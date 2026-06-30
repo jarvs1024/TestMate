@@ -27,10 +27,7 @@ npm run preview  # 预览生产构建
 
 ## iframe 安全
 
-`src/components/InstancePanel.tsx` 给 iframe 配的 `sandbox`:
+`src/components/InstancePanel.tsx` 给 iframe 配的属性:
 
-```
-allow-scripts allow-same-origin allow-forms allow-popups
-```
-
-**不**含 `allow-top-navigation`,防止嵌入页把整个平台劫持到外站。
+- `sandbox`: `allow-scripts allow-same-origin allow-forms allow-popups`(**不**含 `allow-top-navigation`,防劫持)
+- `allow`: `microphone`(Dify chatbot 语音输入需要)

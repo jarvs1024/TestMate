@@ -16,6 +16,7 @@ export default function InstancePanel({ instance }: Props) {
       src={instance.url}
       title={instance.name}
       sandbox={sandbox}
+      allow="microphone"
       frameBorder={0}
       style={{ width: '100%', height: '100%', border: 0, minHeight: 600 }}
     />
