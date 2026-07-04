@@ -1,7 +1,6 @@
 <template>
   <aside class="tm-side">
     <nav class="nav">
-      <div class="nav-label">工作台</div>
       <router-link
         v-for="item in items"
         :key="item.path"
@@ -11,12 +10,10 @@
       >
         <span class="ic" v-html="item.icon"></span>
         <span class="lb">{{ item.label }}</span>
-        <span v-if="item.soon" class="soon">P1</span>
+        <span v-if="item.soon" class="badge">P1</span>
       </router-link>
     </nav>
-
     <div class="foot">
-      <div class="nav-label">系统</div>
       <router-link to="/settings" class="item" :class="{ active: isActive('/settings') }">
         <span class="ic" v-html="icoSettings"></span>
         <span class="lb">设置</span>
@@ -27,7 +24,6 @@
 
 <script setup lang="ts">
 import { useRoute } from 'vue-router';
-
 const route = useRoute();
 
 const icoBook = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>`;
@@ -52,42 +48,30 @@ function isActive(path: string) {
 
 <style scoped>
 .tm-side {
-  width: 240px;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  width: 220px;
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 6px;
   flex-shrink: 0;
 }
 .nav, .foot { display: flex; flex-direction: column; gap: 2px; }
-.foot { margin-top: auto; }
-.nav-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--ink-400);
-  padding: 4px 12px 6px;
-}
-
+.foot { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
 .item {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
-  border-radius: var(--radius-md);
+  border-radius: 9px;
   color: var(--ink-700);
   text-decoration: none;
   font-size: 13.5px;
   font-weight: 500;
   transition: background .12s ease, color .12s ease;
 }
-.item .ic { display: inline-flex; color: var(--ink-500); transition: color .12s ease; }
-.item:hover { background: var(--surface-sunken); color: var(--ink-900); }
+.item .ic { display: inline-flex; color: var(--ink-500); }
+.item:hover { background: var(--surface-soft); color: var(--ink-900); }
 .item:hover .ic { color: var(--ink-700); }
-
 .item.active {
   background: var(--primary-soft);
   color: var(--primary);
@@ -95,19 +79,12 @@ function isActive(path: string) {
 }
 .item.active .ic { color: var(--primary); }
 
-.item:has(.soon) { color: var(--ink-500); }
-.item:has(.soon) .ic { color: var(--ink-400); }
-.item:has(.soon):hover { color: var(--ink-700); }
-.item:has(.soon):hover .ic { color: var(--ink-500); }
-
-.soon {
+.item:has(.badge) { color: var(--ink-500); }
+.item:has(.badge) .ic { color: var(--ink-500); }
+.badge {
   margin-left: auto;
-  font-size: 10px;
-  font-weight: 500;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-  color: var(--ink-500);
-  border: 1px solid var(--border);
+  font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: var(--radius-pill);
+  background: var(--primary-soft); color: var(--primary);
 }
 </style>

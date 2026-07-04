@@ -1,18 +1,14 @@
 <template>
   <header class="tm-header">
-    <div class="left">
-      <div class="logo">T</div>
-      <div class="brand">
-        <div class="name">TestMate</div>
-        <div class="sub">智能测试辅助平台</div>
-      </div>
+    <div class="logo">T</div>
+    <div class="brand">
+      <span class="t1">TestMate</span>
+      <span class="t2">智能测试辅助平台 · v0.1</span>
     </div>
 
-    <div class="center">
-      <div class="wb">
-        <span class="wb-label">当前工作台</span>
-        <span class="wb-name">{{ workbenchName }}</span>
-      </div>
+    <div class="wb">
+      <span class="wb-lbl">当前</span>
+      <span class="wb-name">{{ workbenchName }}</span>
     </div>
 
     <div class="right">
@@ -35,15 +31,15 @@ import UserMenu from './UserMenu.vue';
 const route = useRoute();
 const workbenchName = computed(() => (route.meta.title as string) || 'TestMate');
 
-const ragState = ref<'ok' | 'off'>('off');
-const difyState = ref<'ok' | 'off'>('off');
+const ragState = ref<'ok' | 'warn' | 'off' | 'err'>('off');
+const difyState = ref<'ok' | 'warn' | 'off' | 'err'>('off');
 let pollTimer: number | null = null;
 
 async function fetchStatus() {
   try {
-    const data = (await request.get('/health/services')) as { ragflow?: 'ok' | 'off'; dify?: 'ok' | 'off' };
-    ragState.value = data.ragflow === 'ok' ? 'ok' : 'off';
-    difyState.value = data.dify === 'ok' ? 'ok' : 'off';
+    const data = (await request.get('/health/services')) as { ragflow?: string; dify?: string };
+    ragState.value = (data.ragflow as any) || 'off';
+    difyState.value = (data.dify as any) || 'off';
   } catch {
     ragState.value = 'off';
     difyState.value = 'off';
@@ -58,41 +54,38 @@ onBeforeUnmount(() => { if (pollTimer) window.clearInterval(pollTimer); });
 .tm-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 64px;
-  padding: 0 24px;
+  gap: 12px;
+  padding: 16px 24px;
   background: transparent;
-  position: sticky;
-  top: 0;
-  z-index: 50;
+  flex-shrink: 0;
 }
-.left { display: flex; align-items: center; gap: 12px; min-width: 260px; }
 .logo {
   width: 38px; height: 38px;
-  border-radius: var(--radius-md);
-  background: var(--primary-grad);
-  color: #fff;
+  border-radius: 10px;
   display: grid; place-items: center;
-  font-size: 18px; font-weight: 700;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  color: #fff; font-weight: 800; font-size: 18px;
   box-shadow: var(--primary-shadow);
+  flex-shrink: 0;
 }
-.brand { display: flex; flex-direction: column; gap: 1px; }
-.name { font-size: 15px; font-weight: 700; color: var(--ink-900); letter-spacing: 0.2px; line-height: 1.2; }
-.sub { font-size: 11.5px; color: var(--ink-500); line-height: 1; }
+.brand { display: flex; flex-direction: column; min-width: 200px; }
+.t1 { font-size: 17px; font-weight: 700; color: var(--ink-900); letter-spacing: -0.2px; line-height: 1.2; }
+.t2 { font-size: 12.5px; color: var(--ink-500); margin-top: 1px; }
 
-.center { flex: 1; display: flex; justify-content: center; }
 .wb {
+  margin-left: 16px;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 16px;
-  background: var(--surface);
+  gap: 8px;
+  padding: 5px 14px;
+  background: var(--surface-soft);
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
-.wb-label { font-size: 11.5px; color: var(--ink-500); }
-.wb-name { font-size: 13.5px; font-weight: 600; color: var(--ink-900); }
+.wb-lbl { font-size: 11.5px; color: var(--ink-500); }
+.wb-name { font-size: 13px; font-weight: 600; color: var(--ink-900); }
 
-.right { display: flex; align-items: center; gap: 10px; min-width: 260px; justify-content: flex-end; }
+.right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 </style>

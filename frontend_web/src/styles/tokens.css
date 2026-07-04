@@ -1,142 +1,132 @@
 /* ============================================================
- * TestMate Design Tokens — v3 (按 RAGFlow Retrieval demo 重设)
+ * TestMate Design Tokens — v4 (按 ragflow-search.html 1:1 照抄)
  *
- * 气质:浅紫渐变背景 + 蓝紫主色 + 卡片浮起 + 中文宋体
- * 圆角:12 (卡片) / 8 (按钮+输入) / 999 (胶囊)
- * 阴影:轻, 0 1 3 + 0 4 12
+ * 主色 #1C64F2 (亮蓝) + 备用 #0d9488 (青绿)
+ * 3 色渐变背景 (蓝→紫→粉, 135deg linear)
+ * 玻璃卡片 (backdrop-filter blur 8px)
+ * 3 态状态 (ok/warn/err)
  * ============================================================ */
 
 :root,
 html[data-theme="light"] {
   color-scheme: light;
 
-  /* 背景: 左→右 浅蓝渐变到浅粉, 跟图里一致 */
-  --bg-grad-1: #EEF2FF;   /* 左侧 蓝 */
-  --bg-grad-2: #FDF2F8;   /* 右侧 粉 */
-  --bg-base:   #F8FAFF;
+  /* 背景: 3 色斜向渐变 (跟 demo 完全一致) */
+  --bg-grad-1: #eef2ff;
+  --bg-grad-2: #f5f3ff;
+  --bg-grad-3: #fdf2f8;
 
-  /* 表面 (白 + 卡片) */
-  --surface:        #FFFFFF;
-  --surface-soft:   #FFFFFF;     /* 顶栏 / 侧栏用纯白, 不磨砂 */
-  --surface-sunken: #F5F7FB;
+  /* 主色 (跟 demo 一致) */
+  --primary:     #1C64F2;
+  --primary-2:   #0d9488;     /* 备用色, 跟 demo logo 第二色一致 */
+  --primary-soft: rgba(28, 100, 242, 0.08);
+  --primary-shadow: 0 6px 16px rgba(28, 100, 242, 0.25);
 
-  /* 墨色 (slate) */
-  --ink-900:   #0F172A;     /* 标题 */
-  --ink-700:   #334155;     /* 正文 */
-  --ink-500:   #64748B;     /* 次要 */
-  --ink-400:   #94A3B8;     /* 占位 */
-  --ink-300:   #CBD5E1;
+  /* 文字 (demo 用的 slate 命名) */
+  --ink-900:   #0f172a;     /* text-1 */
+  --ink-700:   #475569;     /* text-2 */
+  --ink-500:   #94a3b8;     /* text-3 */
+  --ink-300:   #cbd5e1;
+  --ink-200:   #e2e8f0;
 
   /* 边框 */
-  --border:        #E2E8F0;
-  --border-strong: #CBD5E1;
-  --border-focus:  #4F46E5;
+  --border:        #e2e8f0;
+  --border-strong: #cbd5e1;
 
-  /* 主色 (蓝紫, 跟图 R logo 一致) */
-  --primary:        #4F46E5;
-  --primary-hover:  #4338CA;
-  --primary-deep:   #3730A3;
-  --primary-soft:   #EEF1FB;
-  --primary-grad:   linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
-  --primary-shadow: 0 6px 18px rgba(79, 70, 229, 0.28);
+  /* 表面 (玻璃) */
+  --surface:        #ffffff;
+  --surface-soft:   #ffffffcc;   /* 玻璃, 跟 demo 一致 */
+  --surface-sunken: #f8fafc;
 
-  /* 状态: 用胶囊 (图里绿底) */
-  --ok:        #10B981;
-  --ok-soft:   #D1FAE5;
-  --ok-text:   #047857;
-  --off:       #94A3B8;
-  --off-soft:  #F1F5F9;
-  --off-text:  #64748B;
+  /* 状态 (3 态, 跟 demo 一致) */
+  --ok:    #16a34a;
+  --warn:  #d97706;
+  --err:   #dc2626;
 
-  /* 阴影 (轻, 卡片浮起) */
+  /* 代码 (跟 demo 一致) */
+  --code-bg:   #0f172a;
+  --code-text: #e2e8f0;
+
+  /* 阴影 (跟 demo 一致) */
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 1px 3px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.04);
-  --shadow-lg: 0 4px 12px rgba(15, 23, 42, 0.06), 0 12px 32px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 4px 12px rgba(15, 23, 42, 0.06), 0 20px 48px rgba(15, 23, 42, 0.08);
 
-  /* 圆角 */
+  /* 圆角 (跟 demo 一致: 卡片 16, 按钮 9, 输入 8, 胶囊 999) */
   --radius-sm:  6px;
   --radius-md:  8px;
+  --radius-btn: 9px;       /* demo 用的 9 */
   --radius-lg:  12px;
-  --radius-xl:  16px;
+  --radius-card: 16px;     /* demo 卡片 16 */
   --radius-pill: 999px;
 
-  /* 字体: 跟图里一致, 中文苹方/思源黑体 + 等宽 */
-  --font-body:   -apple-system, BlinkMacSystemFont, "PingFang SC",
-                 "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans CN", sans-serif;
-  --font-mono:   ui-monospace, "SF Mono", "JetBrains Mono", Menlo, "Cascadia Code", Consolas, monospace;
+  /* 字体 (跟 demo 完全一致) */
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 html[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg-grad-1: #1E1B4B;
-  --bg-grad-2: #4C1D95;
-  --bg-base:   #0B0B1A;
+  --bg-grad-1: #0b1220;
+  --bg-grad-2: #131a2c;
+  --bg-grad-3: #18122a;
 
-  --surface:        #1E1B2E;
-  --surface-soft:   #1A1828;
-  --surface-sunken: #16142A;
+  --primary:     #3B82F6;
+  --primary-2:   #14B8A6;
+  --primary-soft: rgba(59, 130, 246, 0.15);
+  --primary-shadow: 0 6px 16px rgba(59, 130, 246, 0.32);
 
-  --ink-900:   #F1F5F9;
-  --ink-700:   #CBD5E1;
-  --ink-500:   #94A3B8;
-  --ink-400:   #64748B;
+  --ink-900:   #f1f5f9;
+  --ink-700:   #cbd5e1;
+  --ink-500:   #94a3b8;
   --ink-300:   #334155;
+  --ink-200:   #1f2937;
 
-  --border:        #2D2A45;
-  --border-strong: #3F3A5C;
-  --border-focus:  #818CF8;
+  --border:        #1f2937;
+  --border-strong: #334155;
 
-  --primary:        #818CF8;
-  --primary-hover:  #6366F1;
-  --primary-deep:   #4F46E5;
-  --primary-soft:   #1E1B4B;
-  --primary-grad:   linear-gradient(135deg, #818CF8 0%, #A78BFA 100%);
-  --primary-shadow: 0 6px 18px rgba(129, 140, 248, 0.32);
+  --surface:        #111827;
+  --surface-soft:   #111827cc;
+  --surface-sunken: #0b1220;
 
-  --ok:        #34D399;
-  --ok-soft:   rgba(52, 211, 153, 0.15);
-  --ok-text:   #6EE7B7;
-  --off:       #64748B;
-  --off-soft:  #1F2937;
-  --off-text:  #94A3B8;
+  --ok:    #22C55E;
+  --warn:  #F59E0B;
+  --err:   #F87171;
+
+  --code-bg:   #020617;
+  --code-text: #cbd5e1;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4), 0 20px 48px rgba(0, 0, 0, 0.4);
 }
 
 @media (prefers-color-scheme: dark) {
   html[data-theme="auto"] {
     color-scheme: dark;
-    --bg-grad-1: #1E1B4B;
-    --bg-grad-2: #4C1D95;
-    --bg-base:   #0B0B1A;
-    --surface:        #1E1B2E;
-    --surface-soft:   #1A1828;
-    --surface-sunken: #16142A;
-    --ink-900:   #F1F5F9;
-    --ink-700:   #CBD5E1;
-    --ink-500:   #94A3B8;
-    --ink-400:   #64748B;
+    --bg-grad-1: #0b1220;
+    --bg-grad-2: #131a2c;
+    --bg-grad-3: #18122a;
+    --primary:     #3B82F6;
+    --primary-2:   #14B8A6;
+    --primary-soft: rgba(59, 130, 246, 0.15);
+    --primary-shadow: 0 6px 16px rgba(59, 130, 246, 0.32);
+    --ink-900:   #f1f5f9;
+    --ink-700:   #cbd5e1;
+    --ink-500:   #94a3b8;
     --ink-300:   #334155;
-    --border:        #2D2A45;
-    --border-strong: #3F3A5C;
-    --border-focus:  #818CF8;
-    --primary:        #818CF8;
-    --primary-hover:  #6366F1;
-    --primary-deep:   #4F46E5;
-    --primary-soft:   #1E1B4B;
-    --primary-grad:   linear-gradient(135deg, #818CF8 0%, #A78BFA 100%);
-    --primary-shadow: 0 6px 18px rgba(129, 140, 248, 0.32);
-    --ok:        #34D399;
-    --ok-soft:   rgba(52, 211, 153, 0.15);
-    --ok-text:   #6EE7B7;
-    --off:       #64748B;
-    --off-soft:  #1F2937;
-    --off-text:  #94A3B8;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.4);
+    --ink-200:   #1f2937;
+    --border:        #1f2937;
+    --border-strong: #334155;
+    --surface:        #111827;
+    --surface-soft:   #111827cc;
+    --surface-sunken: #0b1220;
+    --ok:    #22C55E;
+    --warn:  #F59E0B;
+    --err:   #F87171;
+    --code-bg:   #020617;
+    --code-text: #cbd5e1;
   }
 }

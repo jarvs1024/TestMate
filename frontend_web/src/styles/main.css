@@ -5,25 +5,18 @@
 @import './tokens.css';
 
 * { box-sizing: border-box; }
-html, body, #app { height: 100%; margin: 0; padding: 0; }
+html, body, #app { height: 100%; margin: 0; padding: 0; min-height: 100%; }
 
 body {
   font-family: var(--font-body);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.55;
   color: var(--ink-900);
-  background: var(--bg-base);
+  /* 关键: 跟 demo 1:1 一致的 3 色斜向渐变背景 */
+  background: linear-gradient(135deg, var(--bg-grad-1), var(--bg-grad-2) 50%, var(--bg-grad-3));
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-/* 关键: 浅紫渐变背景 (跟图里一致) */
-body {
-  background:
-    radial-gradient(1200px 800px at 0% 0%, var(--bg-grad-1) 0%, transparent 55%),
-    radial-gradient(1000px 700px at 100% 0%, var(--bg-grad-2) 0%, transparent 55%),
-    var(--bg-base);
-  min-height: 100vh;
   transition: background-color .25s ease, color .25s ease;
 }
 
@@ -34,11 +27,11 @@ html, html[data-theme] {
   --el-color-primary-light-5: var(--primary-soft);
   --el-color-primary-light-7: var(--primary-soft);
   --el-color-primary-light-9: var(--primary-soft);
-  --el-color-primary-dark-2: var(--primary-hover);
+  --el-color-primary-dark-2: var(--primary);
   --el-text-color-primary: var(--ink-900);
   --el-text-color-regular: var(--ink-700);
   --el-text-color-secondary: var(--ink-500);
-  --el-text-color-placeholder: var(--ink-400);
+  --el-text-color-placeholder: var(--ink-500);
   --el-border-color: var(--border);
   --el-border-color-light: var(--border);
   --el-border-color-lighter: var(--border);
@@ -47,17 +40,20 @@ html, html[data-theme] {
   --el-border-radius-base: 8px;
 }
 
-/* 卡片 (图里风格) */
+/* 卡片 (跟 demo 一致: 16 圆角 + 玻璃 + 阴影) */
 .card {
-  background: var(--surface);
+  background: var(--surface-soft);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow-md);
+  padding: 22px;
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: var(--ink-400); }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-500); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 ::selection { background: var(--primary-soft); color: var(--primary); }

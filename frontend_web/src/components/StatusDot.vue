@@ -1,45 +1,46 @@
 <template>
-  <span class="tm-pill" :class="`is-${state}`" :title="title">
-    <span class="d"></span>
+  <span class="pill" :class="`is-${state}`" :title="title">
+    <span class="d" :class="state"></span>
     <span>{{ stateText }}</span>
   </span>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+type State = 'ok' | 'warn' | 'off' | 'err';
 const props = defineProps<{
   name: string;
-  state: 'ok' | 'off';
+  state: State;
 }>();
-const stateText = computed(() => props.state === 'ok' ? '在线' : '未配置');
-const title = computed(() => `${props.name} · ${stateText.value}`);
+const stateText = computed(() => {
+  if (props.state === 'ok') return `${props.name} · 在线`;
+  if (props.state === 'warn') return `${props.name} · 异常`;
+  if (props.state === 'err') return `${props.name} · 错误`;
+  return `${props.name} · 未配置`;
+});
+const title = computed(() => stateText.value);
 </script>
 
 <style scoped>
-.tm-pill {
+.pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
-  font-weight: 500;
   padding: 4px 10px;
   border-radius: var(--radius-pill);
-  border: 1px solid transparent;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--ink-700);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   user-select: none;
 }
-.tm-pill .d {
+.d {
   width: 6px; height: 6px; border-radius: 50%;
-  background: var(--ok);
+  background: var(--ink-500);
 }
-.tm-pill.is-ok {
-  background: var(--ok-soft);
-  color: var(--ok-text);
-  border-color: rgba(16, 185, 129, 0.2);
-}
-.tm-pill.is-off {
-  background: var(--off-soft);
-  color: var(--off-text);
-  border-color: var(--border);
-}
-.tm-pill.is-off .d { background: var(--off); }
+.d.ok   { background: var(--ok);   box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.15); }
+.d.warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.18); }
+.d.err  { background: var(--err);  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18); }
 </style>

@@ -4,11 +4,13 @@
     <div class="tm-body">
       <AppSidebar />
       <main class="tm-main">
-        <router-view v-slot="{ Component, route }">
-          <transition name="tm-fade" mode="out-in">
-            <component :is="Component" :key="route.fullPath" />
-          </transition>
-        </router-view>
+        <div class="container">
+          <router-view v-slot="{ Component, route }">
+            <transition name="tm-fade" mode="out-in">
+              <component :is="Component" :key="route.fullPath" />
+            </transition>
+          </router-view>
+        </div>
       </main>
       <RagDrawer />
     </div>
@@ -22,9 +24,10 @@ import RagDrawer from '@/components/RagDrawer.vue';
 </script>
 
 <style scoped>
-.tm-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.tm-shell { display: flex; flex-direction: column; min-height: 100vh; }
 .tm-body { flex: 1; display: flex; min-height: 0; }
-.tm-main { flex: 1; min-width: 0; overflow: auto; padding: 8px 24px 32px; }
+.tm-main { flex: 1; min-width: 0; padding: 0 8px 32px; overflow: auto; }
+.container { max-width: 980px; margin: 0 auto; padding: 8px 16px 64px; }
 
 .tm-fade-enter-active, .tm-fade-leave-active { transition: opacity .15s ease, transform .15s ease; }
 .tm-fade-enter-from { opacity: 0; transform: translateY(4px); }
