@@ -1,26 +1,28 @@
 <template>
   <aside class="tm-side">
-    <nav class="nav">
-      <router-link
-        v-for="g in groups"
-        :key="g.path"
-        :to="g.path"
-        class="group"
-        :class="{ active: isActive(g.path) }"
-      >
-        <span class="g-ic" v-html="g.icon"></span>
-        <span class="g-lb">{{ g.label }}</span>
-      </router-link>
-    </nav>
+    <div class="side-inner">
+      <nav class="nav">
+        <router-link
+          v-for="g in groups"
+          :key="g.path"
+          :to="g.path"
+          class="group"
+          :class="{ active: isActive(g.path) }"
+        >
+          <span class="g-ic" v-html="g.icon"></span>
+          <span class="g-lb">{{ g.label }}</span>
+        </router-link>
+      </nav>
 
-    <div class="foot">
-      <div class="ft-lbl">📡 数据 / 工具</div>
-      <div v-for="s in services" :key="s.key" class="src">
-        <span class="dot" :class="`s-${s.status}`"></span>
-        <span class="name">{{ s.label }}</span>
-        <span class="state">{{ s.statusText }}</span>
+      <div class="foot">
+        <div class="ft-lbl">📡 数据 / 工具</div>
+        <div v-for="s in services" :key="s.key" class="src">
+          <span class="dot" :class="`s-${s.status}`"></span>
+          <span class="name">{{ s.label }}</span>
+          <span class="state">{{ s.statusText }}</span>
+        </div>
+        <div class="ft-ts">每 30s 心跳 · {{ lastCheck }}</div>
       </div>
-      <div class="ft-ts">每 30s 心跳 · {{ lastCheck }}</div>
     </div>
   </aside>
 </template>
@@ -81,16 +83,24 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
 </script>
 
 <style scoped>
+/* 侧栏: 固定不动, 自己内部滚 (MainLayout 给了 100% 高) */
 .tm-side {
   width: 220px;
+  flex-shrink: 0;
+  height: 100%;
+  overflow: hidden;     /* 外层不滚, 内部 .side-inner 滚 */
+  border-right: 1px solid var(--border);
+}
+.side-inner {
+  height: 100%;
+  overflow-y: auto;     /* 内容多时自己滚 */
   padding: 20px 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  flex-shrink: 0;
 }
-.nav { display: flex; flex-direction: column; gap: 2px; }
 
+.nav { display: flex; flex-direction: column; gap: 2px; }
 .group {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 12px; border-radius: 9px;

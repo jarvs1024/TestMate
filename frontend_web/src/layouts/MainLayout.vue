@@ -22,9 +22,36 @@ import AppSidebar from '@/components/AppSidebar.vue';
 </script>
 
 <style scoped>
-.tm-shell { display: flex; flex-direction: column; min-height: 100vh; }
-.tm-body { flex: 1; display: flex; min-height: 0; }
-.tm-main { flex: 1; min-width: 0; padding: 0 8px 32px; overflow: auto; }
+/* 整页固定 viewport, 内部用独立 scroll 区分侧栏和主区 */
+.tm-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;          /* 不让 body 滚, 内部滚 */
+  overflow: hidden;
+}
+
+.tm-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;          /* 关键: 让子元素 overflow: auto 生效 */
+}
+
+/* 侧栏: 固定不动, 自己内部滚 */
+:deep(.tm-side) {
+  height: 100%;
+  overflow-y: auto;
+  flex-shrink: 0;
+  /* 防止弹性收缩把内容挤掉 */
+  align-self: stretch;
+}
+
+/* 主区: 独立 scroll, 不带动侧栏 */
+.tm-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;       /* 主区自己滚 */
+  padding: 0 8px 32px;
+}
 .container { max-width: 1080px; margin: 0 auto; padding: 8px 16px 48px; }
 
 .tm-fade-enter-active, .tm-fade-leave-active { transition: opacity .15s ease, transform .15s ease; }
