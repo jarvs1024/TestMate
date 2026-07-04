@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  # MySQL
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-testmate}
+      MYSQL_USER: ${MYSQL_USER:-testmate}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-testmate}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend (FastAPI)
+  backend:
+    build:
+      context: ../backend_gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      DIFY_BASE_URL: ${DIFY_BASE_URL:-http://dify:80/v1}
+      DIFY_API_KEY: ${DIFY_API_KEY:-app-xxxxx}
+      RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-http://ragflow:9380/api/v1}
+      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:-ragflow-xxxxx}
+      JWT_SECRET: ${JWT_SECRET:-please-change-me-32-bytes-random}
+    ports:
+      - "8000:8000"
+
+  # Frontend (Nginx)
+  frontend:
+    build:
+      context: ../frontend_web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+  # Dify (P0 简化版,生产用 docker compose -f ai_engine/docker-compose.yml 启)
+  # 这里先放占位,实际部署时可注释掉,单独用 ai_engine 启动
+  # dify:
+  #   image: langgenius/dify-api:1.0.0
+  #   ...
+
+  # RAGFlow (同理)
+  # ragflow:
+  #   image: infiniflow/ragflow:v0.18.0
+  #   ...
+
+volumes:
+  mysql_data:
+  redis_data:
