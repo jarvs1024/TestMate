@@ -1,69 +1,67 @@
 <template>
-  <div class="settings-page">
-    <div class="page-head">
-      <div>
-        <h1 class="page-title">系统设置</h1>
-        <p class="page-lede">个人偏好 / 主题 / API token / 服务连接</p>
+  <div class="set">
+    <header class="page-head">
+      <h1 class="title">设置</h1>
+    </header>
+
+    <section class="card sec">
+      <div class="sec-h">外观</div>
+      <div class="row">
+        <div>
+          <div class="row-t">主题</div>
+          <div class="row-s">跟随系统或强制选择</div>
+        </div>
+        <div class="theme-chooser">
+          <button
+            v-for="m in modes"
+            :key="m.value"
+            class="tbtn"
+            :class="{ active: themeStore.mode === m.value }"
+            @click="themeStore.set(m.value)"
+          >{{ m.label }}</button>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <div class="settings-grid">
-      <PreviewWindow title="appearance" subtitle="外观">
-        <div class="card-body">
-          <div class="row">
-            <div>
-              <div class="row-title">主题</div>
-              <div class="row-sub">跟随系统,或强制浅色 / 深色</div>
-            </div>
-            <ThemeSwitcher />
-          </div>
-        </div>
-      </PreviewWindow>
+    <section class="card sec">
+      <div class="sec-h">账号</div>
+      <div class="kv">
+        <div class="k">用户名</div><div class="v">{{ userStore.user?.username || '-' }}</div>
+        <div class="k">角色</div><div class="v">{{ roleText(userStore.user?.role) }}</div>
+        <div class="k">用户 ID</div><div class="v mono">{{ userStore.user?.id || '-' }}</div>
+      </div>
+    </section>
 
-      <PreviewWindow title="account" subtitle="账号信息">
-        <div class="card-body">
-          <div class="kv">
-            <div class="k">用户名</div><div class="v tm-mono">{{ userStore.user?.username || '-' }}</div>
-            <div class="k">角色</div><div class="v">{{ roleText(userStore.user?.role) }}</div>
-            <div class="k">用户 ID</div><div class="v tm-mono">{{ userStore.user?.id || '-' }}</div>
-          </div>
+    <section class="card sec">
+      <div class="sec-h">后端服务</div>
+      <div class="svc">
+        <div class="svc-row">
+          <span>TestMate Gateway</span>
+          <span class="ok">● 健康</span>
         </div>
-      </PreviewWindow>
-
-      <PreviewWindow title="api-token" subtitle="个人 API token">
-        <div class="card-body">
-          <p class="hint">供本地 Python 脚本调用 TestMate API 使用,P1 启用,目前接口未实装</p>
-          <div class="token-box tm-mono">tmt_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div>
+        <div class="svc-row">
+          <span>RAGFlow</span>
+          <span class="dim">○ 未配置</span>
         </div>
-      </PreviewWindow>
-
-      <PreviewWindow title="services" subtitle="后端服务">
-        <div class="card-body">
-          <div class="svc-row">
-            <span>TestMate Gateway</span>
-            <span class="chip chip-ok">● 健康</span>
-          </div>
-          <div class="svc-row">
-            <span>RAGFlow</span>
-            <span class="chip chip-off">○ 未配置</span>
-          </div>
-          <div class="svc-row">
-            <span>Dify</span>
-            <span class="chip chip-off">○ 未配置</span>
-          </div>
+        <div class="svc-row">
+          <span>Dify</span>
+          <span class="dim">○ 未配置</span>
         </div>
-      </PreviewWindow>
-    </div>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { useUserStore } from '@/stores/user';
-import PreviewWindow from '@/components/PreviewWindow.vue';
-import ThemeSwitcher from '@/components/ThemeSwitcher.vue';
-
+import { useThemeStore } from '@/stores/theme';
 const userStore = useUserStore();
-
+const themeStore = useThemeStore();
+const modes = [
+  { value: 'auto'  as const, label: '自动' },
+  { value: 'light' as const, label: '浅色' },
+  { value: 'dark'  as const, label: '深色' },
+];
 function roleText(r?: string) {
   if (r === 'admin') return '管理员';
   if (r === 'tester') return '测试工程师';
@@ -73,57 +71,46 @@ function roleText(r?: string) {
 </script>
 
 <style scoped>
-.settings-page { display: flex; flex-direction: column; gap: 16px; }
-.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
-.page-title { font-size: 24px; font-weight: 700; margin: 0; color: var(--ink-900); }
-.page-lede { font-size: 13.5px; color: var(--ink-500); margin: 4px 0 0; }
+.set { display: flex; flex-direction: column; gap: 12px; max-width: 720px; }
+.title { font-size: 18px; font-weight: 600; margin: 0; color: var(--ink-900); }
 
-.settings-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+.sec { padding: 16px 20px; }
+.sec-h {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ink-500);
+  font-weight: 600;
+  margin-bottom: 12px;
 }
 
-.card-body { padding: 18px 22px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.row-t { font-size: 13px; color: var(--ink-900); font-weight: 500; }
+.row-s { font-size: 12px; color: var(--ink-500); margin-top: 2px; }
 
-.row {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px;
+.theme-chooser { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.tbtn {
+  background: transparent; border: none; cursor: pointer;
+  padding: 5px 12px; font-size: 12.5px;
+  color: var(--ink-700); font-family: inherit;
+  border-right: 1px solid var(--border);
 }
-.row-title { font-size: 14px; font-weight: 600; color: var(--ink-900); }
-.row-sub { font-size: 12.5px; color: var(--ink-500); margin-top: 2px; }
+.tbtn:last-child { border-right: none; }
+.tbtn:hover { background: var(--bg-hover); }
+.tbtn.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 
-.kv {
-  display: grid; grid-template-columns: 100px 1fr;
-  row-gap: 10px; column-gap: 16px;
-  font-size: 13.5px;
-}
+.kv { display: grid; grid-template-columns: 100px 1fr; row-gap: 8px; column-gap: 16px; font-size: 13px; }
 .kv .k { color: var(--ink-500); }
 .kv .v { color: var(--ink-900); }
+.mono { font-family: var(--font-mono); font-size: 12.5px; }
 
-.hint { font-size: 12.5px; color: var(--ink-500); margin: 0 0 12px; }
-.token-box {
-  font-size: 12.5px;
-  padding: 8px 12px;
-  background: var(--surface-sunken);
-  border-radius: var(--radius-md);
-  color: var(--ink-500);
-  letter-spacing: 0.5px;
-}
-
+.svc { display: flex; flex-direction: column; }
 .svc-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 0;
-  font-size: 13.5px;
-  color: var(--ink-900);
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 0; font-size: 13px; color: var(--ink-900);
   border-bottom: 1px solid var(--border);
 }
 .svc-row:last-child { border-bottom: none; }
-.chip {
-  font-size: 11px; padding: 2px 9px; border-radius: 999px;
-  font-weight: 500;
-  border: 1px solid transparent;
-}
-.chip-ok  { background: var(--status-ok-soft); color: var(--status-ok); }
-.chip-off { background: var(--surface-sunken); color: var(--ink-500); border-color: var(--border); }
+.ok { color: var(--ok); font-size: 12px; }
+.dim { color: var(--ink-500); font-size: 12px; }
 </style>

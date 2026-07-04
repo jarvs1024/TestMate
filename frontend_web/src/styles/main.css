@@ -4,33 +4,28 @@
 
 @import './tokens.css';
 
-html, body, #app {
-  height: 100%;
-  margin: 0;
-  font-family: var(--font-body);
-  color: var(--ink-900);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  transition: background-color 0.3s ease, color 0.3s ease;
-}
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; padding: 0; }
 
 body {
-  background:
-    radial-gradient(1200px 600px at 10% -10%, var(--bg-grad-1) 0%, transparent 60%),
-    radial-gradient(1000px 500px at 90% 0%, var(--bg-grad-3) 0%, transparent 55%),
-    radial-gradient(800px 800px at 50% 110%, var(--bg-grad-2) 0%, transparent 60%),
-    var(--bg-base);
-  min-height: 100vh;
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-900);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color .15s ease, color .15s ease;
 }
 
-/* 全局: 让 Element Plus 跟我们的 token 联动 */
-html, html[data-theme="light"], html[data-theme="dark"], html[data-theme="auto"] {
+/* Element Plus 主题对齐 */
+html, html[data-theme] {
   --el-color-primary: var(--primary);
   --el-color-primary-light-3: var(--primary);
   --el-color-primary-light-5: var(--primary-soft);
   --el-color-primary-light-7: var(--primary-soft);
   --el-color-primary-light-9: var(--primary-soft);
-  --el-color-primary-dark-2: var(--primary-deep);
+  --el-color-primary-dark-2: var(--primary-hover);
   --el-text-color-primary: var(--ink-900);
   --el-text-color-regular: var(--ink-700);
   --el-text-color-secondary: var(--ink-500);
@@ -38,39 +33,24 @@ html, html[data-theme="light"], html[data-theme="dark"], html[data-theme="auto"]
   --el-border-color: var(--border);
   --el-border-color-light: var(--border);
   --el-border-color-lighter: var(--border);
-  --el-fill-color: var(--surface-sunken);
-  --el-fill-color-blank: var(--surface);
+  --el-fill-color: var(--bg-hover);
+  --el-fill-color-blank: var(--bg);
 }
 
-/* 通用工具类 */
-.tm-glass {
-  background: var(--surface-soft);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+/* 全局: 1px 边框分隔, 极轻圆角 */
+.card {
+  background: var(--bg);
   border: 1px solid var(--border);
+  border-radius: 4px;
 }
 
-.tm-surface {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-}
-
-.tm-serif {
-  font-family: var(--font-display);
-  font-style: italic;
-}
-
-.tm-mono {
-  font-family: var(--font-mono);
-}
-
-/* 滚动条 (轻一点, 跟整体气质) */
+/* 滚动条: 极轻 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: var(--ink-300); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: var(--ink-500); }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ink-400); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* 选区颜色 */
 ::selection { background: var(--primary-soft); color: var(--ink-900); }

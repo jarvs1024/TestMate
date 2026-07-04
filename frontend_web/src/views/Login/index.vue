@@ -1,28 +1,28 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-slate-50">
-    <div class="w-96 p-8 bg-white rounded-2xl shadow-floating">
-      <div class="flex items-center gap-3 mb-6">
-        <div class="w-10 h-10 rounded-xl bg-primary-600 flex items-center justify-center text-white font-bold text-lg">
-          T
-        </div>
-        <h1 class="text-xl font-semibold m-0">TestMate</h1>
+  <div class="login">
+    <form class="box" @submit.prevent="onSubmit">
+      <div class="brand">
+        <span class="logo">T</span>
+        <span class="name">TestMate</span>
       </div>
-      <p class="text-sm text-slate-500 mb-6">智能测试辅助平台</p>
+      <p class="sub">智能测试辅助平台</p>
 
-      <el-form :model="form" @submit.prevent="onSubmit">
-        <el-form-item>
-          <el-input v-model="form.username" placeholder="用户名" size="large" />
-        </el-form-item>
-        <el-form-item>
-          <el-input v-model="form.password" type="password" placeholder="密码" size="large" show-password />
-        </el-form-item>
-        <el-button type="primary" size="large" class="w-full" :loading="loading" @click="onSubmit">
-          登录
-        </el-button>
-      </el-form>
+      <label class="lbl">用户名</label>
+      <el-input v-model="form.username" placeholder="admin" size="large" />
 
-      <div v-if="error" class="mt-3 text-sm text-rose-600">{{ error }}</div>
-    </div>
+      <label class="lbl mt">密码</label>
+      <el-input v-model="form.password" type="password" placeholder="••••••••" size="large" show-password />
+
+      <el-button
+        type="primary"
+        size="large"
+        class="submit"
+        :loading="loading"
+        native-type="submit"
+      >登录</el-button>
+
+      <div v-if="error" class="err">{{ error }}</div>
+    </form>
   </div>
 </template>
 
@@ -53,3 +53,35 @@ async function onSubmit() {
   }
 }
 </script>
+
+<style scoped>
+.login {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  padding: 24px;
+}
+.box {
+  width: 360px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 32px;
+}
+.brand { display: flex; align-items: center; gap: 8px; }
+.logo {
+  width: 22px; height: 22px;
+  background: var(--primary);
+  color: #fff;
+  border-radius: 4px;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 700;
+}
+.name { font-size: 15px; font-weight: 600; color: var(--ink-900); }
+.sub { font-size: 12.5px; color: var(--ink-500); margin: 4px 0 22px; }
+
+.lbl { display: block; font-size: 11.5px; color: var(--ink-500); font-weight: 500; margin-bottom: 6px; }
+.lbl.mt { margin-top: 14px; }
+.submit { width: 100%; margin-top: 18px; }
+.err { margin-top: 12px; font-size: 12.5px; color: #DC2626; }
+</style>

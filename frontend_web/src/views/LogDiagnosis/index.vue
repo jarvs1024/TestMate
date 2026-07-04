@@ -1,75 +1,54 @@
 <template>
-  <div class="ld-page">
-    <div class="page-head">
+  <div class="ld">
+    <header class="page-head">
       <div>
-        <h1 class="page-title">
-          日志分析
-          <span class="tm-serif suffix">— Dify agent + mock</span>
-        </h1>
-        <p class="page-lede">
-          上传 log → AI 提取 assert → 对比历史缺陷图谱 → 三段式根因结论
-        </p>
+        <h1 class="title">日志分析</h1>
+        <p class="sub">上传 log · AI 提取 assert · 三段式根因</p>
       </div>
       <div class="head-actions">
-        <span class="chip chip-demo">P0 Demo · DIFY_MOCK 模式</span>
+        <span class="badge">DIFY_MOCK</span>
+        <el-button @click="onLoadSample" plain>填入示例</el-button>
+        <el-button @click="onClear" plain>清空</el-button>
       </div>
-    </div>
+    </header>
 
-    <div class="ld-grid">
-      <!-- 左:输入 (PreviewWindow 包装) -->
-      <PreviewWindow
-        title="log-input"
-        subtitle="粘贴 / 拖拽"
-        class="input-pane"
-      >
-        <div class="pane-body">
-          <label class="lbl">环境变量 (可选)</label>
-          <el-input
-            v-model="environment"
-            type="textarea"
-            :rows="3"
-            placeholder='例:{"firmware": "v1.2.3", "nand": "Micron B47R"}'
-          />
-
-          <label class="lbl mt-4">log 内容 (必填)</label>
-          <el-input
-            v-model="logContent"
-            type="textarea"
-            :rows="14"
-            placeholder="粘贴 PCIe trace / 串口 log / kernel log…"
-            class="tm-mono"
-          />
-
-          <div class="actions">
-            <el-button
-              type="primary"
-              :loading="diagnosing"
-              :disabled="!logContent.trim()"
-              @click="onDiagnose"
-            >🚀 开始诊断</el-button>
-            <el-button @click="onClear">清空</el-button>
-            <el-button @click="onLoadSample">填入示例</el-button>
-          </div>
+    <div class="grid">
+      <section class="pane">
+        <div class="lbl">环境变量 (可选)</div>
+        <el-input
+          v-model="environment"
+          type="textarea"
+          :rows="3"
+          placeholder='{"firmware": "v1.2.3", "nand": "Micron B47R"}'
+        />
+        <div class="lbl mt">log 内容</div>
+        <el-input
+          v-model="logContent"
+          type="textarea"
+          :rows="14"
+          placeholder="粘贴 PCIe trace / 串口 log / kernel log…"
+          class="mono"
+        />
+        <div class="actions">
+          <el-button
+            type="primary"
+            :loading="diagnosing"
+            :disabled="!logContent.trim()"
+            @click="onDiagnose"
+          >开始诊断</el-button>
         </div>
-      </PreviewWindow>
+      </section>
 
-      <!-- 右:输出 (深色终端 + PreviewWindow) -->
-      <PreviewWindow
-        title="ai-stream"
-        subtitle="DIFY_MOCK"
-        class="output-pane"
-      >
-        <template #actions>
-          <span v-if="diagnosing" class="status-pill is-live">● 流式中</span>
-          <span v-else-if="result" class="status-pill is-done">✓ 已完成</span>
-          <span v-else class="status-pill is-idle">○ 待发起</span>
-        </template>
-
-        <div class="terminal">
-          <pre class="terminal-body">{{ result || '// 点击「开始诊断」,AI 结论会流式渲染到这里…' }}</pre>
-          <div v-if="error" class="terminal-err">❌ {{ error }}</div>
+      <section class="terminal">
+        <div class="t-head">
+          <span>输出</span>
+          <span v-if="diagnosing" class="ok">● 流式</span>
+          <span v-else-if="result" class="dim">已完成</span>
+          <span v-else class="dim">待发起</span>
         </div>
-      </PreviewWindow>
+        <pre class="t-body">{{ result || '// 诊断结果会流式渲染到这里' }}</pre>
+        <div v-if="error" class="t-err">❌ {{ error }}</div>
+      </section>
     </div>
   </div>
 </template>
@@ -77,8 +56,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import request from '@/utils/request';
-import PreviewWindow from '@/components/PreviewWindow.vue';
 
 const environment = ref('');
 const logContent = ref('');
@@ -88,7 +65,7 @@ const diagnosing = ref(false);
 
 async function onDiagnose() {
   if (!logContent.value.trim()) {
-    ElMessage.warning('请输入 log 内容');
+    ElMessage.warning('请输入 log');
     return;
   }
   result.value = '';
@@ -107,10 +84,7 @@ async function onDiagnose() {
         dataset: '',
       }),
     });
-    if (!resp.ok) {
-      const t = await resp.text();
-      throw new Error(`HTTP ${resp.status}: ${t}`);
-    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const reader = resp.body?.getReader();
     const decoder = new TextDecoder();
     if (!reader) throw new Error('无响应流');
@@ -136,17 +110,12 @@ async function onDiagnose() {
   }
 }
 
-function parseEnv(text: string): Record<string, any> {
-  if (!text.trim()) return {};
-  try { return JSON.parse(text); } catch { return { raw: text }; }
+function parseEnv(t: string): Record<string, any> {
+  if (!t.trim()) return {};
+  try { return JSON.parse(t); } catch { return { raw: t }; }
 }
 
-function onClear() {
-  logContent.value = '';
-  result.value = '';
-  error.value = '';
-}
-
+function onClear() { logContent.value = ''; result.value = ''; error.value = ''; }
 function onLoadSample() {
   environment.value = '{"firmware":"v1.2.3","nand":"Micron B47R"}';
   logContent.value = `[ 1234.567890] pcieport 0000:01:00.0: PCIe link down
@@ -155,74 +124,57 @@ function onLoadSample() {
 [ 1234.581000] nvme0: PCI device unresponsive
 [ 1235.100000] kernel: I/O error, dev nvme0, sector 12345678`;
 }
-
-// 避免 lint 警告
-void request;
 </script>
 
 <style scoped>
-.ld-page { display: flex; flex-direction: column; gap: 16px; height: 100%; }
+.ld { display: flex; flex-direction: column; gap: 16px; height: 100%; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
-.page-title { font-size: 24px; font-weight: 700; margin: 0; color: var(--ink-900); line-height: 1.2; }
-.page-title .suffix { color: var(--ink-500); font-size: 18px; margin-left: 6px; }
-.page-lede { font-size: 13.5px; color: var(--ink-500); margin: 4px 0 0; }
-.head-actions { display: flex; gap: 8px; }
-
-.chip {
-  font-size: 11px; padding: 3px 10px; border-radius: 999px;
-  border: 1px solid transparent;
-  font-weight: 500; letter-spacing: 0.2px;
-}
-.chip-demo {
-  background: var(--primary-soft);
-  color: var(--primary);
+.title { font-size: 18px; font-weight: 600; margin: 0; color: var(--ink-900); }
+.sub { font-size: 12.5px; color: var(--ink-500); margin: 2px 0 0; }
+.head-actions { display: flex; gap: 8px; align-items: center; }
+.badge {
+  font-size: 10.5px; padding: 2px 7px; border: 1px solid var(--border);
+  border-radius: 3px; color: var(--ink-500);
+  font-family: var(--font-mono);
+  letter-spacing: 0.3px;
 }
 
-.ld-grid {
+.grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 12px;
   flex: 1;
   min-height: 0;
 }
-.input-pane, .output-pane { min-height: 0; }
-.pane-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 4px; }
-.lbl {
-  display: block;
-  font-size: 12.5px;
-  color: var(--ink-500);
-  font-weight: 500;
-  margin-bottom: 6px;
-}
-.lbl.mt-4 { margin-top: 16px; }
-.actions { display: flex; gap: 8px; margin-top: 16px; }
 
-.status-pill {
-  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+.pane, .terminal {
+  background: var(--bg);
   border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--ink-500);
-}
-.status-pill.is-live {
-  background: var(--status-ok-soft); color: var(--status-ok);
-  border-color: transparent;
-  animation: tm-pulse 1.6s ease-in-out infinite;
-}
-.status-pill.is-done { color: var(--status-ok); }
-@keyframes tm-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }
-
-.terminal {
-  flex: 1;
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
-  background: var(--code-bg, #0f172a);
   min-height: 0;
 }
-.terminal-body {
-  flex: 1;
-  margin: 0;
-  padding: 20px 24px;
-  color: #6ee7b7;
+.pane { padding: 16px 18px; gap: 4px; }
+.lbl { font-size: 11.5px; color: var(--ink-500); font-weight: 500; margin-bottom: 6px; }
+.lbl.mt { margin-top: 12px; }
+.mono :deep(textarea) { font-family: var(--font-mono); font-size: 12px; }
+.actions { margin-top: 14px; }
+
+.terminal { background: var(--code-bg); border-color: var(--code-bg); }
+.t-head {
+  padding: 8px 14px;
+  font-size: 11.5px;
+  color: var(--ink-500);
+  border-bottom: 1px solid #1e293b;
+  display: flex; gap: 8px; align-items: center;
+}
+.t-head .ok { color: #34D399; }
+.t-head .dim { color: #64748B; }
+.t-body {
+  flex: 1; margin: 0;
+  padding: 16px 18px;
+  color: #6EE7B7;
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.7;
@@ -230,10 +182,10 @@ void request;
   word-break: break-word;
   overflow: auto;
 }
-.terminal-err {
-  padding: 10px 24px;
-  background: rgba(244, 63, 94, 0.12);
-  color: #fda4af;
+.t-err {
+  padding: 8px 14px;
+  background: rgba(244, 63, 94, 0.1);
+  color: #FDA4AF;
   font-family: var(--font-mono);
   font-size: 12px;
   border-top: 1px solid rgba(244, 63, 94, 0.3);

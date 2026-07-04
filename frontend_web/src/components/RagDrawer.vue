@@ -1,74 +1,53 @@
 <template>
   <aside class="tm-rag">
     <div class="head">
-      <div class="title">📖 协议随身</div>
-      <div class="sub">NVMe · JEDEC · 企业 spec</div>
+      <span class="title">协议随身</span>
+      <span class="hint">P1</span>
     </div>
-
     <div class="search">
-      <span class="icon">🔍</span>
-      <input
-        v-model="query"
-        type="text"
-        placeholder="搜索 NVMe 2.0 random write latency…"
-        :disabled="true"
-      />
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input v-model="q" type="text" placeholder="NVMe 2.0 random write…" disabled />
     </div>
-
     <div class="empty">
-      <div class="empty-mark">📡</div>
-      <div class="empty-title">RAGFlow 待接入</div>
-      <div class="empty-hint">P1 启动后,这里会展示命中片段,点跳转主区阅读原文</div>
-    </div>
-
-    <div class="foot">
-      <div class="kbd">⌘K</div>
-      <span>快捷搜索</span>
+      <div class="em-title">RAGFlow 未接入</div>
+      <div class="em-sub">P1 启动后,命中片段会列在这里</div>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue';
-const query = ref('');
+const q = ref('');
 </script>
 
 <style scoped>
 .tm-rag {
-  width: 300px;
+  width: 260px;
+  background: var(--bg-sub);
+  border-left: 1px solid var(--border);
+  padding: 14px 14px;
   display: flex;
   flex-direction: column;
-  background: var(--surface-soft);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  border-left: 1px solid var(--border);
-  padding: 16px 14px;
+  gap: 10px;
   flex-shrink: 0;
-  gap: 12px;
 }
-.head .title { font-size: 14px; font-weight: 600; color: var(--ink-900); }
-.head .sub { font-size: 11.5px; color: var(--ink-500); margin-top: 2px; }
+.head { display: flex; align-items: center; justify-content: space-between; }
+.title { font-size: 12px; font-weight: 600; color: var(--ink-900); letter-spacing: 0.2px; }
+.hint { font-size: 10px; color: var(--ink-400); padding: 1px 6px; border: 1px solid var(--border); border-radius: 3px; }
 
 .search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--surface);
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 7px 10px;
-  transition: border-color .15s ease, box-shadow .15s ease;
+  background: var(--bg);
+  border-radius: 4px;
+  color: var(--ink-500);
 }
-.search:focus-within {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-soft);
-}
-.search .icon { color: var(--ink-400); font-size: 13px; }
 .search input {
-  flex: 1; border: none; outline: none;
-  background: transparent;
-  font-size: 13px;
-  color: var(--ink-900);
+  flex: 1; border: none; outline: none; background: transparent;
+  font-size: 12.5px; color: var(--ink-900);
   font-family: inherit;
 }
 .search input::placeholder { color: var(--ink-400); }
@@ -76,32 +55,11 @@ const query = ref('');
 
 .empty {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px;
   text-align: center;
-  padding: 24px 12px;
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  border: 1px dashed var(--border);
-  gap: 6px;
+  color: var(--ink-500);
 }
-.empty-mark { font-size: 28px; opacity: .7; }
-.empty-title { font-size: 13px; font-weight: 600; color: var(--ink-700); }
-.empty-hint { font-size: 11.5px; color: var(--ink-500); line-height: 1.55; }
-
-.foot {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 11.5px; color: var(--ink-500);
-}
-.kbd {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--ink-700);
-}
+.em-title { font-size: 12px; color: var(--ink-700); font-weight: 500; }
+.em-sub { font-size: 11.5px; color: var(--ink-500); }
 </style>

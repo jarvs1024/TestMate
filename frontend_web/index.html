@@ -3,7 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TestMate 智能测试辅助平台</title>
+    <title>TestMate</title>
+    <script>
+      // 防闪: 同步读 localStorage, 在 main.ts 跑之前设上 data-theme
+      (function () {
+        try {
+          var m = localStorage.getItem('testmate:theme') || 'auto';
+          if (m !== 'light' && m !== 'dark' && m !== 'auto') m = 'auto';
+          document.documentElement.setAttribute('data-theme', m);
+          var isDark = m === 'dark' || (m === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', isDark);
+        } catch (_) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
