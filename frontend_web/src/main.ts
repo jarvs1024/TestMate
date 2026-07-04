@@ -5,6 +5,9 @@ import 'element-plus/dist/index.css';
 import App from './App.vue';
 import router from './router';
 import { useThemeStore } from './stores/theme';
+// 关键: 用 JS import, Vite 会把 tokens.css 内联进 bundle
+// 之前用 CSS @import, Vite build 时不内联, 变量全失效
+import './styles/tokens.css';
 import './styles/main.css';
 
 const app = createApp(App);

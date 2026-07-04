@@ -221,8 +221,9 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; display: flex; align-i
 .field textarea { resize: vertical; min-height: 64px; }
 .req { color: var(--err); }
 
-.row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
-.row > * { flex: 1; min-width: 0; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row > * { min-width: 0; }
+.row > .field { flex: 1; }
 .row .field { margin-bottom: 0; }
 
 .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }

@@ -2,7 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-@import './tokens.css';
+/* tokens.css 通过 main.ts 的 JS import 加载, Vite 会自动内联进 bundle.
+   这里不再 @import (CSS @import 在 Vite build 时会被当成外部资源, 变量全失效). */
 
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; padding: 0; min-height: 100%; }
@@ -12,7 +13,6 @@ body {
   font-size: 14px;
   line-height: 1.55;
   color: var(--ink-900);
-  /* 关键: 跟 demo 1:1 一致的 3 色斜向渐变背景 */
   background: linear-gradient(135deg, var(--bg-grad-1), var(--bg-grad-2) 50%, var(--bg-grad-3));
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
@@ -20,7 +20,6 @@ body {
   transition: background-color .25s ease, color .25s ease;
 }
 
-/* Element Plus 主题联动 */
 html, html[data-theme] {
   --el-color-primary: var(--primary);
   --el-color-primary-light-3: var(--primary);
@@ -40,7 +39,6 @@ html, html[data-theme] {
   --el-border-radius-base: 8px;
 }
 
-/* 卡片 (跟 demo 一致: 16 圆角 + 玻璃 + 阴影) */
 .card {
   background: var(--surface-soft);
   backdrop-filter: blur(8px);
@@ -57,3 +55,10 @@ html, html[data-theme] {
 ::-webkit-scrollbar-track { background: transparent; }
 
 ::selection { background: var(--primary-soft); color: var(--primary); }
+
+/* 全局工具: 按钮的 .row 不要被 flex: 1 挤死 (修复 KB 页搜索按钮消失 bug) */
+.row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.row > * { min-width: 0; }
+.row > button { flex: 0 0 auto; }
+.row > .field { flex: 1; }
+.row > .meta { flex: 1; }
