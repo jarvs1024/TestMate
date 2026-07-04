@@ -26,7 +26,7 @@ AsyncSessionLocal = async_sessionmaker(
 async def init_db() -> None:
     """P0 简化:启动时建表。生产用 Alembic。"""
     # 引入 models 让 metadata 知道所有表
-    from app.models import user, machine  # noqa: F401
+    from app.models import user, machine, agent  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

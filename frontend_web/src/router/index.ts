@@ -10,13 +10,11 @@ const router = createRouter({
       component: () => import('@/layouts/MainLayout.vue'),
       meta: { requiresAuth: true },
       children: [
-        { path: '', redirect: '/kb' },
-        { path: 'kb',         name: 'kb',     meta: { title: '知识库检索' },    component: () => import('@/views/KnowledgeBase/index.vue') },
-        { path: 'diagnosis',  name: 'diag',   meta: { title: '日志分析' },      component: () => import('@/views/LogDiagnosis/index.vue') },
-        { path: 'cases',      name: 'cases',  meta: { title: '用例生成' },      component: () => import('@/views/TestCaseBuilder/index.vue') },
-        { path: 'ops',        name: 'ops',    meta: { title: '环境运维' },      component: () => import('@/views/MachineOps/index.vue') },
-        { path: 'plan',       name: 'plan',   meta: { title: '测试方案' },      component: () => import('@/views/TestPlanBuilder/index.vue') },
-        { path: 'settings',   name: 'settings', meta: { title: '系统设置' },    component: () => import('@/views/Settings/index.vue') },
+        // 默认进广场
+        { path: '', redirect: '/plaza' },
+        { path: 'plaza',       name: 'plaza',       meta: { title: '智能体广场' },  component: () => import('@/views/Plaza/index.vue') },
+        { path: 'agents/:code', name: 'agent-runner', meta: { title: '运行' },       component: () => import('@/views/AgentRunner/index.vue') },
+        { path: 'kb-manage',   name: 'kb-manage',   meta: { title: '知识库' },      component: () => import('@/views/KnowledgeManage/index.vue') },
       ],
     },
   ],

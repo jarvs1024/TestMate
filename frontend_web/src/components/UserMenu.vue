@@ -15,7 +15,8 @@
             <div class="dd-role">{{ roleText(userStore.user?.role) }}</div>
           </div>
         </el-dropdown-item>
-        <el-dropdown-item divided command="settings">设置</el-dropdown-item>
+        <el-dropdown-item divided command="agents">智能体注册 (admin)</el-dropdown-item>
+        <el-dropdown-item command="theme">主题 · {{ themeLabel }}</el-dropdown-item>
         <el-dropdown-item command="logout">退出登录</el-dropdown-item>
       </el-dropdown-menu>
     </template>
@@ -31,6 +32,7 @@ import { useUserStore } from '@/stores/user';
 const router = useRouter();
 const userStore = useUserStore();
 const initial = computed(() => (userStore.user?.username || '?')[0]?.toUpperCase() || '?');
+const themeLabel = '☀ / 🌙 / 自动';
 
 function roleText(r?: string) {
   if (r === 'admin') return '管理员';
@@ -44,8 +46,10 @@ function onCommand(cmd: string) {
     userStore.logout();
     ElMessage.success('已退出登录');
     router.push('/login');
-  } else if (cmd === 'settings') {
-    router.push('/settings');
+  } else if (cmd === 'agents') {
+    ElMessage.info('智能体注册 · P1 实现');
+  } else if (cmd === 'theme') {
+    ElMessage.info('点顶栏 ☀/🌙 切换主题');
   }
 }
 </script>

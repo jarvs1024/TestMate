@@ -5,17 +5,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.api import auth, kb, diagnose, machines, notify, health
+from app.api import auth, kb, diagnose, machines, notify, health, agents
+from app.api.agents import seed_agents
 from app.db.session import init_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动 / 关闭钩子。"""
-    # 启动:建表(P0 简化,生产用 Alembic)
+    # 启动: 建表 (P0 简化, 生产用 Alembic)
     await init_db()
+    # 种子智能体
+    await seed_agents()
     yield
-    # 关闭:清理资源
 
 
 app = FastAPI(
@@ -41,6 +43,7 @@ app.include_router(machines.router, prefix="/api/v1/machines", tags=["machines"]
 app.include_router(kb.router, prefix="/api/v1/kb", tags=["kb"])
 app.include_router(diagnose.router, prefix="/api/v1/diagnose", tags=["diagnose"])
 app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])
+app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
 
 
 @app.get("/", include_in_schema=False)

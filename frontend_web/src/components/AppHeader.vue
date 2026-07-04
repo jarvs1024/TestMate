@@ -6,14 +6,22 @@
       <span class="t2">智能测试辅助平台 · v0.1</span>
     </div>
 
-    <div class="wb">
-      <span class="wb-lbl">当前</span>
-      <span class="wb-name">{{ workbenchName }}</span>
-    </div>
+    <!-- 顶栏主导航 tab -->
+    <nav class="topnav">
+      <router-link to="/plaza" class="tn-item" :class="{ active: isPlaza }">
+        <span class="tn-ic">🏠</span>广场
+      </router-link>
+      <router-link to="/kb-manage" class="tn-item" :class="{ active: isKb }">
+        <span class="tn-ic">📚</span>知识库
+      </router-link>
+      <router-link v-if="isAgent" to="/plaza" class="tn-item">
+        <span class="tn-ic">🩺</span>
+        <span class="tn-agent" v-if="currentAgent">{{ currentAgent.icon }} {{ currentAgent.name }}</span>
+        <span v-else>智能体</span>
+      </router-link>
+    </nav>
 
     <div class="right">
-      <StatusDot name="RAGFlow" :state="ragState" />
-      <StatusDot name="Dify" :state="difyState" />
       <ThemeSwitcher />
       <UserMenu />
     </div>
@@ -21,33 +29,35 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import request from '@/utils/request';
-import StatusDot from './StatusDot.vue';
+import { getAgent, type AgentSummary } from '@/api/agents';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 import UserMenu from './UserMenu.vue';
 
 const route = useRoute();
-const workbenchName = computed(() => (route.meta.title as string) || 'TestMate');
 
-const ragState = ref<'ok' | 'warn' | 'off' | 'err'>('off');
-const difyState = ref<'ok' | 'warn' | 'off' | 'err'>('off');
-let pollTimer: number | null = null;
+const isPlaza = computed(() => route.path === '/plaza');
+const isKb = computed(() => route.path === '/kb-manage');
+const isAgent = computed(() => route.path.startsWith('/agents/'));
 
-async function fetchStatus() {
+const currentAgent = ref<AgentSummary | null>(null);
+
+async function loadAgentIfNeeded() {
+  if (!isAgent.value) {
+    currentAgent.value = null;
+    return;
+  }
+  const code = String(route.params.code || '');
+  if (!code) return;
   try {
-    const data = (await request.get('/health/services')) as { ragflow?: string; dify?: string };
-    ragState.value = (data.ragflow as any) || 'off';
-    difyState.value = (data.dify as any) || 'off';
+    currentAgent.value = await getAgent(code);
   } catch {
-    ragState.value = 'off';
-    difyState.value = 'off';
+    currentAgent.value = null;
   }
 }
 
-onMounted(() => { fetchStatus(); pollTimer = window.setInterval(fetchStatus, 30_000); });
-onBeforeUnmount(() => { if (pollTimer) window.clearInterval(pollTimer); });
+onMounted(loadAgentIfNeeded);
 </script>
 
 <style scoped>
@@ -55,7 +65,7 @@ onBeforeUnmount(() => { if (pollTimer) window.clearInterval(pollTimer); });
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 24px;
+  padding: 14px 24px 10px;
   background: transparent;
   flex-shrink: 0;
 }
@@ -68,24 +78,32 @@ onBeforeUnmount(() => { if (pollTimer) window.clearInterval(pollTimer); });
   box-shadow: var(--primary-shadow);
   flex-shrink: 0;
 }
-.brand { display: flex; flex-direction: column; min-width: 200px; }
+.brand { display: flex; flex-direction: column; min-width: 180px; }
 .t1 { font-size: 17px; font-weight: 700; color: var(--ink-900); letter-spacing: -0.2px; line-height: 1.2; }
 .t2 { font-size: 12.5px; color: var(--ink-500); margin-top: 1px; }
 
-.wb {
+.topnav {
   margin-left: 16px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 14px;
+  display: flex; align-items: center; gap: 2px;
   background: var(--surface-soft);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
   backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  box-shadow: var(--shadow-sm);
 }
-.wb-lbl { font-size: 11.5px; color: var(--ink-500); }
-.wb-name { font-size: 13px; font-weight: 600; color: var(--ink-900); }
+.tn-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px;
+  border-radius: 7px;
+  color: var(--ink-700); text-decoration: none;
+  font-size: 13px; font-weight: 500;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.tn-item:hover { background: var(--surface-sunken); color: var(--ink-900); }
+.tn-item.active { background: var(--surface); color: var(--primary); font-weight: 600; box-shadow: var(--shadow-sm); }
+.tn-ic { font-size: 14px; }
+.tn-agent { font-family: var(--font-mono); font-size: 12px; }
 
-.right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 </style>
