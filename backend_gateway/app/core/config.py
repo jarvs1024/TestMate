@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
 
     # Dify
+    DIFY_MOCK: bool = False  # True:不调外部 Dify,本地 mock 流式返回(用于沙箱/无 Dify 环境)
     DIFY_BASE_URL: str = "http://dify:80/v1"
     DIFY_API_KEY: str = "app-xxxxx"
     DIFY_TIMEOUT_SECONDS: int = 120

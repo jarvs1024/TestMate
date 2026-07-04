@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # MySQL
   mysql:
@@ -11,7 +9,7 @@ services:
       MYSQL_USER: ${MYSQL_USER:-testmate}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-testmate}
     ports:
-      - "3306:3306"
+      - "33060:3306"  # host 33060 -> container 3306, 避免与 RAGFlow 等冲突
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -25,7 +23,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "63790:6379"  # host 63790 -> container 6379, 避免与 Dify 等冲突
     volumes:
       - redis_data:/data
     healthcheck:
@@ -48,6 +46,7 @@ services:
     environment:
       MYSQL_HOST: mysql
       REDIS_HOST: redis
+      DIFY_MOCK: ${DIFY_MOCK:-true}
       DIFY_BASE_URL: ${DIFY_BASE_URL:-http://dify:80/v1}
       DIFY_API_KEY: ${DIFY_API_KEY:-app-xxxxx}
       RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-http://ragflow:9380/api/v1}

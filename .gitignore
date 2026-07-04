@@ -32,10 +32,12 @@ venv/
 env/
 
 # Local config / secrets
+# 实际配置(不入仓)
 .env
 .env.local
-.env.*.local
-*.local
+.env.docker
+# 模板(入仓):.env.example / .env.example.local / .env.example.docker
+# 其它 *.local 仍按原规则忽略
 
 # Build artifacts
 *.log
