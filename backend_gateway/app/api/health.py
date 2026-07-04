@@ -36,6 +36,14 @@ async def _probe(name: str, base_url: str, api_key: str, timeout: float = 1.5) -
 async def health_services() -> dict:
     """聚合 RAGFlow / Dify 的可达性,前端顶栏 30s 轮询一次。"""
     from app.core.ragflow_client import probe as rf_probe
+    from app.core.settings_store import get
     rf_status, _ = await rf_probe()
-    dify = await _probe("dify", settings.DIFY_BASE_URL, settings.DIFY_API_KEY)
+    # Dify: 走 DB 配置 + 真实探测 (mock 模式视为 ok)
+    dify_mock = bool(await get("dify.mock_mode", False))
+    if dify_mock:
+        dify = "ok"
+    else:
+        dify_base = (await get("dify.base_url", "")) or ""
+        dify_key = (await get("dify.api_key", "")) or ""
+        dify = await _probe("dify", dify_base, dify_key)
     return {"ragflow": rf_status, "dify": dify}
