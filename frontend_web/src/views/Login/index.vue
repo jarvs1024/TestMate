@@ -35,7 +35,7 @@ const router = useRouter();
 const route = useRoute();
 const userStore = useUserStore();
 
-const form = reactive({ username: 'admin', password: 'admin123' });
+const form = reactive({ username: 'admin', password: 'Admin@2026' });
 const loading = ref(false);
 const error = ref('');
 
