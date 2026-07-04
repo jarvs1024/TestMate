@@ -95,6 +95,10 @@ class Agent(Base):
     last_called_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    # ===== 嵌入模式 =====
+    # 有值时, AgentRunner 跳过表单+流程, 直接全屏渲染该 URL 的 iframe (内嵌第三方 chatbot/页面)
+    embed_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
     # ===== 时间戳 =====
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

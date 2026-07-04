@@ -125,6 +125,25 @@ SEED_AGENTS: list[dict] = [
         "tools": ["machine_ssh", "dingtalk_send", "job_dispatch"],
         "is_featured": True,
     },
+    {
+        "code": "kb-query-bot",
+        "name": "分类查询知识机器助手",
+        "icon": "🤖",
+        "category": AgentCategory.ssd_spec.value,  # 协议 / 知识类
+        "version": "v1.0.0",
+        "status": AgentStatus.stable.value,
+        "summary": "基于 Dify Chatbot 的知识库对话入口,直接在 TestMate 里聊,免开新窗口",
+        "use_when": "• 随手查 Spec / 协议 / 内部知识库\n• 想在 TestMate 内闭环, 不用切浏览器标签",
+        "not_for": "需要 FW diff / FIO 比对 / 老化派发等专业流程 (用对应专业智能体)",
+        "tags": ["Dify", "知识库", "对话", "RAG"],
+        "engine": AgentEngine.dify.value,
+        "engine_config": {"mode": "embed"},
+        "input_schema": [],
+        "data_sources": ["dify:chatbot:1yidcQMo2wcZJH9B"],
+        "tools": [],
+        "is_featured": True,
+        "embed_url": "http://localhost:35001/chatbot/1yidcQMo2wcZJH9B",
+    },
 ]
 
 

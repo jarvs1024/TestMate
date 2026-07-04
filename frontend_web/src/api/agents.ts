@@ -21,6 +21,7 @@ export interface AgentSummary {
   call_count: number;
   last_called_at: string | null;
   is_featured: boolean;
+  embed_url?: string | null;
 }
 
 export interface AgentInputField {

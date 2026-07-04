@@ -19,7 +19,22 @@
       </div>
     </div>
 
-    <div v-if="agent" class="run-body">
+    <div v-if="agent && agent.embed_url" class="run-embed">
+      <div class="embed-hd">
+        <span class="embed-tag">🪟 嵌入模式</span>
+        <span class="embed-hint">内嵌 Dify Chatbot · 由 {{ agent.embed_url }} 提供</span>
+        <a :href="agent.embed_url" target="_blank" rel="noopener" class="embed-pop">↗ 新窗口打开</a>
+      </div>
+      <iframe
+        :src="agent.embed_url"
+        class="embed-frame"
+        frameborder="0"
+        allow="microphone"
+        title="agent-embed"
+      ></iframe>
+    </div>
+
+    <div v-else-if="agent" class="run-body">
       <!-- 左:参数配置 -->
       <div class="run-form card">
         <h2>📋 参数配置</h2>
@@ -318,6 +333,54 @@ onMounted(async () => {
 .st-beta { background: rgba(217, 119, 6, 0.1); color: var(--warn); }
 .st-alpha { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
 .st-draft { background: rgba(148, 163, 184, 0.15); color: var(--ink-500); }
+
+/* 嵌入模式 (Dify chatbot iframe) */
+.run-embed {
+  display: flex;
+  flex-direction: column;
+  background: var(--card, #fff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  /* 用 dvh 让 iframe 撑到 viewport - AppHeader - 上 padding */
+  min-height: calc(100dvh - 110px);
+  max-height: calc(100dvh - 110px);
+}
+.embed-hd {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface-sunken, #f5f5f7);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--ink-700);
+  flex-shrink: 0;
+}
+.embed-tag {
+  font-weight: 600;
+  color: var(--primary, #3b82f6);
+  padding: 2px 8px;
+  background: var(--primary-soft, #dbeafe);
+  border-radius: 5px;
+  font-size: 11px;
+}
+.embed-hint { flex: 1; color: var(--ink-500); font-family: var(--font-mono, monospace); font-size: 11px; }
+.embed-pop {
+  color: var(--primary, #3b82f6);
+  text-decoration: none;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+.embed-pop:hover { background: var(--primary-soft, #dbeafe); }
+.embed-frame {
+  width: 100%;
+  flex: 1;
+  border: 0;
+  display: block;
+  background: #fff;
+}
 
 .run-body {
   display: grid; grid-template-columns: 360px 1fr;
