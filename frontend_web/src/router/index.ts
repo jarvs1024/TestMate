@@ -15,6 +15,7 @@ const router = createRouter({
         { path: 'plaza',       name: 'plaza',       meta: { title: '智能体广场' },  component: () => import('@/views/Plaza/index.vue') },
         { path: 'agents/:code', name: 'agent-runner', meta: { title: '运行' },       component: () => import('@/views/AgentRunner/index.vue') },
         { path: 'kb-manage',   name: 'kb-manage',   meta: { title: '知识库' },      component: () => import('@/views/KnowledgeManage/index.vue') },
+        { path: 'settings',   name: 'settings',   meta: { title: '设置' },         component: () => import('@/views/Settings/index.vue') },
       ],
     },
   ],

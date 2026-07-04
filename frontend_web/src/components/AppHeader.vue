@@ -9,13 +9,12 @@
     <!-- 顶栏主导航 tab -->
     <nav class="topnav">
       <router-link to="/plaza" class="tn-item" :class="{ active: isPlaza }">
-        <span class="tn-ic">🏠</span>广场
+        广场
       </router-link>
       <router-link to="/kb-manage" class="tn-item" :class="{ active: isKb }">
-        <span class="tn-ic">📚</span>知识库
+        知识库
       </router-link>
       <router-link v-if="isAgent" to="/plaza" class="tn-item">
-        <span class="tn-ic">🩺</span>
         <span class="tn-agent" v-if="currentAgent">{{ currentAgent.icon }} {{ currentAgent.name }}</span>
         <span v-else>智能体</span>
       </router-link>
