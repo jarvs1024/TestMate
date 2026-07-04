@@ -1,7 +1,8 @@
 <template>
   <div class="set">
-    <header class="page-head">
+    <header class="head">
       <h1 class="title">设置</h1>
+      <p class="sub">个人偏好 / 主题 / 账号 / 服务连接</p>
     </header>
 
     <section class="card sec">
@@ -9,13 +10,13 @@
       <div class="row">
         <div>
           <div class="row-t">主题</div>
-          <div class="row-s">跟随系统或强制选择</div>
+          <div class="row-s">跟随系统或强制选择浅色/深色</div>
         </div>
-        <div class="theme-chooser">
+        <div class="chooser">
           <button
             v-for="m in modes"
             :key="m.value"
-            class="tbtn"
+            class="cbtn"
             :class="{ active: themeStore.mode === m.value }"
             @click="themeStore.set(m.value)"
           >{{ m.label }}</button>
@@ -37,15 +38,15 @@
       <div class="svc">
         <div class="svc-row">
           <span>TestMate Gateway</span>
-          <span class="ok">● 健康</span>
+          <span class="ok"><span class="d"></span>健康</span>
         </div>
         <div class="svc-row">
           <span>RAGFlow</span>
-          <span class="dim">○ 未配置</span>
+          <span class="off"><span class="d"></span>未配置</span>
         </div>
         <div class="svc-row">
           <span>Dify</span>
-          <span class="dim">○ 未配置</span>
+          <span class="off"><span class="d"></span>未配置</span>
         </div>
       </div>
     </section>
@@ -71,46 +72,35 @@ function roleText(r?: string) {
 </script>
 
 <style scoped>
-.set { display: flex; flex-direction: column; gap: 12px; max-width: 720px; }
-.title { font-size: 18px; font-weight: 600; margin: 0; color: var(--ink-900); }
-
-.sec { padding: 16px 20px; }
-.sec-h {
-  font-size: 11.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--ink-500);
-  font-weight: 600;
-  margin-bottom: 12px;
-}
-
+.set { display: flex; flex-direction: column; gap: 16px; max-width: 720px; }
+.head { margin-bottom: 4px; }
+.title { font-size: 28px; font-weight: 700; margin: 0; color: var(--ink-900); letter-spacing: -0.4px; }
+.sub { font-size: 13.5px; color: var(--ink-500); margin: 4px 0 0; }
+.sec { padding: 20px 24px; }
+.sec-h { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ink-500); margin-bottom: 14px; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.row-t { font-size: 13px; color: var(--ink-900); font-weight: 500; }
-.row-s { font-size: 12px; color: var(--ink-500); margin-top: 2px; }
+.row-t { font-size: 14px; color: var(--ink-900); font-weight: 500; }
+.row-s { font-size: 12.5px; color: var(--ink-500); margin-top: 2px; }
+.chooser { display: inline-flex; background: var(--surface-sunken); border-radius: var(--radius-md); padding: 3px; gap: 2px; }
+.cbtn { background: transparent; border: none; cursor: pointer; padding: 5px 14px; font-size: 12.5px; color: var(--ink-700); font-family: inherit; border-radius: var(--radius-sm); }
+.cbtn:hover { color: var(--ink-900); }
+.cbtn.active { background: var(--surface); color: var(--primary); font-weight: 600; box-shadow: var(--shadow-sm); }
 
-.theme-chooser { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
-.tbtn {
-  background: transparent; border: none; cursor: pointer;
-  padding: 5px 12px; font-size: 12.5px;
-  color: var(--ink-700); font-family: inherit;
-  border-right: 1px solid var(--border);
-}
-.tbtn:last-child { border-right: none; }
-.tbtn:hover { background: var(--bg-hover); }
-.tbtn.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
-
-.kv { display: grid; grid-template-columns: 100px 1fr; row-gap: 8px; column-gap: 16px; font-size: 13px; }
+.kv { display: grid; grid-template-columns: 100px 1fr; row-gap: 10px; column-gap: 16px; font-size: 13.5px; }
 .kv .k { color: var(--ink-500); }
 .kv .v { color: var(--ink-900); }
-.mono { font-family: var(--font-mono); font-size: 12.5px; }
+.mono { font-family: var(--font-mono); font-size: 13px; }
 
-.svc { display: flex; flex-direction: column; }
 .svc-row {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 8px 0; font-size: 13px; color: var(--ink-900);
+  padding: 10px 0; font-size: 13.5px; color: var(--ink-900);
   border-bottom: 1px solid var(--border);
 }
 .svc-row:last-child { border-bottom: none; }
-.ok { color: var(--ok); font-size: 12px; }
-.dim { color: var(--ink-500); font-size: 12px; }
+.ok, .off { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.ok { color: var(--ok-text); }
+.off { color: var(--ink-500); }
+.ok .d, .off .d { width: 6px; height: 6px; border-radius: 50%; }
+.ok .d { background: var(--ok); }
+.off .d { background: var(--off); }
 </style>

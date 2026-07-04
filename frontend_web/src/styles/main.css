@@ -9,16 +9,25 @@ html, body, #app { height: 100%; margin: 0; padding: 0; }
 
 body {
   font-family: var(--font-body);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.6;
   color: var(--ink-900);
-  background: var(--bg);
+  background: var(--bg-base);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  transition: background-color .15s ease, color .15s ease;
 }
 
-/* Element Plus 主题对齐 */
+/* 关键: 浅紫渐变背景 (跟图里一致) */
+body {
+  background:
+    radial-gradient(1200px 800px at 0% 0%, var(--bg-grad-1) 0%, transparent 55%),
+    radial-gradient(1000px 700px at 100% 0%, var(--bg-grad-2) 0%, transparent 55%),
+    var(--bg-base);
+  min-height: 100vh;
+  transition: background-color .25s ease, color .25s ease;
+}
+
+/* Element Plus 主题联动 */
 html, html[data-theme] {
   --el-color-primary: var(--primary);
   --el-color-primary-light-3: var(--primary);
@@ -33,24 +42,22 @@ html, html[data-theme] {
   --el-border-color: var(--border);
   --el-border-color-light: var(--border);
   --el-border-color-lighter: var(--border);
-  --el-fill-color: var(--bg-hover);
-  --el-fill-color-blank: var(--bg);
+  --el-fill-color: var(--surface-sunken);
+  --el-fill-color-blank: var(--surface);
+  --el-border-radius-base: 8px;
 }
 
-/* 全局: 1px 边框分隔, 极轻圆角 */
+/* 卡片 (图里风格) */
 .card {
-  background: var(--bg);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
 }
 
-/* 滚动条: 极轻 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 999px;
-}
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-400); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-::selection { background: var(--primary-soft); color: var(--ink-900); }
+::selection { background: var(--primary-soft); color: var(--primary); }

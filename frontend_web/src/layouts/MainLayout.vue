@@ -24,8 +24,9 @@ import RagDrawer from '@/components/RagDrawer.vue';
 <style scoped>
 .tm-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .tm-body { flex: 1; display: flex; min-height: 0; }
-.tm-main { flex: 1; min-width: 0; overflow: auto; padding: 20px 24px; background: var(--bg); }
+.tm-main { flex: 1; min-width: 0; overflow: auto; padding: 8px 24px 32px; }
 
-.tm-fade-enter-active, .tm-fade-leave-active { transition: opacity .15s ease; }
-.tm-fade-enter-from, .tm-fade-leave-to { opacity: 0; }
+.tm-fade-enter-active, .tm-fade-leave-active { transition: opacity .15s ease, transform .15s ease; }
+.tm-fade-enter-from { opacity: 0; transform: translateY(4px); }
+.tm-fade-leave-to { opacity: 0; transform: translateY(-4px); }
 </style>

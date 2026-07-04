@@ -1,52 +1,60 @@
 <template>
   <div class="ld">
-    <header class="page-head">
+    <header class="head">
       <div>
         <h1 class="title">日志分析</h1>
-        <p class="sub">上传 log · AI 提取 assert · 三段式根因</p>
+        <p class="sub">上传 log · AI 提取 assert · 三段式根因结论 (DIFY_MOCK)</p>
       </div>
-      <div class="head-actions">
-        <span class="badge">DIFY_MOCK</span>
-        <el-button @click="onLoadSample" plain>填入示例</el-button>
-        <el-button @click="onClear" plain>清空</el-button>
+      <div class="actions">
+        <el-button @click="onLoadSample" plain>
+          <span class="btn-row">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            填入示例
+          </span>
+        </el-button>
+        <el-button @click="onClear" plain>
+          <span class="btn-row">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+            清空
+          </span>
+        </el-button>
       </div>
     </header>
 
     <div class="grid">
-      <section class="pane">
-        <div class="lbl">环境变量 (可选)</div>
-        <el-input
-          v-model="environment"
-          type="textarea"
-          :rows="3"
-          placeholder='{"firmware": "v1.2.3", "nand": "Micron B47R"}'
-        />
-        <div class="lbl mt">log 内容</div>
-        <el-input
-          v-model="logContent"
-          type="textarea"
-          :rows="14"
-          placeholder="粘贴 PCIe trace / 串口 log / kernel log…"
-          class="mono"
-        />
-        <div class="actions">
-          <el-button
-            type="primary"
-            :loading="diagnosing"
-            :disabled="!logContent.trim()"
-            @click="onDiagnose"
-          >开始诊断</el-button>
+      <section class="pane card">
+        <div class="sec-h">
+          <span>输入</span>
+          <span class="hint">环境变量选填,提升准确度</span>
         </div>
+
+        <div class="field">
+          <label class="lbl">环境变量</label>
+          <el-input v-model="environment" type="textarea" :rows="3" placeholder='{"firmware": "v1.2.3", "nand": "Micron B47R"}' />
+        </div>
+
+        <div class="field">
+          <label class="lbl">log 内容 <span class="req">*</span></label>
+          <el-input v-model="logContent" type="textarea" :rows="14" placeholder="粘贴 PCIe trace / 串口 log / kernel log…" class="mono" />
+        </div>
+
+        <button class="primary" :disabled="!logContent.trim() || diagnosing" @click="onDiagnose">
+          <svg v-if="!diagnosing" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
+          </svg>
+          <span v-if="diagnosing">诊断中…</span>
+          <span v-else>开始诊断</span>
+        </button>
       </section>
 
-      <section class="terminal">
-        <div class="t-head">
+      <section class="terminal card">
+        <div class="t-h">
           <span>输出</span>
-          <span v-if="diagnosing" class="ok">● 流式</span>
-          <span v-else-if="result" class="dim">已完成</span>
-          <span v-else class="dim">待发起</span>
+          <span v-if="diagnosing" class="s-live"><span class="d"></span>流式中</span>
+          <span v-else-if="result" class="s-done">已完成</span>
+          <span v-else class="s-idle">待发起</span>
         </div>
-        <pre class="t-body">{{ result || '// 诊断结果会流式渲染到这里' }}</pre>
+        <pre class="t-body">{{ result || '// 点击「开始诊断」,AI 结论会流式渲染到这里' }}</pre>
         <div v-if="error" class="t-err">❌ {{ error }}</div>
       </section>
     </div>
@@ -100,7 +108,7 @@ async function onDiagnose() {
           const ev = JSON.parse(json);
           if (ev.type === 'error') error.value += ev.content + '\n';
           else if (ev.content) result.value += ev.content;
-        } catch { /* ignore */ }
+        } catch { /* */ }
       }
     }
   } catch (e: any) {
@@ -127,64 +135,74 @@ function onLoadSample() {
 </script>
 
 <style scoped>
-.ld { display: flex; flex-direction: column; gap: 16px; height: 100%; }
-.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
-.title { font-size: 18px; font-weight: 600; margin: 0; color: var(--ink-900); }
-.sub { font-size: 12.5px; color: var(--ink-500); margin: 2px 0 0; }
-.head-actions { display: flex; gap: 8px; align-items: center; }
-.badge {
-  font-size: 10.5px; padding: 2px 7px; border: 1px solid var(--border);
-  border-radius: 3px; color: var(--ink-500);
-  font-family: var(--font-mono);
-  letter-spacing: 0.3px;
-}
+.ld { display: flex; flex-direction: column; gap: 20px; height: 100%; }
+.head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.title { font-size: 28px; font-weight: 700; margin: 0; color: var(--ink-900); letter-spacing: -0.4px; }
+.sub { font-size: 13.5px; color: var(--ink-500); margin: 4px 0 0; }
+.actions { display: flex; gap: 8px; }
+.btn-row { display: inline-flex; align-items: center; gap: 6px; }
 
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  flex: 1;
-  min-height: 0;
-}
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1; min-height: 0; }
+.pane, .terminal { min-height: 0; display: flex; flex-direction: column; }
 
-.pane, .terminal {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.pane { padding: 16px 18px; gap: 4px; }
-.lbl { font-size: 11.5px; color: var(--ink-500); font-weight: 500; margin-bottom: 6px; }
-.lbl.mt { margin-top: 12px; }
-.mono :deep(textarea) { font-family: var(--font-mono); font-size: 12px; }
-.actions { margin-top: 14px; }
+.pane { padding: 20px 24px; gap: 14px; }
+.sec-h { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 4px; }
+.sec-h > span:first-child { font-size: 15px; font-weight: 600; color: var(--ink-900); }
+.hint { font-size: 11.5px; color: var(--ink-500); }
 
-.terminal { background: var(--code-bg); border-color: var(--code-bg); }
-.t-head {
-  padding: 8px 14px;
-  font-size: 11.5px;
-  color: var(--ink-500);
-  border-bottom: 1px solid #1e293b;
-  display: flex; gap: 8px; align-items: center;
+.field { display: flex; flex-direction: column; }
+.lbl { font-size: 12.5px; color: var(--ink-700); font-weight: 500; margin-bottom: 6px; }
+.req { color: var(--primary); }
+.mono :deep(textarea) { font-family: var(--font-mono); font-size: 12.5px; }
+
+.primary {
+  margin-top: 6px;
+  height: 44px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  background: var(--primary-grad);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 14px; font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--primary-shadow);
+  transition: filter .15s ease, transform .05s ease;
+  font-family: inherit;
 }
-.t-head .ok { color: #34D399; }
-.t-head .dim { color: #64748B; }
+.primary:hover:not(:disabled) { filter: brightness(1.05); }
+.primary:active:not(:disabled) { transform: scale(0.99); }
+.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.terminal { background: #0F172A; border-color: #0F172A; }
+.t-h {
+  padding: 12px 18px;
+  font-size: 13px;
+  color: #94A3B8;
+  display: flex; gap: 12px; align-items: center;
+  border-bottom: 1px solid #1E293B;
+  background: #0B1220;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.s-live { display: inline-flex; align-items: center; gap: 6px; color: #34D399; font-size: 12px; }
+.s-live .d { width: 6px; height: 6px; border-radius: 50%; background: #34D399; animation: tm-pulse 1.6s ease-in-out infinite; }
+.s-done { color: #34D399; font-size: 12px; }
+.s-idle { color: #64748B; font-size: 12px; }
+@keyframes tm-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .4 } }
+
 .t-body {
   flex: 1; margin: 0;
-  padding: 16px 18px;
+  padding: 18px 22px;
   color: #6EE7B7;
   font-family: var(--font-mono);
   font-size: 12.5px;
-  line-height: 1.7;
+  line-height: 1.75;
   white-space: pre-wrap;
   word-break: break-word;
   overflow: auto;
 }
 .t-err {
-  padding: 8px 14px;
-  background: rgba(244, 63, 94, 0.1);
+  padding: 10px 18px;
+  background: rgba(244, 63, 94, 0.12);
   color: #FDA4AF;
   font-family: var(--font-mono);
   font-size: 12px;

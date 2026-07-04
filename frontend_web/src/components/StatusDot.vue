@@ -1,45 +1,45 @@
 <template>
-  <span class="tm-dot" :class="`is-${state}`" :title="title">
+  <span class="tm-pill" :class="`is-${state}`" :title="title">
     <span class="d"></span>
-    <span class="lbl">{{ label }}</span>
+    <span>{{ stateText }}</span>
   </span>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-
-type State = 'ok' | 'off';
 const props = defineProps<{
   name: string;
-  state: State;
-  hint?: string;
+  state: 'ok' | 'off';
 }>();
-
-const label = computed(() =>
-  props.state === 'ok' ? `${props.name}` : props.name,
-);
-const title = computed(() => `${props.name} · ${props.state === 'ok' ? '在线' : '未配置'}${props.hint ? ' · ' + props.hint : ''}`);
+const stateText = computed(() => props.state === 'ok' ? '在线' : '未配置');
+const title = computed(() => `${props.name} · ${stateText.value}`);
 </script>
 
 <style scoped>
-.tm-dot {
+.tm-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  color: var(--ink-700);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
   user-select: none;
 }
-.d {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+.tm-pill .d {
+  width: 6px; height: 6px; border-radius: 50%;
   background: var(--ok);
-  box-shadow: 0 0 0 2px var(--ok-soft);
 }
-.is-off .d {
-  background: var(--off);
-  box-shadow: none;
+.tm-pill.is-ok {
+  background: var(--ok-soft);
+  color: var(--ok-text);
+  border-color: rgba(16, 185, 129, 0.2);
 }
-.is-off .lbl { color: var(--ink-500); }
+.tm-pill.is-off {
+  background: var(--off-soft);
+  color: var(--off-text);
+  border-color: var(--border);
+}
+.tm-pill.is-off .d { background: var(--off); }
 </style>
