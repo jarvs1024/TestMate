@@ -34,13 +34,8 @@ async def _probe(name: str, base_url: str, api_key: str, timeout: float = 1.5) -
 
 @router.get("/health/services")
 async def health_services() -> dict:
-    """聚合 RAGFlow / Dify 的可达性,前端顶栏 30s 轮询一次。
-
-    返回格式:{"ragflow": "ok|warn|off", "dify": "ok|warn|off"}
-    P0 阶段如果配置是 mock / 默认占位,直接报 "off"。
-    """
-    rag, dify = await asyncio.gather(
-        _probe("ragflow", settings.RAGFLOW_BASE_URL, settings.RAGFLOW_API_KEY),
-        _probe("dify", settings.DIFY_BASE_URL, settings.DIFY_API_KEY),
-    )
-    return {"ragflow": rag, "dify": dify}
+    """聚合 RAGFlow / Dify 的可达性,前端顶栏 30s 轮询一次。"""
+    from app.core.ragflow_client import probe as rf_probe
+    rf_status, _ = await rf_probe()
+    dify = await _probe("dify", settings.DIFY_BASE_URL, settings.DIFY_API_KEY)
+    return {"ragflow": rf_status, "dify": dify}
