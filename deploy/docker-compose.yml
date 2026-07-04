@@ -1,3 +1,5 @@
+name: test-mate  # 所有容器/网络/卷前缀: test-mate-mysql / test-mate-backend / ...
+
 services:
   # MySQL
   mysql:
@@ -37,7 +39,8 @@ services:
     build:
       context: ../backend_gateway
       dockerfile: Dockerfile
-    restart: unless-stopped
+    restart: on-failure
+    # 启动 race 兜底:MySQL 还没真 ready 时 init_db 可能丢连接,自动重试
     depends_on:
       mysql:
         condition: service_healthy
