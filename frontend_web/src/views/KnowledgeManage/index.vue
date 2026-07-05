@@ -1,123 +1,62 @@
 <template>
   <div class="kb">
-    <h1 class="title" style="display:none">📚 知识库</h1>
-    <p class="lede" style="display:none">所有智能体共享的私有知识源 · 已对接 RAGFlow · 喂入文档 / Spec / 历史 Case / 缺陷档</p>
-
-    <!-- 顶部: 健康 + 概览 + 检索 -->
+    <!-- 顶部: 概览 (左) + RAGFlow 共享搜索 (右) -->
     <div class="row-grid">
-      <!-- 概览 -->
-      <div class="card">
-        <h2><span>概览</span>
+      <!-- 概览: 缩小, 3 列横排 (无最近命中) -->
+      <div class="card card-overview">
+        <h2>
+          <span>概览</span>
           <span class="rf-status" :class="`s-${rfStatus}`" v-if="rfStatus">
             <span class="dot"></span>{{ rfMsg }}
           </span>
         </h2>
         <div class="stats">
           <div class="stat">
-            <div class="num">{{ datasets.length }}</div>
-            <div class="lbl">数据集</div>
+            <div class="stat-hd"><span class="num">{{ datasets.length }}</span><span class="lbl">数据集</span></div>
           </div>
           <div class="stat">
-            <div class="num">{{ totalDocs }}</div>
-            <div class="lbl">文档</div>
+            <div class="stat-hd"><span class="num">{{ totalDocs }}</span><span class="lbl">文档</span></div>
           </div>
           <div class="stat">
-            <div class="num">{{ totalChunks }}</div>
-            <div class="lbl">分段</div>
+            <div class="stat-hd"><span class="num">{{ totalChunks }}</span><span class="lbl">分段</span></div>
           </div>
-          <div class="stat">
-            <div class="num" :class="{ hi: lastSearch }">{{ lastSearch?.total ?? '—' }}</div>
-            <div class="lbl">最近命中</div>
-          </div>
+        </div>
+        <div class="ds-preview" v-if="datasets.length > 0">
+          <div class="ds-preview-hd">数据集</div>
+          <ul>
+            <li v-for="d in datasets.slice(0, 3)" :key="d.id">
+              <span class="ds-name">{{ d.name }}</span>
+              <span class="ds-meta">{{ d.chunk_count }} 段</span>
+            </li>
+          </ul>
+          <div v-if="datasets.length > 3" class="ds-more">+ {{ datasets.length - 3 }} 个</div>
+        </div>
+        <div v-else class="ds-empty">
+          <span>暂无数据集, 在 RAGFlow 后台创建后刷新</span>
         </div>
       </div>
 
-      <!-- 检索测试 -->
-      <div class="card">
-        <h2><span>检索测试</span>
-          <span class="hint-t" v-if="lastSearch">用时 {{ lastSearch.elapsed_ms || 0 }}ms</span>
+      <!-- RAGFlow 共享搜索: 全屏 iframe -->
+      <div class="card card-share">
+        <h2>
+          <span>🔎 知识检索</span>
+          <span class="share-sub">基于 RAGFlow 共享 Search App</span>
         </h2>
-        <div class="field">
-          <label>问题 <span class="req">*</span></label>
-          <textarea v-model="qText" rows="2" placeholder="例: NVMe GC 流程 / TRIM 时序 / 4K 随机写 P99 抖动"></textarea>
+        <div class="share-frame-wrap">
+          <iframe
+            src="http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81"
+            frameborder="0"
+            allow="microphone"
+            class="share-frame"
+            title="ragflow-shared-search"
+          ></iframe>
         </div>
-        <div class="field">
-          <label>数据集 <span class="req">*</span></label>
-          <div class="ds-checks">
-            <label v-for="d in datasets" :key="d.id" class="ck">
-              <input type="checkbox" :value="d.id"
-                :checked="searchDs.includes(d.id)"
-                @change="toggleDs(d.id, ($event.target as HTMLInputElement).checked)" />
-              <span>{{ d.name }}</span>
-              <span class="hint-s">{{ d.chunk_count }} 分段</span>
-            </label>
-            <span v-if="datasets.length === 0" class="hint">未加载到数据集, 刷新页面或检查 RAGFlow 配置</span>
-          </div>
-        </div>
-        <div class="row3">
-          <div class="field">
-            <label>top_k</label>
-            <input v-model.number="topK" type="number" min="1" max="50" />
-          </div>
-          <div class="field">
-            <label>阈值</label>
-            <input v-model.number="threshold" type="number" step="0.05" min="0" max="1" />
-          </div>
-          <div class="field">
-            <label>向量权重</label>
-            <input v-model.number="vecWeight" type="number" step="0.05" min="0" max="1" />
-          </div>
-        </div>
-        <div class="actions">
-          <button class="primary" :disabled="searching || !canSearch" @click="onSearch">
-            <span v-if="!searching">▶ 检索</span>
-            <span v-else>⏳ 检索中...</span>
-          </button>
-          <button class="ghost" @click="onReset">重置</button>
-        </div>
+        <a href="http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81"
+           target="_blank" rel="noopener" class="share-pop">↗ 新窗口打开 RAGFlow 共享搜索</a>
       </div>
     </div>
 
-    <!-- 命中结果 -->
-    <div class="card results">
-      <div class="res-hd">
-        <h2><span>命中</span>
-          <span class="badge" v-if="lastSearch">{{ lastSearch.total }} 段</span>
-        </h2>
-        <div class="filter-bar">
-          <input v-model="filterDoc" placeholder="过滤文档名..." class="filter-input" />
-        </div>
-      </div>
-
-      <div v-if="!lastSearch" class="empty">
-        <div style="font-size: 36px; opacity: 0.4">🔍</div>
-        <div>填入问题, 选择数据集, 点击 "检索".</div>
-      </div>
-
-      <div v-else-if="filteredChunks.length === 0" class="empty">
-        <div>无匹配结果 · 调低阈值或换关键词试试</div>
-      </div>
-
-      <div v-else class="chunk-list">
-        <div v-for="(c, i) in filteredChunks" :key="c.id" class="chunk">
-          <div class="ch-hd">
-            <span class="idx">{{ i + 1 }}</span>
-            <span class="doc">📄 {{ c.document_keyword || c.document_id.slice(0, 16) }}</span>
-            <span class="sim" :class="simClass(c.similarity)">
-              {{ (c.similarity * 100).toFixed(1) }}%
-            </span>
-            <span class="ds">ds: {{ c.dataset_id.slice(0, 16) }}</span>
-            <span class="copy" @click="copyText(c.highlight)">📋 复制</span>
-          </div>
-          <div class="ch-body" v-html="renderHL(c.highlight)"></div>
-          <div class="ch-meta" v-if="c.tag_kwd && c.tag_kwd.length">
-            <span v-for="t in c.tag_kwd.slice(0, 4)" :key="t" class="kw">#{{ t }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 数据集列表 -->
+        <!-- 数据集列表 -->
     <div class="card">
       <div class="ds-hd">
         <h2><span>数据集</span> <button class="reload" @click="loadAll" :disabled="loading">↻ 刷新</button></h2>
@@ -167,7 +106,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { listDatasets, kbSearch, kbHealth, type KbDataset, type KbSearchResult } from '@/api/kb';
+import { listDatasets, kbHealth, type KbDataset } from '@/api/kb';
 import { listAgents, type AgentSummary } from '@/api/agents';
 
 const datasets = ref<KbDataset[]>([]);
@@ -175,79 +114,19 @@ const loading = ref(false);
 const rfStatus = ref<'ok' | 'warn' | 'off' | ''>('');
 const rfMsg = ref('');
 
-const qText = ref('NVMe GC 流程');
-const searchDs = ref<string[]>([]);
-const topK = ref(5);
-const threshold = ref(0.2);
-const vecWeight = ref(0.3);
-const searching = ref(false);
-const lastSearch = ref<KbSearchResult | null>(null);
-const filterDoc = ref('');
 
 const totalDocs = computed(() => datasets.value.reduce((s, d) => s + d.document_count, 0));
 const totalChunks = computed(() => datasets.value.reduce((s, d) => s + d.chunk_count, 0));
 
-const filteredChunks = computed(() => {
-  if (!lastSearch.value) return [];
-  if (!filterDoc.value.trim()) return lastSearch.value.chunks;
-  const k = filterDoc.value.toLowerCase();
-  return lastSearch.value.chunks.filter((c) =>
-    (c.document_keyword || '').toLowerCase().includes(k),
-  );
-});
 
-const canSearch = computed(() => qText.value.trim().length > 0 && searchDs.value.length > 0);
 
 const usingAgents = ref<AgentSummary[]>([]);
 
-function toggleDs(id: string, on: boolean) {
-  if (on && !searchDs.value.includes(id)) searchDs.value = [...searchDs.value, id];
-  else if (!on) searchDs.value = searchDs.value.filter((x) => x !== id);
-}
 
-function simClass(s: number) {
-  if (s >= 0.5) return 'hi';
-  if (s >= 0.3) return 'mid';
-  return 'low';
-}
 
-function renderHL(h: string) {
-  // RAGFlow highlight 用 <em>...</em> 标高亮
-  return h.replace(/&lt;em&gt;/g, '<em>').replace(/&lt;\/em&gt;/g, '</em>')
-    .replace(/<em>/g, '<mark>').replace(/<\/em>/g, '</mark>');
-}
 
-function copyText(t: string) {
-  navigator.clipboard.writeText(t).then(() => ElMessage.success('已复制'));
-}
 
-async function onSearch() {
-  if (!canSearch.value) return;
-  searching.value = true;
-  try {
-    const data = await kbSearch({
-      question: qText.value.trim(),
-      dataset_ids: searchDs.value,
-      top_k: topK.value,
-      similarity_threshold: threshold.value,
-      vector_similarity_weight: vecWeight.value,
-      highlight: true,
-      page_size: topK.value * 2,
-    });
-    lastSearch.value = data;
-    if (data.total === 0) ElMessage.warning('无匹配, 调低阈值或换关键词');
-  } catch (e: any) {
-    ElMessage.error('检索失败: ' + (e?.response?.data?.detail || e?.message || '未知错误'));
-  } finally {
-    searching.value = false;
-  }
-}
 
-function onReset() {
-  qText.value = '';
-  filterDoc.value = '';
-  lastSearch.value = null;
-}
 
 async function loadAll() {
   loading.value = true;
@@ -258,10 +137,6 @@ async function loadAll() {
 
     const r = await listDatasets();
     datasets.value = r.items;
-    // 默认勾选第一个
-    if (r.items.length > 0 && searchDs.value.length === 0) {
-      searchDs.value = [r.items[0].id];
-    }
 
     // 谁在用
     const ag = await listAgents();
@@ -282,6 +157,33 @@ onMounted(loadAll);
 
 <style scoped>
 .kb { display: flex; flex-direction: column; gap: 16px; }
+
+/* 概览卡: 缩小, 3 列横排, 跟右侧 share 卡等高 */
+.card-overview { display: flex; flex-direction: column; }
+.card-overview .stats { display: flex; gap: 10px; }
+.card-overview .stat { flex: 1; padding: 12px 14px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; gap: 4px; }
+.card-overview .stat-hd { display: flex; align-items: baseline; gap: 6px; }
+.card-overview .num { font-size: 24px; font-weight: 800; color: var(--primary); font-family: var(--font-mono); line-height: 1; letter-spacing: -0.5px; }
+.card-overview .num.hi { color: var(--ok); }
+.card-overview .lbl { font-size: 11px; color: var(--ink-500); }
+
+/* RAGFlow 共享搜索: 占右侧大块, iframe 自适应 */
+.card-share { display: flex; flex-direction: column; min-height: 360px; }
+.card-share h2 { display: flex; align-items: center; gap: 8px; }
+.share-sub { font-size: 11.5px; color: var(--ink-500); font-weight: 400; margin-left: 4px; }
+.share-frame-wrap { flex: 1; min-height: 320px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-sunken); }
+.share-frame { width: 100%; height: 100%; min-height: 320px; display: block; border: 0; }
+.share-pop { display: inline-block; margin-top: 10px; font-size: 11.5px; color: var(--primary); text-decoration: none; align-self: flex-end; }
+.share-pop:hover { text-decoration: underline; }
+
+.ds-preview { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.ds-preview-hd { font-size: 11px; color: var(--ink-500); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.ds-preview ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ds-preview li { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; background: var(--surface-sunken); border-radius: 6px; font-size: 12px; }
+.ds-name { color: var(--ink-900); font-weight: 500; }
+.ds-meta { color: var(--ink-500); font-family: var(--font-mono); font-size: 10.5px; }
+.ds-more { margin-top: 6px; font-size: 11px; color: var(--ink-500); text-align: center; padding: 3px; }
+.ds-empty { margin-top: 14px; padding: 14px; text-align: center; color: var(--ink-500); font-size: 12px; background: var(--surface-sunken); border-radius: 8px; }
 .title { font-size: 30px; font-weight: 800; margin: 0 0 8px; letter-spacing: -0.4px; color: var(--ink-900); }
 .lede { color: var(--ink-700); margin: 0; font-size: 14.5px; }
 
@@ -295,13 +197,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .s-ok { background: rgba(22, 163, 74, 0.1); color: var(--ok); }
 .s-warn { background: rgba(217, 119, 6, 0.1); color: var(--warn); }
 .s-off { background: rgba(220, 38, 38, 0.1); color: var(--err); }
-.hint-t { margin-left: auto; font-size: 11px; color: var(--ink-500); font-family: var(--font-mono); }
 
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-.stat { text-align: center; padding: 16px 6px; background: var(--surface-sunken); border-radius: 10px; border: 1px solid var(--border); }
-.num { font-size: 26px; font-weight: 800; color: var(--primary); font-family: var(--font-mono); line-height: 1; letter-spacing: -0.5px; }
-.num.hi { color: var(--ok); }
-.lbl { font-size: 11px; color: var(--ink-500); margin-top: 6px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .field label { font-size: 12.5px; color: var(--ink-700); font-weight: 500; }
@@ -318,17 +214,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 }
 .field textarea { resize: vertical; min-height: 56px; }
 
-.ds-checks { display: flex; flex-wrap: wrap; gap: 6px; max-height: 140px; overflow: auto; padding: 2px; }
-.ck { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px; font-size: 12.5px; cursor: pointer; color: var(--ink-700); background: var(--surface-sunken); border: 1px solid var(--border); white-space: nowrap; transition: all 0.15s ease; }
-.ck:hover { border-color: var(--primary); color: var(--primary); }
-.ck:hover { background: var(--surface-sunken); }
-.ck input { margin: 0; }
-.ck span:nth-child(2) { flex: 1; }
-.hint-s { color: var(--ink-500); font-family: var(--font-mono); font-size: 10.5px; }
-.hint { font-size: 11.5px; color: var(--ink-500); }
 
-.row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px; }
-.actions { display: flex; gap: 8px; }
 .primary {
   background: var(--primary); color: #fff; border: 0;
   padding: 8px 16px; border-radius: 8px;
@@ -343,11 +229,8 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 }
 .ghost:hover { border-color: var(--primary); color: var(--primary); }
 
-.results { display: flex; flex-direction: column; }
 .res-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .res-hd h2 { margin: 0; }
-.badge { font-size: 11px; padding: 2px 8px; background: var(--primary-soft); color: var(--primary); border-radius: var(--radius-pill); font-weight: 600; }
-.filter-bar { display: flex; gap: 8px; }
 .filter-input {
   padding: 5px 10px; border: 1px solid var(--border);
   border-radius: 6px; background: var(--surface);
@@ -355,9 +238,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 }
 .filter-input:focus { outline: none; border-color: var(--primary); }
 
-.empty { padding: 40px 20px; text-align: center; color: var(--ink-500); display: flex; flex-direction: column; gap: 6px; align-items: center; }
 
-.chunk-list { display: flex; flex-direction: column; gap: 10px; }
 .chunk {
   background: var(--surface); border: 1px solid var(--border);
   border-left: 3px solid var(--primary);
@@ -365,22 +246,16 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
   transition: border-color 0.15s ease;
 }
 .chunk:hover { border-left-color: var(--primary-2); }
-.ch-hd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; margin-bottom: 8px; }
-.idx { background: var(--primary); color: #fff; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: var(--radius-pill); }
-.doc { color: var(--ink-900); font-weight: 600; }
 .sim { font-family: var(--font-mono); font-weight: 600; padding: 1px 7px; border-radius: var(--radius-pill); font-size: 10.5px; }
 .sim.hi { background: rgba(22, 163, 74, 0.1); color: var(--ok); }
 .sim.mid { background: rgba(245, 158, 11, 0.1); color: var(--warn); }
 .sim.low { background: rgba(148, 163, 184, 0.15); color: var(--ink-500); }
-.ds { color: var(--ink-500); font-family: var(--font-mono); font-size: 10.5px; }
 .copy { margin-left: auto; color: var(--ink-500); cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 11px; }
 .copy:hover { background: var(--primary-soft); color: var(--primary); }
 
 .ch-body { font-size: 13px; line-height: 1.7; color: var(--ink-900); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
 .ch-body :deep(mark) { background: rgba(245, 158, 11, 0.35); color: inherit; padding: 0 2px; border-radius: 2px; font-weight: 600; }
 
-.ch-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
-.kw { font-size: 10.5px; color: var(--ink-500); background: var(--surface-sunken); padding: 1px 6px; border-radius: var(--radius-sm); font-family: var(--font-mono); }
 
 .ds-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .ds-hd h2 { margin: 0; }
