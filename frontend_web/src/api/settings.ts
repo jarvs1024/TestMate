@@ -41,3 +41,10 @@ export async function testRagflow(): Promise<TestResult> {
 export async function testDify(): Promise<TestResult> {
   return (await request.post('/settings/test/dify')) as TestResult;
 }
+
+// ===== 运行时拼 URL: 把 <prefix>.embed_url 拼上 userId (后端取当前用户) + theme (前端传) =====
+// 后端按 schema 中的 <prefix>.append_user_id / <prefix>.append_theme 开关决定是否拼
+// prefix: 配置项前缀 (search / chat / agent), 不带 .embed_url 后缀
+export async function buildEmbedUrl(prefix: string, theme: string): Promise<{ url: string }> {
+  return (await request.get(`/settings/embed/${prefix}`, { params: { theme } })) as { url: string };
+}

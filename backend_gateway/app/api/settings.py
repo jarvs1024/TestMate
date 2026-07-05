@@ -1,9 +1,12 @@
 """/api/v1/settings — DB-backed 配置读写 + 测试连接."""
 from __future__ import annotations
 import logging
+from urllib.parse import parse_qs, urlencode, urlunparse, urlparse
+from typing import Any
 import httpx
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.auth import get_current_user
@@ -27,6 +30,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "notification": "🔔 通知 / 钉钉",
     "general":    "⚙️ 通用",
     "search":     "🔎 知识检索",
+    "chat":       "💬 知识对话",
 }
 
 
@@ -155,3 +159,47 @@ async def test_dify(_user: User = Depends(get_current_user)) -> SettingTestOut:
             return SettingTestOut(ok=False, status="warn", message=f"HTTP {r.status_code}", detail=None)
     except Exception as e:
         return SettingTestOut(ok=False, status="off", message=f"不可达: {type(e).__name__}: {e}", detail=None)
+
+
+
+# ===== 运行时拼 URL =====
+# 设计: KB 页面 iframe 需要 userId (按登录用户) + theme (按浏览器当前主题),
+# DB 里 admin 只配 raw URL + 是否拼, 运行时由后端拿当前用户 / 接前端传的 theme 拼好返回.
+
+
+
+class EmbedOut(BaseModel):
+    url: str
+
+
+@router.get("/embed/{key:path}", response_model=EmbedOut)
+async def build_embed_url(
+    key: str,
+    theme: str | None = None,
+    user: User = Depends(get_current_user),
+) -> EmbedOut:
+    """把 <prefix>.embed_url 拼上 userId / theme (按 schema 中的 <prefix>.append_user_id / <prefix>.append_theme 开关).
+
+    - key: 配置项的 prefix (search / chat / agent), 不带 .embed_url 后缀, 跟 schema 解耦
+    - theme: 浏览器当前主题 light / dark, 不传或传 auto 都视作不拼 theme
+    """
+    prefix = key.split(".")[0]   # 接受 "search" / "search.embed_url" / "search/foo" 都行, 取首段
+    raw_key = f"{prefix}.embed_url"
+    raw = (await get(raw_key, "")) or ""
+    if not raw:
+        raise HTTPException(status_code=404, detail=f"{raw_key} 未配置")
+
+    pr = urlparse(raw)
+    q = parse_qs(pr.query, keep_blank_values=True)
+
+    append_user = bool(await get(f"{prefix}.append_user_id", True))
+    append_theme = bool(await get(f"{prefix}.append_theme", True))
+
+    if append_user and user and user.username and "userId" not in q:
+        q["userId"] = [user.username]
+    if append_theme and theme and theme in ("light", "dark") and "theme" not in q:
+        q["theme"] = [theme]
+
+    new_q = urlencode({k: v[0] for k, v in q.items()}, doseq=False)
+    final = urlunparse(pr._replace(query=new_q))
+    return EmbedOut(url=final)
