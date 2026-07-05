@@ -24,22 +24,32 @@
       </div>
     </div>
 
-    <!-- 知识检索: RAGFlow 共享搜索 iframe -->
+    <!-- 知识检索: 由 settings.search.* 配置驱动, 换其他检索源不用改代码 -->
     <div class="card card-share">
       <h2>
         <span>🔎 知识检索</span>
-        <span class="share-sub">基于 RAGFlow 共享 Search App</span>
+        <span class="share-sub">{{ searchLabel }}</span>
       </h2>
-      <div class="share-frame-wrap">
-        <iframe
-          :src="shareUrl"
-          frameborder="0"
-          class="share-frame"
-          title="ragflow-shared-search"
-        ></iframe>
+      <!-- 正常: iframe 嵌入检索源 -->
+      <template v-if="searchEmbedUrl">
+        <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
+          <iframe
+            :src="searchEmbedUrl"
+            frameborder="0"
+            class="share-frame"
+            :style="{ minHeight: searchMinHeight + 'px' }"
+            title="knowledge-search"
+          ></iframe>
+        </div>
+        <a :href="searchEmbedUrl"
+           target="_blank" rel="noopener" class="share-pop">{{ searchOpenUrlLabel }}</a>
+      </template>
+      <!-- 兜底: 未配置 / 选 none, 显示"建设中" -->
+      <div v-else class="search-placeholder">
+        <div class="ph-ic">🔎</div>
+        <div class="ph-t">知识检索建设中</div>
+        <div class="ph-d">admin 可在 设置 → 知识检索 配置 <code>search.embed_url</code> 启用</div>
       </div>
-      <a :href="shareUrl"
-         target="_blank" rel="noopener" class="share-pop">↗ 新窗口打开 RAGFlow 共享搜索</a>
     </div>
 
         <!-- 数据集列表 -->
@@ -78,16 +88,38 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-
 import { ElMessage } from 'element-plus';
 import { listDatasets, kbHealth, type KbDataset } from '@/api/kb';
-
-
-const SHARE_BASE = 'http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81&visible_avatar=1&locale=zh-Hans';
-const shareUrl = computed(() => SHARE_BASE);
+import { getSchema } from '@/api/settings';
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
+
+// 知识检索: 从 system_settings 读 search.* 配置
+const searchEngine = ref('ragflow-share');
+const searchEmbedUrl = ref('');
+const searchLabel = ref('基于 RAGFlow 共享 Search App');
+const searchOpenUrlLabel = ref('↗ 新窗口打开 RAGFlow 共享搜索');
+const searchMinHeight = ref(600);
+
+async function loadSearchConfig() {
+  try {
+    const r = await getSchema();
+    const items = r.groups.find((g) => g.category === 'search')?.items || [];
+    for (const it of items) {
+      // 后端 value 已经是 merged (DB || default), 直接用
+      const v = it.value;
+      if (it.key === 'search.engine') searchEngine.value = v ?? 'ragflow-share';
+      else if (it.key === 'search.embed_url') searchEmbedUrl.value = v ?? '';
+      else if (it.key === 'search.label') searchLabel.value = v ?? '基于 RAGFlow 共享 Search App';
+      else if (it.key === 'search.open_url_label') searchOpenUrlLabel.value = v ?? '↗ 新窗口打开';
+      else if (it.key === 'search.min_height') searchMinHeight.value = Number(v) || 600;
+    }
+    if (searchEngine.value === 'none') searchEmbedUrl.value = '';
+  } catch (e) {
+    console.error('load search config failed', e);
+  }
+}
 const rfStatus = ref<'ok' | 'warn' | 'off' | ''>('');
 const rfMsg = ref('');
 
@@ -123,7 +155,7 @@ async function loadAll() {
   }
 }
 
-onMounted(loadAll);
+onMounted(() => { loadAll(); loadSearchConfig(); });
 </script>
 
 <style scoped>
@@ -144,6 +176,12 @@ onMounted(loadAll);
 .share-frame { display: block; border: 0; width: 100%; height: 600px; }
 .share-pop { display: inline-block; margin-top: 10px; font-size: 11.5px; color: var(--primary); text-decoration: none; align-self: flex-end; }
 .share-pop:hover { text-decoration: underline; }
+
+.search-placeholder { padding: 60px 20px; text-align: center; color: var(--ink-500); }
+.ph-ic { font-size: 48px; opacity: 0.4; margin-bottom: 12px; }
+.ph-t { font-size: 16px; font-weight: 600; color: var(--ink-700); margin-bottom: 6px; }
+.ph-d { font-size: 12.5px; color: var(--ink-500); }
+.ph-d code { background: var(--surface-sunken); padding: 2px 6px; border-radius: 4px; font-size: 11.5px; color: var(--primary); }
 
 .ds-preview li { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; background: var(--surface-sunken); border-radius: 6px; font-size: 12px; }
 .title { font-size: 30px; font-weight: 800; margin: 0 0 8px; letter-spacing: -0.4px; color: var(--ink-900); }

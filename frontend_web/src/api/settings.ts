@@ -8,6 +8,8 @@ export interface SettingItem {
   description: string;
   is_secret: boolean;
   is_default: boolean;
+  default?: any;        // 默认值 (来自 .env 或代码, 未在 DB 改过)
+  category?: string;
 }
 export interface SettingGroup {
   category: string;

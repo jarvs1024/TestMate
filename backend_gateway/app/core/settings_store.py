@@ -65,6 +65,49 @@ SETTING_SCHEMA: list[dict] = [
         "description": "平台显示名 (顶栏 + 标题)",
         "is_secret": False,
     },
+
+    # ===== 知识检索源 (知识库页 KB 嵌入的 iframe URL) =====
+    # 设计: 任意 URL 都能塞, 换 RAGFlow / Dify / 其他都不需要改代码
+    {
+        "key": "search.engine",
+        "category": "search",
+        "value_type": "string",
+        "default": "ragflow-share",
+        "description": "检索源引擎: ragflow-share (RAGFlow 共享 Search App) / dify-chatbot / custom-url / none (显示建设中)",
+        "is_secret": False,
+    },
+    {
+        "key": "search.embed_url",
+        "category": "search",
+        "value_type": "url",
+        "default": "http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81&visible_avatar=1&locale=zh-Hans",
+        "description": "iframe 直接嵌入的 URL (RAGFlow 共享 search app / Dify chatbot / 任意可嵌入 URL)",
+        "is_secret": False,
+    },
+    {
+        "key": "search.label",
+        "category": "search",
+        "value_type": "string",
+        "default": "基于 RAGFlow 共享 Search App",
+        "description": "知识检索卡副标题 (说明底层引擎)",
+        "is_secret": False,
+    },
+    {
+        "key": "search.open_url_label",
+        "category": "search",
+        "value_type": "string",
+        "default": "↗ 新窗口打开 RAGFlow 共享搜索",
+        "description": "新窗口打开按钮文字",
+        "is_secret": False,
+    },
+    {
+        "key": "search.min_height",
+        "category": "search",
+        "value_type": "int",
+        "default": 600,
+        "description": "iframe 最小高度 (px)",
+        "is_secret": False,
+    },
 ]
 
 

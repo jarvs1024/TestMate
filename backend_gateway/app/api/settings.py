@@ -25,6 +25,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "knowledge":  "📚 知识库 / RAGFlow",
     "notification": "🔔 通知 / 钉钉",
     "general":    "⚙️ 通用",
+    "search":     "🔎 知识检索",
 }
 
 
