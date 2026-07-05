@@ -103,14 +103,17 @@ async function onSubmit() {
 .field input:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-soft);
+  /* focus ring 用主渐变 (跟 logo 一致): 蓝→青绿 软光环 */
+  box-shadow:
+    0 0 0 3px var(--primary-soft),
+    0 0 0 4px rgba(13, 148, 136, 0.10);
 }
 
 .primary {
   width: 100%;
   margin-top: 6px;
   padding: 9px 18px;
-  background: var(--primary);
+  background: var(--primary-grad);
   color: #fff;
   border: 0;
   border-radius: 9px;
@@ -119,9 +122,13 @@ async function onSubmit() {
   font-family: inherit;
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  transition: transform .05s ease, box-shadow .15s ease, background .15s ease;
+  transition: transform .05s ease, box-shadow .15s ease, filter .15s ease;
 }
-.primary:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(28, 100, 242, 0.3); }
+.primary:hover:not(:disabled) {
+  /* hover 时整体亮一档 (logo 渐变方向不变, 提亮即可) */
+  filter: brightness(1.08) saturate(1.05);
+  box-shadow: 0 8px 20px rgba(59, 130, 246, 0.30), 0 4px 10px rgba(13, 148, 136, 0.18);
+}
 .primary:active:not(:disabled) { transform: translateY(1px); }
 .primary:disabled { opacity: 0.5; cursor: not-allowed; }
 

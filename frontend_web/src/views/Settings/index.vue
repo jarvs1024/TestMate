@@ -615,12 +615,16 @@ onMounted(load);
 
 .act-col { display: flex; flex-direction: column; gap: 4px; align-items: stretch; min-width: 70px; }
 .primary {
-  background: var(--primary); color: #fff; border: 0;
+  background: var(--primary-grad); color: #fff; border: 0;
   padding: 6px 14px; border-radius: 7px;
   font-size: 12.5px; font-weight: 600; font-family: inherit; cursor: pointer;
+  transition: filter .15s ease, box-shadow .15s ease;
 }
 .primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.primary:not(:disabled):hover { box-shadow: 0 4px 12px rgba(28, 100, 242, 0.25); }
+.primary:not(:disabled):hover {
+  filter: brightness(1.08) saturate(1.05);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+}
 .ghost {
   background: transparent; border: 1px solid var(--border);
   padding: 5px 12px; border-radius: 7px;

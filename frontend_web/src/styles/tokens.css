@@ -16,10 +16,14 @@ html[data-theme="light"] {
   --bg-glow: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 50%, #fdf2f8 100%);
 
   /* 主色 (跟 demo 一致) */
-  --primary:     #1C64F2;
-  --primary-2:   #0d9488;     /* 备用色, 跟 demo logo 第二色一致 */
-  --primary-soft: rgba(28, 100, 242, 0.08);
-  --primary-shadow: 0 6px 16px rgba(28, 100, 242, 0.25);
+  /* 主色: 跟 logo 渐变对齐 (#3B82F6 亮蓝 → #0D9488 青绿)
+     --primary 是按钮/边框 focus 用的纯色 (取 logo 起点), --primary-grad 是强调渐变 */
+  --primary:     #3B82F6;
+  --primary-2:   #0D9488;     /* logo 第二色 */
+  --primary-grad: linear-gradient(135deg, #3B82F6 0%, #0D9488 100%);
+  --primary-grad-soft: linear-gradient(135deg, rgba(59,130,246,0.18) 0%, rgba(13,148,136,0.18) 100%);
+  --primary-soft: rgba(59, 130, 246, 0.12);
+  --primary-shadow: 0 6px 18px rgba(59, 130, 246, 0.28);
 
   /* 文字 (demo 用的 slate 命名) */
   --ink-900:   #0f172a;     /* text-1 */
@@ -77,9 +81,11 @@ html[data-theme="dark"] {
     linear-gradient(180deg, #050714 0%, #07071a 50%, #050510 100%);
 
   --primary:     #3B82F6;
-  --primary-2:   #14B8A6;
+  --primary-2:   #14B8A6;     /* dark 下用 #14B8A6 (比 light #0D9488 亮, 保持深底对比) */
+  --primary-grad: linear-gradient(135deg, #3B82F6 0%, #14B8A6 100%);
+  --primary-grad-soft: linear-gradient(135deg, rgba(59,130,246,0.22) 0%, rgba(20,184,166,0.22) 100%);
   --primary-soft: rgba(59, 130, 246, 0.15);
-  --primary-shadow: 0 6px 16px rgba(59, 130, 246, 0.32);
+  --primary-shadow: 0 6px 18px rgba(59, 130, 246, 0.35);
 
   --ink-900:   #f1f5f9;
   --ink-700:   #cbd5e1;
@@ -116,7 +122,11 @@ html[data-theme="dark"] {
       radial-gradient(1200px 700px at 100% 0%,  rgba(99,  102, 241, 0.65) 0%, rgba(99,  102, 241, 0.30) 20%, rgba(99,  102, 241, 0) 55%),
       radial-gradient(1000px 600px at 95%  -5%, rgba(168, 85, 247, 0.55) 0%, rgba(168, 85, 247, 0.18) 30%, rgba(168, 85, 247, 0) 60%),
       radial-gradient(600px  500px at 0%   100%, rgba(124, 58, 237, 0.30) 0%, rgba(124, 58, 237, 0) 60%),
-      linear-gradient(180deg, #050714 0%, #07071a 50%, #050510 100%);    --primary-2:   #14B8A6;
+      linear-gradient(180deg, #050714 0%, #07071a 50%, #050510 100%);
+    --primary:     #3B82F6;
+    --primary-2:   #14B8A6;
+    --primary-grad: linear-gradient(135deg, #3B82F6 0%, #14B8A6 100%);
+    --primary-grad-soft: linear-gradient(135deg, rgba(59,130,246,0.22) 0%, rgba(20,184,166,0.22) 100%);
     --primary-soft: rgba(59, 130, 246, 0.15);
     --primary-shadow: 0 6px 16px rgba(59, 130, 246, 0.32);
     --ink-900:   #f1f5f9;

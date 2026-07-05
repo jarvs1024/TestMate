@@ -410,7 +410,9 @@ onMounted(async () => {
 }
 .field input:focus, .field textarea:focus, .field select:focus {
   outline: none; border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-soft);
+  box-shadow:
+    0 0 0 3px var(--primary-soft),
+    0 0 0 4px rgba(13, 148, 136, 0.10);
 }
 .field textarea { resize: vertical; min-height: 64px; }
 
@@ -436,13 +438,16 @@ onMounted(async () => {
 
 .actions { display: flex; gap: 10px; margin-top: 8px; margin-bottom: 12px; }
 button.primary {
-  background: var(--primary); color: #fff; border: 0;
+  background: var(--primary-grad); color: #fff; border: 0;
   padding: 10px 20px; border-radius: 9px;
   font-size: 13.5px; font-weight: 600; font-family: inherit; cursor: pointer;
   display: inline-flex; align-items: center; gap: 6px;
-  transition: transform 0.05s ease, box-shadow 0.15s ease;
+  transition: transform 0.05s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
-button.primary:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(28, 100, 242, 0.3); }
+button.primary:hover:not(:disabled) {
+  filter: brightness(1.08) saturate(1.05);
+  box-shadow: 0 6px 18px rgba(59, 130, 246, 0.30), 0 3px 8px rgba(13, 148, 136, 0.20);
+}
 button.primary:active:not(:disabled) { transform: translateY(1px); }
 button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
 button.secondary {
