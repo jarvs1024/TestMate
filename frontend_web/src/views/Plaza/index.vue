@@ -129,11 +129,9 @@ onMounted(async () => {
 
 .grid {
   display: grid;
-  /* 固定 3 列, 5 张 3+2 整齐, 大屏卡片列宽自适应, 不撑满 */
+  /* 固定 3 列, 跟 toolbar 同样满宽, 视觉对齐 */
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
-  max-width: 1200px;        /* 3 列总宽封顶, 大屏左右居中 */
-  margin: 0 auto;
 }
 @media (max-width: 1100px) {
   /* 中等屏以下, 主区窄时降到 2 列 */

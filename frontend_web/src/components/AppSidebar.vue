@@ -94,7 +94,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
 .side-inner {
   height: 100%;
   overflow-y: auto;     /* 内容多时自己滚 */
-  padding: 20px 12px 16px;
+  /* 顶部 0: 让"广场"按钮顶部跟主区"智能体广场"标题顶部对齐 (都在 AppHeader 底部) */
+  padding: 0 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;

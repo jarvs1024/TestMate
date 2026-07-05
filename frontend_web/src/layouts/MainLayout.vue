@@ -55,7 +55,8 @@ import AppSidebar from '@/components/AppSidebar.vue';
 .container {
   max-width: 1440px;
   margin: 0 auto;
-  padding: 8px 32px 48px;
+  /* 顶部 padding 减到 0, 让广场 / 知识库标题紧贴 AppHeader 底部, 跟 sidebar 第一项对齐 */
+  padding: 0 32px 48px;
   width: 100%;
   box-sizing: border-box;
 }
