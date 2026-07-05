@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 SETTING_SCHEMA: list[dict] = [
     {
         "key": "ragflow.base_url",
-        "category": "knowledge",
+        "category": "knowledge-source",
         "value_type": "url",
         "default": settings.RAGFLOW_BASE_URL,
         "description": "RAGFlow API 基础地址 (例: http://host:9380/api/v1)",
@@ -27,7 +27,7 @@ SETTING_SCHEMA: list[dict] = [
     },
     {
         "key": "ragflow.api_key",
-        "category": "knowledge",
+        "category": "knowledge-source",
         "value_type": "secret",
         "default": settings.RAGFLOW_API_KEY,
         "description": "RAGFlow API Key (ragflow-xxxxx)",
@@ -118,15 +118,24 @@ def get_schema() -> list[dict]:
 # ===== DB 加载 / 兜底 =====
 
 async def seed_defaults() -> None:
-    """启动时: 把 SCHEMA 里有但 DB 里没有的, 用 .env default 落库."""
+    """启动时:
+    1) 把 SCHEMA 里有但 DB 里没有的, 用 .env default 落库
+    2) 修正 DB 里 category 跟 SCHEMA 不一致的 (旧版本 category='knowledge' 现在拆成 'knowledge-source')
+    """
     from app.db.session import AsyncSessionLocal
     from app.models.system_setting import SystemSetting
     from sqlalchemy import select
+
+    expected_cat = {s["key"]: s["category"] for s in SETTING_SCHEMA}
 
     async with AsyncSessionLocal() as session:
         for s in SETTING_SCHEMA:
             existing = await session.get(SystemSetting, s["key"])
             if existing:
+                # category 漂移修复: 跟 SCHEMA 对齐
+                if existing.category != s["category"]:
+                    logger.info("settings: fix category %s: %s -> %s", s["key"], existing.category, s["category"])
+                    existing.category = s["category"]
                 continue
             row = SystemSetting(
                 key=s["key"],
