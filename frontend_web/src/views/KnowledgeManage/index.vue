@@ -30,7 +30,7 @@
         <span>🔎 知识检索</span>
         <span class="share-sub">基于 RAGFlow 共享 Search App</span>
       </h2>
-      <div class="share-frame-wrap">
+      <div class="share-frame-wrap" :class="{ 'is-dark': themeStore.resolved === 'dark' }">
         <iframe
           :src="shareUrl"
           :key="themeStore.resolved"
@@ -141,8 +141,11 @@ onMounted(loadAll);
 .card-share { display: flex; flex-direction: column; }
 .card-share h2 { display: flex; align-items: center; gap: 8px; }
 .share-sub { font-size: 11.5px; color: var(--ink-500); font-weight: 400; margin-left: 4px; }
-.share-frame-wrap { width: 100%; min-height: 600px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-sunken); }
-.share-frame { display: block; border: 0; }
+.share-frame-wrap { width: 100%; min-height: 600px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-sunken); position: relative; transition: filter 0.2s ease; }
+.share-frame { display: block; border: 0; width: 100%; height: 600px; }
+/* dark 模式: 用 CSS filter 把 RAGFlow light 页视觉上反色变深
+   跨域 iframe 无法写 localStorage, 这是 web 标准 trick */
+.share-frame-wrap.is-dark { filter: invert(0.92) hue-rotate(180deg); }
 .share-pop { display: inline-block; margin-top: 10px; font-size: 11.5px; color: var(--primary); text-decoration: none; align-self: flex-end; }
 .share-pop:hover { text-decoration: underline; }
 

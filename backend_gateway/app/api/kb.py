@@ -6,7 +6,7 @@
 - GET  /api/v1/kb/health          健康检查
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_user
@@ -100,3 +100,45 @@ async def search(payload: SearchIn, _user: User = Depends(get_current_user)) -> 
 async def health() -> dict:
     status, msg = await probe()
     return {"status": status, "message": msg}
+
+@router.api_route("/share-embed/{path:path}", methods=["GET"])
+async def share_embed_proxy(path: str = "", theme: str = "light", shared_id: str = "ea62499872bb11f1a82f771aafbe4f81") -> Response:
+    """代理 RAGFlow 共享搜索页 + 静态资源.
+
+    浏览器访问 /api/v1/kb/share-embed/search/share?shared_id=xxx&theme=dark
+    后端去 RAGFlow 拉 HTML, 在 <head> 注入 localStorage 主题, 再透传.
+
+    RAGFlow HTML 里的 /entry/ /chunk/ /assets/ 静态资源由前端 nginx 在
+    /api/v1/kb/share-embed/{path} 透传 (nginx 配 /share-embed/ 反代到 RAGFlow 端口 18080).
+    """
+    import httpx
+    # 透传到 RAGFlow
+    if path:
+        # 子资源: /entry/.../xxx.js, /chunk/.../xxx.js, /assets/.../xxx.css 等
+        target_url = f"http://host.docker.internal:18080/{path}"
+    else:
+        target_url = f"http://host.docker.internal:18080/search/share?shared_id={shared_id}"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(target_url)
+        r.raise_for_status()
+        content = r.content
+        content_type = r.headers.get("content-type", "application/octet-stream")
+
+    # 仅对 HTML 注入 localStorage 主题
+    if "text/html" in content_type:
+        html = content.decode("utf-8", errors="ignore")
+        inject = (
+            "<script>(function(){"
+            "try{var t='" + theme + "';"
+            "localStorage.setItem('ragflow-ui-theme',t);"
+            "localStorage.setItem('ragflow-ui-theme-mode',t);}catch(e){}"
+            "})();</script>"
+        )
+        if "</head>" in html:
+            html = html.replace("</head>", inject + "</head>", 1)
+        else:
+            html = inject + html
+        return Response(content=html, media_type="text/html; charset=utf-8")
+
+    return Response(content=content, media_type=content_type)
