@@ -1,59 +1,46 @@
 <template>
   <div class="kb">
-    <!-- 顶部: 概览 (左) + RAGFlow 共享搜索 (右) -->
-    <div class="row-grid">
-      <!-- 概览: 缩小, 3 列横排 (无最近命中) -->
-      <div class="card card-overview">
-        <h2>
-          <span>概览</span>
-          <span class="rf-status" :class="`s-${rfStatus}`" v-if="rfStatus">
-            <span class="dot"></span>{{ rfMsg }}
-          </span>
-        </h2>
-        <div class="stats">
-          <div class="stat">
-            <div class="stat-hd"><span class="num">{{ datasets.length }}</span><span class="lbl">数据集</span></div>
-          </div>
-          <div class="stat">
-            <div class="stat-hd"><span class="num">{{ totalDocs }}</span><span class="lbl">文档</span></div>
-          </div>
-          <div class="stat">
-            <div class="stat-hd"><span class="num">{{ totalChunks }}</span><span class="lbl">分段</span></div>
-          </div>
+    <!-- 概览: 最顶部一行, 3 个数据 -->
+    <div class="card card-overview">
+      <h2>
+        <span>概览</span>
+        <span class="rf-status" :class="`s-${rfStatus}`" v-if="rfStatus">
+          <span class="dot"></span>{{ rfMsg }}
+        </span>
+      </h2>
+      <div class="stats">
+        <div class="stat">
+          <div class="num">{{ datasets.length }}</div>
+          <div class="lbl">数据集</div>
         </div>
-        <div class="ds-preview" v-if="datasets.length > 0">
-          <div class="ds-preview-hd">数据集</div>
-          <ul>
-            <li v-for="d in datasets.slice(0, 3)" :key="d.id">
-              <span class="ds-name">{{ d.name }}</span>
-              <span class="ds-meta">{{ d.chunk_count }} 段</span>
-            </li>
-          </ul>
-          <div v-if="datasets.length > 3" class="ds-more">+ {{ datasets.length - 3 }} 个</div>
+        <div class="stat">
+          <div class="num">{{ totalDocs }}</div>
+          <div class="lbl">文档</div>
         </div>
-        <div v-else class="ds-empty">
-          <span>暂无数据集, 在 RAGFlow 后台创建后刷新</span>
+        <div class="stat">
+          <div class="num">{{ totalChunks }}</div>
+          <div class="lbl">分段</div>
         </div>
       </div>
+    </div>
 
-      <!-- RAGFlow 共享搜索: 全屏 iframe -->
-      <div class="card card-share">
-        <h2>
-          <span>🔎 知识检索</span>
-          <span class="share-sub">基于 RAGFlow 共享 Search App</span>
-        </h2>
-        <div class="share-frame-wrap">
-          <iframe
-            src="http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81"
-            frameborder="0"
-            allow="microphone"
-            class="share-frame"
-            title="ragflow-shared-search"
-          ></iframe>
-        </div>
-        <a href="http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81"
-           target="_blank" rel="noopener" class="share-pop">↗ 新窗口打开 RAGFlow 共享搜索</a>
+    <!-- 知识检索: RAGFlow 共享搜索 iframe -->
+    <div class="card card-share">
+      <h2>
+        <span>🔎 知识检索</span>
+        <span class="share-sub">基于 RAGFlow 共享 Search App</span>
+      </h2>
+      <div class="share-frame-wrap">
+        <iframe
+          src="http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81&visible_avatar=1&locale=zh-Hans"
+          style="width: 100%; height: 100%; min-height: 600px"
+          frameborder="0"
+          class="share-frame"
+          title="ragflow-shared-search"
+        ></iframe>
       </div>
+      <a href="http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81&visible_avatar=1&locale=zh-Hans"
+         target="_blank" rel="noopener" class="share-pop">↗ 新窗口打开 RAGFlow 共享搜索</a>
     </div>
 
         <!-- 数据集列表 -->
@@ -87,19 +74,6 @@
         </tbody>
       </table>
     </div>
-
-    <!-- 谁在用 -->
-    <div class="card">
-      <h2><span>谁在用这些数据</span></h2>
-      <p class="hint" style="margin: 0 0 12px;">数据被哪些智能体引用, 改文档后智能体下次调用会用到新内容 (RAG 实时检索)</p>
-      <div class="users">
-        <div v-for="a in usingAgents" :key="a.code" class="ua">
-          <span class="ua-ic">{{ a.icon }}</span>
-          <span class="ua-nm">{{ a.name }}</span>
-          <span class="ua-ver">{{ a.version }}</span>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -107,7 +81,6 @@
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { listDatasets, kbHealth, type KbDataset } from '@/api/kb';
-import { listAgents, type AgentSummary } from '@/api/agents';
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
@@ -120,7 +93,6 @@ const totalChunks = computed(() => datasets.value.reduce((s, d) => s + d.chunk_c
 
 
 
-const usingAgents = ref<AgentSummary[]>([]);
 
 
 
@@ -138,11 +110,6 @@ async function loadAll() {
     const r = await listDatasets();
     datasets.value = r.items;
 
-    // 谁在用
-    const ag = await listAgents();
-    usingAgents.value = ag.items.filter((a) =>
-      a.data_sources.some((s) => s.startsWith('ragflow:') || s === 'fw_library'),
-    );
   } catch (e: any) {
     rfStatus.value = 'off';
     rfMsg.value = '加载失败';
@@ -158,32 +125,23 @@ onMounted(loadAll);
 <style scoped>
 .kb { display: flex; flex-direction: column; gap: 16px; }
 
-/* 概览卡: 缩小, 3 列横排, 跟右侧 share 卡等高 */
-.card-overview { display: flex; flex-direction: column; }
-.card-overview .stats { display: flex; gap: 10px; }
-.card-overview .stat { flex: 1; padding: 12px 14px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; gap: 4px; }
-.card-overview .stat-hd { display: flex; align-items: baseline; gap: 6px; }
+/* 概览卡: 顶部一行, 3 列横排 */
+.card-overview .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.card-overview .stat { text-align: center; padding: 14px 8px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 10px; }
 .card-overview .num { font-size: 24px; font-weight: 800; color: var(--primary); font-family: var(--font-mono); line-height: 1; letter-spacing: -0.5px; }
 .card-overview .num.hi { color: var(--ok); }
-.card-overview .lbl { font-size: 11px; color: var(--ink-500); }
+.card-overview .lbl { font-size: 11px; color: var(--ink-500); margin-top: 6px; }
 
-/* RAGFlow 共享搜索: 占右侧大块, iframe 自适应 */
-.card-share { display: flex; flex-direction: column; min-height: 360px; }
+/* RAGFlow 共享搜索: 全宽, iframe 600px */
+.card-share { display: flex; flex-direction: column; }
 .card-share h2 { display: flex; align-items: center; gap: 8px; }
 .share-sub { font-size: 11.5px; color: var(--ink-500); font-weight: 400; margin-left: 4px; }
-.share-frame-wrap { flex: 1; min-height: 320px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-sunken); }
-.share-frame { width: 100%; height: 100%; min-height: 320px; display: block; border: 0; }
+.share-frame-wrap { width: 100%; min-height: 600px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-sunken); }
+.share-frame { display: block; border: 0; }
 .share-pop { display: inline-block; margin-top: 10px; font-size: 11.5px; color: var(--primary); text-decoration: none; align-self: flex-end; }
 .share-pop:hover { text-decoration: underline; }
 
-.ds-preview { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
-.ds-preview-hd { font-size: 11px; color: var(--ink-500); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-.ds-preview ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .ds-preview li { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; background: var(--surface-sunken); border-radius: 6px; font-size: 12px; }
-.ds-name { color: var(--ink-900); font-weight: 500; }
-.ds-meta { color: var(--ink-500); font-family: var(--font-mono); font-size: 10.5px; }
-.ds-more { margin-top: 6px; font-size: 11px; color: var(--ink-500); text-align: center; padding: 3px; }
-.ds-empty { margin-top: 14px; padding: 14px; text-align: center; color: var(--ink-500); font-size: 12px; background: var(--surface-sunken); border-radius: 8px; }
 .title { font-size: 30px; font-weight: 800; margin: 0 0 8px; letter-spacing: -0.4px; color: var(--ink-900); }
 .lede { color: var(--ink-700); margin: 0; font-size: 14.5px; }
 
@@ -273,9 +231,4 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .ds-id { font-size: 10.5px; color: var(--ink-500); margin-left: 4px; }
 .mono { font-family: var(--font-mono); font-size: 12px; }
 
-.users { display: flex; flex-wrap: wrap; gap: 8px; }
-.ua { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-pill); font-size: 12px; }
-.ua-ic { font-size: 14px; }
-.ua-nm { color: var(--ink-900); font-weight: 500; }
-.ua-ver { color: var(--ink-500); font-family: var(--font-mono); font-size: 10.5px; }
 </style>
