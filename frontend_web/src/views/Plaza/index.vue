@@ -90,15 +90,7 @@ onMounted(async () => {
 
 <style scoped>
 .plaza { display: flex; flex-direction: column; gap: 18px; }
-.plaza-hd {
-  margin-bottom: 4px;
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: var(--bg-app, #f5f5f9);
-  padding: 12px 0 8px;
-  border-bottom: 1px solid var(--border);
-}
+.plaza-hd { display: none; }  /* 标题已挪到 AppHeader, 不再显示 */
 .title { font-size: 30px; font-weight: 800; margin: 0 0 8px; letter-spacing: -0.4px; color: var(--ink-900); }
 .lede { color: var(--ink-700); margin: 0; font-size: 14.5px; }
 
@@ -108,7 +100,7 @@ onMounted(async () => {
   border: 1px solid var(--border); border-radius: var(--radius-card);
   padding: 12px 16px; box-shadow: var(--shadow-sm);
   position: sticky;
-  top: 100px;                  /* 跟 plaza-hd 高度错开, 黏在标题下方 */
+  top: 0;                      /* plaza-hd 已挪到 AppHeader, toolbar 黏顶 */
   z-index: 4;
 }
 .filters { display: flex; gap: 6px; }

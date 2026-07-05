@@ -1,7 +1,7 @@
 <template>
   <div class="kb">
-    <h1 class="title">📚 知识库</h1>
-    <p class="lede">所有智能体共享的私有知识源 · 已对接 RAGFlow · 喂入文档 / Spec / 历史 Case / 缺陷档</p>
+    <h1 class="title" style="display:none">📚 知识库</h1>
+    <p class="lede" style="display:none">所有智能体共享的私有知识源 · 已对接 RAGFlow · 喂入文档 / Spec / 历史 Case / 缺陷档</p>
 
     <!-- 顶部: 健康 + 概览 + 检索 -->
     <div class="row-grid">

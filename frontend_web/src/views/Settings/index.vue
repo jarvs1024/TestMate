@@ -1,6 +1,6 @@
 <template>
   <div class="set">
-    <h1 class="title">⚙️ 设置</h1>
+    <h1 class="title" style="display:none">⚙️ 设置</h1>
     <p class="lede">平台运行配置 · 改了立刻生效, 不需重启</p>
 
     <div v-if="!isAdmin" class="card warn-card">

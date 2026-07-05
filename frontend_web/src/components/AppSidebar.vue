@@ -94,8 +94,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
 .side-inner {
   height: 100%;
   overflow-y: auto;     /* 内容多时自己滚 */
-  /* 顶部 100: 让"广场"按钮中心 y 跟主区"全部/精选"筛选栏中心对齐 (~y=200) */
-  padding: 100px 12px 16px;
+  /* 顶部 12: 让"广场"按钮贴在 AppHeader 下方, 不跟主区 toolbar 对齐 (主区在 header 区显示标题了) */
+  padding: 12px 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
