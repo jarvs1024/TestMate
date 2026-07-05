@@ -3,7 +3,7 @@
     <div class="container">
       <div class="box">
         <div class="brand">
-          <div class="logo">T</div>
+          <BrandLogo :size="44" />
           <div class="b-txt">
             <div class="t1">TestMate</div>
             <div class="t2">智能测试辅助平台</div>
@@ -38,6 +38,7 @@
 </template>
 
 <script setup lang="ts">
+import BrandLogo from '@/components/BrandLogo.vue';
 import { reactive, ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useUserStore } from '@/stores/user';
@@ -79,14 +80,7 @@ async function onSubmit() {
   padding: 32px;
 }
 .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
-.logo {
-  width: 38px; height: 38px;
-  border-radius: 10px;
-  display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--primary), var(--primary-2));
-  color: #fff; font-weight: 800; font-size: 18px;
-  box-shadow: var(--primary-shadow);
-}
+
 .t1 { font-size: 17px; font-weight: 700; color: var(--ink-900); line-height: 1.2; letter-spacing: -0.2px; }
 .t2 { font-size: 12.5px; color: var(--ink-500); margin-top: 2px; }
 
