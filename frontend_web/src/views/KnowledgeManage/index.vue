@@ -32,14 +32,14 @@
       </h2>
       <div class="share-frame-wrap">
         <iframe
-          src="http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81&visible_avatar=1&locale=zh-Hans"
-          style="width: 100%; height: 100%; min-height: 600px"
+          :src="shareUrl"
+          :key="themeStore.resolved"
           frameborder="0"
           class="share-frame"
           title="ragflow-shared-search"
         ></iframe>
       </div>
-      <a href="http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81&visible_avatar=1&locale=zh-Hans"
+      <a :href="shareUrl"
          target="_blank" rel="noopener" class="share-pop">↗ 新窗口打开 RAGFlow 共享搜索</a>
     </div>
 
@@ -79,8 +79,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useThemeStore } from '@/stores/theme';
 import { ElMessage } from 'element-plus';
 import { listDatasets, kbHealth, type KbDataset } from '@/api/kb';
+
+const themeStore = useThemeStore();
+const SHARE_BASE = 'http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81&visible_avatar=1&locale=zh-Hans';
+const shareUrl = computed(() => `${SHARE_BASE}&theme=${themeStore.resolved}`);
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
