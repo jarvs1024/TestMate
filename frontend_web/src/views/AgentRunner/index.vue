@@ -22,7 +22,7 @@
     <div v-if="agent && agent.embed_url" class="run-embed">
       <div class="embed-hd">
         <span class="embed-tag">🪟 嵌入模式</span>
-        <span class="embed-hint">内嵌 Dify Chatbot · 由 {{ agent.embed_url }} 提供</span>
+        <span class="embed-hint">{{ embedLabel }} · 由 {{ agent.embed_url }} 提供</span>
         <a :href="agent.embed_url" target="_blank" rel="noopener" class="embed-pop">↗ 新窗口打开</a>
       </div>
       <iframe
@@ -155,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { getAgent, type AgentSummary, type AgentInputField } from '@/api/agents';
 import axios from 'axios';
@@ -171,6 +171,14 @@ const running = ref(false);
 const lastRun = ref(false);
 const elapsed = ref(0);
 const events = ref<Array<{ type: string; title?: string; content: string }>>([]);
+
+const embedLabel = computed(() => {
+  if (!agent.value?.embed_url) return '内嵌外部应用';
+  const u = agent.value.embed_url.toLowerCase();
+  if (u.includes('chatbot') || u.includes('dify')) return '内嵌 Dify Chatbot';
+  if (u.includes('search/share') || u.includes('ragflow')) return '内嵌 RAGFlow 共享搜索';
+  return '内嵌外部应用';
+});
 
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿', alpha: '内测', beta: 'Beta', stable: '稳定', deprecated: '弃用',
@@ -334,7 +342,7 @@ onMounted(async () => {
 .st-alpha { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
 .st-draft { background: rgba(148, 163, 184, 0.15); color: var(--ink-500); }
 
-/* 嵌入模式 (Dify chatbot iframe) */
+/* 嵌入模式 (Dify / RAGFlow iframe) */
 .run-embed {
   display: flex;
   flex-direction: column;
