@@ -34,8 +34,11 @@ const pageLede = computed(() => (route.meta?.lede as string) || '');
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 24px;
-  background: transparent;
+  padding: 14px 24px;
+  background: var(--surface-soft);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 

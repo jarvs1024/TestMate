@@ -337,10 +337,10 @@ onMounted(async () => {
   background: var(--surface-sunken); color: var(--ink-700);
 }
 .run-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.st-stable { background: rgba(22, 163, 74, 0.1); color: var(--ok); }
-.st-beta { background: rgba(217, 119, 6, 0.1); color: var(--warn); }
-.st-alpha { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
-.st-draft { background: rgba(148, 163, 184, 0.15); color: var(--ink-500); }
+.st-stable { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
+.st-beta { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
+.st-alpha { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
+.st-draft { background: var(--surface-sunken); color: var(--ink-500); }
 
 /* 嵌入模式 (Dify / RAGFlow iframe) */
 .run-embed {
@@ -410,9 +410,8 @@ onMounted(async () => {
 }
 .field input:focus, .field textarea:focus, .field select:focus {
   outline: none; border-color: var(--primary);
-  box-shadow:
-    0 0 0 3px var(--primary-soft),
-    0 0 0 4px rgba(13, 148, 136, 0.10);
+  /* 清新版: 单层 focus ring */
+  box-shadow: 0 0 0 3px var(--primary-soft);
 }
 .field textarea { resize: vertical; min-height: 64px; }
 
@@ -445,8 +444,10 @@ button.primary {
   transition: transform 0.05s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
 button.primary:hover:not(:disabled) {
-  filter: brightness(1.08) saturate(1.05);
-  box-shadow: 0 6px 18px rgba(59, 130, 246, 0.30), 0 3px 8px rgba(13, 148, 136, 0.20);
+  filter: brightness(1.05);
+  /* 单色柔和投影 + 上抬 */
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.28);
+  transform: translateY(-1px);
 }
 button.primary:active:not(:disabled) { transform: translateY(1px); }
 button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -521,21 +522,21 @@ button.secondary:hover { border-color: var(--border-strong); color: var(--ink-90
 .ev-info .ev-icon { background: var(--primary-soft); color: var(--primary); }
 .ev-ok {
   border-left-color: var(--ok);
-  background: linear-gradient(135deg, rgba(22, 163, 74, 0.06) 0%, rgba(22, 163, 74, 0.02) 100%);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.06) 0%, rgba(16, 185, 129, 0.02) 100%);
 }
-.ev-ok .ev-icon { background: rgba(22, 163, 74, 0.1); color: var(--ok); }
+.ev-ok .ev-icon { background: rgba(16, 185, 129, 0.1); color: var(--ok); }
 .ev-warn {
   border-left-color: var(--warn);
-  background: linear-gradient(135deg, rgba(217, 119, 6, 0.06) 0%, rgba(217, 119, 6, 0.02) 100%);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.06) 0%, rgba(245, 158, 11, 0.02) 100%);
 }
-.ev-warn .ev-icon { background: rgba(217, 119, 6, 0.1); color: var(--warn); }
+.ev-warn .ev-icon { background: rgba(245, 158, 11, 0.1); color: var(--warn); }
 .ev-err {
   border-left-color: var(--err);
-  background: linear-gradient(135deg, rgba(220, 38, 38, 0.06) 0%, rgba(220, 38, 38, 0.02) 100%);
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.06) 0%, rgba(239, 68, 68, 0.02) 100%);
 }
-.ev-err .ev-icon { background: rgba(220, 38, 38, 0.1); color: var(--err); }
+.ev-err .ev-icon { background: rgba(239, 68, 68, 0.1); color: var(--err); }
 .ev-section { border-left-color: var(--primary-2); }
-.ev-section .ev-icon { background: rgba(13, 148, 136, 0.1); color: var(--primary-2); }
+.ev-section .ev-icon { background: rgba(13, 148, 136, 0.10); color: var(--primary-2); }
 .ev-log { background: var(--surface-sunken); border-color: var(--border); }
 .ev-log .ev-content { color: var(--ink-500); font-family: var(--font-mono); font-size: 11.5px; }
 .ev-streaming .ev-icon { animation: pulse 1.2s ease-in-out infinite; }
@@ -549,8 +550,8 @@ button.secondary:hover { border-color: var(--border-strong); color: var(--ink-90
 }
 
 .unknown {
-  padding: 8px 12px; background: rgba(220, 38, 38, 0.05);
-  border: 1px dashed rgba(220, 38, 38, 0.3);
+  padding: 8px 12px; background: rgba(239, 68, 68, 0.05);
+  border: 1px dashed rgba(239, 68, 68, 0.3);
   border-radius: 6px; color: var(--err); font-size: 11.5px;
 }
 </style>

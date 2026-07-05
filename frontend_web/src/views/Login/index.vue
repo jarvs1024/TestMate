@@ -103,10 +103,8 @@ async function onSubmit() {
 .field input:focus {
   outline: none;
   border-color: var(--primary);
-  /* focus ring 用主渐变 (跟 logo 一致): 蓝→青绿 软光环 */
-  box-shadow:
-    0 0 0 3px var(--primary-soft),
-    0 0 0 4px rgba(13, 148, 136, 0.10);
+  /* 清新版: 单层 focus ring */
+  box-shadow: 0 0 0 3px var(--primary-soft);
 }
 
 .primary {
@@ -116,26 +114,27 @@ async function onSubmit() {
   background: var(--primary-grad);
   color: #fff;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   font-size: 13.5px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  transition: transform .05s ease, box-shadow .15s ease, filter .15s ease;
+  transition: transform .08s ease, box-shadow .15s ease, filter .15s ease;
 }
 .primary:hover:not(:disabled) {
-  /* hover 时整体亮一档 (logo 渐变方向不变, 提亮即可) */
-  filter: brightness(1.08) saturate(1.05);
-  box-shadow: 0 8px 20px rgba(59, 130, 246, 0.30), 0 4px 10px rgba(13, 148, 136, 0.18);
+  filter: brightness(1.05);
+  /* 单色柔和投影 */
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.28);
+  transform: translateY(-1px);
 }
-.primary:active:not(:disabled) { transform: translateY(1px); }
+.primary:active:not(:disabled) { transform: translateY(0); }
 .primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .err {
   margin-top: 12px;
-  background: rgba(220, 38, 38, 0.06);
-  border: 1px solid rgba(220, 38, 38, 0.25);
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.25);
   border-radius: 8px;
   padding: 10px 12px;
   color: var(--err);

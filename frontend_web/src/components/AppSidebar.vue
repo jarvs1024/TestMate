@@ -110,10 +110,11 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
 }
 .group:hover { background: var(--surface-sunken); color: var(--ink-900); }
 .group.active {
-  /* 跟 KB 检索/对话 tab 风格统一: 浅底 + 渐变文字, 不再用深色渐变填底 */
-  background: var(--primary-soft);
+  /* 用 3 段渐变的 soft 版 (蓝绿 → 橙) 当底, 比单色更"实验室" */
+  background: var(--primary-grad-soft);
   font-weight: 600;
-  box-shadow: 0 0 0 1px var(--primary-soft);
+  /* 1px 暖灰边描出卡片感, 不要用 primary-soft (会糊) */
+  box-shadow: inset 0 0 0 1px var(--border);
   /* 渐变文字: 标签用主色渐变, 图标保持纯色 (图标用 currentColor 不太方便, 直接给 .g-ic 单写) */
 }
 .group.active .g-lb {
@@ -139,9 +140,9 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
 .ft-lbl { font-size: 10.5px; color: var(--ink-500); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
 .src { display: flex; align-items: center; gap: 7px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.s-ok { background: var(--ok); box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.18); }
-.s-warn { background: var(--warn); box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.18); }
-.s-off { background: var(--err); box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18); }
+.s-ok { background: var(--ok); box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18); }
+.s-warn { background: var(--warn); box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.18); }
+.s-off { background: var(--err); box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18); }
 .s-unknown { background: var(--ink-500); }
 .name { flex: 1; color: var(--ink-700); }
 .state { color: var(--ink-500); font-family: var(--font-mono); font-size: 10.5px; }

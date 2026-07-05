@@ -2,6 +2,7 @@
   <div class="brand-logo" :style="`--size:${size}px`" aria-label="TestMate">
     <svg :viewBox="`0 0 ${VB} ${VB}`" :width="size" :height="size" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>
+        <!-- 原始: 蓝 → 青绿 -->
         <linearGradient :id="`lg-bg-${uid}`" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stop-color="#3B82F6"/>
           <stop offset="100%" stop-color="#0d9488"/>
@@ -37,6 +38,7 @@ const uid = computed(() => Math.random().toString(36).slice(2, 8));
   flex-shrink: 0;
   border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.25);
+  /* 蓝→靛→青 渐变投影 */
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.28);
 }
 </style>

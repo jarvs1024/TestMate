@@ -40,7 +40,7 @@ const title = computed(() => stateText.value);
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--ink-500);
 }
-.d.ok   { background: var(--ok);   box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.15); }
-.d.warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.18); }
-.d.err  { background: var(--err);  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18); }
+.d.ok   { background: var(--ok);   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
+.d.warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18); }
+.d.err  { background: var(--err);  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18); }
 </style>

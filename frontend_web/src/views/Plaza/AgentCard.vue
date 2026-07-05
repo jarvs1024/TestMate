@@ -74,7 +74,8 @@ function relativeTime(iso: string): string {
 .agent-card:hover {
   transform: translateY(-2px);
   border-color: var(--primary);
-  box-shadow: 0 8px 24px rgba(28, 100, 242, 0.12), 0 0 0 3px var(--primary-soft);
+  /* 清新版: 单色柔和 hover 投影 */
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.12), 0 0 0 3px var(--primary-soft);
 }
 .agent-card.status-deprecated { opacity: 0.5; }
 
@@ -104,11 +105,11 @@ function relativeTime(iso: string): string {
   flex-shrink: 0;
 }
 .ac-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.st-stable { background: rgba(22, 163, 74, 0.1); color: var(--ok); }
-.st-beta { background: rgba(217, 119, 6, 0.1); color: var(--warn); }
-.st-alpha { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
-.st-draft { background: rgba(148, 163, 184, 0.15); color: var(--ink-500); }
-.st-deprecated { background: rgba(220, 38, 38, 0.1); color: var(--err); }
+.st-stable { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
+.st-beta { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
+.st-alpha { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
+.st-draft { background: var(--surface-sunken); color: var(--ink-500); }
+.st-deprecated { background: rgba(239, 68, 68, 0.10); color: var(--err); }
 
 .ac-summary {
   margin: 0;

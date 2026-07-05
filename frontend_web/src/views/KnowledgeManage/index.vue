@@ -299,7 +299,8 @@ onMounted(async () => {
      跟 Settings toc / Sidebar nav / Plaza filter 的 active 风格统一 */
   background: var(--surface);
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 0 0 1px var(--primary-soft);
+  /* 暖灰边描出卡片感 */
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 .share-tab.active .lbl {
   display: inline-block;  /* inline 元素 background-clip:text 在部分浏览器失效, 转 inline-block */
@@ -325,9 +326,9 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 
 .rf-status { margin-left: auto; font-size: 11px; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: var(--radius-pill); }
 .rf-status .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.s-ok { background: rgba(22, 163, 74, 0.1); color: var(--ok); }
-.s-warn { background: rgba(217, 119, 6, 0.1); color: var(--warn); }
-.s-off { background: rgba(220, 38, 38, 0.1); color: var(--err); }
+.s-ok { background: rgba(16, 185, 129, 0.1); color: var(--ok); }
+.s-warn { background: rgba(245, 158, 11, 0.1); color: var(--warn); }
+.s-off { background: rgba(239, 68, 68, 0.1); color: var(--err); }
 
 
 .ds-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }

@@ -113,10 +113,11 @@ onMounted(async () => {
 }
 .filter:hover { background: var(--surface-sunken); color: var(--ink-900); }
 .filter.active {
-  background: var(--primary-soft);
+  /* 用 3 段渐变 soft 版当底, 比单色更生动 */
+  background: var(--primary-grad-soft);
   border-color: transparent;
   font-weight: 600;
-  box-shadow: 0 0 0 1px var(--primary-soft);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 .filter.active .lbl {
   display: inline-block;  /* inline 元素 background-clip:text 在部分浏览器失效, 转 inline-block */
@@ -130,7 +131,7 @@ onMounted(async () => {
   font-size: 11.5px; background: var(--surface); padding: 1px 7px; border-radius: var(--radius-pill);
   font-family: var(--font-mono); font-weight: 600;
 }
-.filter.active .count { background: var(--primary-grad-text); color: #fff; }
+.filter.active .count { background: var(--primary-grad); color: #fff; }
 
 .search {
   display: flex; align-items: center; gap: 6px;

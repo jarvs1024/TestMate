@@ -43,14 +43,116 @@ html, html[data-theme] {
 }
 
 .card {
-  background: var(--surface-soft);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: var(--surface);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
   padding: 22px;
 }
+
+/* ============================================================
+ * 全局控件样式 (C 版 · 毛玻璃 + 简约 · 单层 focus ring)
+ * ============================================================ */
+
+/* 主按钮 — 蓝→靛→青 渐变, hover 提亮 + 上抬 1px */
+button.tm-btn,
+button.tm-btn-primary {
+  background: var(--primary-grad);
+  color: #fff;
+  border: 0;
+  padding: 9px 18px;
+  border-radius: var(--radius-btn);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: transform .08s ease, box-shadow .15s ease, filter .15s ease;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.22);
+}
+button.tm-btn:hover:not(:disabled),
+button.tm-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow: 0 6px 18px rgba(59, 130, 246, 0.30);
+  transform: translateY(-1px);
+}
+button.tm-btn:active:not(:disabled),
+button.tm-btn-primary:active:not(:disabled) { transform: translateY(0); }
+button.tm-btn:disabled,
+button.tm-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 次按钮 — 毛玻璃 */
+button.tm-btn-ghost {
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--ink-700);
+  border: 1px solid var(--border);
+  padding: 9px 16px;
+  border-radius: var(--radius-btn);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+button.tm-btn-ghost:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+/* 输入框 — 毛玻璃 + 单层 focus ring */
+.tm-input,
+input.tm-input,
+textarea.tm-input,
+select.tm-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--ink-900);
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.tm-input:focus,
+input.tm-input:focus,
+textarea.tm-input:focus,
+select.tm-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+/* 通用 badge — 简约扁平 */
+.tm-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface-sunken);
+  color: var(--ink-700);
+  line-height: 1;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.tm-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.tm-badge.ok    { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
+.tm-badge.warn  { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
+.tm-badge.err   { background: rgba(239, 68, 68, 0.12);  color: var(--err); }
+.tm-badge.muted { background: var(--surface-sunken);    color: var(--ink-500); }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
@@ -141,17 +243,16 @@ select {
 select:focus {
   outline: none !important;
   border-color: var(--primary) !important;
-  color: var(--ink-900);  /* 文字保持 ink-900, 箭头颜色在 background-image 里改 */
-  box-shadow:
-    0 0 0 3px var(--primary-soft),
-    0 0 0 4px rgba(13, 148, 136, 0.10) !important;
+  color: var(--ink-900);
+  /* 清新版: 单层 focus ring */
+  box-shadow: 0 0 0 3px var(--primary-soft) !important;
   background-image:
     linear-gradient(45deg, transparent 50%, var(--primary) 50%),
     linear-gradient(135deg, var(--primary) 50%, transparent 50%) !important;
 }
 .el-select__wrapper.is-focused {
+  /* 单层 ring */
   box-shadow:
     0 0 0 1px var(--primary) inset,
-    0 0 0 3px var(--primary-soft),
-    0 0 0 4px rgba(13, 148, 136, 0.10) !important;
+    0 0 0 3px var(--primary-soft) !important;
 }
