@@ -16,16 +16,16 @@
       <aside class="set-toc">
         <div class="toc-hd">配置目录</div>
         <template v-for="s in sections" :key="s.id">
-          <div :class="['toc-item', { active: activeSection === s.id }]"
-               @click="scrollTo(s.id)">
+          <div :class="['toc-item', { active: activeTop === s.id }]"
+               @click="onPickTop(s.id)">
             <span class="toc-ic">{{ s.icon }}</span>
             <span class="toc-lb">{{ s.label }}</span>
-            <span class="toc-cnt">{{ s.count }}</span>
+            <span v-if="!s.children?.length" class="toc-cnt">{{ s.count }}</span>
           </div>
           <ul v-if="s.children && s.children.length" class="toc-sub">
             <li v-for="c in s.children" :key="c.id"
-                :class="{ active: activeSection === c.id }"
-                @click.stop="scrollTo(c.id)">
+                :class="{ active: activeTop === s.id && activeSub === c.id }"
+                @click.stop="onPickSub(s.id, c.id)">
               <span class="toc-dot"></span>
               <span class="toc-lb">{{ c.label }}</span>
               <span class="toc-cnt">{{ c.count }}</span>
@@ -37,7 +37,7 @@
       <!-- 右侧 sections -->
       <main class="set-main">
         <!-- 📚 知识库 (大组) -->
-        <section :id="'sec-knowledge'" class="card grp">
+        <section v-if="activeTop === 'sec-knowledge'" :id="'sec-knowledge'" class="card grp">
           <h2>
             <span>📚 知识库</span>
             <span class="grp-cnt">{{ knowledgeSource.length + searchItems.length }} 项</span>
@@ -156,7 +156,7 @@
         </section>
 
         <!-- 🤖 智能体 -->
-        <section :id="'sec-agents'" class="card grp">
+        <section v-if="activeTop === 'sec-agents'" :id="'sec-agents'" class="card grp">
           <h2>
             <span>🤖 智能体 / Dify</span>
             <span class="grp-cnt">{{ agentsItems.length }} 项</span>
@@ -219,7 +219,7 @@
         </section>
 
         <!-- ⚙️ 通用 -->
-        <section :id="'sec-general'" class="card grp">
+        <section v-if="activeTop === 'sec-general'" :id="'sec-general'" class="card grp">
           <h2>
             <span>⚙️ 通用</span>
             <span class="grp-cnt">{{ generalItems.length }} 项</span>
@@ -270,7 +270,7 @@
         </section>
 
         <!-- 🔔 通知 (P1) -->
-        <section :id="'sec-notification'" class="card grp">
+        <section v-if="activeTop === 'sec-notification'" :id="'sec-notification'" class="card grp">
           <h2>
             <span>🔔 通知</span>
             <span class="grp-cnt">P1 规划中</span>
@@ -298,7 +298,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { getSchema, updateSetting, testRagflow, testDify, type SettingItem, type TestResult } from '@/api/settings';
 import { useUserStore } from '@/stores/user';
@@ -314,8 +314,9 @@ const saving = ref<string | null>(null);
 const testing = ref<string | null>(null);
 const testResults = reactive<Record<string, TestResult | null>>({});
 
-const activeSection = ref('sec-knowledge');
-let observer: IntersectionObserver | null = null;
+// 当前选中的顶级 section + 子级 (sub group)
+const activeTop = ref<string>('sec-knowledge');
+const activeSub = ref<string>('sec-knowledge-source');
 
 // ===== 按 category 拆分 (后端 schema 是单一来源) =====
 const knowledgeSource = computed(() => itemsByCategory('knowledge-source'));
@@ -336,39 +337,34 @@ const sections = computed(() => [
     id: 'sec-knowledge',
     icon: '📚',
     label: '知识库',
-    count: knowledgeSource.value.length + searchItems.value.length,
+    count: 0, // 父级不显示数字, 子级显示
     children: [
       { id: 'sec-knowledge-source', label: '数据源 (RAGFlow)', count: knowledgeSource.value.length },
       { id: 'sec-search',            label: '知识检索',         count: searchItems.value.length },
     ],
   },
-  { id: 'sec-agents',      icon: '🤖', label: '智能体', count: agentsItems.value.length, children: [] },
-  { id: 'sec-general',     icon: '⚙️', label: '通用',   count: generalItems.value.length, children: [] },
-  { id: 'sec-notification', icon: '🔔', label: '通知',  count: 0,                       children: [] },
+  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: agentsItems.value.length,   children: [] },
+  { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length,  children: [] },
+  { id: 'sec-notification', icon: '🔔', label: '通知',   count: 0,                          children: [] },
 ]);
 
-// ===== scroll-spy =====
-function scrollTo(id: string) {
-  const el = document.getElementById(id);
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+// ===== 点击目录 =====
+function onPickTop(topId: string) {
+  activeTop.value = topId;
+  // 滚到右侧 section 顶部 (不滚到子级)
+  nextTick(() => {
+    const el = document.getElementById(topId);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 }
 
-function setupObserver() {
-  observer?.disconnect();
-  observer = new IntersectionObserver(
-    (entries) => {
-      // 收集所有可见 section, 取最靠上的一个
-      const visible = entries
-        .filter((e) => e.isIntersecting)
-        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-      if (visible.length > 0) {
-        activeSection.value = visible[0].target.id;
-      }
-    },
-    { rootMargin: '-20% 0px -60% 0px', threshold: 0 },
-  );
-  document.querySelectorAll('.set-main section[id], .set-main .sub-grp[id]').forEach((s) => {
-    observer?.observe(s);
+function onPickSub(topId: string, subId: string) {
+  activeTop.value = topId;
+  activeSub.value = subId;
+  // 滚到右侧子 group 顶部
+  nextTick(() => {
+    const el = document.getElementById(subId);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 }
 
@@ -382,8 +378,6 @@ async function load() {
       originals[it.key] = it.value;
     }
   }
-  // 等 DOM 渲染完再挂 observer
-  setTimeout(setupObserver, 50);
 }
 
 function isDirty(it: SettingItem) {
@@ -445,7 +439,6 @@ async function onTest(category: string) {
 }
 
 onMounted(load);
-onBeforeUnmount(() => observer?.disconnect());
 </script>
 
 <style scoped>
@@ -538,6 +531,8 @@ onBeforeUnmount(() => observer?.disconnect());
 }
 
 .set-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.set-main > .card { animation: fade-in 0.2s ease; }
+@keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* ====== groups / rows / inputs (沿用旧版) ====== */
 .grp h2 {
