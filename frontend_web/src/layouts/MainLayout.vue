@@ -52,7 +52,17 @@ import AppSidebar from '@/components/AppSidebar.vue';
   overflow-y: auto;       /* 主区自己滚 */
   padding: 0 8px 32px;
 }
-.container { max-width: 1080px; margin: 0 auto; padding: 8px 16px 48px; }
+.container {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 8px 32px 48px;
+  width: 100%;
+  box-sizing: border-box;
+}
+/* 大屏给 grid 更多空间, 让卡片列数自然变多 */
+@media (min-width: 1600px) {
+  .container { max-width: 1600px; padding: 8px 40px 48px; }
+}
 
 .tm-fade-enter-active, .tm-fade-leave-active { transition: opacity .15s ease, transform .15s ease; }
 .tm-fade-enter-from { opacity: 0; transform: translateY(4px); }
