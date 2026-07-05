@@ -281,7 +281,7 @@ onMounted(loadAll);
 </script>
 
 <style scoped>
-.kb { display: flex; flex-direction: column; gap: 18px; }
+.kb { display: flex; flex-direction: column; gap: 16px; }
 .title { font-size: 30px; font-weight: 800; margin: 0 0 8px; letter-spacing: -0.4px; color: var(--ink-900); }
 .lede { color: var(--ink-700); margin: 0; font-size: 14.5px; }
 
@@ -298,8 +298,8 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .hint-t { margin-left: auto; font-size: 11px; color: var(--ink-500); font-family: var(--font-mono); }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-.stat { text-align: center; padding: 14px 8px; background: var(--surface-sunken); border-radius: 10px; }
-.num { font-size: 22px; font-weight: 800; color: var(--primary); font-family: var(--font-mono); line-height: 1; }
+.stat { text-align: center; padding: 16px 6px; background: var(--surface-sunken); border-radius: 10px; border: 1px solid var(--border); }
+.num { font-size: 26px; font-weight: 800; color: var(--primary); font-family: var(--font-mono); line-height: 1; letter-spacing: -0.5px; }
 .num.hi { color: var(--ok); }
 .lbl { font-size: 11px; color: var(--ink-500); margin-top: 6px; }
 
@@ -318,8 +318,9 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 }
 .field textarea { resize: vertical; min-height: 56px; }
 
-.ds-checks { display: flex; flex-direction: column; gap: 4px; max-height: 110px; overflow: auto; }
-.ck { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; font-size: 12.5px; cursor: pointer; color: var(--ink-700); }
+.ds-checks { display: flex; flex-wrap: wrap; gap: 6px; max-height: 140px; overflow: auto; padding: 2px; }
+.ck { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px; font-size: 12.5px; cursor: pointer; color: var(--ink-700); background: var(--surface-sunken); border: 1px solid var(--border); white-space: nowrap; transition: all 0.15s ease; }
+.ck:hover { border-color: var(--primary); color: var(--primary); }
 .ck:hover { background: var(--surface-sunken); }
 .ck input { margin: 0; }
 .ck span:nth-child(2) { flex: 1; }

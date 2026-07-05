@@ -44,7 +44,7 @@ const keyword = ref('');
 
 const FILTERS = [
   { value: 'all' as const, label: '全部' },
-  { value: 'featured' as const, label: '⭐ 精选' },
+  { value: 'featured' as const, label: '精选' },
   { value: 'stable' as const, label: '稳定' },
   { value: 'beta' as const, label: 'Beta' },
 ];
@@ -89,7 +89,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.plaza { display: flex; flex-direction: column; gap: 18px; }
+.plaza { display: flex; flex-direction: column; gap: 16px; }
 .plaza-hd { display: none; }  /* 标题已挪到 AppHeader, 不再显示 */
 .title { font-size: 30px; font-weight: 800; margin: 0 0 8px; letter-spacing: -0.4px; color: var(--ink-900); }
 .lede { color: var(--ink-700); margin: 0; font-size: 14.5px; }
@@ -106,16 +106,16 @@ onMounted(async () => {
 .filters { display: flex; gap: 6px; }
 .filter {
   background: transparent; border: 1px solid transparent;
-  padding: 6px 12px; border-radius: var(--radius-pill);
-  font-size: 12.5px; color: var(--ink-700); cursor: pointer;
+  padding: 7px 14px; border-radius: var(--radius-pill);
+  font-size: 13px; color: var(--ink-700); cursor: pointer;
   font-family: inherit; transition: all 0.15s ease;
   display: inline-flex; align-items: center; gap: 5px;
 }
 .filter:hover { background: var(--surface-sunken); color: var(--ink-900); }
 .filter.active { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); font-weight: 600; }
 .filter .count {
-  font-size: 10.5px; background: var(--surface); padding: 1px 6px; border-radius: var(--radius-pill);
-  font-family: var(--font-mono);
+  font-size: 11.5px; background: var(--surface); padding: 1px 7px; border-radius: var(--radius-pill);
+  font-family: var(--font-mono); font-weight: 600;
 }
 .filter.active .count { background: var(--primary); color: #fff; }
 
@@ -134,7 +134,7 @@ onMounted(async () => {
   display: grid;
   /* 固定 3 列, 跟 toolbar 同样满宽, 视觉对齐 */
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  gap: 16px;
 }
 @media (max-width: 1100px) {
   /* 中等屏以下, 主区窄时降到 2 列 */
