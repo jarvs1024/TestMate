@@ -65,3 +65,36 @@ html, html[data-theme] {
 .row > button { flex: 0 0 auto; }
 .row > .field { flex: 1; }
 .row > .meta { flex: 1; }
+
+/* ===== Element Plus 弹层跟主题走 (el-dropdown / el-popover / el-tooltip / el-select dropdown) =====
+   Element Plus 弹层默认白底, 文字用 --el-text-color-primary.
+   我们的 --el-text-color-primary 跟主题走 (light 浅字 / dark 深字), 但弹层底色没跟.
+   这里强制弹层底色跟 surface 走, 文字跟 ink 走. */
+.el-popper,
+.el-dropdown-menu,
+.el-select-dropdown,
+.el-popover {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+  color: var(--ink-900) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+.el-popper .el-dropdown-menu__item,
+.el-select-dropdown__item {
+  color: var(--ink-700) !important;
+}
+.el-popper .el-dropdown-menu__item:not(.is-disabled):hover,
+.el-select-dropdown__item:hover {
+  background: var(--surface-sunken) !important;
+  color: var(--primary) !important;
+}
+.el-popper .el-dropdown-menu__item.is-disabled {
+  color: var(--ink-500) !important;
+  cursor: default;
+}
+/* 弹层内的小箭头同色 */
+.el-popper .el-popper__arrow::before,
+.el-dropdown-menu .el-popper__arrow::before {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+}
