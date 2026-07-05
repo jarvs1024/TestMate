@@ -30,10 +30,9 @@
         <span>🔎 知识检索</span>
         <span class="share-sub">基于 RAGFlow 共享 Search App</span>
       </h2>
-      <div class="share-frame-wrap" :class="{ 'is-dark': themeStore.resolved === 'dark' }">
+      <div class="share-frame-wrap">
         <iframe
           :src="shareUrl"
-          :key="themeStore.resolved"
           frameborder="0"
           class="share-frame"
           title="ragflow-shared-search"
@@ -79,13 +78,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useThemeStore } from '@/stores/theme';
+
 import { ElMessage } from 'element-plus';
 import { listDatasets, kbHealth, type KbDataset } from '@/api/kb';
 
-const themeStore = useThemeStore();
+
 const SHARE_BASE = 'http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81&visible_avatar=1&locale=zh-Hans';
-const shareUrl = computed(() => `${SHARE_BASE}&theme=${themeStore.resolved}`);
+const shareUrl = computed(() => SHARE_BASE);
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
@@ -141,11 +140,8 @@ onMounted(loadAll);
 .card-share { display: flex; flex-direction: column; }
 .card-share h2 { display: flex; align-items: center; gap: 8px; }
 .share-sub { font-size: 11.5px; color: var(--ink-500); font-weight: 400; margin-left: 4px; }
-.share-frame-wrap { width: 100%; min-height: 600px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-sunken); position: relative; transition: filter 0.2s ease; }
+.share-frame-wrap { width: 100%; min-height: 600px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-sunken); }
 .share-frame { display: block; border: 0; width: 100%; height: 600px; }
-/* dark 模式: 用 CSS filter 把 RAGFlow light 页视觉上反色变深
-   跨域 iframe 无法写 localStorage, 这是 web 标准 trick */
-.share-frame-wrap.is-dark { filter: invert(0.92) hue-rotate(180deg); }
 .share-pop { display: inline-block; margin-top: 10px; font-size: 11.5px; color: var(--primary); text-decoration: none; align-self: flex-end; }
 .share-pop:hover { text-decoration: underline; }
 
