@@ -57,7 +57,14 @@ html, html[data-theme] {
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-500); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-::selection { background: var(--primary-soft); color: var(--primary); }
+::selection {
+  background: var(--primary-grad-soft);
+  color: var(--ink-900);
+}
+::-moz-selection {
+  background: var(--primary-grad-soft);
+  color: var(--ink-900);
+}
 
 /* 全局工具: 按钮的 .row 不要被 flex: 1 挤死 (修复 KB 页搜索按钮消失 bug) */
 .row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
@@ -97,4 +104,54 @@ html, html[data-theme] {
 .el-dropdown-menu .el-popper__arrow::before {
   background: var(--surface) !important;
   border-color: var(--border) !important;
+}
+
+/* ===== 原生 <select> + el-select 跟主题对齐 (边框 + focus 渐变 ring) =====
+   原生 select 默认 1px 灰色边框, focus 蓝色 outline, 跟 input 风格不统一.
+   统一成 input 风格: 默认 1px border, focus 时主色边框 + 双层光晕. */
+select,
+.el-select__wrapper,
+.el-input__wrapper {
+  border-radius: 8px !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+select {
+  border: 1px solid var(--border) !important;
+  background-color: var(--surface) !important;
+  color: var(--ink-900) !important;
+  padding: 7px 32px 7px 10px !important;
+  font-family: var(--font-body);
+  font-size: 13px;
+  cursor: pointer;
+  /* 去掉浏览器默认下拉箭头, 自己用 background 画一个 */
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  /* 两个三角形拼成 ▾ 箭头, 用 --ink-500 颜色, 跟 input 旁的 icon 一致 */
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-500) 50%),
+    linear-gradient(135deg, var(--ink-500) 50%, transparent 50%) !important;
+  background-repeat: no-repeat, no-repeat !important;
+  background-position:
+    right 14px top 50%,
+    right 9px  top 50% !important;
+  background-size: 5px 5px, 5px 5px !important;
+  /* focus 时箭头也变成主色, 跟 border 同步 (见下面的 select:focus 块) */
+}
+select:focus {
+  outline: none !important;
+  border-color: var(--primary) !important;
+  color: var(--ink-900);  /* 文字保持 ink-900, 箭头颜色在 background-image 里改 */
+  box-shadow:
+    0 0 0 3px var(--primary-soft),
+    0 0 0 4px rgba(13, 148, 136, 0.10) !important;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--primary) 50%),
+    linear-gradient(135deg, var(--primary) 50%, transparent 50%) !important;
+}
+.el-select__wrapper.is-focused {
+  box-shadow:
+    0 0 0 1px var(--primary) inset,
+    0 0 0 3px var(--primary-soft),
+    0 0 0 4px rgba(13, 148, 136, 0.10) !important;
 }

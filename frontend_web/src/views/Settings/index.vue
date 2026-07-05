@@ -481,8 +481,19 @@ onMounted(load);
 .toc-item:hover, .toc-sub li:hover { background: var(--surface-sunken); color: var(--ink-900); }
 .toc-item.active, .toc-sub li.active {
   background: var(--primary-soft);
-  color: var(--primary);
   font-weight: 600;
+  box-shadow: 0 0 0 1px var(--primary-soft);
+}
+.toc-item.active .toc-lb, .toc-sub li.active .toc-lb {
+  background: var(--primary-grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.toc-item.active .toc-ic, .toc-sub li.active .toc-ic {
+  color: var(--primary);
+  opacity: 1;
 }
 .toc-ic { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
 .toc-lb { flex: 1; min-width: 0; }
@@ -496,7 +507,7 @@ onMounted(load);
   flex-shrink: 0;
 }
 .toc-item.active .toc-cnt, .toc-sub li.active .toc-cnt {
-  background: var(--primary-grad);
+  background: var(--primary-grad-text);
   color: #fff;
 }
 .toc-sub {
@@ -548,7 +559,14 @@ onMounted(load);
   margin-top: 10px; font-size: 12px; color: var(--ink-500); line-height: 1.6;
   background: var(--surface-sunken); border-radius: 8px; padding: 8px 12px;
 }
-.hint code { font-family: var(--font-mono); color: var(--primary); font-size: 11.5px; }
+.hint code {
+  font-family: var(--font-mono);
+  color: var(--primary);
+  font-size: 11.5px;
+  background: var(--primary-soft);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
 
 .empty-hint {
   display: flex; flex-direction: column; align-items: center;
@@ -570,7 +588,19 @@ onMounted(load);
 @media (max-width: 768px) { .row { grid-template-columns: 1fr; } }
 
 .lbl-col .k { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.lbl-col code { font-size: 12.5px; background: var(--surface-sunken); padding: 2px 8px; border-radius: 5px; color: var(--primary); font-family: var(--font-mono); }
+.lbl-col code {
+  font-size: 13px; font-weight: 600;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: var(--primary);
+  font-family: var(--font-body);
+  /* 加渐变下划线强调, 跟胶囊/按钮的渐变方向一致 */
+  background-image: var(--primary-grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
 .lbl-col .d { font-size: 12px; color: var(--ink-500); margin-top: 4px; line-height: 1.5; }
 
 .secret-tag { font-size: 9.5px; padding: 1px 6px; background: rgba(220, 38, 38, 0.1); color: var(--err); border-radius: var(--radius-pill); font-weight: 600; }
@@ -613,14 +643,14 @@ onMounted(load);
   transition: transform 0.2s ease;
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
-.switch input:checked + .sl { background: var(--primary-grad); }
+.switch input:checked + .sl { background: var(--primary-grad-text); }
 .switch input:checked + .sl::before { transform: translateX(18px); }
 .switch input:disabled + .sl { opacity: 0.5; }
 .stxt { font-family: var(--font-mono); font-size: 11px; color: var(--ink-500); min-width: 24px; }
 
 .act-col { display: flex; flex-direction: column; gap: 4px; align-items: stretch; min-width: 70px; }
 .primary {
-  background: var(--primary-grad); color: #fff; border: 0;
+  background: var(--primary-grad-text); color: #fff; border: 0;
   padding: 6px 14px; border-radius: 7px;
   font-size: 12.5px; font-weight: 600; font-family: inherit; cursor: pointer;
   transition: filter .15s ease, box-shadow .15s ease;

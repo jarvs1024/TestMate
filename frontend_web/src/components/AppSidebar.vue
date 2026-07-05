@@ -109,7 +109,21 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
   transition: background 0.15s ease, color 0.15s ease;
 }
 .group:hover { background: var(--surface-sunken); color: var(--ink-900); }
-.group.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.group.active {
+  /* 跟 KB 检索/对话 tab 风格统一: 浅底 + 渐变文字, 不再用深色渐变填底 */
+  background: var(--primary-soft);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--primary-soft);
+  /* 渐变文字: 标签用主色渐变, 图标保持纯色 (图标用 currentColor 不太方便, 直接给 .g-ic 单写) */
+}
+.group.active .g-lb {
+  background: var(--primary-grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.group.active .g-ic { color: var(--primary); }
 .g-ic { display: inline-flex; align-items: center; }
 .g-lb { flex: 1; }
 

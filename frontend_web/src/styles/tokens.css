@@ -21,6 +21,8 @@ html[data-theme="light"] {
   --primary:     #3B82F6;
   --primary-2:   #0D9488;     /* logo 第二色 */
   --primary-grad: linear-gradient(135deg, #3B82F6 0%, #0D9488 100%);
+  /* 短文本 (2-3 字) 用的更明显的渐变: 让中点过渡更早出现, 不至于全显示蓝色 */
+  --primary-grad-text: linear-gradient(90deg, #1D4ED8 0%, #0891B2 50%, #0D9488 100%);
   --primary-grad-soft: linear-gradient(135deg, rgba(59,130,246,0.18) 0%, rgba(13,148,136,0.18) 100%);
   --primary-soft: rgba(59, 130, 246, 0.12);
   --primary-shadow: 0 6px 18px rgba(59, 130, 246, 0.28);
@@ -83,6 +85,7 @@ html[data-theme="dark"] {
   --primary:     #3B82F6;
   --primary-2:   #14B8A6;     /* dark 下用 #14B8A6 (比 light #0D9488 亮, 保持深底对比) */
   --primary-grad: linear-gradient(135deg, #3B82F6 0%, #14B8A6 100%);
+  --primary-grad-text: linear-gradient(90deg, #2563EB 0%, #06B6D4 50%, #14B8A6 100%);
   --primary-grad-soft: linear-gradient(135deg, rgba(59,130,246,0.22) 0%, rgba(20,184,166,0.22) 100%);
   --primary-soft: rgba(59, 130, 246, 0.15);
   --primary-shadow: 0 6px 18px rgba(59, 130, 246, 0.35);
@@ -126,6 +129,8 @@ html[data-theme="dark"] {
     --primary:     #3B82F6;
     --primary-2:   #14B8A6;
     --primary-grad: linear-gradient(135deg, #3B82F6 0%, #14B8A6 100%);
+    --primary-grad-text: linear-gradient(90deg, #2563EB 0%, #06B6D4 50%, #14B8A6 100%);
+  --primary-grad-text: linear-gradient(90deg, #2563EB 0%, #06B6D4 50%, #14B8A6 100%);
     --primary-grad-soft: linear-gradient(135deg, rgba(59,130,246,0.22) 0%, rgba(20,184,166,0.22) 100%);
     --primary-soft: rgba(59, 130, 246, 0.15);
     --primary-shadow: 0 6px 16px rgba(59, 130, 246, 0.32);

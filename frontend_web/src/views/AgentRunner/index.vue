@@ -515,13 +515,24 @@ button.secondary:hover { border-color: var(--border-strong); color: var(--ink-90
   border-left: 3px solid;
   border-image: var(--primary-grad) 1 100%;
   border-image-slice: 1;
+  /* 配同色系极淡底色, 让"当前步骤"视觉重心更明显, 不只是 3px 细线 */
+  background: var(--primary-grad-soft);
 }
 .ev-info .ev-icon { background: var(--primary-soft); color: var(--primary); }
-.ev-ok { border-left-color: var(--ok); }
+.ev-ok {
+  border-left-color: var(--ok);
+  background: linear-gradient(135deg, rgba(22, 163, 74, 0.06) 0%, rgba(22, 163, 74, 0.02) 100%);
+}
 .ev-ok .ev-icon { background: rgba(22, 163, 74, 0.1); color: var(--ok); }
-.ev-warn { border-left-color: var(--warn); }
+.ev-warn {
+  border-left-color: var(--warn);
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.06) 0%, rgba(217, 119, 6, 0.02) 100%);
+}
 .ev-warn .ev-icon { background: rgba(217, 119, 6, 0.1); color: var(--warn); }
-.ev-err { border-left-color: var(--err); }
+.ev-err {
+  border-left-color: var(--err);
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.06) 0%, rgba(220, 38, 38, 0.02) 100%);
+}
 .ev-err .ev-icon { background: rgba(220, 38, 38, 0.1); color: var(--err); }
 .ev-section { border-left-color: var(--primary-2); }
 .ev-section .ev-icon { background: rgba(13, 148, 136, 0.1); color: var(--primary-2); }

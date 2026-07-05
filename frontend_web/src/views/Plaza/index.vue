@@ -10,7 +10,7 @@
         <button v-for="f in FILTERS" :key="f.value"
           class="filter" :class="{ active: filter === f.value }"
           @click="filter = f.value">
-          {{ f.label }} <span class="count">{{ countBy(f.value) }}</span>
+          <span class="lbl">{{ f.label }}</span><span class="count">{{ countBy(f.value) }}</span>
         </button>
       </div>
       <div class="search">
@@ -112,12 +112,25 @@ onMounted(async () => {
   display: inline-flex; align-items: center; gap: 5px;
 }
 .filter:hover { background: var(--surface-sunken); color: var(--ink-900); }
-.filter.active { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); font-weight: 600; }
+.filter.active {
+  background: var(--primary-soft);
+  border-color: transparent;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--primary-soft);
+}
+.filter.active .lbl {
+  display: inline-block;  /* inline 元素 background-clip:text 在部分浏览器失效, 转 inline-block */
+  background: var(--primary-grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
 .filter .count {
   font-size: 11.5px; background: var(--surface); padding: 1px 7px; border-radius: var(--radius-pill);
   font-family: var(--font-mono); font-weight: 600;
 }
-.filter.active .count { background: var(--primary-grad); color: #fff; }
+.filter.active .count { background: var(--primary-grad-text); color: #fff; }
 
 .search {
   display: flex; align-items: center; gap: 6px;

@@ -35,14 +35,14 @@
             role="tab"
             :aria-selected="activeTab === 'search'"
             @click="activeTab = 'search'"
-          >搜索</button>
+          ><span class="lbl">搜索</span></button>
           <button
             class="share-tab"
             :class="{ active: activeTab === 'chat' }"
             role="tab"
             :aria-selected="activeTab === 'chat'"
             @click="activeTab = 'chat'"
-          >对话</button>
+          ><span class="lbl">对话</span></button>
         </div>
       </div>
       <!-- 检索 tab -->
@@ -271,7 +271,7 @@ onMounted(async () => {
 .card-overview .num {
   font-size: 20px; font-weight: 800;
   font-family: var(--font-mono); line-height: 1; letter-spacing: -0.5px;
-  background: var(--primary-grad);
+  background: var(--primary-grad-text);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -295,10 +295,19 @@ onMounted(async () => {
 }
 .share-tab:hover { color: var(--ink-900); }
 .share-tab.active {
+  /* 保持浅色 (跟之前一致: var(--surface) 白底), 但文字从纯蓝改成品牌渐变
+     跟 Settings toc / Sidebar nav / Plaza filter 的 active 风格统一 */
   background: var(--surface);
-  color: var(--primary);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 0 0 1px var(--primary-soft);
   font-weight: 600;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 0 0 1px var(--primary-soft);
+}
+.share-tab.active .lbl {
+  display: inline-block;  /* inline 元素 background-clip:text 在部分浏览器失效, 转 inline-block */
+  background: var(--primary-grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 .share-sub-inline { font-size: 12px; font-weight: 400; color: var(--ink-500); }
 .share-frame-wrap { width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-sunken); }
