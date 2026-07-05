@@ -13,8 +13,11 @@ body {
   font-size: 14px;
   line-height: 1.55;
   color: var(--ink-900);
-  background: linear-gradient(135deg, var(--bg-grad-1), var(--bg-grad-2) 50%, var(--bg-grad-3));
+  background: var(--bg-base);
+  background-image: var(--bg-glow);
   background-attachment: fixed;
+  background-size: 100% 100%, 100% 100%, 100% 100%;
+  background-repeat: no-repeat;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   transition: background-color .25s ease, color .25s ease;
