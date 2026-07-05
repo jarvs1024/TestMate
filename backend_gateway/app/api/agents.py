@@ -14,142 +14,115 @@ from app.schemas.agent import AgentOut, AgentListOut, AgentCreateIn
 
 router = APIRouter()
 
-
-# ===== 种子: 4 个 SSD 域智能体 =====
-# 跟现有 4 个前端页面 1:1 对应,等新布局跑起来,旧页面 302 到对应 agent
+# ===== 在建 4 个智能体 (2026-Q3 路线图) =====
+# 全部 status=draft, 广场仍展示, 点进去显示"建设中"; 真实 workflow 待资源到位后接
 SEED_AGENTS: list[dict] = [
     {
-        "code": "trace-doctor",
-        "name": "Trace 医生",
-        "icon": "🩺",
-        "category": AgentCategory.ssd_trace.value,
-        "version": "v1.2.0",
-        "status": AgentStatus.stable.value,
-        "summary": "上传 NVMe/SATA trace,自动定位完成符异常/重传/Credit 耗尽,关联历史同类 case",
-        "use_when": "• 跑完 case 拿到 pcap/log\n• 需要快速判断\"是不是 FW 问题\"",
-        "not_for": "kernel ring buffer 日志(用 LogLog 智能体)\nFIO 报告对比(用 FIO 判官)\n纯人工解读",
-        "tags": ["NVMe", "PCIe", "trace", "诊断"],
-        "engine": AgentEngine.dify.value,
-        "engine_config": {"workflow_id": "trace_diagnose_v1"},
+        "code": "log-analysis",
+        "name": "日志分析",
+        "icon": "📜",
+        "category": AgentCategory.ssd_trace.value,  # 复用 trace 域 (取 log 来源)
+        "version": "v0.0.0",
+        "status": AgentStatus.draft.value,
+        "summary": "贴 kernel ring buffer / 应用日志,自动分段 + 异常标注 + 关联已知 case",
+        "use_when": "(规划中) 客户日志 / syslog / dmesg 需要结构化解读",
+        "not_for": "(规划中) NVMe pcap trace 请用 Trace 医生",
+        "tags": ["日志", "诊断", "规划中"],
+        "engine": AgentEngine.builtin.value,
+        "engine_config": {},
         "input_schema": [
-            {"key": "trace_file", "label": "trace 文件", "type": "file", "required": True,
-             "accept": ".pcap,.log,.txt,.bin"},
-            {"key": "machine_id", "label": "机台", "type": "machine_select", "required": True},
-            {"key": "fw_version", "label": "FW 版本", "type": "text", "required": False,
-             "placeholder": "例: 2.1.5-rc3"},
-            {"key": "mode", "label": "解析模式", "type": "select",
-             "options": ["rule+rag", "rule", "llm"], "default": "rule+rag",
-             "required": True},
+            {"key": "log_text", "label": "日志文本", "type": "text", "required": True,
+             "placeholder": "直接粘贴 syslog / dmesg / 应用 log"},
         ],
-        "data_sources": ["machines:SMART", "machines:last_fw", "ragflow:trace_history"],
-        "tools": ["dingtalk_send"],
-        "is_featured": True,
-    },
-    {
-        "code": "fio-judge",
-        "name": "FIO 判官",
-        "icon": "📊",
-        "category": AgentCategory.ssd_fio.value,
-        "version": "v2.0.1",
-        "status": AgentStatus.stable.value,
-        "summary": "上传 2 份 fio JSON,自动画回归图 + 标红恶化指标 + 关联历史 FW 回归",
-        "use_when": "• FW 升级前后, 跑 4K 随机读写要对比\n• 性能抖动要找原因",
-        "not_for": "trace/PCIe 行为(用 Trace 医生)\n长期老化数据(用 Aging 守望)",
-        "tags": ["FIO", "性能", "回归", "对比"],
-        "engine": AgentEngine.dify.value,
-        "engine_config": {"workflow_id": "fio_compare_v2"},
-        "input_schema": [
-            {"key": "baseline", "label": "基线 fio JSON", "type": "file", "required": True,
-             "accept": ".json"},
-            {"key": "candidate", "label": "新版本 fio JSON", "type": "file", "required": True,
-             "accept": ".json"},
-            {"key": "regression_pct", "label": "恶化阈值 (%)", "type": "number",
-             "default": 5, "min": 1, "max": 50, "required": True},
-        ],
-        "data_sources": ["ragflow:fio_regression_history"],
-        "tools": ["dingtalk_send", "report_save"],
-        "is_featured": True,
-    },
-    {
-        "code": "fw-scout",
-        "name": "FW 侦察兵",
-        "icon": "🧬",
-        "category": AgentCategory.ssd_fw.value,
-        "version": "v0.3.0",
-        "status": AgentStatus.beta.value,
-        "summary": "上传两份 FW 镜像,自动 diff + 标出改了哪些模块 + 建议回归 case 清单",
-        "use_when": "• 新 FW release 前要评估影响面\n• QA 拿到 changelog 不知道测啥",
-        "not_for": "已上机跑的 FW(用 Trace 医生)\n生产事故根因(用 Trace 医生)",
-        "tags": ["FW", "diff", "风险", "回归"],
-        "engine": AgentEngine.dify.value,
-        "engine_config": {"workflow_id": "fw_diff_v0_3"},
-        "input_schema": [
-            {"key": "fw_base", "label": "基线 FW", "type": "file", "required": True,
-             "accept": ".bin,.fw,.zip"},
-            {"key": "fw_target", "label": "新 FW", "type": "file", "required": True,
-             "accept": ".bin,.fw,.zip"},
-            {"key": "scope", "label": "影响范围", "type": "select",
-             "options": ["仅 GC", "仅 Trim", "仅 Wear-leveling", "全部", "智能推断"],
-             "default": "智能推断", "required": True},
-        ],
-        "data_sources": ["fw_library", "ragflow:fw_bug_history"],
-        "tools": ["dingtalk_send", "case_pool_read"],
-        "is_featured": True,
-    },
-    {
-        "code": "aging-watch",
-        "name": "老化守望",
-        "icon": "⏱",
-        "category": AgentCategory.ssd_burn.value,
-        "version": "v1.0.0",
-        "status": AgentStatus.stable.value,
-        "summary": "7×24h 老化/高低温/断电恢复任务派发,实时回传机台状态 + 异常推钉钉",
-        "use_when": "• FW 出了一版, 要跑长时老化\n• 客户要求做可靠性验证",
-        "not_for": "单次短测试(用其他 agent)\nCI 代码测试(走 Jenkins)",
-        "tags": ["老化", "长时任务", "可靠性"],
-        "engine": AgentEngine.n8n.value,
-        "engine_config": {"workflow_id": "aging_dispatch_v1"},
-        "input_schema": [
-            {"key": "machine_ids", "label": "机台 (多选)", "type": "machine_multi_select",
-             "required": True},
-            {"key": "fw_version", "label": "FW 版本", "type": "text", "required": True},
-            {"key": "duration_hours", "label": "运行时长 (小时)", "type": "number",
-             "default": 168, "min": 1, "required": True},
-            {"key": "workload", "label": "工况", "type": "select",
-             "options": ["4K 随机写", "128K 顺序写", "混合 70/30", "高低温循环"],
-             "default": "4K 随机写", "required": True},
-            {"key": "temp_profile", "label": "温箱曲线", "type": "text",
-             "placeholder": "例: 25℃→70℃→-10℃, 8h 循环"},
-        ],
-        "data_sources": ["machines:all", "fw_library"],
-        "tools": ["machine_ssh", "dingtalk_send", "job_dispatch"],
-        "is_featured": True,
-    },
-    {
-        "code": "kb-query-bot",
-        "name": "分类查询知识机器助手",
-        "icon": "🤖",
-        "category": AgentCategory.ssd_spec.value,  # 协议 / 知识类
-        "version": "v1.0.0",
-        "status": AgentStatus.stable.value,
-        "summary": "基于 Dify Chatbot 的知识库对话入口,直接在 TestMate 里聊,免开新窗口",
-        "use_when": "• 随手查 Spec / 协议 / 内部知识库\n• 想在 TestMate 内闭环, 不用切浏览器标签",
-        "not_for": "需要 FW diff / FIO 比对 / 老化派发等专业流程 (用对应专业智能体)",
-        "tags": ["Dify", "知识库", "对话", "RAG"],
-        "engine": AgentEngine.dify.value,
-        "engine_config": {"mode": "embed"},
-        "input_schema": [],
-        "data_sources": ["dify:chatbot:1yidcQMo2wcZJH9B"],
+        "data_sources": [],
         "tools": [],
-        "is_featured": True,
-        "embed_url": "http://localhost:35001/chatbot/1yidcQMo2wcZJH9B",
+        "is_featured": False,
+    },
+    {
+        "code": "env-ops",
+        "name": "环境运维",
+        "icon": "🛠",
+        "category": AgentCategory.ssd_ops.value,  # 机台/环境
+        "version": "v0.0.0",
+        "status": AgentStatus.draft.value,
+        "summary": "查询机台状态 / 温箱 / 通道占用 / 剩余盘位; 一键开工单",
+        "use_when": "(规划中) 实验室要快速看哪些机台空闲 / 排队状态",
+        "not_for": "(规划中) 长时老化派发请用 老化守望",
+        "tags": ["机台", "运维", "规划中"],
+        "engine": AgentEngine.builtin.value,
+        "engine_config": {},
+        "input_schema": [
+            {"key": "query", "label": "查询指令", "type": "text", "required": True,
+             "placeholder": "例: 哪些 8 通道机台是空闲的?"},
+        ],
+        "data_sources": ["machines:status"],
+        "tools": ["machine_ssh"],
+        "is_featured": False,
+    },
+    {
+        "code": "test-plan-gen",
+        "name": "测试方案生成",
+        "icon": "📝",
+        "category": AgentCategory.ssd_spec.value,  # 协议 / 知识类
+        "version": "v0.0.0",
+        "status": AgentStatus.draft.value,
+        "summary": "给 Spec / 场景 / 工况描述,自动出一版测试方案 + 步骤 + 风险点",
+        "use_when": "(规划中) 客户新功能上线前要出测试方案",
+        "not_for": "(规划中) 已有 case 模板请用模板库 (后续接入)",
+        "tags": ["测试方案", "Spec", "规划中"],
+        "engine": AgentEngine.dify.value,
+        "engine_config": {},
+        "input_schema": [
+            {"key": "spec_doc", "label": "Spec / 需求描述", "type": "text", "required": True,
+             "placeholder": "粘贴 spec 章节 / 客户需求 / 工况约束"},
+        ],
+        "data_sources": [],
+        "tools": [],
+        "is_featured": False,
+    },
+    {
+        "code": "testcase-gen",
+        "name": "文本用例生成",
+        "icon": "🧪",
+        "category": AgentCategory.ssd_spec.value,
+        "version": "v0.0.0",
+        "status": AgentStatus.draft.value,
+        "summary": "指定 Spec + 测试方案,自动展开成可执行的 case 列表 + 预期结果",
+        "use_when": "(规划中) QA 拿到方案要快速落 case",
+        "not_for": "(规划中) 已有 case 库请用 case 库 (后续接入)",
+        "tags": ["用例", "Spec", "规划中"],
+        "engine": AgentEngine.dify.value,
+        "engine_config": {},
+        "input_schema": [
+            {"key": "test_plan", "label": "测试方案", "type": "text", "required": True,
+             "placeholder": "贴方案 / 选已有方案"},
+            {"key": "style", "label": "用例粒度", "type": "select",
+             "options": ["粗 (步骤级)", "中 (操作级)", "细 (断言级)"],
+             "default": "中 (操作级)", "required": True},
+        ],
+        "data_sources": [],
+        "tools": [],
+        "is_featured": False,
     },
 ]
 
 
 async def seed_agents() -> None:
-    """启动时跑一次: 4 个种子智能体, 已有就跳过。"""
+    """启动时跑一次:
+       - SEED_AGENTS 里的 code 已存在 → 跳过
+       - 不在 SEED_AGENTS 里的旧 agent → 标记 deprecated (广场不显示, 但 DB 里留痕可回滚)
+       - 新增的 code → 插入
+       这样切换智能体路线图时, DB 自动收敛到 SEED_AGENTS 的状态.
+    """
     async with AsyncSessionLocal() as session:
+        seed_codes = {cfg["code"] for cfg in SEED_AGENTS}
+        # 1) 把不在 SEED 里的旧 agent 标 deprecated (广场列表会过滤掉)
+        old_stmt = select(Agent).where(Agent.code.notin_(seed_codes))
+        old_result = await session.execute(old_stmt)
+        for old_agent in old_result.scalars().all():
+            old_agent.status = AgentStatus.deprecated
+            session.add(old_agent)
+        # 2) 插入新的
         for cfg in SEED_AGENTS:
             result = await session.execute(
                 select(Agent).where(Agent.code == cfg["code"])

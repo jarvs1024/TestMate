@@ -34,6 +34,17 @@
       ></iframe>
     </div>
 
+    <div v-else-if="agent && agent.status === 'draft'" class="run-body draft-mode">
+      <div class="draft-page">
+        <div class="draft-emoji">{{ agent.icon }}</div>
+        <h3>{{ agent.name }} · 建设中</h3>
+        <p class="draft-summary">{{ agent.summary }}</p>
+        <p class="draft-meta">本智能体还在规划中, 上线会推送到广场. 现在点
+          <router-link :to="{ name: 'plaza' }">返回广场</router-link>
+          看其他能用的.
+        </p>
+      </div>
+    </div>
     <div v-else-if="agent" class="run-body">
       <!-- 左:参数配置 -->
       <div class="run-form card">
@@ -181,7 +192,7 @@ const embedLabel = computed(() => {
 });
 
 const STATUS_LABELS: Record<string, string> = {
-  draft: '草稿', alpha: '内测', beta: 'Beta', stable: '稳定', deprecated: '弃用',
+  draft: '建设中', alpha: '内测', beta: 'Beta', stable: '稳定', deprecated: '弃用',
 };
 const EV_ICON: Record<string, string> = {
   info: 'ℹ', ok: '✓', warn: '⚠', err: '✗', section: '▣', stream: '✎', log: '›',
@@ -542,6 +553,26 @@ button.secondary:hover { border-color: var(--border-strong); color: var(--ink-90
 .ev-streaming .ev-icon { animation: pulse 1.2s ease-in-out infinite; }
 .cursor { display: inline-block; width: 6px; height: 14px; background: var(--primary); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 0%,50% { opacity: 1; } 50.01%,100% { opacity: 0; } }
+
+.draft-page {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center;
+  padding: 80px 24px;
+  gap: 12px;
+  width: 100%;
+}
+.draft-page h3 { font-size: 22px; font-weight: 700; color: var(--ink-900); margin: 0; }
+.draft-page .draft-emoji {
+  font-size: 56px;
+  background: linear-gradient(135deg, var(--primary-soft), var(--primary-grad-soft));
+  padding: 28px;
+  border-radius: 24px;
+  filter: grayscale(0.4);
+}
+.draft-page .draft-summary { font-size: 14px; color: var(--ink-700); max-width: 560px; margin: 0; line-height: 1.6; }
+.draft-page .draft-meta { font-size: 12.5px; color: var(--ink-500); margin: 8px 0 0; }
+.draft-page .draft-meta a { color: var(--primary); }
 
 .loading {
   background: var(--surface-soft); backdrop-filter: blur(8px);

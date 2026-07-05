@@ -1,5 +1,8 @@
 <template>
-  <div class="card agent-card" :class="`status-${agent.status}`" @click="$emit('open', agent)">
+  <div class="card agent-card" :class="[`status-${agent.status}`, { 'is-draft': isDraft }]"
+       :role="isDraft ? 'img' : 'button'"
+       :tabindex="isDraft ? -1 : 0"
+       @click="onCardClick">
     <div class="ac-hd">
       <div class="ac-icon">{{ agent.icon }}</div>
       <div class="ac-title">
@@ -13,6 +16,10 @@
     <p class="ac-summary">{{ agent.summary }}</p>
     <div class="ac-tags">
       <span v-for="t in agent.tags.slice(0, 4)" :key="t" class="tag">#{{ t }}</span>
+    </div>
+    <div v-if="isDraft" class="ac-overlay" aria-hidden="true">
+      <span class="ov-dot"></span>
+      <span class="ov-txt">建设中</span>
     </div>
     <div class="ac-meta">
       <span class="meta-item">🔧 {{ agent.engine }}</span>
@@ -29,7 +36,6 @@ import { computed } from 'vue';
 import type { AgentSummary } from '@/api/agents';
 
 const props = defineProps<{ agent: AgentSummary }>();
-defineEmits<{ (e: 'open', a: AgentSummary): void }>();
 
 const CATEGORY_LABELS: Record<string, string> = {
   'ssd-trace': 'Trace 诊断',
@@ -41,7 +47,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   'ssd-ops': '机台运维',
 };
 const STATUS_LABELS: Record<string, string> = {
-  draft: '草稿',
+  draft: '建设中',
   alpha: '内测',
   beta: 'Beta',
   stable: '稳定',
@@ -50,6 +56,12 @@ const STATUS_LABELS: Record<string, string> = {
 
 const categoryLabel = computed(() => CATEGORY_LABELS[props.agent.category] || props.agent.category);
 const statusLabel = computed(() => STATUS_LABELS[props.agent.status] || props.agent.status);
+const emit = defineEmits<{ (e: 'open', a: AgentSummary): void }>();
+const isDraft = computed(() => props.agent.status === 'draft');
+function onCardClick() {
+  if (isDraft.value) return;  // 建设中智能体暂不跳 Runner
+  emit('open', props.agent);
+}
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -127,6 +139,56 @@ function relativeTime(iso: string): string {
   padding: 2px 7px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
+}
+
+/* 建设中智能体: 整张卡淡掉 + 右上角"建设中"水印, 不能点 */
+.agent-card.is-draft {
+  cursor: not-allowed;
+  position: relative;
+  overflow: hidden;
+  opacity: 0.78;
+}
+.agent-card.is-draft:hover {
+  transform: none;
+  border-color: var(--border);
+  box-shadow: none;
+}
+.agent-card.is-draft .ac-icon {
+  filter: grayscale(0.6);
+  box-shadow: none;
+}
+.ac-overlay {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-700);
+  pointer-events: none;
+}
+html[data-theme="dark"] .ac-overlay {
+  background: rgba(15, 22, 40, 0.85);
+  color: var(--ink-300);
+}
+.ac-overlay .ov-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--ink-500);
+  animation: ov-pulse 1.6s ease-in-out infinite;
+}
+@keyframes ov-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.85); }
+  50%      { opacity: 1;   transform: scale(1); }
 }
 
 .ac-meta {
