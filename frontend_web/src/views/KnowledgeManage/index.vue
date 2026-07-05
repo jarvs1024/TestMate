@@ -268,7 +268,15 @@ onMounted(async () => {
 .card-overview h2 { margin-bottom: 10px; }
 .card-overview .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .card-overview .stat { text-align: center; padding: 8px 6px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 8px; }
-.card-overview .num { font-size: 20px; font-weight: 800; color: var(--primary); font-family: var(--font-mono); line-height: 1; letter-spacing: -0.5px; }
+.card-overview .num {
+  font-size: 20px; font-weight: 800;
+  font-family: var(--font-mono); line-height: 1; letter-spacing: -0.5px;
+  background: var(--primary-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
 .card-overview .num.hi { color: var(--ok); }
 .card-overview .lbl { font-size: 11px; color: var(--ink-500); margin-top: 4px; }
 

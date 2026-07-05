@@ -510,7 +510,12 @@ button.secondary:hover { border-color: var(--border-strong); color: var(--ink-90
 .ev-title { font-size: 12.5px; font-weight: 600; color: var(--ink-900); margin-bottom: 2px; }
 .ev-content { font-size: 12.5px; color: var(--ink-700); line-height: 1.55; white-space: pre-wrap; }
 
-.ev-info { border-left-color: var(--primary); }
+.ev-info {
+  /* 左边 3px 渐变线: box-shadow inset 不支持渐变, 用 background gradient + mask 模拟 */
+  border-left: 3px solid;
+  border-image: var(--primary-grad) 1 100%;
+  border-image-slice: 1;
+}
 .ev-info .ev-icon { background: var(--primary-soft); color: var(--primary); }
 .ev-ok { border-left-color: var(--ok); }
 .ev-ok .ev-icon { background: rgba(22, 163, 74, 0.1); color: var(--ok); }

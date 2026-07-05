@@ -117,7 +117,7 @@ onMounted(async () => {
   font-size: 11.5px; background: var(--surface); padding: 1px 7px; border-radius: var(--radius-pill);
   font-family: var(--font-mono); font-weight: 600;
 }
-.filter.active .count { background: var(--primary); color: #fff; }
+.filter.active .count { background: var(--primary-grad); color: #fff; }
 
 .search {
   display: flex; align-items: center; gap: 6px;
