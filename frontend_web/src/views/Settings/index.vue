@@ -106,49 +106,11 @@
           <!-- 子组: 知识检索 -->
           <div :id="'sec-search'" class="sub-grp">
             <h3>🔎 知识检索 <span class="sub-cnt">{{ searchItems.length }} 项</span></h3>
-            <div v-for="(it, idx) in searchItems" :key="it.key" class="row" :class="{ first: idx === 0 }">
-              <div class="lbl-col">
-                <div class="k">
-                  <code>{{ it.key }}</code>
-                  <span v-if="it.is_secret" class="secret-tag">secret</span>
-                  <span v-if="!it.is_default" class="custom-tag">已定制</span>
-                </div>
-                <div class="d">{{ it.description }}</div>
-              </div>
-              <div class="inp-col">
-                <label v-if="it.value_type === 'bool'" class="switch">
-                  <input type="checkbox" :checked="!!drafts[it.key]"
-                    :disabled="!isAdmin"
-                    @change="setDraft(it.key, ($event.target as HTMLInputElement).checked)" />
-                  <span class="sl"></span>
-                  <span class="stxt">{{ drafts[it.key] ? 'ON' : 'OFF' }}</span>
-                </label>
-                <template v-else-if="it.value_type === 'secret'">
-                  <div class="secret-wrap">
-                    <input :type="showSecrets[it.key] ? 'text' : 'password'"
-                      :value="getInputValue(it)"
-                      :placeholder="it.is_default ? '(使用 .env 默认值)' : '已设置, 留空不改'"
-                      :disabled="!isAdmin"
-                      @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-                    <button class="eye" type="button" @click="showSecrets[it.key] = !showSecrets[it.key]" :title="showSecrets[it.key] ? '隐藏' : '显示'">
-                      {{ showSecrets[it.key] ? '🙈' : '👁' }}
-                    </button>
-                  </div>
-                </template>
-                <input v-else
-                  :type="it.value_type === 'int' ? 'number' : 'text'"
-                  :value="drafts[it.key]"
-                  :placeholder="it.description"
-                  :disabled="!isAdmin"
-                  @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-              </div>
-              <div class="act-col" v-if="isAdmin">
-                <button class="primary" :disabled="!isDirty(it) || !!saving" @click="onSave(it)">
-                  {{ saving === it.key ? '保存中…' : '保存' }}
-                </button>
-                <button v-if="isDirty(it)" class="ghost" @click="revert(it)">取消</button>
-              </div>
-            </div>
+            <SettingRow v-for="(it, idx) in searchItems" :key="it.key"
+              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+              :saving="saving === it.key" :secret-display="getInputValue(it)"
+              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
             <div class="hint">
               💡 这组控制 <code>/kb</code> 页"知识检索"卡片的嵌入 URL. 换 RAGFlow 共享 Search App / Dify chatbot / 任意可嵌入页面都改这里, 不需要改代码.
             </div>
@@ -157,49 +119,11 @@
           <!-- 子组: 知识对话 -->
           <div :id="'sec-chat'" class="sub-grp">
             <h3>💬 知识对话 <span class="sub-cnt">{{ chatItems.length }} 项</span></h3>
-            <div v-for="(it, idx) in chatItems" :key="it.key" class="row" :class="{ first: idx === 0 }">
-              <div class="lbl-col">
-                <div class="k">
-                  <code>{{ it.key }}</code>
-                  <span v-if="it.is_secret" class="secret-tag">secret</span>
-                  <span v-if="!it.is_default" class="custom-tag">已定制</span>
-                </div>
-                <div class="d">{{ it.description }}</div>
-              </div>
-              <div class="inp-col">
-                <label v-if="it.value_type === 'bool'" class="switch">
-                  <input type="checkbox" :checked="!!drafts[it.key]"
-                    :disabled="!isAdmin"
-                    @change="setDraft(it.key, ($event.target as HTMLInputElement).checked)" />
-                  <span class="sl"></span>
-                  <span class="stxt">{{ drafts[it.key] ? 'ON' : 'OFF' }}</span>
-                </label>
-                <template v-else-if="it.value_type === 'secret'">
-                  <div class="secret-wrap">
-                    <input :type="showSecrets[it.key] ? 'text' : 'password'"
-                      :value="getInputValue(it)"
-                      :placeholder="it.is_default ? '(使用 .env 默认值)' : '已设置, 留空不改'"
-                      :disabled="!isAdmin"
-                      @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-                    <button class="eye" type="button" @click="showSecrets[it.key] = !showSecrets[it.key]" :title="showSecrets[it.key] ? '隐藏' : '显示'">
-                      {{ showSecrets[it.key] ? '🙈' : '👁' }}
-                    </button>
-                  </div>
-                </template>
-                <input v-else
-                  :type="it.value_type === 'int' ? 'number' : 'text'"
-                  :value="drafts[it.key]"
-                  :placeholder="it.description"
-                  :disabled="!isAdmin"
-                  @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-              </div>
-              <div class="act-col" v-if="isAdmin">
-                <button class="primary" :disabled="!isDirty(it) || !!saving" @click="onSave(it)">
-                  {{ saving === it.key ? '保存中…' : '保存' }}
-                </button>
-                <button v-if="isDirty(it)" class="ghost" @click="revert(it)">取消</button>
-              </div>
-            </div>
+            <SettingRow v-for="(it, idx) in chatItems" :key="it.key"
+              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+              :saving="saving === it.key" :secret-display="getInputValue(it)"
+              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
             <div class="hint">
               💡 这组控制 <code>/kb</code> 页"知识对话"tab 的嵌入 URL (RAGFlow 共享 Chat App / 任意可嵌入聊天页).
             </div>
@@ -353,6 +277,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { getSchema, updateSetting, testRagflow, testDify, type SettingItem, type TestResult } from '@/api/settings';
+import SettingRow from './components/SettingRow.vue';
 import { useUserStore } from '@/stores/user';
 
 const userStore = useUserStore();
@@ -446,6 +371,9 @@ function isDirty(it: SettingItem) {
 
 function setDraft(key: string, v: any) {
   drafts[key] = v;
+}
+function toggleShow(key: string) {
+  showSecrets[key] = !showSecrets[key];
 }
 
 function getInputValue(it: SettingItem) {
