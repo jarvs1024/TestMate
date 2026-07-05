@@ -34,7 +34,7 @@ html[data-theme="light"] {
 
   /* 表面 (玻璃) */
   --surface:        #ffffff;
-  --surface-soft:   #ffffffcc;   /* 玻璃, 跟 demo 一致 */
+  --surface-soft:   #ffffff;      /* 不透明, 避免 light 模式背景渐变从卡片透出 */
   --surface-sunken: #f8fafc;
 
   /* 状态 (3 态, 跟 demo 一致) */

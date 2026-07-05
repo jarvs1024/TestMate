@@ -338,7 +338,7 @@ onMounted(async () => {
 .run-embed {
   display: flex;
   flex-direction: column;
-  background: var(--card, #fff);
+  background: var(--card, var(--surface-soft));
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
@@ -349,7 +349,7 @@ onMounted(async () => {
 .embed-hd {
   display: flex; align-items: center; gap: 12px;
   padding: 10px 14px;
-  background: var(--surface-sunken, #f5f5f7);
+  background: var(--surface-sunken);
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   color: var(--ink-700);
@@ -357,9 +357,9 @@ onMounted(async () => {
 }
 .embed-tag {
   font-weight: 600;
-  color: var(--primary, #3b82f6);
+  color: var(--primary);
   padding: 2px 8px;
-  background: var(--primary-soft, #dbeafe);
+  background: var(--primary-soft);
   border-radius: 5px;
   font-size: 11px;
 }
@@ -379,7 +379,7 @@ onMounted(async () => {
   flex: 1;
   border: 0;
   display: block;
-  background: #fff;
+  background: var(--surface);
 }
 
 .run-body {
