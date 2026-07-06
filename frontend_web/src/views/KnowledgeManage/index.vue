@@ -50,8 +50,8 @@
         <template v-if="searchEmbedUrl">
           <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
             <iframe
-              :key="`search-${themeKey}`"
-              :src="searchResolvedUrl"
+              :key="`search-${themeKey}-${themeNonce}`"
+              :src="searchIframeSrc"
               frameborder="0"
               class="share-frame"
               :style="{ minHeight: searchMinHeight + 'px' }"
@@ -75,8 +75,8 @@
         <template v-if="chatEmbedUrl">
           <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
             <iframe
-              :key="`chat-${themeKey}`"
-              :src="chatResolvedUrl"
+              :key="`chat-${themeKey}-${themeNonce}`"
+              :src="chatIframeSrc"
               frameborder="0"
               class="share-frame"
               :style="{ minHeight: searchMinHeight + 'px' }"
@@ -165,6 +165,9 @@ const activeSubLabel = computed(() => {
 const themeStore = useThemeStore();
 // 用于 iframe :key, 主题一变强制重挂载, 避免浏览器缓存 query string 相同的 URL
 const themeKey = computed(() => themeStore.resolved);
+// cache-buster: 主题切换时刷一次, 保证 iframe 拿到新 query string 时不会复用旧响应缓存
+// 只追加到 *ResolvedUrl 上 (raw embed_url 不动, 后端 /api/v1/settings/embed/<key>?theme=xxx 不感知)
+const themeNonce = ref(0);
 
 function readCurrentTheme(): string {
   // auto 已由 store.resolved 解出, 这里只可能是 'light' | 'dark'
@@ -186,6 +189,14 @@ async function resolve(prefix: 'search' | 'chat', raw: string): Promise<string> 
 const searchResolvedUrl = ref('');
 const chatResolvedUrl = ref('');
 
+// iframe 真正用的 src: resolved URL + cache-buster (主题切换时强制 reload)
+function withNonce(u: string, nonce: number): string {
+  if (!u) return '';
+  return nonce === 0 ? u : u + (u.includes('?') ? '&' : '?') + '_t=' + nonce;
+}
+const searchIframeSrc = computed(() => withNonce(searchResolvedUrl.value, themeNonce.value));
+const chatIframeSrc   = computed(() => withNonce(chatResolvedUrl.value, themeNonce.value));
+
 // 重新拼某个 tab 的 URL (无缓存, 每次都重发请求, 保证主题 / 用户切换时拿到最新 query string)
 async function reResolve(prefix: 'search' | 'chat') {
   const raw = prefix === 'search' ? searchEmbedUrl.value : chatEmbedUrl.value;
@@ -195,10 +206,11 @@ async function reResolve(prefix: 'search' | 'chat') {
   else chatResolvedUrl.value = u;
 }
 
-// 主题切换时两个 tab 都重拼 (即使当前不可见, 切回去也不会用陈旧 URL)
-watch(() => themeStore.resolved, () => {
-  reResolve('search');
-  reResolve('chat');
+// 主题切换时两个 tab 都重拼 (即使当前不可见, 切回去不会用陈旧 URL) + nonce 自增
+// (nonce 让当前可见的 iframe src 变成一个全新的 URL, 浏览器一定会重新 GET, 不会复用旧响应缓存)
+watch(() => themeStore.resolved, async () => {
+  themeNonce.value++;
+  await Promise.all([reResolve('search'), reResolve('chat')]);
 });
 
 // tab 切换: 当前 tab 没值就拉一次
