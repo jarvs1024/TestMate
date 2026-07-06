@@ -7,9 +7,25 @@
 """
 from __future__ import annotations
 import logging
+import re
 from typing import Any
 
 from app.core.config import settings
+
+
+def _rewrite_loopback(base: str) -> str:
+    """用户在容器外用 127.0.0.1/localhost 配的地址,在容器内改成 host.docker.internal 才能到 host.
+
+    生产环境如果服务在另一个 docker 容器里(用 service name),保持原样;
+    只在 URL 用了 loopback 时改写.
+    """
+    if not base:
+        return base
+    return re.sub(
+        r"https?://(?:127\.0\.0\.1|localhost)(?=[:/])",
+        "http://host.docker.internal",
+        base,
+    )
 
 logger = logging.getLogger(__name__)
 

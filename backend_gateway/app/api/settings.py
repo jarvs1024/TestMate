@@ -117,7 +117,9 @@ def _empty_out(key: str, schema: dict) -> SettingOut:
 @router.post("/test/ragflow", response_model=SettingTestOut)
 async def test_ragflow(_user: User = Depends(get_current_user)) -> SettingTestOut:
     """用当前 DB (或 fallback env) 的 ragflow 配置打 datasets 端点."""
-    base_url = (await get("ragflow.base_url", "")) or ""
+    from app.core.settings_store import _rewrite_loopback
+    raw_url = (await get("ragflow.base_url", "")) or ""
+    base_url = _rewrite_loopback(raw_url).rstrip("/")
     api_key = await get("ragflow.api_key", "") or ""
     if not base_url or "xxxxx" in api_key or "mock" in api_key:
         return SettingTestOut(ok=False, status="off", message="未配置或仍在 mock 占位", detail=None)
@@ -141,7 +143,9 @@ async def test_ragflow(_user: User = Depends(get_current_user)) -> SettingTestOu
 @router.post("/test/dify", response_model=SettingTestOut)
 async def test_dify(_user: User = Depends(get_current_user)) -> SettingTestOut:
     """用当前 DB (或 fallback env) 的 dify 配置测 mock 模式 + URL 可达."""
-    base_url = (await get("dify.base_url", "")) or ""
+    from app.core.settings_store import _rewrite_loopback
+    raw_url = (await get("dify.base_url", "")) or ""
+    base_url = _rewrite_loopback(raw_url).rstrip("/")
     api_key = await get("dify.api_key", "") or ""
     mock = bool(await get("dify.mock_mode", False))
     if mock:

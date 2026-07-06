@@ -1,0 +1,15 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+.venv
+venv
+.pytest_cache
+.ruff_cache
+tests
+node_modules
+dist
+build
+*.log
+.env
+.env.local

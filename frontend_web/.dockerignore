@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+dist
+build
+.cache
+.vite
+*.log
+.env
+.env.local
+tests
+e2e.mjs

@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from app.core.settings_store import get
+from app.core.settings_store import get, _rewrite_loopback
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ async def _config() -> tuple[str, str]:
     """(base_url, api_key) 实时从 DB / 兜底 .env 读."""
     base = (await get("ragflow.base_url", "")) or ""
     key = (await get("ragflow.api_key", "")) or ""
-    return base.rstrip("/"), key
+    return _rewrite_loopback(base).rstrip("/"), key
 
 
 async def _headers() -> dict[str, str]:

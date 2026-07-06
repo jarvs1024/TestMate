@@ -1,85 +1,142 @@
-name: test-mate  # 所有容器/网络/卷前缀: test-mate-mysql / test-mate-backend / ...
+name: test-mate
+
+# 用法:
+#   cp deploy/.env.template deploy/.env && $EDITOR deploy/.env
+#   sudo ./deploy/deploy.sh                       # 在线
+#   sudo ./deploy/deploy.sh --offline             # 离线
 
 services:
-  # MySQL
+  # ==================== MySQL ====================
   mysql:
     image: mysql:8.0
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?must set}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-testmate}
       MYSQL_USER: ${MYSQL_USER:-testmate}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-testmate}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?must set}
+      TZ: Asia/Shanghai
     ports:
-      - "33060:3306"  # host 33060 -> container 3306, 避免与 RAGFlow 等冲突
+      - "${MYSQL_HOST_PORT:-43060}:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - ${DATA_ROOT:-/opt/testmate/data}/mysql:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "${MYSQL_CPU_LIMIT:-2.0}"
+          memory: "${MYSQL_MEM_LIMIT:-2g}"
+    networks: [test-mate-net]
 
-  # Redis
+  # ==================== Redis ====================
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "63790:6379"  # host 63790 -> container 6379, 避免与 Dify 等冲突
+      - "${REDIS_HOST_PORT:-63790}:6379"
     volumes:
-      - redis_data:/data
+      - ${DATA_ROOT:-/opt/testmate/data}/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "${REDIS_CPU_LIMIT:-0.5}"
+          memory: "${REDIS_MEM_LIMIT:-512m}"
+    networks: [test-mate-net]
 
-  # Backend (FastAPI)
+  # ==================== Backend ====================
   backend:
     build:
       context: ../backend_gateway
       dockerfile: Dockerfile
-    restart: on-failure
-    # 启动 race 兜底:MySQL 还没真 ready 时 init_db 可能丢连接,自动重试
+    image: test-mate-backend:latest
+    restart: unless-stopped
+    extra_hosts:
+      # 让 backend 容器能通过 host.docker.internal 访问 host(mac/Windows 默认支持,
+      # Linux Docker 24+ 也支持). 用于:外部 RAGFlow / Dify 跑 host 上时的连接
+      - "host.docker.internal:host-gateway"
     depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
     environment:
-      MYSQL_HOST: mysql
-      REDIS_HOST: redis
-      DIFY_MOCK: ${DIFY_MOCK:-true}
-      DIFY_BASE_URL: ${DIFY_BASE_URL:-http://dify:80/v1}
-      DIFY_API_KEY: ${DIFY_API_KEY:-app-xxxxx}
-      RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-http://ragflow:9380/api/v1}
-      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:-ragflow-xxxxx}
-      JWT_SECRET: ${JWT_SECRET:-please-change-me-32-bytes-random}
-    ports:
-      - "8000:8000"
+      APP_NAME: TestMate Gateway
+      APP_VERSION: 0.1.0
+      DEBUG: "false"
+      HOST: 0.0.0.0
+      PORT: "8000"
 
-  # Frontend (Nginx)
+      JWT_SECRET: ${JWT_SECRET:?must set}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-10080}
+
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: ${MYSQL_USER:-testmate}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?must set}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-testmate}
+
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+
+      DIFY_MOCK: ${DIFY_MOCK:-true}
+      DIFY_BASE_URL: ${DIFY_BASE_URL:-}
+      DIFY_API_KEY: ${DIFY_API_KEY:-}
+      DIFY_TIMEOUT_SECONDS: "120"
+
+      RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-}
+      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:-}
+
+      DINGTALK_DEFAULT_WEBHOOK: ${DINGTALK_DEFAULT_WEBHOOK:-}
+
+      ADMIN_DEFAULT_PASSWORD: ${ADMIN_DEFAULT_PASSWORD:-ChangeMe@2026}
+    ports:
+      - "${BACKEND_HOST_PORT:-18000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "${BACKEND_CPU_LIMIT:-2.0}"
+          memory: "${BACKEND_MEM_LIMIT:-2g}"
+    networks: [test-mate-net]
+
+  # ==================== Frontend ====================
   frontend:
     build:
       context: ../frontend_web
       dockerfile: Dockerfile
+    image: test-mate-frontend:latest
     restart: unless-stopped
     depends_on:
-      - backend
+      backend: { condition: service_healthy }
     ports:
-      - "8080:80"
+      - "${FRONTEND_HOST_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "${FRONTEND_CPU_LIMIT:-0.5}"
+          memory: "${FRONTEND_MEM_LIMIT:-256m}"
+    networks: [test-mate-net]
 
-  # Dify (P0 简化版,生产用 docker compose -f ai_engine/docker-compose.yml 启)
-  # 这里先放占位,实际部署时可注释掉,单独用 ai_engine 启动
-  # dify:
-  #   image: langgenius/dify-api:1.0.0
-  #   ...
-
-  # RAGFlow (同理)
-  # ragflow:
-  #   image: infiniflow/ragflow:v0.18.0
-  #   ...
-
-volumes:
-  mysql_data:
-  redis_data:
+networks:
+  test-mate-net:
+    driver: bridge

@@ -38,14 +38,17 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
 
     # Dify
-    DIFY_MOCK: bool = False  # True:不调外部 Dify,本地 mock 流式返回(用于沙箱/无 Dify 环境)
-    DIFY_BASE_URL: str = "http://dify:80/v1"
-    DIFY_API_KEY: str = "app-xxxxx"
+    # 默认 DIFY_MOCK=True:沙箱/无 Dify 环境跑得起来;生产想接真 Dify 时改 .env DIFY_MOCK=false 并填 DIFY_BASE_URL/DIFY_API_KEY
+    DIFY_MOCK: bool = True
+    DIFY_BASE_URL: str = ""
+    DIFY_API_KEY: str = ""
     DIFY_TIMEOUT_SECONDS: int = 120
 
     # RAGFlow
-    RAGFLOW_BASE_URL: str = "http://ragflow:9380/api/v1"
-    RAGFLOW_API_KEY: str = "ragflow-xxxxx"
+    # 默认空:本工程不打包 RAGFlow,需要时由用户在 Settings 页或 .env 填真值
+    # 填的时候注意:从 backend 容器内访问 host 用 host.docker.internal,不要用 127.0.0.1
+    RAGFLOW_BASE_URL: str = ""
+    RAGFLOW_API_KEY: str = ""
 
     # DingTalk
     DINGTALK_DEFAULT_WEBHOOK: str = ""

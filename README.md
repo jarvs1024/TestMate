@@ -28,7 +28,17 @@
 |---|---|
 | `docs/superpowers/specs/2026-07-04-testmate-brief.md` | 老板汇报(232 行) |
 | `docs/superpowers/specs/2026-07-04-testmate-design.md` | 完整技术方案(587 行) |
+| `docs/DEPLOY.md` | Linux 部署架构 + 资源估算 |
+| `deploy/README.md` | 一键部署实操(在线 / 离线) |
 
 ## 后续
 
 P0 启动后,会在仓库里创建 `frontend_web/` / `backend_gateway/` / `ai_engine/` / `deploy/` 等子目录,详见详细方案 §5 工程项目架构。
+
+## 快速部署
+
+```bash
+cd deploy && cp .env.template .env && $EDITOR .env
+sudo ./deploy.sh        # 在线;离线见 deploy/README.md §3
+```
+详见 `deploy/README.md`。
