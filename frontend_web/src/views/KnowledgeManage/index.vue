@@ -45,57 +45,55 @@
           ><span class="lbl">对话</span></button>
         </div>
       </div>
-      <!-- 两个 iframe 都常驻 DOM, 由 .share-frame-hidden 控制可见性.
-           这样主题切换时:
-           - 切换 visible 是 CSS 即时切换 (无 v-if 卸载, 无 tab flash)
-           - 强制 reload 当前可见 iframe 的 src: 让 RAGFlow memory cache 释放,
-             重新 GET 拿到新主题内容 (用户描述的 '以对话为跳板' 实质就是 iframe 销毁/重建,
-             这里改成 src reload, 效果一致但无 tab 视觉跳变) -->
-      <div v-if="searchEmbedUrl" class="share-frame-wrap"
-           :class="{ 'share-frame-hidden': activeTab !== 'search' }"
-           :style="{ minHeight: searchMinHeight + 'px' }">
-        <iframe
-          ref="searchFrame"
-          :src="searchResolvedUrl"
-          frameborder="0"
-          class="share-frame"
-          :style="{ minHeight: searchMinHeight + 'px' }"
-          title="knowledge-search"
-          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-          referrerpolicy="no-referrer"
-        ></iframe>
-      </div>
-      <a v-if="searchEmbedUrl && activeTab === 'search'"
-         :href="searchEmbedUrl" target="_blank" rel="noopener"
-         class="share-pop">{{ searchOpenUrlLabel }}</a>
-      <div v-if="!searchEmbedUrl && activeTab === 'search'" class="search-placeholder">
-        <div class="ph-ic">🔎</div>
-        <div class="ph-t">知识检索建设中</div>
-        <div class="ph-d">admin 可在 设置 → 知识检索 配置 <code>search.embed_url</code> 启用</div>
-      </div>
+      <!-- 检索 tab -->
+      <template v-if="activeTab === 'search'">
+        <template v-if="searchEmbedUrl">
+          <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
+            <iframe
+              :key="`search-${themeKey}-${themeNonce}`"
+              :src="searchIframeSrc"
+              frameborder="0"
+              class="share-frame"
+              :style="{ minHeight: searchMinHeight + 'px' }"
+              title="knowledge-search"
+              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+              referrerpolicy="no-referrer"
+            ></iframe>
+          </div>
+          <a :href="searchEmbedUrl"
+             target="_blank" rel="noopener" class="share-pop">{{ searchOpenUrlLabel }}</a>
+        </template>
+        <div v-else class="search-placeholder">
+          <div class="ph-ic">🔎</div>
+          <div class="ph-t">知识检索建设中</div>
+          <div class="ph-d">admin 可在 设置 → 知识检索 配置 <code>search.embed_url</code> 启用</div>
+        </div>
+      </template>
 
-      <div v-if="chatEmbedUrl" class="share-frame-wrap"
-           :class="{ 'share-frame-hidden': activeTab !== 'chat' }"
-           :style="{ minHeight: searchMinHeight + 'px' }">
-        <iframe
-          ref="chatFrame"
-          :src="chatResolvedUrl"
-          frameborder="0"
-          class="share-frame"
-          :style="{ minHeight: searchMinHeight + 'px' }"
-          title="knowledge-chat"
-          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-          referrerpolicy="no-referrer"
-        ></iframe>
-      </div>
-      <a v-if="chatEmbedUrl && activeTab === 'chat'"
-         :href="chatEmbedUrl" target="_blank" rel="noopener"
-         class="share-pop">{{ chatOpenUrlLabel }}</a>
-      <div v-if="!chatEmbedUrl && activeTab === 'chat'" class="search-placeholder">
-        <div class="ph-ic">💬</div>
-        <div class="ph-t">知识对话建设中</div>
-        <div class="ph-d">admin 可在 设置 → 知识对话 配置 <code>chat.embed_url</code> 启用</div>
-      </div>
+      <!-- 对话 tab -->
+      <template v-else-if="activeTab === 'chat'">
+        <template v-if="chatEmbedUrl">
+          <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
+            <iframe
+              :key="`chat-${themeKey}-${themeNonce}`"
+              :src="chatIframeSrc"
+              frameborder="0"
+              class="share-frame"
+              :style="{ minHeight: searchMinHeight + 'px' }"
+              title="knowledge-chat"
+              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+              referrerpolicy="no-referrer"
+            ></iframe>
+          </div>
+          <a :href="chatEmbedUrl"
+             target="_blank" rel="noopener" class="share-pop">{{ chatOpenUrlLabel }}</a>
+        </template>
+        <div v-else class="search-placeholder">
+          <div class="ph-ic">💬</div>
+          <div class="ph-t">知识对话建设中</div>
+          <div class="ph-d">admin 可在 设置 → 知识对话 配置 <code>chat.embed_url</code> 启用</div>
+        </div>
+      </template>
 
     </div>
 
@@ -135,7 +133,7 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus';
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { buildEmbedUrl as apiBuildEmbedUrl, getSchema } from '@/api/settings';
 import { listDatasets, kbHealth, type KbDataset } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
@@ -165,6 +163,11 @@ const activeSubLabel = computed(() => {
 
 // 当前主题: 从 theme store 的 resolved getter 读 (light/dark); 比读 data-theme 更可靠
 const themeStore = useThemeStore();
+// 用于 iframe :key, 主题一变强制重挂载, 避免浏览器缓存 query string 相同的 URL
+const themeKey = computed(() => themeStore.resolved);
+// cache-buster: 主题切换时刷一次, 保证 iframe 拿到新 query string 时不会复用旧响应缓存
+// 只追加到 *ResolvedUrl 上 (raw embed_url 不动, 后端 /api/v1/settings/embed/<key>?theme=xxx 不感知)
+const themeNonce = ref(0);
 
 function readCurrentTheme(): string {
   // auto 已由 store.resolved 解出, 这里只可能是 'light' | 'dark'
@@ -186,6 +189,14 @@ async function resolve(prefix: 'search' | 'chat', raw: string): Promise<string> 
 const searchResolvedUrl = ref('');
 const chatResolvedUrl = ref('');
 
+// iframe 真正用的 src: resolved URL + cache-buster (主题切换时强制 reload)
+function withNonce(u: string, nonce: number): string {
+  if (!u) return '';
+  return nonce === 0 ? u : u + (u.includes('?') ? '&' : '?') + '_t=' + nonce;
+}
+const searchIframeSrc = computed(() => withNonce(searchResolvedUrl.value, themeNonce.value));
+const chatIframeSrc   = computed(() => withNonce(chatResolvedUrl.value, themeNonce.value));
+
 // 重新拼某个 tab 的 URL (无缓存, 每次都重发请求, 保证主题 / 用户切换时拿到最新 query string)
 async function reResolve(prefix: 'search' | 'chat') {
   const raw = prefix === 'search' ? searchEmbedUrl.value : chatEmbedUrl.value;
@@ -195,39 +206,12 @@ async function reResolve(prefix: 'search' | 'chat') {
   else chatResolvedUrl.value = u;
 }
 
-// template refs: 直接拿 iframe DOM, 主题切换时强制 reload (绕过 memory cache)
-const searchFrame = ref<HTMLIFrameElement | null>(null);
-const chatFrame = ref<HTMLIFrameElement | null>(null);
-
-// 主题切换: 先拉新主题 URL, 再强制 reload 两个 iframe (含隐藏的, 切回时也是新内容)
-// 为什么需要 reload iframe (而不是改 :src 触发重新 fetch):
-//   - RAGFlow 渲染完后, 浏览器层 memory cache 锁住 RAGFlow 应用 JS 状态 (含主题)
-//   - 单纯改 :src 的 query string 同源 fetch 命中 memory cache, RAGFlow JS 不重跑
-//   - 用 iframeEl.contentWindow.location.reload() 才是真正的 reload, 等价于用户按 F5
-//   - 这就是用户描述的 '以对话为跳板' 的本质: 销毁/重建 iframe. 这里直接 reload, 跳过 tab 跳变,
-//     视觉上无 tab 闪烁
+// 主题切换时两个 tab 都重拼 (即使当前不可见, 切回去不会用陈旧 URL) + nonce 自增
+// (nonce 让当前可见的 iframe src 变成一个全新的 URL, 浏览器一定会重新 GET, 不会复用旧响应缓存)
 watch(() => themeStore.resolved, async () => {
-  // 1) 把两个 tab 的 URL 都拉到新主题
+  themeNonce.value++;
   await Promise.all([reResolve('search'), reResolve('chat')]);
-  // 2) 等 Vue 把新 :src 同步到两个 iframe 的 src 属性 (下一帧 DOM 才更新)
-  await nextTick();
-  // 3) 强制 reload 两个 iframe, 让 RAGFlow 按新主题重新渲染
-  //    注意: reload 当前可见的 iframe 时用户会看到短暂白屏 (RAGFlow 重新加载),
-  //          这是 RAGFlow 自身不可避免的, 不是我们的逻辑问题
-  reloadFrame(searchFrame.value);
-  reloadFrame(chatFrame.value);
 });
-
-function reloadFrame(el: HTMLIFrameElement | null) {
-  if (!el) return;
-  try {
-    el.contentWindow?.location?.reload();
-  } catch {
-    // sandbox 限制下跨源 reload 可能抛错, 静默回退: 改 src 触发同源 fetch
-    const cur = el.getAttribute('src');
-    if (cur) el.setAttribute('src', cur);
-  }
-}
 
 // tab 切换: 当前 tab 没值就拉一次
 watch(activeTab, async (t) => {
@@ -360,17 +344,6 @@ onMounted(async () => {
 }
 .share-sub-inline { font-size: 12px; font-weight: 400; color: var(--ink-500); }
 .share-frame-wrap { width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-sunken); }
-/* 隐藏但不卸载: 保持 iframe 常驻 DOM, 切回时不重新 fetch */
-.share-frame-hidden {
-  position: absolute;
-  width: 1px; height: 1px;
-  opacity: 0;
-  pointer-events: none;
-  border: 0 !important;
-  overflow: hidden;
-}
-/* wrap 容器需要 relative 让隐藏的 iframe 跳出布局 */
-.card-share { position: relative; }
 .share-frame { display: block; border: 0; width: 100%; height: 100%; min-height: inherit; }
 .share-pop { display: inline-block; margin-top: 10px; font-size: 11.5px; color: var(--primary); text-decoration: none; align-self: flex-end; }
 .share-pop:hover { text-decoration: underline; }
