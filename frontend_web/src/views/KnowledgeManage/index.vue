@@ -50,6 +50,7 @@
         <template v-if="searchEmbedUrl">
           <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
             <iframe
+              :key="`search-${themeKey}`"
               :src="searchResolvedUrl"
               frameborder="0"
               class="share-frame"
@@ -74,6 +75,7 @@
         <template v-if="chatEmbedUrl">
           <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
             <iframe
+              :key="`chat-${themeKey}`"
               :src="chatResolvedUrl"
               frameborder="0"
               class="share-frame"
@@ -134,6 +136,7 @@ import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref, watch } from 'vue';
 import { buildEmbedUrl as apiBuildEmbedUrl, getSchema } from '@/api/settings';
 import { listDatasets, kbHealth, type KbDataset } from '@/api/kb';
+import { useThemeStore } from '@/stores/theme';
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
@@ -158,10 +161,14 @@ const activeSubLabel = computed(() => {
   return searchLabel.value;
 });
 
-// 当前主题: 从 <html data-theme="..."> 读, light/dark/auto; auto 视作 light 传给后端
+// 当前主题: 从 theme store 的 resolved getter 读 (light/dark); 比读 data-theme 更可靠
+const themeStore = useThemeStore();
+// 用于 iframe :key, 主题一变强制重挂载, 避免浏览器缓存 query string 相同的 URL
+const themeKey = computed(() => themeStore.resolved);
+
 function readCurrentTheme(): string {
-  const t = document.documentElement.getAttribute('data-theme') || 'light';
-  return t === 'dark' ? 'dark' : 'light';
+  // auto 已由 store.resolved 解出, 这里只可能是 'light' | 'dark'
+  return themeStore.resolved;
 }
 
 // 调后端 /api/v1/settings/embed/<key>?theme=xxx 拼 userId+theme, 后端按 schema 中 *\.append_user_id / *\.append_theme 开关
@@ -179,19 +186,31 @@ async function resolve(prefix: 'search' | 'chat', raw: string): Promise<string> 
 const searchResolvedUrl = ref('');
 const chatResolvedUrl = ref('');
 
-// 拼 URL: 当前 tab 的 raw URL + 后端 runtime 拼 userId/theme
-// 注意: loadSearchConfig 异步拉配置, 期间 raw URL 还没填; 所以同时监听 activeTab 和 raw URL,
-//       只有两边都 ready 才发请求, 避免一上来并发 3 个 (也避免空 raw 发请求).
-function resolveForTab(t: ShareTab) {
-  if (t === 'search' && !searchResolvedUrl.value && searchEmbedUrl.value) {
-    resolve('search', searchEmbedUrl.value).then((u) => (searchResolvedUrl.value = u));
-  } else if (t === 'chat' && !chatResolvedUrl.value && chatEmbedUrl.value) {
-    resolve('chat', chatEmbedUrl.value).then((u) => (chatResolvedUrl.value = u));
-  }
+// 重新拼某个 tab 的 URL (无缓存, 每次都重发请求, 保证主题 / 用户切换时拿到最新 query string)
+async function reResolve(prefix: 'search' | 'chat') {
+  const raw = prefix === 'search' ? searchEmbedUrl.value : chatEmbedUrl.value;
+  if (!raw) return;
+  const u = await resolve(prefix, raw);
+  if (prefix === 'search') searchResolvedUrl.value = u;
+  else chatResolvedUrl.value = u;
 }
-watch(activeTab, (t) => resolveForTab(t));
-watch(searchEmbedUrl, (v) => { if (v && activeTab.value === 'search') resolveForTab('search'); });
-watch(chatEmbedUrl, (v) => { if (v && activeTab.value === 'chat') resolveForTab('chat'); });
+
+// 主题切换时两个 tab 都重拼 (即使当前不可见, 切回去也不会用陈旧 URL)
+watch(() => themeStore.resolved, () => {
+  reResolve('search');
+  reResolve('chat');
+});
+
+// tab 切换: 当前 tab 没值就拉一次
+watch(activeTab, async (t) => {
+  if (t === 'search' && searchEmbedUrl.value && !searchResolvedUrl.value) {
+    await reResolve('search');
+  } else if (t === 'chat' && chatEmbedUrl.value && !chatResolvedUrl.value) {
+    await reResolve('chat');
+  }
+});
+watch(searchEmbedUrl, (v) => { if (v && activeTab.value === 'search' && !searchResolvedUrl.value) reResolve('search'); });
+watch(chatEmbedUrl, (v) => { if (v && activeTab.value === 'chat' && !chatResolvedUrl.value) reResolve('chat'); });
 
 async function loadShareConfig() {
   try {
@@ -256,7 +275,8 @@ async function loadAll() {
 onMounted(async () => {
   // 概览数据 + 配置并发拉, 任一失败 ElMessage 提示; 配置到位后拼默认 tab 的 URL
   await Promise.allSettled([loadAll(), loadShareConfig()]);
-  resolveForTab(activeTab.value);
+  if (activeTab.value === 'search' && searchEmbedUrl.value) await reResolve('search');
+  else if (activeTab.value === 'chat' && chatEmbedUrl.value) await reResolve('chat');
 });
 </script>
 
