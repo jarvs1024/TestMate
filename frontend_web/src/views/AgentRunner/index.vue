@@ -230,6 +230,162 @@ function toggleMulti(key: string, v: number, checked: boolean) {
   else if (!checked) form[key] = cur.filter((x) => x !== v);
 }
 
+/* ===== 日志分析 (demo) ===== */
+// 分类规则: (pattern, category, severity, hint)
+const LOG_RULES: Array<{ re: RegExp; category: string; severity: 'err' | 'warn' | 'info'; hint: string }> = [
+  { re: /nvme[\s\S]*I\/O\s+\d+\s+QID\s+\d+\s+timeout/i, category: 'NVMe IO timeout', severity: 'err', hint: '控制器未在规定时间内完成 IO, 常见原因: FW hang / 热降频 / PCIe 链路异常' },
+  { re: /nvme[\s\S]*PCI device unresponsive/i,         category: 'NVMe 链路异常', severity: 'err', hint: 'PCIe 设备无响应, 排查: lspci / 复位链路 / 物理插槽' },
+  { re: /nvme[\s\S]*Abort status/i,                    category: 'NVMe Abort',   severity: 'warn', hint: '提交了 abort, IO 被取消, 跟 timeout 关联看' },
+  { re: /nvme[\s\S]*resetting controller/i,            category: 'NVMe Reset',   severity: 'warn', hint: '驱动走了控制器 reset 路径, 记录频次' },
+  { re: /nvme[\s\S]*Invalid\s+opcode/i,                category: 'NVMe 协议错',  severity: 'err', hint: 'NVMe opcode 不被 FW 接受, FW/驱动版本不匹配可能' },
+  { re: /nvme[\s\S]*Media and Data Integrity Errors/i,  category: '介质 / 数据完整性', severity: 'err', hint: 'UNC / 介质错误, 立即停止老化, 走 RMA 流程' },
+  { re: /blk_update_request:\s*I\/O error/i,            category: 'blk IO error', severity: 'err', hint: '块层 IO error, 看上层 device-mapper / FS 行为' },
+  { re: /EXT4-fs error/i,                                category: '文件系统错误', severity: 'err', hint: 'ext4 元数据异常, 立即 dump + 不要 fsck 自动跑' },
+  { re: /XFS\s*\(.*\):\s*Corruption/i,                category: '文件系统错误', severity: 'err', hint: 'XFS 元数据损坏, 走 xfs_repair / 不要 mount -w' },
+  { re: /thermal.*critical|temp.*critical|critical temperature/i, category: '温度临界', severity: 'err', hint: '过温保护, 停机 / 查散热 / 降负载' },
+  { re: /CPU\s+\d+:\s+Package temperature above threshold/i, category: 'CPU 过温', severity: 'warn', hint: 'CPU 限频可能影响吞吐, 查机台环境' },
+  { re: /Out of memory|oom-kill|invoked oom-killer/i,    category: 'OOM',          severity: 'err', hint: '内存不足杀进程, 看 dmesg 时间附近 workload / 内存泄漏' },
+  { re: /segfault|general protection fault/i,            category: '应用 crash',   severity: 'err', hint: '应用层段错误, 收集 coredump' },
+  { re: /WARNING:/i,                                     category: '通用警告',     severity: 'warn', hint: '非致命警告, 关注是否累积' },
+  { re: /ERROR|FATAL|panic/i,                            category: '致命错误',     severity: 'err', hint: '需立即关注' },
+  { re: /smartd.*FAILED|ata\d+\.\d+:\s*failed/i,      category: 'SMART 失败',   severity: 'err', hint: 'SMART 自检失败, 准备 RMA' },
+  { re: /ata\d+:\s*soft reset|ata\d+:\s*hard reset/i, category: 'SATA 复位',   severity: 'warn', hint: 'SATA 链路 soft/hard reset, 看热插拔 / 链路质量' },
+  { re: /nvme[\s\S]*initialization.?complete/i,        category: 'NVMe 正常',   severity: 'info', hint: '驱动加载完成, 正常' },
+  { re: /scsi[\s\S]*Synchronize Cache\(10\) failed/i,  category: 'SCSI flush 失败', severity: 'warn', hint: 'flush cache 失败, 跟 PLP / 掉电路径相关' },
+];
+
+interface LogFinding {
+  lineNo: number;
+  ts?: string;
+  category: string;
+  severity: 'err' | 'warn' | 'info';
+  raw: string;
+  hint: string;
+}
+
+function parseTimestamp(line: string): string | undefined {
+  // dmesg: "[ 1234.567890]"
+  const dm = line.match(/\[\s*(\d+\.\d+)\]/);
+  if (dm) return `+${dm[1]}s`;
+  // syslog: "Mar 12 14:23:01" / "2026-03-12T14:23:01"
+  const sl = line.match(/^([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})/);
+  if (sl) return sl[1];
+  const iso = line.match(/(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2})/);
+  if (iso) return iso[1];
+  return undefined;
+}
+
+function analyzeLog(text: string): {
+  findings: LogFinding[];
+  stats: { total: number; err: number; warn: number; info: number };
+  categories: Record<string, number>;
+} {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  const findings: LogFinding[] = [];
+  const cats: Record<string, number> = {};
+  let errN = 0, warnN = 0, infoN = 0;
+  lines.forEach((line, idx) => {
+    for (const r of LOG_RULES) {
+      if (r.re.test(line)) {
+        findings.push({
+          lineNo: idx + 1,
+          ts: parseTimestamp(line),
+          category: r.category,
+          severity: r.severity,
+          raw: line.length > 200 ? line.slice(0, 200) + '…' : line,
+          hint: r.hint,
+        });
+        cats[r.category] = (cats[r.category] || 0) + 1;
+        if (r.severity === 'err') errN++;
+        else if (r.severity === 'warn') warnN++;
+        else infoN++;
+        break; // 一行只归一类, 避免重复
+      }
+    }
+  });
+  return {
+    findings,
+    stats: { total: lines.length, err: errN, warn: warnN, info: infoN },
+    categories: cats,
+  };
+}
+
+async function runLogAnalysis() {
+  const text = String(form.log_text || '');
+  if (!text.trim()) {
+    events.value.push({ type: 'err', title: '参数缺失', content: 'log_text 不能为空' });
+    return;
+  }
+  const logType = String(form.log_type || 'auto');
+  events.value.push({ type: 'info', title: '日志分析 (demo 模式)', content: `日志类型: ${logType} · 引擎: builtin (本地规则匹配)` });
+  await sleep(250);
+
+  events.value.push({ type: 'log', content: '解析时间戳 + 分行...' });
+  const r = analyzeLog(text);
+  await sleep(300);
+
+  // 总览
+  const pct = r.stats.total === 0 ? 0 : Math.round((r.stats.err * 100) / r.stats.total);
+  events.value.push({
+    type: 'section',
+    title: '▣ 概览',
+    content: `共 ${r.stats.total} 行 · 错误 ${r.stats.err} (${pct}%) · 警告 ${r.stats.warn} · 信息 ${r.stats.info}`,
+  });
+  await sleep(400);
+
+  // 错误分类统计
+  if (Object.keys(r.categories).length > 0) {
+    const lines = Object.entries(r.categories)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `  ${k.padEnd(18)} ${v}`);
+    events.value.push({
+      type: 'section',
+      title: '📊 错误分类 (按命中行数排序)',
+      content: lines.join('\n'),
+    });
+  } else {
+    events.value.push({ type: 'section', title: '✓ 未发现已知错误模式', content: 'demo 规则集覆盖: NVMe / blk / ext4 / XFS / thermal / OOM / SMART / SATA / SCSI flush' });
+  }
+  await sleep(500);
+
+  // 关键事件 (只列 err / warn)
+  const critical = r.findings.filter((f) => f.severity !== 'info');
+  if (critical.length > 0) {
+    events.value.push({ type: 'section', title: `🚨 关键事件 (${critical.length} 条)`, content: '' });
+    await sleep(200);
+    // 流式输出前 10 条
+    const top = critical.slice(0, 10);
+    for (const f of top) {
+      const tag = f.severity === 'err' ? '✗' : '⚠';
+      events.value.push({
+        type: f.severity === 'err' ? 'err' : 'warn',
+        title: `${tag} L${f.lineNo}${f.ts ? ` ${f.ts}` : ''} · ${f.category}`,
+        content: f.raw + '\n  → ' + f.hint,
+      });
+      await sleep(280);
+    }
+    if (critical.length > top.length) {
+      events.value.push({ type: 'log', content: `… 还有 ${critical.length - top.length} 条未列出 (按规则只展示前 ${top.length} 条关键事件)` });
+    }
+  }
+  await sleep(300);
+
+  // 推测根因
+  const topCat = Object.entries(r.categories).sort((a, b) => b[1] - a[1])[0];
+  const summary = topCat
+    ? `最高频类别: ${topCat[0]} (${topCat[1]} 次). 建议优先排查: ${topCat[0] === 'NVMe IO timeout' || topCat[0] === 'NVMe 链路异常' ? 'FW / PCIe 链路 / 供电' : topCat[0] === '温度临界' || topCat[0] === 'CPU 过温' ? '机台环境 / 散热 / 降负载' : topCat[0] === '介质 / 数据完整性' ? '立即停机 RMA' : '见上方分类'}.`
+    : 'demo 规则集未命中任何已知模式, 建议人工研读或升级规则集.';
+  events.value.push({ type: 'section', title: '💡 AI 推测根因 (demo)', content: summary });
+  await sleep(300);
+
+  events.value.push({
+    type: r.stats.err > 0 ? 'warn' : 'ok',
+    title: r.stats.err > 0 ? `✓ 完成 · 发现 ${r.stats.err} 个错误` : '✓ 完成 · 日志干净',
+    content: `本次为客户端规则 demo, 真实 AI 推理待接入 Dify workflow (engine_config.demo=true).`,
+  });
+}
+
+
 async function loadMachines() {
   try {
     const { data } = await axios.get('/api/v1/machines', {
@@ -256,6 +412,12 @@ async function onRun() {
   // 1. 模拟参数校验
   events.value.push({ type: 'log', content: '校验参数...' });
   await sleep(300);
+
+  // 1.5 引擎分发: log-analysis 走真实 demo (客户端规则), 其他 agent 走通用 mock
+  if (agent.value.code === 'log-analysis') {
+    await runLogAnalysis();
+    return;
+  }
 
   // 2. 模拟引擎调用
   events.value.push({ type: 'log', content: `调用 ${agent.value.engine} 引擎: ${agent.value.engine_config.workflow_id || 'default'}` });

@@ -22,17 +22,20 @@ SEED_AGENTS: list[dict] = [
         "name": "日志分析",
         "icon": "📜",
         "category": AgentCategory.ssd_trace.value,  # 复用 trace 域 (取 log 来源)
-        "version": "v0.0.0",
-        "status": AgentStatus.draft.value,
+        "version": "v0.1.0-demo",
+        "status": AgentStatus.beta.value,
         "summary": "SSD 测试日志分析: 贴 kernel ring buffer / 应用日志, 自动分段 + 异常标注 + 错误分类",
-        "use_when": "(规划中) SSD 测试中产生的 syslog / dmesg / FW log 需要结构化解读",
-        "not_for": "(规划中) NVMe pcap trace 请用 Trace 医生",
-        "tags": ["日志", "诊断", "规划中"],
+        "use_when": "SSD 测试中产生的 syslog / dmesg / FW log 需要结构化解读 (demo 模式: 客户端规则分类, 真实 AI 推理待接 Dify workflow)",
+        "not_for": "NVMe pcap trace 请用 Trace 医生",
+        "tags": ["日志", "诊断", "Demo"],
         "engine": AgentEngine.builtin.value,
-        "engine_config": {},
+        "engine_config": {"demo": True},
         "input_schema": [
-            {"key": "log_text", "label": "日志文本", "type": "text", "required": True,
-             "placeholder": "直接粘贴 syslog / dmesg / 应用 log"},
+            {"key": "log_text", "label": "日志文本", "type": "textarea", "required": True,
+             "placeholder": "直接粘贴 syslog / dmesg / FW log (多行). 例: [ 1234.56] nvme nvme0: I/O 234 QID 5 timeout, aborting"},
+            {"key": "log_type", "label": "日志类型", "type": "select",
+             "options": ["auto", "dmesg", "syslog", "fw-log"],
+             "default": "auto", "required": True},
         ],
         "data_sources": [],
         "tools": [],
@@ -122,11 +125,13 @@ async def seed_agents() -> None:
         for old_agent in old_result.scalars().all():
             old_agent.status = AgentStatus.deprecated
             session.add(old_agent)
-        # 2) 已存在的 seed agent → 同步 description / use_when / not_for / icon / tags / input_schema /
-        #    data_sources / tools (summary 是卡片主描述, 改了必须同步; 其他字段一并保持一致)
-        #    不动: call_count / last_called_at / created_by / is_featured / status / engine
-        sync_keys = ("summary", "use_when", "not_for", "icon", "tags",
-                     "input_schema", "data_sources", "tools")
+        # 2) 已存在的 seed agent → 同步元信息字段, 不动运行时统计 / 发布状态
+        #    同步: summary / use_when / not_for / version / icon / tags / input_schema /
+        #          data_sources / tools / status (draft→beta/stable 自动升档;
+        #          stable/beta 不降档, 防止误操作把已发布 agent 标记 draft)
+        #    不动: call_count / last_called_at / created_by / is_featured / engine
+        sync_keys = ("summary", "use_when", "not_for", "version", "icon", "tags",
+                     "input_schema", "data_sources", "tools", "engine_config")
         for cfg in SEED_AGENTS:
             result = await session.execute(
                 select(Agent).where(Agent.code == cfg["code"])
@@ -141,6 +146,10 @@ async def seed_agents() -> None:
                 if getattr(agent, k) != cfg[k]:
                     setattr(agent, k, cfg[k])
                     changed = True
+            # status 升级: 仅 draft → 非 draft 自动升, 不降档
+            if agent.status == AgentStatus.draft and cfg["status"] != AgentStatus.draft.value:
+                agent.status = AgentStatus(cfg["status"])
+                changed = True
             if changed:
                 session.add(agent)
         await session.commit()
