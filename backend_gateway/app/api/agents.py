@@ -24,8 +24,8 @@ SEED_AGENTS: list[dict] = [
         "category": AgentCategory.ssd_trace.value,  # 复用 trace 域 (取 log 来源)
         "version": "v0.0.0",
         "status": AgentStatus.draft.value,
-        "summary": "贴 kernel ring buffer / 应用日志,自动分段 + 异常标注 + 关联已知 case",
-        "use_when": "(规划中) 客户日志 / syslog / dmesg 需要结构化解读",
+        "summary": "SSD 测试日志分析: 贴 kernel ring buffer / 应用日志, 自动分段 + 异常标注 + 错误分类",
+        "use_when": "(规划中) SSD 测试中产生的 syslog / dmesg / FW log 需要结构化解读",
         "not_for": "(规划中) NVMe pcap trace 请用 Trace 医生",
         "tags": ["日志", "诊断", "规划中"],
         "engine": AgentEngine.builtin.value,
@@ -45,8 +45,8 @@ SEED_AGENTS: list[dict] = [
         "category": AgentCategory.ssd_ops.value,  # 机台/环境
         "version": "v0.0.0",
         "status": AgentStatus.draft.value,
-        "summary": "查询机台状态 / 温箱 / 通道占用 / 剩余盘位; 一键开工单",
-        "use_when": "(规划中) 实验室要快速看哪些机台空闲 / 排队状态",
+        "summary": "环境运维: 查询测试机状态 / 温箱与通道占用 / 环境分析 (温度/功耗/吞吐), 一键执行常用运维命令 (拉日志 / 复位 / 升级 FW)",
+        "use_when": "(规划中) 测试过程中要快速查机台 / 看环境 / 跑常用运维动作",
         "not_for": "(规划中) 长时老化派发请用 老化守望",
         "tags": ["机台", "运维", "规划中"],
         "engine": AgentEngine.builtin.value,
@@ -122,15 +122,27 @@ async def seed_agents() -> None:
         for old_agent in old_result.scalars().all():
             old_agent.status = AgentStatus.deprecated
             session.add(old_agent)
-        # 2) 插入新的
+        # 2) 已存在的 seed agent → 同步 description / use_when / not_for / icon / tags / input_schema /
+        #    data_sources / tools (summary 是卡片主描述, 改了必须同步; 其他字段一并保持一致)
+        #    不动: call_count / last_called_at / created_by / is_featured / status / engine
+        sync_keys = ("summary", "use_when", "not_for", "icon", "tags",
+                     "input_schema", "data_sources", "tools")
         for cfg in SEED_AGENTS:
             result = await session.execute(
                 select(Agent).where(Agent.code == cfg["code"])
             )
-            if result.scalar_one_or_none():
+            agent = result.scalar_one_or_none()
+            if not agent:
+                agent = Agent(**cfg, created_by=None)
+                session.add(agent)
                 continue
-            agent = Agent(**cfg, created_by=None)
-            session.add(agent)
+            changed = False
+            for k in sync_keys:
+                if getattr(agent, k) != cfg[k]:
+                    setattr(agent, k, cfg[k])
+                    changed = True
+            if changed:
+                session.add(agent)
         await session.commit()
 
 
