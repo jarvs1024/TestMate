@@ -283,3 +283,36 @@ input[type="password"] {
   user-select: text !important;
   -webkit-user-select: text !important;
 }
+
+/* ===== 全局选中文本配色 =====
+   默认浏览器的 ::selection 是浅蓝底 + 白字, 在浅色主题下几乎看不清 (字体没颜色 = 字和背景撞色).
+   这里用项目主色 --primary 半透明当底, 文字用 ink-900, 浅色/深色主题都能看清. */
+::selection {
+  background: var(--primary-soft);
+  color: var(--ink-900);
+}
+::-moz-selection {
+  background: var(--primary-soft);
+  color: var(--ink-900);
+}
+/* 深色主题: 文字翻成浅色 (ink-900 在深色下已经是浅色, 这里只是保险再叠一层) */
+html[data-theme="dark"] ::selection,
+html[data-theme="dark"] ::-moz-selection {
+  background: rgba(59, 130, 246, 0.35);
+  color: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="auto"] ::selection,
+  html[data-theme="auto"] ::-moz-selection {
+    background: rgba(59, 130, 246, 0.35);
+    color: #fff;
+  }
+}
+/* input/textarea 里选中文本: 用更深一档主色, 跟毛玻璃底色对比强一点 */
+input::selection,
+input::-moz-selection,
+textarea::selection,
+textarea::-moz-selection {
+  background: var(--primary);
+  color: #fff;
+}
