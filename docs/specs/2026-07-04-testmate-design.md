@@ -223,7 +223,7 @@ TestMate/
 │   └── README.md
 │
 ├── docs/
-│   ├── superpowers/specs/       # 设计 / 方案文档
+│   ├── specs/                   # 设计 / 方案文档
 │   └── api/                     # 自动生成 OpenAPI
 │
 ├── scripts/
@@ -584,4 +584,4 @@ docker compose exec dify tar czf /backup/dify-$DATE.tar.gz /var/lib/dify
 
 ## 15. 关联文档
 
-- 汇报版:`docs/superpowers/specs/2026-07-04-testmate-brief.md`
+- 汇报版:`docs/specs/2026-07-04-testmate-brief.md`

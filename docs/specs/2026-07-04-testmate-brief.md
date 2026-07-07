@@ -229,4 +229,4 @@ SSD 测试组日常面对三类高频工作:
 
 ### 详细 spec
 
-见 `docs/superpowers/specs/2026-07-04-testmate-design.md`(587 行)。
+见 `docs/specs/2026-07-04-testmate-design.md`(587 行)。
