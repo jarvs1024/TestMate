@@ -2,18 +2,26 @@
 """一行命令建 admin 账号,不用手 SQL。
 
 用法:
-    # 默认账号 admin / 默认密码(从 .env 的 ADMIN_DEFAULT_PASSWORD 读,缺省 TestMate@2026)
-    python scripts/create_admin.py
+    # 默认账号 admin + 默认密码(从 --password / --password-file / ADMIN_DEFAULT_PASSWORD env 读)
+    python scripts/create_admin.py --password 'YourStrongP@ss'
 
-    # 自定义账号
-    python scripts/create_admin.py --username admin --password 'YourStrongP@ss'
+    # 显式指定 MySQL 连接(从 docker 主机外跑这个脚本连 docker 暴露的端口时用)
+    python scripts/create_admin.py \\
+        --password 'xxx' \\
+        --mysql-host 127.0.0.1 --mysql-port 3306 \\
+        --mysql-user testmate --mysql-password 'mysql-pass' \\
+        --mysql-database testmate
+
+    # 密码从文件读(避免 shell history / ps 泄漏)
+    python scripts/create_admin.py --password-file /run/secrets/admin-password
 
     # 改成 tester 角色
-    python scripts/create_admin.py --username li.wang --password xxx --role tester
+    python scripts/create_admin.py --password xxx --role tester --username li.wang
 
-依赖环境变量(同 backend_gateway 一致):
-    MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE
-    docker 部署默认 host=mysql,本地直跑请先 export 或用 .env.local
+参数优先级(高到低):
+    --password / --password-file   命令行
+    ADMIN_DEFAULT_PASSWORD env     环境变量
+    显式 --mysql-* 参数            覆盖 .env 加载值
 """
 import argparse
 import asyncio
@@ -24,12 +32,6 @@ from pathlib import Path
 # 让脚本能找到 backend_gateway.app.*
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend_gateway"))
-
-# 默认密码(只在用户没传 --password 时使用,生产请覆盖)
-DEFAULT_ADMIN_PASSWORD = os.getenv("ADMIN_DEFAULT_PASSWORD", "TestMate@2026")
-
-# 关键:从环境覆盖 DB 配置(便于在 docker 主机外跑这个脚本连 docker 暴露的端口)
-# 顺序: 显式环境变量 > .env.local > .env.example 默认
 
 
 def _load_env_file(path: Path) -> None:
@@ -43,13 +45,37 @@ def _load_env_file(path: Path) -> None:
         k, v = line.split("=", 1)
         k = k.strip()
         v = v.strip().strip('"').strip("'")
-        os.environ.setdefault(k, v)
+        # 改用 os.environ[k] = v — 显式覆盖,跟命令行参数顺序一致
+        # (旧版用 setdefault,会导致 env 变量优先于命令行,反直觉)
+        os.environ[k] = v
+
+
+def _resolve_password(args) -> str:
+    """密码解析 — 三种来源,优先级: --password-file > --password > ADMIN_DEFAULT_PASSWORD env。"""
+    if args.password_file:
+        p = Path(args.password_file)
+        if not p.exists():
+            print(f"❌ 密码文件不存在: {p}", file=sys.stderr)
+            sys.exit(2)
+        return p.read_text(encoding="utf-8").rstrip("\n")
+    if args.password:
+        return args.password
+    env_pw = os.environ.get("ADMIN_DEFAULT_PASSWORD")
+    if env_pw:
+        return env_pw
+    print("❌ 必须传 --password / --password-file 或设置 ADMIN_DEFAULT_PASSWORD 环境变量", file=sys.stderr)
+    sys.exit(2)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="TestMate admin 账号创建脚本")
     parser.add_argument("--username", default="admin", help="用户名(默认 admin)")
-    parser.add_argument("--password", default=None, help="明文密码(默认读 ADMIN_DEFAULT_PASSWORD 或 TestMate@2026)")
+    parser.add_argument("--password", default=None, help="明文密码")
+    parser.add_argument(
+        "--password-file",
+        default=None,
+        help="密码文件路径(推荐,避免 ps / history 泄漏)",
+    )
     parser.add_argument(
         "--role",
         default="admin",
@@ -61,6 +87,12 @@ def main() -> int:
         default=None,
         help="指定 .env 文件路径(默认依次尝试 .env.local / .env.example)",
     )
+    # 显式 MySQL 参数 — 覆盖 .env 里的值
+    parser.add_argument("--mysql-host", default=None)
+    parser.add_argument("--mysql-port", type=int, default=None)
+    parser.add_argument("--mysql-user", default=None)
+    parser.add_argument("--mysql-password", default=None)
+    parser.add_argument("--mysql-database", default=None)
     args = parser.parse_args()
 
     # 加载 env
@@ -70,16 +102,28 @@ def main() -> int:
         for candidate in [ROOT / ".env.local", ROOT / "backend_gateway" / ".env.example"]:
             _load_env_file(candidate)
 
+    # 命令行 --mysql-* 优先级最高
+    if args.mysql_host:
+        os.environ["MYSQL_HOST"] = args.mysql_host
+    if args.mysql_port:
+        os.environ["MYSQL_PORT"] = str(args.mysql_port)
+    if args.mysql_user:
+        os.environ["MYSQL_USER"] = args.mysql_user
+    if args.mysql_password:
+        os.environ["MYSQL_PASSWORD"] = args.mysql_password
+    if args.mysql_database:
+        os.environ["MYSQL_DATABASE"] = args.mysql_database
+
+    password = _resolve_password(args)
+
     # 延迟 import,确保 sys.path 和环境变量都准备好
     from sqlalchemy import select
     from app.core.security import hash_password
     from app.db.session import AsyncSessionLocal, init_db
     from app.models.user import User, UserRole
 
-    password = args.password or DEFAULT_ADMIN_PASSWORD
-
     async def run() -> int:
-        # 先确保表存在
+        # 先确保表存在(走 alembic)
         await init_db()
         async with AsyncSessionLocal() as session:
             # 查重
@@ -107,7 +151,7 @@ def main() -> int:
     rc = asyncio.run(run())
     print()
     print(f"   账号: {args.username}")
-    print(f"   密码: {password}")
+    print(f"   密码: {password if args.password else '(从文件/env 读)'}")
     print(f"   角色: {args.role}")
     print()
     print("⚠️  生产部署请立即改默认密码,设置 ADMIN_DEFAULT_PASSWORD 环境变量覆盖")

@@ -1,7 +1,11 @@
 # TestMate 离线部署镜像清单
 # 用法: deploy/offline-save.sh <输出目录>
 # backend / frontend 是 build 出来的,不在这里列。
+# 这些是 build 时需要的 base 镜像,在内网/离线环境需要提前 save。
 
 mysql:8.0
 redis:7-alpine
+python:3.11-slim
+node:20-alpine
+nginx:1.27-alpine
 

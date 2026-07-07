@@ -1,4 +1,7 @@
 """SQLAlchemy 异步 session。"""
+import asyncio
+import os
+from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -24,11 +27,29 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def init_db() -> None:
-    """P0 简化:启动时建表。生产用 Alembic。"""
-    # 引入 models 让 metadata 知道所有表
+    """跑 alembic upgrade head — 数据库 schema 版本化管理。
+
+    由 deploy.sh / docker entrypoint / lifespan 钩子触发。
+    不要再用 Base.metadata.create_all(只新建不改列,生产危险)。
+    """
+    # 引入 models 让 Base.metadata 知道表 — alembic env.py 也 import 了,这里再 import 一次保险
     from app.models import user, machine, agent, system_setting  # noqa: F401
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+
+    # 跑 alembic upgrade head 子进程
+    backend_dir = Path(__file__).resolve().parent.parent
+    proc = await asyncio.create_subprocess_exec(
+        "alembic", "upgrade", "head",
+        cwd=str(backend_dir),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": str(backend_dir)},
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"alembic upgrade head failed (exit {proc.returncode}):\n"
+            f"stdout: {stdout.decode()}\nstderr: {stderr.decode()}"
+        )
 
 
 async def get_session() -> AsyncSession:

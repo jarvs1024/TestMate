@@ -31,6 +31,11 @@ services:
         limits:
           cpus: "${MYSQL_CPU_LIMIT:-2.0}"
           memory: "${MYSQL_MEM_LIMIT:-2g}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks: [test-mate-net]
 
   # ==================== Redis ====================
@@ -52,6 +57,11 @@ services:
         limits:
           cpus: "${REDIS_CPU_LIMIT:-0.5}"
           memory: "${REDIS_MEM_LIMIT:-512m}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks: [test-mate-net]
 
   # ==================== Backend ====================
@@ -61,10 +71,12 @@ services:
       dockerfile: Dockerfile
     image: test-mate-backend:latest
     restart: unless-stopped
-    extra_hosts:
-      # 让 backend 容器能通过 host.docker.internal 访问 host(mac/Windows 默认支持,
-      # Linux Docker 24+ 也支持). 用于:外部 RAGFlow / Dify 跑 host 上时的连接
-      - "host.docker.internal:host-gateway"
+    # extra_hosts 仅在开发场景启用(让 backend 容器能通过 host.docker.internal
+    # 访问 host 上跑的 RAGFlow / Dify)。生产环境(Dify / RAGFlow 也在 docker 里)
+    # 必须注释掉,否则增加攻击面 — 容器能 host 出去。
+    # 用法: 把下面 3 行取消注释即可启用,生产前重新注释回去。
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -102,7 +114,7 @@ services:
     ports:
       - "${BACKEND_HOST_PORT:-18000}:8000"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/health/ready"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -112,6 +124,12 @@ services:
         limits:
           cpus: "${BACKEND_CPU_LIMIT:-2.0}"
           memory: "${BACKEND_MEM_LIMIT:-2g}"
+    # 日志: json-file 驱动,每个容器最多 3 个 10MB 文件,防日志爆炸撑爆磁盘
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks: [test-mate-net]
 
   # ==================== Frontend ====================
@@ -135,6 +153,11 @@ services:
         limits:
           cpus: "${FRONTEND_CPU_LIMIT:-0.5}"
           memory: "${FRONTEND_MEM_LIMIT:-256m}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks: [test-mate-net]
 
 networks:

@@ -55,14 +55,21 @@ require_root() {
 
 require_docker() {
   command -v docker >/dev/null 2>&1 || die "未安装 docker,先跑: curl -fsSL https://get.docker.com | sh"
-  docker compose version >/dev/null 2>&1 || die "缺 docker compose v2,请升级 docker"
+  # 兼容 docker compose v2 (内置子命令) 和 v1 (docker-compose 独立命令)
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_BIN="docker compose"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_BIN="docker-compose"
+  else
+    die "缺 docker compose,装 v2 插件或 v1 (apt install docker-compose)"
+  fi
   docker info >/dev/null 2>&1 || die "docker daemon 没起来,先: systemctl start docker"
 }
 
 ensure_env() {
   [[ -f .env ]] || die "缺少 deploy/.env,先: cp deploy/.env.template deploy/.env && $EDITOR deploy/.env"
 
-  # JWT_SECRET / MYSQL_ROOT_PASSWORD 必须是占位符检测
+  # 占位符检测 — change-me / please-generate / ChangeMe@ 等
   if grep -q "change-me\|please-generate\|please-change-me-32\|ChangeMe@" .env; then
     warn ".env 里还有占位符(change-me / please-generate / ChangeMe@)"
     warn "生产环境必须先改 JWT_SECRET、MYSQL_ROOT_PASSWORD、ADMIN_DEFAULT_PASSWORD"
@@ -71,10 +78,34 @@ ensure_env() {
       [[ "$ans" =~ ^[Yy]$ ]] || die "已中止"
     fi
   fi
+
+  # JWT_SECRET 强度校验 — 至少 32 字节 + 不能含 change/placeholder/dev/test 子串
+  JWT_VAL="$(grep '^JWT_SECRET=' .env | cut -d= -f2- | tr -d '\"'\'\'' )"
+  if [[ -z "$JWT_VAL" ]]; then
+    die "JWT_SECRET 未设置"
+  fi
+  if [[ ${#JWT_VAL} -lt 32 ]]; then
+    die "JWT_SECRET 太短 (${#JWT_VAL} 字节),至少 32 字节,推荐: openssl rand -base64 32"
+  fi
+  if echo "$JWT_VAL" | grep -qiE 'change|placeholder|please|dev-secret|test-secret|example'; then
+    die "JWT_SECRET 含占位符字面量 (change/placeholder/please/dev/test/example),生产前必须改"
+  fi
+
+  # MYSQL_ROOT_PASSWORD / ADMIN_DEFAULT_PASSWORD 长度校验(弱密码不可接受)
+  for key in MYSQL_ROOT_PASSWORD ADMIN_DEFAULT_PASSWORD; do
+    val="$(grep "^${key}=" .env | cut -d= -f2- | tr -d '\"'\'\'' )"
+    if [[ -z "$val" ]]; then
+      die "${key} 未设置"
+    fi
+    if [[ ${#val} -lt 12 ]]; then
+      die "${key} 太短 (${#val} 字符),至少 12 字符"
+    fi
+  done
 }
 
+# 走 .env 调用 compose(v1/v2 都吃 --env-file)
 compose_cmd() {
-  docker compose --env-file .env "$@"
+  $COMPOSE_BIN --env-file .env "$@"
 }
 
 # ---------- 主流程 ----------
