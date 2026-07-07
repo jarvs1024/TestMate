@@ -200,8 +200,11 @@ async def build_embed_url(
     append_theme = bool(await get(f"{prefix}.append_theme", True))
 
     if append_user and user and user.username and "userId" not in q:
+        # userId 只在不存在时拼, 避免覆盖手动配置的固定值
         q["userId"] = [user.username]
-    if append_theme and theme and theme in ("light", "dark") and "theme" not in q:
+    if append_theme and theme and theme in ("light", "dark"):
+        # theme 总是用当前主题覆盖 — 浏览器切主题,iframe 必须立刻跟着切,
+        # 否则会出现 "前端是 light, RAGFlow 还是 dark" 这种错位
         q["theme"] = [theme]
 
     new_q = urlencode({k: v[0] for k, v in q.items()}, doseq=False)

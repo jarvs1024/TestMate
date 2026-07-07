@@ -167,7 +167,9 @@ const themeStore = useThemeStore();
 const themeKey = computed(() => themeStore.resolved);
 // cache-buster: 主题切换时刷一次, 保证 iframe 拿到新 query string 时不会复用旧响应缓存
 // 只追加到 *ResolvedUrl 上 (raw embed_url 不动, 后端 /api/v1/settings/embed/<key>?theme=xxx 不感知)
-const themeNonce = ref(0);
+// 初始用 Date.now() 而非 0:组件每次 mount 都有唯一 nonce,iframe 首次加载也强制 reload,
+// 避免 SPA 内存里残留旧主题状态. 主题切换时再 +1.
+const themeNonce = ref(Date.now());
 
 function readCurrentTheme(): string {
   // auto 已由 store.resolved 解出, 这里只可能是 'light' | 'dark'
@@ -192,7 +194,8 @@ const chatResolvedUrl = ref('');
 // iframe 真正用的 src: resolved URL + cache-buster (主题切换时强制 reload)
 function withNonce(u: string, nonce: number): string {
   if (!u) return '';
-  return nonce === 0 ? u : u + (u.includes('?') ? '&' : '?') + '_t=' + nonce;
+  // 任何 nonce 都拼 _t= 强制 reload(避免 RAGFlow SPA 内存状态残留旧主题)
+  return u + (u.includes('?') ? '&' : '?') + '_t=' + nonce;
 }
 const searchIframeSrc = computed(() => withNonce(searchResolvedUrl.value, themeNonce.value));
 const chatIframeSrc   = computed(() => withNonce(chatResolvedUrl.value, themeNonce.value));
