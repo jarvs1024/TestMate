@@ -256,3 +256,30 @@ select:focus {
     0 0 0 1px var(--primary) inset,
     0 0 0 3px var(--primary-soft) !important;
 }
+
+/* ===== 全局 input/textarea 文本可选中兜底 =====
+   背景: 任意祖先元素 (例如 .toc-item / .switch / 卡片容器) 加了 user-select: none,
+   在标准 CSS 里 user-select 默认是会继承的, 导致子 input 里的文字无法被鼠标选中/复制.
+   这里对所有"必须可选中"的输入控件显式打开 user-select, 并用 !important 覆盖祖级继承.
+   范围只限 input / textarea / [contenteditable], 不影响其他纯展示元素的禁选效果. */
+input,
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="search"],
+input[type="email"],
+input[type="url"],
+input[type="tel"],
+textarea,
+[contenteditable="true"],
+[contenteditable=""] {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+}
+/* secret 输入框(密码)默认浏览器行为是 user-select: none, 也覆盖一下允许复制 */
+input[type="password"] {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
