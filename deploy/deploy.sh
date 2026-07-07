@@ -101,8 +101,8 @@ ensure_env() {
     if [[ -z "$val" ]]; then
       die "${key} 未设置"
     fi
-    if [[ ${#val} -lt 12 ]]; then
-      die "${key} 太短 (${#val} 字符),至少 12 字符"
+    if [[ ${#val} -lt 9 ]]; then
+      die "${key} 太短 (${#val} 字符),至少 9 字符"
     fi
   done
 }
@@ -195,11 +195,11 @@ do_up() {
   ADMIN_USER="$(grep '^ADMIN_DEFAULT_USER=' .env 2>/dev/null | cut -d= -f2- || true)"
   ADMIN_USER="${ADMIN_USER:-admin}"
   ADMIN_PASS="$(grep '^ADMIN_DEFAULT_PASSWORD=' .env | cut -d= -f2-)"
-  ADMIN_PASS="${ADMIN_PASS:-ChangeMe@2026}"
+  ADMIN_PASS="${ADMIN_PASS:-Admin@123}"
 
   # 通过 docker exec 在 backend 容器内跑(里面有 sqlalchemy / app 模型)
   # 凭证通过环境变量传(避免 heredoc 变量展开的转义问题)
-  if compose_cmd exec -T -e ADMIN_USER="$ADMIN_USER" -e ADMIN_PASS="$ADMIN_PASS"       backend python - >/dev/null 2>&1 <<'PYEOF'
+  if compose_cmd exec -T -e ADMIN_USER="$ADMIN_USER" -e ADMIN_PASS="$ADMIN_PASS"       backend python - >/tmp/admin_create.log 2>&1 <<'PYEOF'
 import asyncio, os
 from sqlalchemy import select
 from app.core.security import hash_password
@@ -232,7 +232,13 @@ PYEOF
 then
     ok "admin 账号就绪(用户: $ADMIN_USER,密码见 .env 的 ADMIN_DEFAULT_PASSWORD)"
   else
-    warn "admin 自动建失败,可手动: docker compose exec backend python ...  (见 README)"
+    warn "admin 自动建失败,日志:"
+    if [[ -s /tmp/admin_create.log ]]; then
+      sed 's/^/    /' /tmp/admin_create.log | head -20
+    else
+      echo "    /tmp/admin_create.log 空(可能 backend 没 ready,等 30s 再试)"
+    fi
+    echo "    手动建: docker compose exec backend python  (见 README)"
   fi
 
   FE_PORT="$(grep '^FRONTEND_HOST_PORT=' .env | cut -d= -f2-)"

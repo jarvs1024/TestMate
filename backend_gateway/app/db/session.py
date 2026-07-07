@@ -35,21 +35,38 @@ async def init_db() -> None:
     # 引入 models 让 Base.metadata 知道表 — alembic env.py 也 import 了,这里再 import 一次保险
     from app.models import user, machine, agent, system_setting  # noqa: F401
 
-    # 跑 alembic upgrade head 子进程
     # session.py 在 backend_gateway/app/db/session.py,需要 .parent.parent.parent 才是仓库根 (backend_gateway/)
     backend_dir = Path(__file__).resolve().parent.parent.parent
-    proc = await asyncio.create_subprocess_exec(
-        "alembic", "upgrade", "head",
-        cwd=str(backend_dir),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "PYTHONPATH": str(backend_dir)},
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
+
+    async def _alembic(*args: str) -> tuple[int, str, str]:
+        proc = await asyncio.create_subprocess_exec(
+            "alembic", *args,
+            cwd=str(backend_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "PYTHONPATH": str(backend_dir)},
+        )
+        so, se = await proc.communicate()
+        return proc.returncode, so.decode(errors="replace"), se.decode(errors="replace")
+
+    # 智能判定:
+    # 1) alembic_version 表缺失(老环境 create_all 没建)/ 版本落后 -> stamp head 兜底 + upgrade
+    # 2) 已经在 head -> 跳过 upgrade, 避免无意义的报错
+    rc2, _so2, se2 = await _alembic("check")
+    if rc2 != 0:
+        print(f"[init_db] alembic check exit {rc2}, stamping head: {se2.strip()[:200]}")
+        rc3, so3, se3 = await _alembic("stamp", "head")
+        if rc3 != 0:
+            raise RuntimeError(
+                f"alembic stamp head failed (exit {rc3}):\n"
+                f"stdout: {so3}\nstderr: {se3}"
+            )
+
+    rc4, so4, se4 = await _alembic("upgrade", "head")
+    if rc4 != 0:
         raise RuntimeError(
-            f"alembic upgrade head failed (exit {proc.returncode}):\n"
-            f"stdout: {stdout.decode()}\nstderr: {stderr.decode()}"
+            f"alembic upgrade head failed (exit {rc4}):\n"
+            f"stdout: {so4}\nstderr: {se4}"
         )
 
 
