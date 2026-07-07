@@ -34,6 +34,10 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+
+# 去字符串首尾的引号 (单/双) — 替换原来有 bug 的 tr -d '"'\'\'\'\'
+_strip_quotes() { awk '{ sub(/^["\047]/, ""); sub(/["\047]$/, ""); print }'; }
+
 # ---------- 颜色 ----------
 if [[ -t 1 ]]; then
   C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_BLUE=$'\033[34m'; C_OFF=$'\033[0m'
@@ -80,7 +84,7 @@ ensure_env() {
   fi
 
   # JWT_SECRET 强度校验 — 至少 32 字节 + 不能含 change/placeholder/dev/test 子串
-  JWT_VAL="$(grep '^JWT_SECRET=' .env | cut -d= -f2- | tr -d '\"'\'\'' )"
+  JWT_VAL="$(grep '^JWT_SECRET=' .env | cut -d= -f2- | _strip_quotes )"
   if [[ -z "$JWT_VAL" ]]; then
     die "JWT_SECRET 未设置"
   fi
@@ -93,7 +97,7 @@ ensure_env() {
 
   # MYSQL_ROOT_PASSWORD / ADMIN_DEFAULT_PASSWORD 长度校验(弱密码不可接受)
   for key in MYSQL_ROOT_PASSWORD ADMIN_DEFAULT_PASSWORD; do
-    val="$(grep "^${key}=" .env | cut -d= -f2- | tr -d '\"'\'\'' )"
+    val="$(grep "^${key}=" .env | cut -d= -f2- | _strip_quotes )"
     if [[ -z "$val" ]]; then
       die "${key} 未设置"
     fi
@@ -157,7 +161,21 @@ do_up() {
   fi
 
   log "4/5 启动整栈..."
-  log "5/5 等待 backend 健康..."
+  set +e   # backend 第一次启动会失败(init_db 因表已存在崩溃),不要让 set -e 杀进程
+  compose_cmd up -d
+  set -e
+
+  # 4.5/5 老数据卷兼容:alembic upgrade 之前先 stamp head(把已有表标记成已迁移版本,
+  # 避免 alembic upgrade head 因表已存在而失败). 用一个一次性容器跑,不等 backend ready.
+  log "  alembic stamp head(老数据卷兼容,一次性容器)..."
+  set +e
+  compose_cmd run --rm --no-deps --entrypoint "" backend alembic stamp head >/dev/null 2>&1
+  set -e
+
+  # 重启 backend 让 init_db() 重新跑(现在 stamp 过了,upgrade head 应该 no-op)
+  compose_cmd restart backend >/dev/null 2>&1 || true
+
+  log "5/5 等待 backend healthy..."
   BE_PORT="$(grep '^BACKEND_HOST_PORT=' .env | cut -d= -f2-)"
   BE_PORT="${BE_PORT:-18000}"
   for i in $(seq 1 30); do
@@ -211,7 +229,7 @@ async def main():
             print("created")
 asyncio.run(main())
 PYEOF
-  then
+then
     ok "admin 账号就绪(用户: $ADMIN_USER,密码见 .env 的 ADMIN_DEFAULT_PASSWORD)"
   else
     warn "admin 自动建失败,可手动: docker compose exec backend python ...  (见 README)"

@@ -36,7 +36,8 @@ async def init_db() -> None:
     from app.models import user, machine, agent, system_setting  # noqa: F401
 
     # 跑 alembic upgrade head 子进程
-    backend_dir = Path(__file__).resolve().parent.parent
+    # session.py 在 backend_gateway/app/db/session.py,需要 .parent.parent.parent 才是仓库根 (backend_gateway/)
+    backend_dir = Path(__file__).resolve().parent.parent.parent
     proc = await asyncio.create_subprocess_exec(
         "alembic", "upgrade", "head",
         cwd=str(backend_dir),

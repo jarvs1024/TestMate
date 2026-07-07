@@ -12,3 +12,4 @@ bcrypt<5.0  # 5.x 移除 __about__, passlib 1.7.4 暂未适配,见 issue #1234
 python-multipart>=0.0.9
 paramiko>=3.4.0
 structlog>=24.1.0  # JSON 结构化日志
+alembic>=1.13.0

@@ -14,7 +14,8 @@ from app.db.session import init_db
 
 # 入口模块最顶端调用:配置 JSON 结构化日志
 setup_logging(level="INFO" if not settings.DEBUG else "DEBUG")
-log = logging.getLogger("testmate.main")
+import structlog
+log = structlog.get_logger("testmate.main")
 
 
 @asynccontextmanager
