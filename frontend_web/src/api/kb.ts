@@ -75,6 +75,8 @@ export interface KbDocument {
   process_begin_at: string | null;
   process_duration: number;    // 秒
   source_type: string;         // 'local' | 'http' | ...
+  thumbnail: string;           // base64 data url (PDF/图片有)
+  parser_config: Record<string, any>;
   status: string;              // '1' = 启用
   create_date: string;
   update_date: string;
@@ -82,6 +84,26 @@ export interface KbDocument {
   update_time: number;
 }
 
+
+export interface KbDocChunk {
+  id: string;
+  content: string;
+  docnm_kwd: string;
+  document_id: string;
+  available: boolean;
+  image_id: string;
+  important_keywords: string[];
+  tag_kwd: string[];
+  positions: number[][];
+  create_time: string;
+  create_timestamp: number;
+}
+
+export interface KbDocChunksResult {
+  chunks: KbDocChunk[];
+  total: number;
+  doc: Record<string, any>;
+}
 export interface KbDocumentListResult {
   docs: KbDocument[];
   total: number;
@@ -127,3 +149,21 @@ export async function deleteKbDocuments(
     data: { ids: docIds, delete_all: deleteAll },
   })) as { ok: boolean };
 }
+
+// 文档下载: 浏览器直接走 <a :href download> 即可, 这里只返回 URL
+export function downloadDocumentUrl(datasetId: string, documentId: string): string {
+  return `/api/v1/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}/download`;
+}
+
+// 列出某文档的 chunks
+export async function listDocChunks(
+  datasetId: string,
+  documentId: string,
+  params: { page?: number; page_size?: number; keywords?: string } = {},
+): Promise<KbDocChunksResult> {
+  return (await request.get(
+    `/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}/chunks`,
+    { params },
+  )) as KbDocChunksResult;
+}
+

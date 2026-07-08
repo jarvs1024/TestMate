@@ -108,18 +108,19 @@
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th>名称</th><th>类型</th><th>大小</th><th>分段</th><th>状态</th><th>进度</th><th>更新</th>
+                        <th>名称</th><th>大小</th><th>分段</th><th>Tokens</th><th>状态</th><th>进度</th><th>更新</th><th style="width:120px">操作</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-for="doc in docsOf(d.id)" :key="doc.id" :class="{ failed: doc.run === 'FAIL' }">
                         <td class="nm">
-                          <span class="doc-ic">{{ docIcon(doc.type) }}</span>
+                          <img v-if="doc.thumbnail" :src="doc.thumbnail" class="doc-thumb" :title="doc.name" />
+                          <span v-else class="doc-ic">{{ docIcon(doc.type) }}</span>
                           <span class="doc-name" :title="doc.location">{{ doc.name }}</span>
                         </td>
-                        <td class="mono">{{ (doc.type || '').toLowerCase() || '—' }}</td>
                         <td class="mono">{{ fmtSize(doc.size) }}</td>
                         <td class="mono">{{ doc.chunk_count }}</td>
+                        <td class="mono">{{ doc.token_count }}</td>
                         <td>
                           <span class="run-badge" :class="runStatusClass(doc.run)" :title="doc.progress_msg || ''">{{ runStatusLabel(doc.run) }}</span>
                         </td>
@@ -128,9 +129,13 @@
                           <span class="prog-num">{{ Math.round((doc.progress || 0) * 100) }}%</span>
                         </td>
                         <td class="mono">{{ fmtTime(doc.update_time) || doc.update_date || '—' }}</td>
+                        <td>
+                          <a class="link-btn" :href="kbDownloadUrl(d.id, doc.id)" :download="doc.name" title="下载原文件">下载</a>
+                          <button class="link-btn" @click="openChunks(d, doc)" title="查看分段内容">分段</button>
+                        </td>
                       </tr>
                       <tr v-if="docsOf(d.id).length === 0 && !docLoading">
-                        <td :colspan="7" class="empty">暂无文档</td>
+                        <td :colspan="8" class="empty">暂无文档</td>
                       </tr>
                     </tbody>
                   </table>
@@ -172,6 +177,32 @@
         </div>
       </template>
     </el-drawer>
+
+    <!-- 文档分段预览抽屉 -->
+    <el-drawer v-model="chunksOpen" :title="chunksTitle" size="640px" direction="rtl">
+      <div class="chunks-panel">
+        <div class="chunks-hd">
+          <div class="chunks-meta">
+            <span class="chunks-tot">共 {{ chunksTotal }} 个分段</span>
+            <span v-if="chunksLoading" class="chunks-load">加载中…</span>
+          </div>
+        </div>
+        <div v-if="chunksList.length === 0 && !chunksLoading" class="empty">该文档暂无分段</div>
+        <div v-for="(c, idx) in chunksList" :key="c.id" class="chunk-card">
+          <div class="chunk-hd">
+            <span class="chunk-num">#{{ idx + 1 }}</span>
+            <span class="chunk-id mono">{{ c.id.slice(0, 12) }}…</span>
+            <span v-if="c.important_keywords?.length" class="chunk-kw">
+              <span v-for="k in c.important_keywords" :key="k" class="kw-tag">{{ k }}</span>
+            </span>
+            <span v-if="c.tag_kwd?.length" class="chunk-kw">
+              <span v-for="t in c.tag_kwd" :key="t" class="kw-tag kw-tag-tag">{{ t }}</span>
+            </span>
+          </div>
+          <div class="chunk-body">{{ c.content || '—' }}</div>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -181,7 +212,8 @@ import { ElMessage } from 'element-plus';
 import { buildEmbedUrl as apiBuildEmbedUrl, getSchema } from '@/api/settings';
 import {
   listDatasets, kbHealth, type KbDataset, type KbDocument,
-  listDocuments,
+  listDocuments, downloadDocumentUrl, listDocChunks,
+  type KbDocChunk,
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
 import {
@@ -309,6 +341,34 @@ async function loadDocs(datasetId: string) {
 const detailOpen = ref(false);
 const detailDs = ref<KbDataset | null>(null);
 function openDetail(d: KbDataset) { detailDs.value = d; detailOpen.value = true; }
+
+// 文档下载 (返回给 template 用的 url)
+function kbDownloadUrl(datasetId: string, documentId: string): string {
+  return downloadDocumentUrl(datasetId, documentId);
+}
+
+// chunks 抽屉状态
+const chunksOpen = ref(false);
+const chunksTitle = ref('');
+const chunksList = ref<KbDocChunk[]>([]);
+const chunksTotal = ref(0);
+const chunksLoading = ref(false);
+
+async function openChunks(d: KbDataset, doc: KbDocument) {
+  chunksTitle.value = `📑 ${doc.name} · 分段预览`;
+  chunksOpen.value = true;
+  chunksList.value = [];
+  chunksLoading.value = true;
+  try {
+    const r = await listDocChunks(d.id, doc.id, { page_size: 200 });
+    chunksList.value = r.chunks;
+    chunksTotal.value = r.total;
+  } catch (e: any) {
+    ElMessage.error('加载分段失败: ' + (e?.response?.data?.detail || e?.message));
+  } finally {
+    chunksLoading.value = false;
+  }
+}
 
 // === 数据加载 ===
 async function loadAll() {
@@ -444,4 +504,41 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .dt-v.mono { font-family: var(--font-mono); font-size: 12px; }
 .dt-sep { font-size: 12.5px; font-weight: 700; color: var(--ink-700); margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .dt-pre { font-family: var(--font-mono); font-size: 11.5px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+
+/* 文档缩略图 (base64 data url) */
+.doc-thumb { width: 24px; height: 24px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); flex-shrink: 0; }
+
+/* 文档行内联操作按钮 (下载 / 分段) */
+.link-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--ink-700);
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  margin-right: 4px;
+  text-decoration: none;
+  display: inline-block;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.link-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
+.link-btn:last-child { margin-right: 0; }
+
+/* chunks 抽屉 */
+.chunks-panel { display: flex; flex-direction: column; gap: 12px; }
+.chunks-hd { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 8px; border-bottom: 1px solid var(--border); }
+.chunks-meta { display: flex; gap: 10px; align-items: center; font-size: 12px; color: var(--ink-500); }
+.chunks-tot { font-weight: 600; color: var(--ink-900); }
+.chunks-load { color: var(--primary); }
+.chunk-card { background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.chunk-hd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.chunk-num { font-size: 11px; font-weight: 700; color: var(--primary); font-family: var(--font-mono); }
+.chunk-id { font-size: 10.5px; color: var(--ink-500); }
+.chunk-kw { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+.kw-tag { font-size: 10px; padding: 2px 7px; border-radius: var(--radius-pill); background: rgba(59, 130, 246, 0.1); color: var(--primary); font-weight: 500; }
+.kw-tag-tag { background: rgba(13, 148, 136, 0.12); color: var(--primary-2, var(--primary)); }
+.chunk-body { font-size: 12.5px; color: var(--ink-700); line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
+
 </style>

@@ -316,3 +316,49 @@ textarea::-moz-selection {
   background: var(--primary);
   color: #fff;
 }
+
+/* ===== 全局 Element Plus 控件深色主题适配 =====
+   element-plus 内置 dark 模式已经做了 .el-drawer/.el-message-box 等的深色色,
+   但默认是白底, 在我们 html[data-theme="dark"] 下不会自动切换.
+   这里强制让 el-drawer / el-message-box / el-popper 跟我们主题 token 走. */
+html[data-theme="dark"] .el-drawer,
+html[data-theme="dark"] .el-drawer__header,
+html[data-theme="dark"] .el-drawer__body,
+html[data-theme="dark"] .el-message-box,
+html[data-theme="dark"] .el-message-box__header,
+html[data-theme="dark"] .el-message-box__body,
+html[data-theme="dark"] .el-message-box__btns {
+  background-color: var(--surface) !important;
+  color: var(--ink-900) !important;
+  border-color: var(--border) !important;
+}
+html[data-theme="dark"] .el-drawer__title,
+html[data-theme="dark"] .el-message-box__title,
+html[data-theme="dark"] .el-message-box__content,
+html[data-theme="dark"] .el-message-box__message,
+html[data-theme="dark"] .el-message-box__message p {
+  color: var(--ink-900) !important;
+}
+html[data-theme="dark"] .el-overlay {
+  background-color: rgba(0, 0, 0, 0.6) !important;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="auto"] .el-drawer,
+  html[data-theme="auto"] .el-drawer__header,
+  html[data-theme="auto"] .el-drawer__body,
+  html[data-theme="auto"] .el-message-box,
+  html[data-theme="auto"] .el-message-box__header,
+  html[data-theme="auto"] .el-message-box__body,
+  html[data-theme="auto"] .el-message-box__btns {
+    background-color: var(--surface) !important;
+    color: var(--ink-900) !important;
+    border-color: var(--border) !important;
+  }
+  html[data-theme="auto"] .el-drawer__title,
+  html[data-theme="auto"] .el-message-box__title,
+  html[data-theme="auto"] .el-message-box__content,
+  html[data-theme="auto"] .el-message-box__message,
+  html[data-theme="auto"] .el-message-box__message p {
+    color: var(--ink-900) !important;
+  }
+}

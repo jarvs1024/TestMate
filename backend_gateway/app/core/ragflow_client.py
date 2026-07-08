@@ -70,6 +70,55 @@ async def list_documents(
         return data.get("data") or {"docs": [], "total": 0}
 
 
+async def download_document(dataset_id: str, document_id: str) -> tuple[bytes, str]:
+    """下载 document 文件 (代理 RAGFlow GET /datasets/{id}/documents/{doc_id}).
+
+    返回 (content_bytes, filename). 文件名从 Content-Disposition 头拿, 拿不到就用 document_id.
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        raise RuntimeError("RAGFlow 未配置")
+    url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/{quote(document_id, safe='')}"
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.get(url, headers=await _headers())
+        r.raise_for_status()
+        # RAGFlow 直接返回文件流; Content-Disposition: attachment; filename="xxx.txt"
+        cd = r.headers.get("content-disposition", "")
+        filename = document_id
+        import re as _re
+        m = _re.search(r'filename[*]?=(?:UTF-8'')?"?([^";]+)"?', cd)
+        if m:
+            filename = m.group(1).strip()
+        return r.content, filename
+
+
+async def list_doc_chunks(
+    dataset_id: str,
+    document_id: str,
+    page: int = 1,
+    page_size: int = 100,
+    keywords: str = "",
+) -> dict[str, Any]:
+    """列出某 document 下的 chunks (代理 RAGFlow GET .../documents/{doc_id}/chunks).
+
+    返回 RAGFlow 原始 data: { chunks: [...], doc: {...}, total: int }
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        return {"chunks": [], "doc": {}, "total": 0, "_mock": True}
+    url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/{quote(document_id, safe='')}/chunks"
+    params: dict[str, Any] = {"page": page, "page_size": page_size}
+    if keywords:
+        params["keywords"] = keywords
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.get(url, headers=await _headers(), params=params)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow list_doc_chunks: {data.get('message') or data}")
+        return data.get("data") or {"chunks": [], "doc": {}, "total": 0}
+
+
 async def ingest_documents(doc_ids: list[str], run: str = "1", delete: bool = False) -> bool:
     """重跑 / 取消 / 启动 documents 解析 (代理 RAGFlow POST /documents/ingest).
 

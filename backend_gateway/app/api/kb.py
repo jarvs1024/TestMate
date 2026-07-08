@@ -13,6 +13,7 @@ from app.api.auth import get_current_user
 from app.core.ragflow_client import (
     list_datasets, retrieval, probe,
     list_documents, ingest_documents, delete_documents,
+    download_document, list_doc_chunks,
 )
 from app.models.user import User
 from app.models.user import UserRole
@@ -81,7 +82,8 @@ async def get_documents(
             orderby=orderby, desc=desc, keywords=keywords, run=run,
         )
         docs = data.get("docs") or []
-        # 精简: 去掉 thumbnail (base64 太大) + parser_config 太深
+        # 保留 thumbnail (PDF/图片有, base64 缩略图; 文本类一般是空串/null) + parser_config
+        # 单 doc 缩略图一般 5-50KB, 列表不会太多, 可以传
         cleaned = [
             {
                 "id": d.get("id"),
@@ -98,11 +100,13 @@ async def get_documents(
                 "process_begin_at": d.get("process_begin_at"),
                 "process_duration": d.get("process_duration", 0.0),
                 "source_type": d.get("source_type", ""),
+                "thumbnail": d.get("thumbnail") or "",
                 "status": d.get("status", "1"),
                 "create_date": d.get("create_date", ""),
                 "update_date": d.get("update_date", ""),
                 "create_time": d.get("create_time", 0),
                 "update_time": d.get("update_time", 0),
+                "parser_config": d.get("parser_config") or {},
             }
             for d in docs
         ]
@@ -112,6 +116,76 @@ async def get_documents(
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
 
+
+
+
+@router.get("/datasets/{dataset_id}/documents/{document_id}/download")
+async def download(
+    dataset_id: str,
+    document_id: str,
+    _user: User = Depends(get_current_user),
+) -> Response:
+    """下载 dataset 下的某个 document 文件."""
+    try:
+        content, filename = await download_document(dataset_id, document_id)
+    except Exception as e:
+        logger.exception("download failed")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+    # 触发浏览器下载 (Content-Disposition: attachment)
+    import urllib.parse as _u
+    # 中文文件名要做 RFC 5987 编码
+    encoded = _u.quote(filename)
+    headers = {
+        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
+    }
+    # 猜一下 content-type
+    ctype = "application/octet-stream"
+    if filename.lower().endswith((".txt", ".md", ".log", ".csv")): ctype = "text/plain; charset=utf-8"
+    elif filename.lower().endswith(".pdf"): ctype = "application/pdf"
+    elif filename.lower().endswith((".json",)): ctype = "application/json; charset=utf-8"
+    elif filename.lower().endswith((".html", ".htm")): ctype = "text/html; charset=utf-8"
+    elif filename.lower().endswith((".png",)): ctype = "image/png"
+    elif filename.lower().endswith((".jpg", ".jpeg")): ctype = "image/jpeg"
+    return Response(content=content, media_type=ctype, headers=headers)
+
+
+@router.get("/datasets/{dataset_id}/documents/{document_id}/chunks")
+async def get_doc_chunks(
+    dataset_id: str,
+    document_id: str,
+    page: int = 1,
+    page_size: int = 100,
+    keywords: str = "",
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """列出某 document 下的 chunks (代理 RAGFlow)."""
+    try:
+        data = await list_doc_chunks(dataset_id, document_id, page=page, page_size=page_size, keywords=keywords)
+        # 精简 chunks: content 不裁, 但去掉 content_ltks (很大)
+        chunks = data.get("chunks") or []
+        cleaned = []
+        for c in chunks:
+            cleaned.append({
+                "id": c.get("id"),
+                "content": c.get("content", ""),
+                "docnm_kwd": c.get("docnm_kwd", ""),
+                "document_id": c.get("document_id"),
+                "available": c.get("available", True),
+                "image_id": c.get("image_id", ""),
+                "important_keywords": c.get("important_keywords", []),
+                "tag_kwd": c.get("tag_kwd", []),
+                "positions": c.get("positions", []),
+                "create_time": c.get("create_time", ""),
+                "create_timestamp": c.get("create_timestamp", 0),
+            })
+        return {
+            "chunks": cleaned,
+            "total": data.get("total", len(cleaned)),
+            "doc": data.get("doc") or {},
+        }
+    except Exception as e:
+        logger.exception("list_doc_chunks failed")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 class IngestIn(BaseModel):
     doc_ids: list[str] = Field(..., min_length=1)
     run: str = Field("1", description="1=start, 2=cancel")
