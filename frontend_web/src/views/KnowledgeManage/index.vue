@@ -108,7 +108,7 @@
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th>名称</th><th>大小</th><th>分段</th><th>Tokens</th><th>状态</th><th>进度</th><th>更新</th><th style="width:120px">操作</th>
+                        <th>名称</th><th>大小</th><th>分段</th><th>Tokens</th><th>状态</th><th>进度</th><th>更新</th><th style="width:80px">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -129,7 +129,6 @@
                         </td>
                         <td class="mono">{{ fmtTime(doc.update_time) || doc.update_date || '—' }}</td>
                         <td>
-                          <a class="link-btn" :href="kbDownloadUrl(d.id, doc.id)" :download="doc.name" title="下载原文件">下载</a>
                           <button class="link-btn" @click="openChunks(d, doc)" title="查看分段内容">分段</button>
                         </td>
                       </tr>
@@ -211,7 +210,7 @@ import { ElMessage } from 'element-plus';
 import { buildEmbedUrl as apiBuildEmbedUrl, getSchema } from '@/api/settings';
 import {
   listDatasets, kbHealth, type KbDataset, type KbDocument,
-  listDocuments, downloadDocumentUrl, listDocChunks,
+  listDocuments, listDocChunks,
   type KbDocChunk,
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
@@ -340,12 +339,6 @@ async function loadDocs(datasetId: string) {
 const detailOpen = ref(false);
 const detailDs = ref<KbDataset | null>(null);
 function openDetail(d: KbDataset) { detailDs.value = d; detailOpen.value = true; }
-
-// 文档下载 (返回给 template 用的 url)
-function kbDownloadUrl(datasetId: string, documentId: string): string {
-  return downloadDocumentUrl(datasetId, documentId);
-}
-
 // chunks 抽屉状态
 const chunksOpen = ref(false);
 const chunksTitle = ref('');

@@ -68,30 +68,6 @@ async def list_documents(
         if data.get("code", 0) != 0:
             raise RuntimeError(f"ragflow list_documents: {data.get('message') or data}")
         return data.get("data") or {"docs": [], "total": 0}
-
-
-async def download_document(dataset_id: str, document_id: str) -> tuple[bytes, str]:
-    """下载 document 文件 (代理 RAGFlow GET /datasets/{id}/documents/{doc_id}).
-
-    返回 (content_bytes, filename). 文件名从 Content-Disposition 头拿, 拿不到就用 document_id.
-    """
-    base, key = await _config()
-    if not base or "xxxxx" in key or "mock" in key:
-        raise RuntimeError("RAGFlow 未配置")
-    url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/{quote(document_id, safe='')}"
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.get(url, headers=await _headers())
-        r.raise_for_status()
-        # RAGFlow 直接返回文件流; Content-Disposition: attachment; filename="xxx.txt"
-        cd = r.headers.get("content-disposition", "")
-        filename = document_id
-        import re as _re
-        m = _re.search(r'filename[*]?=(?:UTF-8'')?"?([^";]+)"?', cd)
-        if m:
-            filename = m.group(1).strip()
-        return r.content, filename
-
-
 async def list_doc_chunks(
     dataset_id: str,
     document_id: str,

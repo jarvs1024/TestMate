@@ -149,12 +149,6 @@ export async function deleteKbDocuments(
   })) as { ok: boolean };
 }
 
-// 文档下载: 浏览器直接走 <a :href download> 即可, 这里只返回 URL
-export function downloadDocumentUrl(datasetId: string, documentId: string): string {
-  return `/api/v1/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}/download`;
-}
-
-
 // 列出某文档的 chunks
 export async function listDocChunks(
   datasetId: string,

@@ -3,7 +3,7 @@
 # node / nginx 都 pin 具体 patch 版本,保证 reproducible build
 
 # ===== Stage 1: builder =====
-FROM node:20.18.1-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ COPY . .
 RUN npm run build
 
 # ===== Stage 2: runtime (nginx 静态服务) =====
-FROM nginx:1.27.4-alpine
+FROM nginx:1.27-alpine
 
 # 复制构建产物
 COPY --from=builder /app/dist /usr/share/nginx/html
