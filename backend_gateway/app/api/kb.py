@@ -65,6 +65,55 @@ async def get_datasets(_user: User = Depends(get_current_user)) -> dict:
 # ============ Documents (P2: 数据集下文档列表 / 重跑 / 删除) ============
 
 @router.get("/datasets/{dataset_id}/documents")
+async def get_documents(
+    dataset_id: str,
+    page: int = 1,
+    page_size: int = 30,
+    orderby: str = "create_time",
+    desc: bool = True,
+    keywords: str = "",
+    run: str = "",
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """列出某 dataset 下的 documents (代理 RAGFlow)."""
+    try:
+        data = await list_documents(
+            dataset_id=dataset_id, page=page, page_size=page_size,
+            orderby=orderby, desc=desc, keywords=keywords, run=run,
+        )
+        docs = data.get("docs") or []
+        # 精简字段, 不传 thumbnail (RAGFlow 相对路径没法直接展示)
+        cleaned = [
+            {
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "location": d.get("location", ""),
+                "type": d.get("type", ""),
+                "size": d.get("size", 0),
+                "chunk_count": d.get("chunk_count", 0),
+                "token_count": d.get("token_count", 0),
+                "chunk_method": d.get("chunk_method", ""),
+                "run": d.get("run", "UNSTART"),
+                "progress": d.get("progress", 0.0),
+                "progress_msg": d.get("progress_msg", ""),
+                "process_begin_at": d.get("process_begin_at"),
+                "process_duration": d.get("process_duration", 0.0),
+                "source_type": d.get("source_type", ""),
+                "status": d.get("status", "1"),
+                "create_date": d.get("create_date", ""),
+                "update_date": d.get("update_date", ""),
+                "create_time": d.get("create_time", 0),
+                "update_time": d.get("update_time", 0),
+                "parser_config": d.get("parser_config") or {},
+            }
+            for d in docs
+        ]
+        return {"docs": cleaned, "total": len(cleaned)}
+    except Exception as e:
+        logger.exception("list_documents failed")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+
 @router.get("/datasets/{dataset_id}/documents/{document_id}/chunks")
 async def get_doc_chunks(
     dataset_id: str,
