@@ -108,7 +108,7 @@
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th>名称</th><th>大小</th><th>分段</th><th>Tokens</th><th>解析</th><th>启用</th><th>更新</th><th style="width:80px">操作</th>
+                        <th>名称</th><th>大小</th><th>分段</th><th>解析</th><th>启用</th><th>更新</th><th style="width:80px">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -119,7 +119,6 @@
                         </td>
                         <td class="mono">{{ fmtSize(doc.size) }}</td>
                         <td class="mono">{{ doc.chunk_count }}</td>
-                        <td class="mono">{{ doc.token_count }}</td>
                         <td>
                           <span class="run-badge" :class="runStatusClass(doc.run)" :title="runTitle(doc)">{{ runStatusLabel(doc.run) }}</span>
                         </td>
@@ -132,7 +131,7 @@
                         </td>
                       </tr>
                       <tr v-if="docsOf(d.id).length === 0 && !docLoading">
-                        <td :colspan="8" class="empty">暂无文档</td>
+                        <td :colspan="7" class="empty">暂无文档</td>
                       </tr>
                     </tbody>
                   </table>
