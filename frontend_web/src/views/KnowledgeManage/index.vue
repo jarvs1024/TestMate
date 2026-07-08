@@ -102,7 +102,7 @@
                   <div class="doc-hd">
                     <div class="doc-t">📄 {{ d.name }} · 文档列表</div>
                     <div class="doc-tools">
-                      <button class="reload sm" @click="loadDocs(d.id)" :disabled="docLoading">↻</button>
+                      <button class="reload sm" @click="loadDocs(d.id)" :disabled="docLoading(d.id)">↻</button>
                     </div>
                   </div>
                   <table class="doc-tbl">
