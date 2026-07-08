@@ -76,3 +76,24 @@ export function runStatusLabel(run: string): string {
     default: return run || '—';
   }
 }
+
+/** 把秒数格式化成 'X分Y秒' / 'Y秒' / 'X.X秒'. < 60 显示秒, < 3600 显示分秒 */
+export function fmtDuration(seconds: number): string {
+  if (!seconds || seconds < 0) return '';
+  if (seconds < 60) return `${seconds.toFixed(1)}秒`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  if (m < 60) return `${m}分${s}秒`;
+  const h = Math.floor(m / 60);
+  return `${h}时${m % 60}分`;
+}
+
+/** source_type -> 简短中文标签 (用于文档行) */
+export function sourceLabel(type: string): string {
+  switch ((type || '').toLowerCase()) {
+    case 'local': return '本地';
+    case 'http': return 'HTTP';
+    case 'web': return '网页';
+    default: return type || '—';
+  }
+}

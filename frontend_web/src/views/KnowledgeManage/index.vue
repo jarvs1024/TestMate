@@ -108,20 +108,22 @@
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th>名称</th><th>大小</th><th>分段</th><th>Tokens</th><th>解析</th><th>启用</th><th>更新</th><th style="width:80px">操作</th>
+                        <th>名称</th><th>来源</th><th>切片</th><th>大小</th><th>分段</th><th>Tokens</th><th>解析</th><th>启用</th><th>更新</th><th style="width:60px">操作</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-for="doc in docsOf(d.id)" :key="doc.id" :class="{ failed: doc.run === 'FAIL' }">
                         <td class="nm">
                           <span class="doc-ic">{{ docIcon(doc.type) }}</span>
-                          <span class="doc-name" :title="doc.location">{{ doc.name }}</span>
+                          <span class="doc-name" :title="doc.location" @click="openDocDetail(doc)" style="cursor:pointer">{{ doc.name }}</span>
                         </td>
+                        <td class="mono" :title="doc.source_type">{{ sourceLabel(doc.source_type) }}</td>
+                        <td class="mono">{{ fmtChunkMethod(doc.chunk_method) }}</td>
                         <td class="mono">{{ fmtSize(doc.size) }}</td>
                         <td class="mono">{{ doc.chunk_count }}</td>
                         <td class="mono">{{ doc.token_count }}</td>
                         <td>
-                          <span class="run-badge" :class="runStatusClass(doc.run)" :title="doc.progress_msg || ''">{{ runStatusLabel(doc.run) }}</span>
+                          <span class="run-badge" :class="runStatusClass(doc.run)" :title="runTitle(doc)">{{ runStatusLabel(doc.run) }}{{ doc.run === 'DONE' ? ' · ' + fmtDuration(doc.process_duration) : '' }}</span>
                         </td>
                         <td>
                           <span class="run-badge" :class="doc.status === '1' ? 'run-done' : 'run-fail'">{{ doc.status === '1' ? '启用' : '禁用' }}</span>
@@ -132,7 +134,7 @@
                         </td>
                       </tr>
                       <tr v-if="docsOf(d.id).length === 0 && !docLoading">
-                        <td :colspan="8" class="empty">暂无文档</td>
+                        <td :colspan="10" class="empty">暂无文档</td>
                       </tr>
                     </tbody>
                   </table>
@@ -200,6 +202,33 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- 文档详情抽屉 -->
+    <el-drawer v-model="docDetailOpen" :title="docDetail?.name || '文档详情'" size="540px" direction="rtl">
+      <template v-if="docDetail">
+        <div class="dt">
+          <div class="dt-row"><span class="dt-k">ID</span><span class="dt-v mono">{{ docDetail.id }}</span></div>
+          <div class="dt-row"><span class="dt-k">名称</span><span class="dt-v">{{ docDetail.name }}</span></div>
+          <div class="dt-row"><span class="dt-k">路径</span><span class="dt-v mono">{{ docDetail.location || '—' }}</span></div>
+          <div class="dt-row"><span class="dt-k">类型</span><span class="dt-v">{{ (docDetail.type || '').toUpperCase() || '—' }}</span></div>
+          <div class="dt-row"><span class="dt-k">大小</span><span class="dt-v mono">{{ fmtSize(docDetail.size) }}</span></div>
+          <div class="dt-row"><span class="dt-k">分段数</span><span class="dt-v mono">{{ docDetail.chunk_count }}</span></div>
+          <div class="dt-row"><span class="dt-k">Token 数</span><span class="dt-v mono">{{ docDetail.token_count }}</span></div>
+          <div class="dt-row"><span class="dt-k">来源</span><span class="dt-v">{{ sourceLabel(docDetail.source_type) }} ({{ docDetail.source_type || '—' }})</span></div>
+          <div class="dt-row"><span class="dt-k">切片法</span><span class="dt-v">{{ fmtChunkMethod(docDetail.chunk_method) }}（{{ docDetail.chunk_method }}）</span></div>
+          <div class="dt-row"><span class="dt-k">解析状态</span><span class="dt-v"><span class="run-badge" :class="runStatusClass(docDetail.run)">{{ runStatusLabel(docDetail.run) }}</span></span></div>
+          <div class="dt-row"><span class="dt-k">启用状态</span><span class="dt-v"><span class="run-badge" :class="docDetail.status === '1' ? 'run-done' : 'run-fail'">{{ docDetail.status === '1' ? '启用' : '禁用' }}</span></span></div>
+          <div v-if="docDetail.process_duration" class="dt-row"><span class="dt-k">处理耗时</span><span class="dt-v mono">{{ fmtDuration(docDetail.process_duration) }}</span></div>
+          <div v-if="docDetail.process_begin_at" class="dt-row"><span class="dt-k">开始处理</span><span class="dt-v mono">{{ docDetail.process_begin_at }}</span></div>
+          <div v-if="docDetail.progress_msg && docDetail.run === 'FAIL'" class="dt-row"><span class="dt-k">失败信息</span><span class="dt-v mono dt-err">{{ docDetail.progress_msg }}</span></div>
+          <div class="dt-row"><span class="dt-k">创建</span><span class="dt-v mono">{{ docDetail.create_date }} ({{ fmtTime(docDetail.create_time) }})</span></div>
+          <div class="dt-row"><span class="dt-k">更新</span><span class="dt-v mono">{{ docDetail.update_date }} ({{ fmtTime(docDetail.update_time) }})</span></div>
+
+          <div class="dt-sep">切片参数 (parser_config)</div>
+          <pre class="dt-pre mono">{{ JSON.stringify(docDetail.parser_config || {}, null, 2) }}</pre>
+        </div>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -215,7 +244,7 @@ import {
 import { useThemeStore } from '@/stores/theme';
 import {
   fmtSize, fmtTime, fmtChunkMethod, docIcon,
-  runStatusClass, runStatusLabel,
+  runStatusClass, runStatusLabel, fmtDuration, sourceLabel,
 } from '@/utils/format';
 
 const datasets = ref<KbDataset[]>([]);
@@ -344,6 +373,24 @@ const chunksTitle = ref('');
 const chunksList = ref<KbDocChunk[]>([]);
 const chunksTotal = ref(0);
 const chunksLoading = ref(false);
+
+// run badge tooltip: 失败时显示 progress_msg, DONE 时显示 process_begin_at + duration
+function runTitle(doc: KbDocument): string {
+  if (doc.run === 'FAIL' && doc.progress_msg) return doc.progress_msg;
+  if (doc.run === 'DONE' && doc.process_duration) {
+    const dur = fmtDuration(doc.process_duration);
+    return `完成, 耗时 ${dur}`;
+  }
+  return '';
+}
+
+// 文档详情抽屉状态
+const docDetailOpen = ref(false);
+const docDetail = ref<KbDocument | null>(null);
+function openDocDetail(doc: KbDocument) {
+  docDetail.value = doc;
+  docDetailOpen.value = true;
+}
 
 async function openChunks(d: KbDataset, doc: KbDocument) {
   chunksTitle.value = `📑 ${doc.name} · 分段预览`;
@@ -491,6 +538,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .dt-v.mono { font-family: var(--font-mono); font-size: 12px; }
 .dt-sep { font-size: 12.5px; font-weight: 700; color: var(--ink-700); margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .dt-pre { font-family: var(--font-mono); font-size: 11.5px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.dt-err { color: var(--err); white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; display: block; }
 
 /* 文档行内联操作按钮 (下载 / 分段) */
 .link-btn {
