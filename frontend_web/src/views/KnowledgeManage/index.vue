@@ -108,7 +108,7 @@
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th>名称</th><th>大小</th><th>分段</th><th>Tokens</th><th>状态</th><th>进度</th><th>更新</th><th style="width:80px">操作</th>
+                        <th>名称</th><th>大小</th><th>分段</th><th>Tokens</th><th>解析</th><th>启用</th><th>更新</th><th style="width:80px">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -123,9 +123,8 @@
                         <td>
                           <span class="run-badge" :class="runStatusClass(doc.run)" :title="doc.progress_msg || ''">{{ runStatusLabel(doc.run) }}</span>
                         </td>
-                        <td class="prog-cell">
-                          <div class="prog-bar"><div class="prog-fill" :style="{ width: Math.round((doc.progress || 0) * 100) + '%' }"></div></div>
-                          <span class="prog-num">{{ Math.round((doc.progress || 0) * 100) }}%</span>
+                        <td>
+                          <span class="run-badge" :class="doc.status === '1' ? 'run-done' : 'run-fail'">{{ doc.status === '1' ? '启用' : '禁用' }}</span>
                         </td>
                         <td class="mono">{{ fmtTime(doc.update_time) || doc.update_date || '—' }}</td>
                         <td>
@@ -475,11 +474,6 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .doc-tbl tr.failed td { background: rgba(239, 68, 68, 0.04); }
 .doc-ic { font-size: 15px; margin-right: 4px; }
 .doc-name { color: var(--ink-900); font-weight: 500; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
-
-.prog-cell { display: flex; align-items: center; gap: 6px; min-width: 130px; }
-.prog-bar { flex: 1; height: 6px; background: var(--surface-sunken); border-radius: 999px; overflow: hidden; }
-.prog-fill { height: 100%; background: var(--primary-grad); transition: width 0.3s ease; }
-.prog-num { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-500); min-width: 32px; text-align: right; }
 
 /* run 状态徽章 */
 .run-badge { display: inline-block; font-size: 10.5px; padding: 2px 8px; border-radius: var(--radius-pill); font-weight: 600; white-space: nowrap; }
