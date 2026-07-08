@@ -219,8 +219,8 @@
           <div v-if="docDetail.process_duration" class="dt-row"><span class="dt-k">处理耗时</span><span class="dt-v mono">{{ fmtDuration(docDetail.process_duration) }}</span></div>
           <div v-if="docDetail.process_begin_at" class="dt-row"><span class="dt-k">开始处理</span><span class="dt-v mono">{{ docDetail.process_begin_at }}</span></div>
           <div v-if="docDetail.progress_msg && docDetail.run === 'FAIL'" class="dt-row"><span class="dt-k">失败信息</span><span class="dt-v mono dt-err">{{ docDetail.progress_msg }}</span></div>
-          <div class="dt-row"><span class="dt-k">创建</span><span class="dt-v mono">{{ docDetail.create_date }} ({{ fmtTime(docDetail.create_time) }})</span></div>
-          <div class="dt-row"><span class="dt-k">更新</span><span class="dt-v mono">{{ docDetail.update_date }} ({{ fmtTime(docDetail.update_time) }})</span></div>
+          <div class="dt-row"><span class="dt-k">创建</span><span class="dt-v mono">{{ fmtTime(docDetail.create_time) || docDetail.create_date || '—' }}</span></div>
+          <div class="dt-row"><span class="dt-k">更新</span><span class="dt-v mono">{{ fmtTime(docDetail.update_time) || docDetail.update_date || '—' }}</span></div>
 
           <div class="dt-sep">切片参数 (parser_config)</div>
           <pre class="dt-pre mono">{{ JSON.stringify(docDetail.parser_config || {}, null, 2) }}</pre>
