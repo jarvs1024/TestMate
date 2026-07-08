@@ -1,9 +1,11 @@
-"""Alembic 环境 — 异步 SQLAlchemy 适配。
+"""Alembic 环境 — 异步 SQLAlchemy 适配 + 避开 configparser interpolation 拦截 DSN。
 
-参照官方文档:
-https://alembic.sqlalchemy.org/en/latest/cookbook.html#using-asyncio-with-alembic
+DSN 里的 @ 经 quote_plus 编码成 %40,configparser 默认把 %xx 当 interpolation 变量解析。
+解决:用 RawConfigParser 关 interpolation,或用 alembic 1.13+ 的 no-interpolation 标志。
 """
 import asyncio
+import os
+import sys
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -24,11 +26,17 @@ import app.models.agent  # noqa: F401, E402
 import app.models.machine  # noqa: F401, E402
 import app.models.system_setting  # noqa: F401, E402
 
-# Alembic Config — 提供 .ini 文件里 [alembic] 段的访问
+# Alembic Config
 config = context.config
 
-# 用 settings 里的 DSN 覆盖 .ini 里的 sqlalchemy.url
-# (这样 alembic 走 .env / 环境变量,不靠 alembic.ini 硬编码)
+# 关键: 关 configparser 的 interpolation
+# 原因: DSN 里的 @ 经 quote_plus 编码成 %40,configparser 默认把 %xx 当 interpolation 变量解析
+from configparser import RawConfigParser
+config.file_config = RawConfigParser()
+if config.config_file_name:
+    config.file_config.read(config.config_file_name)
+
+# 直接用 settings 的 DSN 覆盖,不走 configparser 拦截
 config.set_main_option("sqlalchemy.url", settings.mysql_async_dsn)
 
 # 配 logging — 走 alembic.ini
