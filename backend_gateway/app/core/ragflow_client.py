@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from app.core.settings_store import get, _rewrite_loopback
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,75 @@ async def list_datasets(page: int = 1, page_size: int = 50) -> list[dict[str, An
         if data.get("code", 0) != 0:
             raise RuntimeError(f"ragflow list_datasets: {data.get('message') or data}")
         return data.get("data") or []
+
+
+async def list_documents(
+    dataset_id: str,
+    page: int = 1,
+    page_size: int = 30,
+    orderby: str = "create_time",
+    desc: bool = True,
+    keywords: str = "",
+    run: str = "",
+) -> dict[str, Any]:
+    """列出某个 dataset 下的 documents (代理 RAGFlow GET /datasets/{id}/documents)."""
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        return {"docs": [], "total": 0, "_mock": True}
+    url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents"
+    params: dict[str, Any] = {
+        "page": page, "page_size": page_size, "orderby": orderby, "desc": desc,
+    }
+    if keywords:
+        params["keywords"] = keywords
+    if run:
+        params["run"] = run
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(url, headers=await _headers(), params=params)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow list_documents: {data.get('message') or data}")
+        return data.get("data") or {"docs": [], "total": 0}
+
+
+async def ingest_documents(doc_ids: list[str], run: str = "1", delete: bool = False) -> bool:
+    """重跑 / 取消 / 启动 documents 解析 (代理 RAGFlow POST /documents/ingest).
+
+    run: "1" = start, "2" = cancel
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        return False
+    url = f"{base}/documents/ingest"
+    body = {"doc_ids": doc_ids, "run": run, "delete": delete}
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.post(url, headers=await _headers(), json=body)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow ingest_documents: {data.get('message') or data}")
+        return bool(data.get("data"))
+
+
+async def delete_documents(dataset_id: str, doc_ids: list[str] | None = None, delete_all: bool = False) -> bool:
+    """删除 documents (代理 RAGFlow DELETE /datasets/{id}/documents)."""
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        return False
+    url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents"
+    body: dict[str, Any] = {}
+    if doc_ids:
+        body["ids"] = doc_ids
+    else:
+        body["delete_all"] = delete_all
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.request("DELETE", url, headers=await _headers(), json=body)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow delete_documents: {data.get('message') or data}")
+        return True
 
 
 async def retrieval(

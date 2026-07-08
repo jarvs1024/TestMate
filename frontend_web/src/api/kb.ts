@@ -9,6 +9,19 @@ export interface KbDataset {
   document_count: number;
   chunk_method: string;
   create_date: string;
+  // P1 新增
+  embedding_model: string;
+  permission: string;          // 'me' | 'team'
+  status: string;              // '1' = 启用
+  language: string;
+  token_num: number;
+  similarity_threshold: number;
+  vector_similarity_weight: number;
+  pagerank: number;
+  update_date: string;
+  create_time: number;         // epoch ms
+  update_time: number;
+  parser_config: Record<string, any>;
 }
 
 export interface KbChunk {
@@ -44,6 +57,36 @@ export interface KbSearchParams {
   page_size?: number;
 }
 
+// P2 新增: 文档列表
+export type DocRunStatus = 'UNSTART' | 'RUNNING' | 'CANCEL' | 'DONE' | 'FAIL';
+
+export interface KbDocument {
+  id: string;
+  name: string;
+  location: string;
+  type: string;                // 'doc' | 'pdf' | 'excel' | ...
+  size: number;                // bytes
+  chunk_count: number;
+  token_count: number;
+  chunk_method: string;
+  run: DocRunStatus | string;  // 文档处理状态
+  progress: number;            // 0~1
+  progress_msg: string;        // 失败原因 (FAIL 时)
+  process_begin_at: string | null;
+  process_duration: number;    // 秒
+  source_type: string;         // 'local' | 'http' | ...
+  status: string;              // '1' = 启用
+  create_date: string;
+  update_date: string;
+  create_time: number;
+  update_time: number;
+}
+
+export interface KbDocumentListResult {
+  docs: KbDocument[];
+  total: number;
+}
+
 export async function listDatasets(): Promise<{ items: KbDataset[]; total: number }> {
   return (await request.get('/kb/datasets')) as { items: KbDataset[]; total: number };
 }
@@ -54,4 +97,33 @@ export async function kbSearch(params: KbSearchParams): Promise<KbSearchResult> 
 
 export async function kbHealth(): Promise<{ status: string; message: string }> {
   return (await request.get('/kb/health')) as { status: string; message: string };
+}
+
+// P2 新增: 文档相关
+export async function listDocuments(
+  datasetId: string,
+  params: { page?: number; page_size?: number; keywords?: string; run?: string } = {},
+): Promise<KbDocumentListResult> {
+  return (await request.get(`/kb/datasets/${encodeURIComponent(datasetId)}/documents`, { params })) as KbDocumentListResult;
+}
+
+export async function ingestDocuments(
+  datasetId: string,
+  docIds: string[],
+  run: '1' | '2' = '1',
+  deleteExisting = false,
+): Promise<{ ok: boolean }> {
+  return (await request.post(`/kb/datasets/${encodeURIComponent(datasetId)}/documents/ingest`, {
+    doc_ids: docIds, run, delete: deleteExisting,
+  })) as { ok: boolean };
+}
+
+export async function deleteKbDocuments(
+  datasetId: string,
+  docIds?: string[],
+  deleteAll = false,
+): Promise<{ ok: boolean }> {
+  return (await request.delete(`/kb/datasets/${encodeURIComponent(datasetId)}/documents`, {
+    data: { ids: docIds, delete_all: deleteAll },
+  })) as { ok: boolean };
 }

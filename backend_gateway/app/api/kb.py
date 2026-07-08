@@ -10,8 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_user
-from app.core.ragflow_client import list_datasets, retrieval, probe
+from app.core.ragflow_client import (
+    list_datasets, retrieval, probe,
+    list_documents, ingest_documents, delete_documents,
+)
 from app.models.user import User
+from app.models.user import UserRole
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,6 +36,19 @@ async def get_datasets(_user: User = Depends(get_current_user)) -> dict:
                 "document_count": d.get("document_count", 0),
                 "chunk_method": d.get("chunk_method", ""),
                 "create_date": d.get("create_date", ""),
+                # P1: 多放一些字段, 前端可展示 embedding_model / 权限 / 切片参数等
+                "embedding_model": d.get("embedding_model", ""),
+                "permission": d.get("permission", "me"),
+                "status": d.get("status", "1"),
+                "language": d.get("language", ""),
+                "token_num": d.get("token_num", 0),
+                "similarity_threshold": d.get("similarity_threshold", 0.2),
+                "vector_similarity_weight": d.get("vector_similarity_weight", 0.3),
+                "pagerank": d.get("pagerank", 0),
+                "update_date": d.get("update_date", ""),
+                "create_time": d.get("create_time", 0),
+                "update_time": d.get("update_time", 0),
+                "parser_config": d.get("parser_config") or {},
             }
             for d in items
         ]
@@ -40,6 +57,104 @@ async def get_datasets(_user: User = Depends(get_current_user)) -> dict:
         logger.exception("list_datasets failed")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
+
+
+
+
+# ============ Documents (P2: 数据集下文档列表 / 重跑 / 删除) ============
+
+@router.get("/datasets/{dataset_id}/documents")
+async def get_documents(
+    dataset_id: str,
+    page: int = 1,
+    page_size: int = 30,
+    orderby: str = "create_time",
+    desc: bool = True,
+    keywords: str = "",
+    run: str = "",
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """列出某 dataset 下的 documents (代理 RAGFlow)."""
+    try:
+        data = await list_documents(
+            dataset_id=dataset_id, page=page, page_size=page_size,
+            orderby=orderby, desc=desc, keywords=keywords, run=run,
+        )
+        docs = data.get("docs") or []
+        # 精简: 去掉 thumbnail (base64 太大) + parser_config 太深
+        cleaned = [
+            {
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "location": d.get("location", ""),
+                "type": d.get("type", ""),
+                "size": d.get("size", 0),
+                "chunk_count": d.get("chunk_count", 0),
+                "token_count": d.get("token_count", 0),
+                "chunk_method": d.get("chunk_method", ""),
+                "run": d.get("run", "UNSTART"),
+                "progress": d.get("progress", 0.0),
+                "progress_msg": d.get("progress_msg", ""),
+                "process_begin_at": d.get("process_begin_at"),
+                "process_duration": d.get("process_duration", 0.0),
+                "source_type": d.get("source_type", ""),
+                "status": d.get("status", "1"),
+                "create_date": d.get("create_date", ""),
+                "update_date": d.get("update_date", ""),
+                "create_time": d.get("create_time", 0),
+                "update_time": d.get("update_time", 0),
+            }
+            for d in docs
+        ]
+        return {"docs": cleaned, "total": len(cleaned)}
+    except Exception as e:
+        logger.exception("list_documents failed")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+
+class IngestIn(BaseModel):
+    doc_ids: list[str] = Field(..., min_length=1)
+    run: str = Field("1", description="1=start, 2=cancel")
+    delete: bool = False
+
+
+@router.post("/datasets/{dataset_id}/documents/ingest")
+async def ingest(
+    dataset_id: str,
+    payload: IngestIn,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """启动/取消文档解析. admin only."""
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="admin only")
+    try:
+        ok = await ingest_documents(payload.doc_ids, run=payload.run, delete=payload.delete)
+        return {"ok": ok}
+    except Exception as e:
+        logger.exception("ingest failed")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+
+class DeleteDocsIn(BaseModel):
+    ids: list[str] | None = None
+    delete_all: bool = False
+
+
+@router.delete("/datasets/{dataset_id}/documents")
+async def delete_docs(
+    dataset_id: str,
+    payload: DeleteDocsIn,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """删除 dataset 下的文档. admin only."""
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="admin only")
+    try:
+        ok = await delete_documents(dataset_id, doc_ids=payload.ids, delete_all=payload.delete_all)
+        return {"ok": ok}
+    except Exception as e:
+        logger.exception("delete_docs failed")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
 class SearchIn(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
