@@ -1,6 +1,12 @@
 # TestMate Backend Dockerfile
 # 多阶段 build: builder 阶段装 gcc/libffi-dev 编译依赖,runtime 阶段只保留运行需要的 curl。
 # 镜像体积: 单阶段 ~430MB -> 多阶段 ~200MB
+#
+# 离线场景(如 86 完全断网)备选:
+#   没有 python:3.11-slim 镜像 + 没有公网时,可以暂时改用主机直跑:
+#     pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0
+#   或者参照 deploy/deploy.sh 走完整 offline-save 流程先把 base 镜像弄到内网。
+#   不要随便换 base(ubuntu/squid 等) — 它们的 apt repo 走公网,断网下走不通。
 
 # ===== Stage 1: builder =====
 FROM python:3.11-slim AS builder
