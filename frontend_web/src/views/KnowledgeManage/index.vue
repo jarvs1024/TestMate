@@ -114,8 +114,7 @@
                     <tbody>
                       <tr v-for="doc in docsOf(d.id)" :key="doc.id" :class="{ failed: doc.run === 'FAIL' }">
                         <td class="nm">
-                          <img v-if="doc.thumbnail" :src="doc.thumbnail" class="doc-thumb" :title="doc.name" />
-                          <span v-else class="doc-ic">{{ docIcon(doc.type) }}</span>
+                          <span class="doc-ic">{{ docIcon(doc.type) }}</span>
                           <span class="doc-name" :title="doc.location">{{ doc.name }}</span>
                         </td>
                         <td class="mono">{{ fmtSize(doc.size) }}</td>
@@ -360,7 +359,8 @@ async function openChunks(d: KbDataset, doc: KbDocument) {
   chunksList.value = [];
   chunksLoading.value = true;
   try {
-    const r = await listDocChunks(d.id, doc.id, { page_size: 200 });
+    // RAGFlow 限制 page_size <= 100, 后端 / API 层都会兜底; 这里用 100
+    const r = await listDocChunks(d.id, doc.id, { page_size: 100 });
     chunksList.value = r.chunks;
     chunksTotal.value = r.total;
   } catch (e: any) {
@@ -504,9 +504,6 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .dt-v.mono { font-family: var(--font-mono); font-size: 12px; }
 .dt-sep { font-size: 12.5px; font-weight: 700; color: var(--ink-700); margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .dt-pre { font-family: var(--font-mono); font-size: 11.5px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
-
-/* 文档缩略图 (base64 data url) */
-.doc-thumb { width: 24px; height: 24px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); flex-shrink: 0; }
 
 /* 文档行内联操作按钮 (下载 / 分段) */
 .link-btn {

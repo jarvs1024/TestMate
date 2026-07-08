@@ -82,8 +82,7 @@ async def get_documents(
             orderby=orderby, desc=desc, keywords=keywords, run=run,
         )
         docs = data.get("docs") or []
-        # 保留 thumbnail (PDF/图片有, base64 缩略图; 文本类一般是空串/null) + parser_config
-        # 单 doc 缩略图一般 5-50KB, 列表不会太多, 可以传
+        # 透传 parser_config, 前端自己展开
         cleaned = [
             {
                 "id": d.get("id"),
@@ -100,7 +99,6 @@ async def get_documents(
                 "process_begin_at": d.get("process_begin_at"),
                 "process_duration": d.get("process_duration", 0.0),
                 "source_type": d.get("source_type", ""),
-                "thumbnail": d.get("thumbnail") or "",
                 "status": d.get("status", "1"),
                 "create_date": d.get("create_date", ""),
                 "update_date": d.get("update_date", ""),
@@ -158,7 +156,15 @@ async def get_doc_chunks(
     keywords: str = "",
     _user: User = Depends(get_current_user),
 ) -> dict:
-    """列出某 document 下的 chunks (代理 RAGFlow)."""
+    """列出某 document 下的 chunks (代理 RAGFlow).
+
+    注意: RAGFlow API 限制 page_size <= 100. 前端想要看完整分段列表应自己分页.
+    """
+    # 兜底: 防止前端传超过 100
+    if page_size > 100:
+        page_size = 100
+    if page_size < 1:
+        page_size = 30
     try:
         data = await list_doc_chunks(dataset_id, document_id, page=page, page_size=page_size, keywords=keywords)
         # 精简 chunks: content 不裁, 但去掉 content_ltks (很大)
@@ -186,6 +192,9 @@ async def get_doc_chunks(
     except Exception as e:
         logger.exception("list_doc_chunks failed")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+
+
 class IngestIn(BaseModel):
     doc_ids: list[str] = Field(..., min_length=1)
     run: str = Field("1", description="1=start, 2=cancel")

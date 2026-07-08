@@ -75,7 +75,6 @@ export interface KbDocument {
   process_begin_at: string | null;
   process_duration: number;    // 秒
   source_type: string;         // 'local' | 'http' | ...
-  thumbnail: string;           // base64 data url (PDF/图片有)
   parser_config: Record<string, any>;
   status: string;              // '1' = 启用
   create_date: string;
@@ -155,15 +154,19 @@ export function downloadDocumentUrl(datasetId: string, documentId: string): stri
   return `/api/v1/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}/download`;
 }
 
+
 // 列出某文档的 chunks
 export async function listDocChunks(
   datasetId: string,
   documentId: string,
   params: { page?: number; page_size?: number; keywords?: string } = {},
 ): Promise<KbDocChunksResult> {
+  // RAGFlow 限制 page_size <= 100, 兜底 (后端也会兜)
+  const p = { page: 1, page_size: 100, ...params };
+  if (p.page_size > 100) p.page_size = 100;
   return (await request.get(
     `/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}/chunks`,
-    { params },
+    { params: p },
   )) as KbDocChunksResult;
 }
 
