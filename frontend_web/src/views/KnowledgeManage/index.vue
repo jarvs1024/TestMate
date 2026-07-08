@@ -61,8 +61,8 @@
           <tr>
             <th style="width:24px"></th>
             <th>名称</th>
-            <th>嵌入模型</th>
-            <th>权限</th>
+            <th>说明</th>
+            <th>状态</th>
             <th>文档</th>
             <th>分段</th>
             <th>切片法</th>
@@ -83,9 +83,9 @@
                 <span>{{ d.name }}</span>
                 <span class="ds-id mono">{{ d.id.slice(0, 8) }}…</span>
               </td>
-              <td class="mono emb" :title="d.embedding_model">{{ embShort(d.embedding_model) || '—' }}</td>
+              <td class="ds-desc" :title="d.description">{{ d.description || '—' }}</td>
               <td>
-                <span class="perm" :class="`perm-${d.permission}`">{{ d.permission === 'team' ? '团队' : '私有' }}</span>
+                <span class="run-badge" :class="d.status === '1' ? 'run-done' : 'run-fail'">{{ d.status === '1' ? '启用' : '禁用' }}</span>
               </td>
               <td class="mono">{{ d.document_count }}</td>
               <td class="mono">{{ d.chunk_count }}</td>
@@ -102,23 +102,17 @@
                   <div class="doc-hd">
                     <div class="doc-t">📄 {{ d.name }} · 文档列表</div>
                     <div class="doc-tools">
-                      <button class="ghost-btn" v-if="isAdmin" :disabled="!docsSelected.length || docActing || docLoading(d.id)" @click="onReparse(d)">↻ 重跑 ({{ docsSelected.length }})</button>
-                      <button class="ghost-btn" v-if="isAdmin" :disabled="!docsSelected.length || docActing || docLoading(d.id)" @click="onDeleteDocs(d)">🗑 删除 ({{ docsSelected.length }})</button>
                       <button class="reload sm" @click="loadDocs(d.id)" :disabled="docLoading">↻</button>
                     </div>
                   </div>
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th style="width:28px" v-if="isAdmin"><input type="checkbox" :checked="allSelected(d)" @change="toggleAll(d, $event)" /></th>
                         <th>名称</th><th>类型</th><th>大小</th><th>分段</th><th>状态</th><th>进度</th><th>更新</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-for="doc in docsOf(d.id)" :key="doc.id" :class="{ failed: doc.run === 'FAIL' }">
-                        <td v-if="isAdmin">
-                          <input type="checkbox" :checked="isSelected(doc.id)" @change="toggleOne(doc.id, $event)" />
-                        </td>
                         <td class="nm">
                           <span class="doc-ic">{{ docIcon(doc.type) }}</span>
                           <span class="doc-name" :title="doc.location">{{ doc.name }}</span>
@@ -136,7 +130,7 @@
                         <td class="mono">{{ fmtTime(doc.update_time) || doc.update_date || '—' }}</td>
                       </tr>
                       <tr v-if="docsOf(d.id).length === 0 && !docLoading">
-                        <td :colspan="isAdmin ? 8 : 7" class="empty">暂无文档</td>
+                        <td :colspan="7" class="empty">暂无文档</td>
                       </tr>
                     </tbody>
                   </table>
@@ -160,10 +154,8 @@
         <div class="dt">
           <div class="dt-row"><span class="dt-k">ID</span><span class="dt-v mono">{{ detailDs.id }}</span></div>
           <div class="dt-row"><span class="dt-k">名称</span><span class="dt-v">{{ detailDs.name }}</span></div>
-          <div class="dt-row"><span class="dt-k">说明</span><span class="dt-v">{{ detailDs.description || '—' }}</span></div>
           <div class="dt-row"><span class="dt-k">嵌入模型</span><span class="dt-v mono">{{ detailDs.embedding_model || '—' }}</span></div>
           <div class="dt-row"><span class="dt-k">权限</span><span class="dt-v"><span class="perm" :class="`perm-${detailDs.permission}`">{{ detailDs.permission === 'team' ? '团队' : '私有' }}</span></span></div>
-          <div class="dt-row"><span class="dt-k">状态</span><span class="dt-v"><span class="run-badge" :class="detailDs.status === '1' ? 'run-done' : 'run-fail'">{{ detailDs.status === '1' ? '启用' : '禁用' }}</span></span></div>
           <div class="dt-row"><span class="dt-k">语言</span><span class="dt-v">{{ detailDs.language || '—' }}</span></div>
           <div class="dt-row"><span class="dt-k">文档数</span><span class="dt-v mono">{{ detailDs.document_count }}</span></div>
           <div class="dt-row"><span class="dt-k">分段数</span><span class="dt-v mono">{{ detailDs.chunk_count }}</span></div>
@@ -172,8 +164,8 @@
           <div class="dt-row"><span class="dt-k">相似度阈值</span><span class="dt-v mono">{{ detailDs.similarity_threshold }}</span></div>
           <div class="dt-row"><span class="dt-k">向量权重</span><span class="dt-v mono">{{ detailDs.vector_similarity_weight }}</span></div>
           <div class="dt-row"><span class="dt-k">PageRank</span><span class="dt-v mono">{{ detailDs.pagerank }}</span></div>
-          <div class="dt-row"><span class="dt-k">创建</span><span class="dt-v mono">{{ detailDs.create_date }} ({{ fmtTime(detailDs.create_time) }})</span></div>
-          <div class="dt-row"><span class="dt-k">更新</span><span class="dt-v mono">{{ detailDs.update_date }} ({{ fmtTime(detailDs.update_time) }})</span></div>
+          <div class="dt-row"><span class="dt-k">创建</span><span class="dt-v mono">{{ fmtTime(detailDs.create_time) }}</span></div>
+          <div class="dt-row"><span class="dt-k">更新</span><span class="dt-v mono">{{ fmtTime(detailDs.update_time) }}</span></div>
 
           <div class="dt-sep">切片参数 (parser_config)</div>
           <pre class="dt-pre mono">{{ JSON.stringify(detailDs.parser_config, null, 2) }}</pre>
@@ -185,14 +177,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import { buildEmbedUrl as apiBuildEmbedUrl, getSchema } from '@/api/settings';
 import {
   listDatasets, kbHealth, type KbDataset, type KbDocument,
-  listDocuments, ingestDocuments, deleteKbDocuments,
+  listDocuments,
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
-import { useUserStore } from '@/stores/user';
 import {
   fmtSize, fmtTime, fmtChunkMethod, docIcon,
   runStatusClass, runStatusLabel,
@@ -204,8 +195,6 @@ const rfStatus = ref<'ok' | 'warn' | 'off' | ''>('');
 const rfMsg = ref('');
 
 const themeStore = useThemeStore();
-const userStore = useUserStore();
-const isAdmin = computed(() => userStore.isAdmin);
 
 // search/chat embed 配置 (沿用)
 type ShareTab = 'search' | 'chat';
@@ -285,46 +274,13 @@ const totalChunks = computed(() => datasets.value.reduce((s, d) => s + d.chunk_c
 // P1: 概览加总大小 — 需要 docs, 用懒加载的总量; 这里先按数据集的 token_num 估算不易, 改为文档列表都加载后汇总
 const totalSize = ref(0);
 
-// 把过长的 embedding_model 截短显示
-function embShort(s: string): string {
-  if (!s) return '';
-  // 'BAAI/bge-large-zh-v1.5@BAAI' -> 'bge-large-zh-v1.5@BAAI'
-  const parts = s.split('/');
-  const last = parts[parts.length - 1] || s;
-  return last.length > 24 ? last.slice(0, 22) + '…' : last;
-}
-
 // 行展开
 const expandedId = ref('');
 const docsByDataset = ref<Record<string, KbDocument[]>>({});
 const docLoadingByDs = ref<Record<string, boolean>>({});
-const selectedByDataset = ref<Record<string, Set<string>>>({});
 
 function docsOf(datasetId: string): KbDocument[] { return docsByDataset.value[datasetId] || []; }
 function docLoading(datasetId: string): boolean { return !!docLoadingByDs.value[datasetId]; }
-const docActing = ref(false);
-const docsSelected = computed(() => Array.from(selectedByDataset.value[expandedId.value] || []));
-
-function isSelected(id: string): boolean { return !!(selectedByDataset.value[expandedId.value]?.has(id)); }
-function toggleOne(id: string, ev: Event) {
-  const checked = (ev.target as HTMLInputElement).checked;
-  const set = selectedByDataset.value[expandedId.value] || new Set<string>();
-  if (checked) set.add(id); else set.delete(id);
-  selectedByDataset.value[expandedId.value] = set;
-}
-function allSelected(d: KbDataset): boolean {
-  const list = docsOf(d.id);
-  const sel = selectedByDataset.value[d.id];
-  return list.length > 0 && !!sel && list.every(x => sel.has(x.id));
-}
-function toggleAll(d: KbDataset, ev: Event) {
-  const checked = (ev.target as HTMLInputElement).checked;
-  const list = docsOf(d.id);
-  const set = selectedByDataset.value[d.id] || new Set<string>();
-  if (checked) list.forEach(x => set.add(x.id));
-  else list.forEach(x => set.delete(x.id));
-  selectedByDataset.value[d.id] = set;
-}
 
 async function toggleExpand(datasetId: string) {
   if (expandedId.value === datasetId) { expandedId.value = ''; return; }
@@ -347,41 +303,6 @@ async function loadDocs(datasetId: string) {
   } finally {
     docLoadingByDs.value[datasetId] = false;
   }
-}
-
-async function onReparse(d: KbDataset) {
-  const ids = Array.from(selectedByDataset.value[d.id] || []);
-  if (!ids.length) return;
-  docActing.value = true;
-  try {
-    await ingestDocuments(d.id, ids, '1', false);
-    ElMessage.success(`已触发重跑 (${ids.length} 个文档)`);
-    await loadDocs(d.id);
-    await loadAll(); // 刷新数据集分段数
-  } catch (e: any) {
-    ElMessage.error('重跑失败: ' + (e?.response?.data?.detail || e?.message));
-  } finally { docActing.value = false; }
-}
-
-async function onDeleteDocs(d: KbDataset) {
-  const ids = Array.from(selectedByDataset.value[d.id] || []);
-  if (!ids.length) return;
-  try {
-    await ElMessageBox.confirm(
-      `确定删除 ${ids.length} 个文档? 文档对应分段会一并删除 (RAGFlow 行为).`,
-      '删除确认', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
-    );
-  } catch { return; }
-  docActing.value = true;
-  try {
-    await deleteKbDocuments(d.id, ids);
-    ElMessage.success(`已删除 ${ids.length} 个文档`);
-    selectedByDataset.value[d.id] = new Set();
-    await loadDocs(d.id);
-    await loadAll();
-  } catch (e: any) {
-    ElMessage.error('删除失败: ' + (e?.response?.data?.detail || e?.message));
-  } finally { docActing.value = false; }
 }
 
 // === 详情抽屉 ===
@@ -475,6 +396,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .ds-ic { font-size: 16px; }
 .ds-id { font-size: 10.5px; color: var(--ink-500); margin-left: 4px; }
 .emb { color: var(--ink-500); font-size: 11.5px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-desc { color: var(--ink-700); font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .perm { font-size: 10.5px; padding: 2px 7px; border-radius: var(--radius-pill); font-weight: 600; }
 .perm-me { background: var(--surface-sunken); color: var(--ink-700); }
