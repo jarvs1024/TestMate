@@ -108,7 +108,7 @@
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th>名称</th><th>来源</th><th>切片</th><th>大小</th><th>分段</th><th>Tokens</th><th>解析</th><th>启用</th><th>更新</th><th style="width:60px">操作</th>
+                        <th>名称</th><th>大小</th><th>分段</th><th>Tokens</th><th>解析</th><th>启用</th><th>更新</th><th style="width:80px">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -117,13 +117,11 @@
                           <span class="doc-ic">{{ docIcon(doc.type) }}</span>
                           <span class="doc-name" :title="doc.location" @click="openDocDetail(doc)" style="cursor:pointer">{{ doc.name }}</span>
                         </td>
-                        <td class="mono" :title="doc.source_type">{{ sourceLabel(doc.source_type) }}</td>
-                        <td class="mono">{{ fmtChunkMethod(doc.chunk_method) }}</td>
                         <td class="mono">{{ fmtSize(doc.size) }}</td>
                         <td class="mono">{{ doc.chunk_count }}</td>
                         <td class="mono">{{ doc.token_count }}</td>
                         <td>
-                          <span class="run-badge" :class="runStatusClass(doc.run)" :title="runTitle(doc)">{{ runStatusLabel(doc.run) }}{{ doc.run === 'DONE' ? ' · ' + fmtDuration(doc.process_duration) : '' }}</span>
+                          <span class="run-badge" :class="runStatusClass(doc.run)" :title="runTitle(doc)">{{ runStatusLabel(doc.run) }}</span>
                         </td>
                         <td>
                           <span class="run-badge" :class="doc.status === '1' ? 'run-done' : 'run-fail'">{{ doc.status === '1' ? '启用' : '禁用' }}</span>
@@ -134,7 +132,7 @@
                         </td>
                       </tr>
                       <tr v-if="docsOf(d.id).length === 0 && !docLoading">
-                        <td :colspan="10" class="empty">暂无文档</td>
+                        <td :colspan="8" class="empty">暂无文档</td>
                       </tr>
                     </tbody>
                   </table>
