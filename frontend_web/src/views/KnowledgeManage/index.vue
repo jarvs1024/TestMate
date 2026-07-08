@@ -215,7 +215,7 @@
           <div class="dt-row"><span class="dt-k">来源</span><span class="dt-v">{{ sourceLabel(docDetail.source_type) }} ({{ docDetail.source_type || '—' }})</span></div>
           <div class="dt-row"><span class="dt-k">切片法</span><span class="dt-v">{{ fmtChunkMethod(docDetail.chunk_method) }}（{{ docDetail.chunk_method }}）</span></div>
           <div class="dt-row"><span class="dt-k">解析状态</span><span class="dt-v"><span class="run-badge" :class="runStatusClass(docDetail.run)">{{ runStatusLabel(docDetail.run) }}</span></span></div>
-          <div class="dt-row"><span class="dt-k">启用状态</span><span class="dt-v"><span class="run-badge" :class="docDetail.status === '1' ? 'run-done' : 'run-fail'">{{ docDetail.status === '1' ? '启用' : '禁用' }}</span></span></div>
+          <div class="dt-row"><span class="dt-k">状态</span><span class="dt-v"><span class="run-badge" :class="docDetail.status === '1' ? 'run-done' : 'run-fail'">{{ docDetail.status === '1' ? '启用' : '禁用' }}</span></span></div>
           <div v-if="docDetail.process_duration" class="dt-row"><span class="dt-k">处理耗时</span><span class="dt-v mono">{{ fmtDuration(docDetail.process_duration) }}</span></div>
           <div v-if="docDetail.process_begin_at" class="dt-row"><span class="dt-k">开始处理</span><span class="dt-v mono">{{ docDetail.process_begin_at }}</span></div>
           <div v-if="docDetail.progress_msg && docDetail.run === 'FAIL'" class="dt-row"><span class="dt-k">失败信息</span><span class="dt-v mono dt-err">{{ docDetail.progress_msg }}</span></div>
