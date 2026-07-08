@@ -6,7 +6,6 @@
 
 - 当前阶段:**P0 已完成,P1 部分完成**(2026-07-07)
 - 仓库:`github.com/jarvs1024/TestMate`
-- 已上线:http://10.20.68.86:8090/(ai-test-86 服务器,86 上 admin / Admin@123)
 - 详细方案:`docs/specs/2026-07-04-testmate-design.md`
 - 汇报版:`docs/specs/2026-07-04-testmate-brief.md`
 - P0 进度:`docs/specs/2026-07-04-p0-progress.md`

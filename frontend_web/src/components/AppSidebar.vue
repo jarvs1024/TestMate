@@ -9,7 +9,7 @@
           class="group"
           :class="{ active: isActive(g.path) }"
         >
-          <span class="g-ic" v-html="g.icon"></span>
+          <span class="g-ic" v-html="safeIcon(g.icon)"></span>
           <span class="g-lb">{{ g.label }}</span>
         </router-link>
       </nav>
@@ -28,6 +28,7 @@
 </template>
 
 <script setup lang="ts">
+import { sanitizeIcon } from '@/utils/sanitizeIcon';
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import axios from 'axios';
@@ -42,6 +43,12 @@ const groups = [
   { path: '/plaza',    label: '广场',   icon: icoPlaza },
   { path: '/kb-manage', label: '知识库', icon: icoKb },
 ];
+
+/* v-html 兜底: 即使将来 icon 来源切到后端 API, 也只放行白名单 svg 标签,
+   剥除 <script> / on* 事件 / javascript: URL, 防 XSS. */
+function safeIcon(html: string): string {
+  return sanitizeIcon(html);
+}
 
 interface ServiceHealth { key: string; label: string; status: 'ok' | 'warn' | 'off' | 'unknown'; statusText: string }
 const services = ref<ServiceHealth[]>([
