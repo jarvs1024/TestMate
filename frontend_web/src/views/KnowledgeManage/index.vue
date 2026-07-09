@@ -54,7 +54,7 @@
     <!-- 数据集列表 (P1 加列 + 行可展开看文档) -->
     <div class="card">
       <div class="ds-hd">
-        <h2><span>数据集</span> <button class="reload" @click="loadAll" :disabled="loading">↻ 刷新</button></h2>
+        <h2><span>数据集</span> <button class="reload" @click="onReload" :disabled="loading">↻ 刷新</button></h2>
       </div>
       <table class="ds-tbl">
         <thead>
@@ -326,8 +326,12 @@ async function loadShareConfig() {
 // === 数据集 + 文档 ===
 const totalDocs = computed(() => datasets.value.reduce((s, d) => s + d.document_count, 0));
 const totalChunks = computed(() => datasets.value.reduce((s, d) => s + d.chunk_count, 0));
-// P1: 概览加总大小 — 需要 docs, 用懒加载的总量; 这里先按数据集的 token_num 估算不易, 改为文档列表都加载后汇总
-const totalSize = ref(0);
+// P1: 概览加总大小 — 文档加载后从 docsByDataset 实时汇总
+const totalSize = computed(() =>
+  Object.values(docsByDataset.value).reduce(
+    (s, list) => s + list.reduce((ss, doc) => ss + (doc.size || 0), 0), 0,
+  ),
+);
 
 // 行展开
 const expandedId = ref('');
@@ -344,14 +348,21 @@ async function toggleExpand(datasetId: string) {
 }
 
 async function loadDocs(datasetId: string) {
+  if (docsByDataset.value[datasetId]) return; // 已缓存, 不重复拉
   docLoadingByDs.value[datasetId] = true;
   try {
-    const r = await listDocuments(datasetId, { page_size: 100 });
-    docsByDataset.value[datasetId] = r.docs;
-    // 累加 totalSize
-    totalSize.value = Object.values(docsByDataset.value).reduce(
-      (s, list) => s + list.reduce((ss, doc) => ss + (doc.size || 0), 0), 0,
-    );
+    // RAGFlow 单页上限 100, 分页拿全量用于准确汇总 totalSize
+    const all: KbDocument[] = [];
+    const PAGE = 100;
+    const first = await listDocuments(datasetId, { page: 1, page_size: PAGE });
+    all.push(...first.docs);
+    const total = first.total || first.docs.length;
+    for (let page = 2; all.length < total; page++) {
+      const r = await listDocuments(datasetId, { page, page_size: PAGE });
+      if (!r.docs.length) break;
+      all.push(...r.docs);
+    }
+    docsByDataset.value[datasetId] = all;
   } catch (e: any) {
     ElMessage.error('加载文档失败: ' + (e?.response?.data?.detail || e?.message));
     docsByDataset.value[datasetId] = [];
@@ -426,8 +437,21 @@ async function loadAll() {
   } finally { loading.value = false; }
 }
 
+async function onReload() {
+  await loadAll();
+  warmupAllDocs();
+}
+
+// 预热所有数据集的文档, 让概览的总大小/分段/文档数立即准确, 且展开时直接命中缓存
+async function warmupAllDocs() {
+  if (!datasets.value.length) return;
+  await Promise.allSettled(datasets.value.map(d => loadDocs(d.id)));
+}
+
 onMounted(async () => {
   await Promise.allSettled([loadAll(), loadShareConfig()]);
+  // 不阻塞 UI: 后台预热文档列表, 概览总大小 / 分段数 / 文档数随后到位
+  warmupAllDocs();
   if (activeTab.value === 'search' && searchEmbedUrl.value) await reResolve('search');
   else if (activeTab.value === 'chat' && chatEmbedUrl.value) await reResolve('chat');
 });
