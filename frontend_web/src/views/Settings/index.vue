@@ -134,68 +134,52 @@
         <!-- 🤖 智能体 -->
         <section v-if="activeTop === 'sec-agents'" :id="'sec-agents'" class="card grp">
           <h2>
-            <span>🤖 智能体 / Dify</span>
-            <span class="grp-cnt">{{ agentsItems.length }} 项</span>
+            <span>🤖 智能体</span>
+            <span class="grp-cnt">{{ agentsMeta.length }} 个</span>
           </h2>
-          <div v-for="(it, idx) in agentsItems" :key="it.key" class="row" :class="{ first: idx === 0 }">
-            <div class="lbl-col">
-              <div class="k">
-                <code>{{ it.key }}</code>
-                <span v-if="it.is_secret" class="secret-tag">secret</span>
-                <span v-if="!it.is_default" class="custom-tag">已定制</span>
-              </div>
-              <div class="d">{{ it.description }}</div>
-            </div>
-            <div class="inp-col">
-              <label v-if="it.value_type === 'bool'" class="switch">
-                <input type="checkbox" :checked="!!drafts[it.key]"
-                  :disabled="!isAdmin"
-                  @change="setDraft(it.key, ($event.target as HTMLInputElement).checked)" />
-                <span class="sl"></span>
-                <span class="stxt">{{ drafts[it.key] ? 'ON' : 'OFF' }}</span>
-              </label>
-              <template v-else-if="it.value_type === 'secret'">
-                <div class="secret-wrap">
-                  <input :type="showSecrets[it.key] ? 'text' : 'password'"
-                    :value="getInputValue(it)"
-                    :placeholder="it.is_default ? '(使用 .env 默认值)' : '已设置, 留空不改'"
-                    :disabled="!isAdmin"
-                    @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-                  <button class="eye" type="button" @click="showSecrets[it.key] = !showSecrets[it.key]" :title="showSecrets[it.key] ? '隐藏' : '显示'">
-                    {{ showSecrets[it.key] ? '🙈' : '👁' }}
-                  </button>
-                </div>
-              </template>
-              <input v-else
-                :type="it.value_type === 'int' ? 'number' : 'text'"
-                :value="drafts[it.key]"
-                :placeholder="it.description"
-                :disabled="!isAdmin"
-                @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-            </div>
-            <div class="act-col" v-if="isAdmin">
-              <button class="primary" :disabled="!isDirty(it) || !!saving" @click="onSave(it)">
-                {{ saving === it.key ? '保存中…' : '保存' }}
-              </button>
-              <button v-if="isDirty(it)" class="ghost" @click="revert(it)">取消</button>
-            </div>
-          </div>
-          <div class="test-row">
-            <button class="test-btn" :disabled="!!testing" @click="onTest('agents')">
-              {{ testing === 'agents' ? '测试中…' : '🔌 测试 Dify 连接' }}
-            </button>
-            <div v-if="testResults['agents']" class="test-result" :class="`s-${testResults['agents']?.status}`">
-              <span class="dot"></span>
-              <span class="msg">{{ testResults['agents']?.message }}</span>
-              <span v-if="testResults['agents']?.detail" class="det">
-                {{ JSON.stringify(testResults['agents']?.detail) }}
-              </span>
-            </div>
-          </div>
-        </section>
 
-        <!-- ⚙️ 通用 -->
-        <section v-if="activeTop === 'sec-general'" :id="'sec-general'" class="card grp">
+          <!-- 智能体卡片网格 (类似广场 AgentCard) -->
+          <div class="agent-cards">
+            <div v-for="a in agentsMeta" :key="a.id"
+                 class="agent-card" :class="{ active: activeAgentId === a.id }"
+                 @click="onPickAgent(a.id)">
+              <div class="ac-icon">{{ a.icon }}</div>
+              <div class="ac-body">
+                <div class="ac-row1">
+                  <span class="ac-name">{{ a.name }}</span>
+                  <span class="ac-cnt mono">{{ itemsByAgentId(a.id).length }} 项</span>
+                </div>
+                <div class="ac-sub">{{ a.sub }}</div>
+                <div class="ac-summary">{{ a.summary }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 当前选中智能体的详细配置 -->
+          <div v-for="a in agentsMeta" :key="`detail-${a.id}`" v-show="activeAgentId === a.id" :id="'sec-agent-detail'" class="sub-grp">
+            <h3>{{ a.icon }} {{ a.name }} <span class="sub-cnt">{{ itemsByAgentId(a.id).length }} 项</span></h3>
+            <SettingRow v-for="(it, idx) in itemsByAgentId(a.id)" :key="it.key"
+              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+              :saving="saving === it.key" :secret-display="getInputValue(it)"
+              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+            <div v-if="itemsByAgentId(a.id).length === 0" class="hint">
+              此智能体暂无可配置项.
+            </div>
+            <div class="test-row">
+              <button class="test-btn" :disabled="!!testing" @click="onTest(a.testKey)">
+                {{ testing === a.testKey ? '测试中…' : a.testLabel }}
+              </button>
+              <div v-if="testResults[a.testKey]" class="test-result" :class="`s-${testResults[a.testKey]?.status}`">
+                <span class="dot"></span>
+                <span class="msg">{{ testResults[a.testKey]?.message }}</span>
+                <span v-if="testResults[a.testKey]?.detail" class="det">
+                  {{ JSON.stringify(testResults[a.testKey]?.detail) }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </section><section v-if="activeTop === 'sec-general'" :id="'sec-general'" class="card grp">
           <h2>
             <span>⚙️ 通用</span>
             <span class="grp-cnt">{{ generalItems.length }} 项</span>
@@ -299,8 +283,47 @@ const activeSub = ref<string>('sec-knowledge-source');
 const knowledgeSource = computed(() => itemsByCategory('knowledge-source'));
 const searchItems = computed(() => itemsByCategory('search'));
 const chatItems = computed(() => itemsByCategory('chat'));
-const agentsItems = computed(() => itemsByCategory('agents'));
 const generalItems = computed(() => itemsByCategory('general'));
+
+// ===== 智能体 sub-view 配置 (前缀分组, 前端聚合, 后端 schema 不变) =====
+type AgentMeta = { id: string; icon: string; name: string; sub: string; summary: string; prefix: string; testKey: string; testLabel: string }
+const agentsMeta: AgentMeta[] = [
+  { id: 'sec-agent-dify',     icon: '🤖', name: 'Dify',           sub: 'Workflow 编排引擎',   summary: 'Dify API 基础地址 + Key + mock 开关. 走 Dify workflow 调 LLM.',
+    prefix: 'dify.',    testKey: 'agents',  testLabel: '🔌 测试 Dify 连接' },
+  { id: 'sec-agent-pr',       icon: '🧪', name: '代码检视',        sub: 'pr-agent telemetry', summary: 'pr-agent telemetry API 地址 + token. 供 /code-review 看板拉数据.',
+    prefix: 'pr_agent.',testKey: 'pr-agent',testLabel: '🔌 测试 pr-agent 连接' },
+  { id: 'sec-agent-ragflow',  icon: '📡', name: 'RAGFlow 数据源',   sub: '知识库底层引擎',      summary: 'RAGFlow API 地址 + Key. 知识库 (数据集 / 文档 / 分段) 都从这拉.',
+    prefix: 'ragflow.', testKey: 'knowledge-source', testLabel: '🔌 测试 RAGFlow 连接' },
+];
+
+const activeAgentId = ref<string>('sec-agent-dify');
+
+function itemsByPrefix(prefix: string): SettingItem[] {
+  const out: SettingItem[] = [];
+  for (const g of groups.value) {
+    for (const it of g.items) {
+      if (it.key.startsWith(prefix)) out.push(it);
+    }
+  }
+  return out;
+}
+const difyItems      = computed(() => itemsByPrefix('dify.'));
+const prAgentItems   = computed(() => itemsByPrefix('pr_agent.'));
+const ragflowItems   = computed(() => itemsByPrefix('ragflow.'));
+
+function itemsByAgentId(id: string): SettingItem[] {
+  const m = agentsMeta.find(a => a.id === id);
+  return m ? itemsByPrefix(m.prefix) : [];
+}
+
+function onPickAgent(id: string) {
+  activeAgentId.value = id;
+  nextTick(() => {
+    const el = document.getElementById('sec-agent-detail');
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
 
 function itemsByCategory(cat: string): SettingItem[] {
   for (const g of groups.value) {
@@ -322,7 +345,11 @@ const sections = computed(() => [
       { id: 'sec-chat',              label: '知识对话',         count: chatItems.value.length },
     ],
   },
-  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: agentsItems.value.length,   children: [] },
+  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: agentsMeta.length, children: [
+    { id: 'sec-agent-dify',     label: '🤖 Dify',          count: difyItems.value.length },
+    { id: 'sec-agent-pr',       label: '🧪 代码检视',      count: prAgentItems.value.length },
+    { id: 'sec-agent-ragflow',  label: '📡 RAGFlow',       count: ragflowItems.value.length },
+  ]},
   { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length,  children: [] },
   { id: 'sec-notification', icon: '🔔', label: '通知',   count: 0,                          children: [] },
 ]);
@@ -424,6 +451,61 @@ onMounted(load);
 </script>
 
 <style scoped>
+
+/* ===== 智能体卡片网格 (Settings 专属, 类似广场 AgentCard) ===== */
+.agent-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 18px;
+}
+@media (max-width: 1100px) { .agent-cards { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 700px)  { .agent-cards { grid-template-columns: 1fr; } }
+
+.agent-card {
+  display: flex; gap: 12px;
+  padding: 14px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  cursor: pointer; transition: all 0.15s ease;
+  align-items: flex-start;
+}
+.agent-card:hover {
+  border-color: var(--primary);
+  background: var(--surface-sunken);
+  transform: translateY(-1px);
+}
+.agent-card.active {
+  border-color: transparent;
+  background: var(--primary-grad-soft);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.agent-card .ac-icon {
+  width: 38px; height: 38px; border-radius: 10px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; flex-shrink: 0;
+  box-shadow: var(--primary-shadow);
+}
+.agent-card .ac-body { flex: 1; min-width: 0; }
+.agent-card .ac-row1 {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 8px;
+}
+.agent-card .ac-name { font-size: 14px; font-weight: 700; color: var(--ink-900); }
+.agent-card .ac-cnt {
+  font-size: 10.5px; padding: 1px 7px;
+  background: var(--surface-sunken); color: var(--ink-700);
+  border-radius: var(--radius-pill);
+}
+.agent-card.active .ac-cnt { background: var(--primary-grad); color: #fff; }
+.agent-card .ac-sub {
+  font-size: 11px; color: var(--ink-500);
+  font-family: var(--font-mono); margin-top: 1px;
+}
+.agent-card .ac-summary {
+  font-size: 12px; color: var(--ink-700); line-height: 1.5;
+  margin-top: 4px;
+}
 .set { padding: 4px 4px 40px; }
 .lede { color: var(--ink-500); font-size: 13px; margin: 0 0 18px; }
 
