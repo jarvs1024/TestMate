@@ -22,6 +22,7 @@ export interface AgentSummary {
   last_called_at: string | null;
   is_featured: boolean;
   embed_url?: string | null;
+  route?: string | null;
 }
 
 export interface AgentInputField {

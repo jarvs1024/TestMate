@@ -25,6 +25,7 @@ class AgentOut(BaseModel):
     last_called_at: datetime | None = None
     is_featured: bool = False
     embed_url: str | None = None
+    route: str | None = None
 
     class Config:
         from_attributes = True
@@ -55,3 +56,4 @@ class AgentCreateIn(BaseModel):
     allowed_roles: list[str] = []
     is_featured: bool = False
     embed_url: str | None = None
+    route: str | None = None

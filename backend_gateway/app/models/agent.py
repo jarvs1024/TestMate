@@ -99,6 +99,12 @@ class Agent(Base):
     # 有值时, AgentRunner 跳过表单+流程, 直接全屏渲染该 URL 的 iframe (内嵌第三方 chatbot/页面)
     embed_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
+    # ===== 自定义路由 =====
+    # 默认空 = 走 AgentRunner (表单+流程).
+    # 有值时, AgentCard 点击跳到指定路由, 而不是 Runner.
+    # 格式: "page:<name>" 跳前端路由 name (例: "page:code-review" → /code-review)
+    route: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     # ===== 时间戳 =====
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

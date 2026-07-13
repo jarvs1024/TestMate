@@ -107,6 +107,25 @@ SEED_AGENTS: list[dict] = [
         "tools": [],
         "is_featured": False,
     },
+    {
+        "code": "code-review",
+        "name": "代码检视",
+        "icon": "🧪",
+        "category": AgentCategory.ssd_fw.value,  # 借 FW 域 (代码 review 跟 FW 迭代强相关)
+        "version": "v0.1.0",
+        "status": AgentStatus.stable.value,
+        "summary": "pr-agent 评审数据看板: MR 生命周期 / 建议采纳率 / 规则命中 / 作者分布",
+        "use_when": "看 GitLab MR 评审结果的整体采纳情况, 或下钻到单条 MR 的运行历史 + 建议明细",
+        "not_for": "要看单条 review 评论的代码 diff, 直接打开 GitLab MR 页面",
+        "tags": ["代码", "检视", "看板"],
+        "engine": AgentEngine.builtin.value,
+        "engine_config": {},
+        "input_schema": [],
+        "data_sources": ["pr_agent:telemetry"],
+        "tools": [],
+        "is_featured": True,
+        "route": "page:code-review",
+    },
 ]
 
 
