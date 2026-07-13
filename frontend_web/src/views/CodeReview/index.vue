@@ -1,10 +1,20 @@
 <template>
   <div class="cr">
-    <!-- 顶部状态条 -->
-    <div class="cr-hd">
-      <div class="hd-l">
-        <h1 class="title">代码检视</h1>
-        <p class="lede">pr-agent 评审数据看板 · MR / 建议采纳率 / 规则命中 / 作者分布</p>
+    <!-- 顶栏: 与其他智能体详情布局一致 (返回广场 + icon + 名/版本/简介 + status + 时间窗/刷新) -->
+    <div class="run-hd">
+      <button class="back" @click="$router.push({ name: 'plaza' })">← 返回广场</button>
+      <div class="run-title">
+        <div class="run-icon">🧪</div>
+        <div>
+          <div class="run-name">
+            <span>代码检视</span>
+            <span class="run-ver">v0.1.0</span>
+          </div>
+          <div class="run-summary">pr-agent 评审数据看板 · MR / 建议采纳率 / 规则命中 / 作者分布</div>
+        </div>
+      </div>
+      <div class="run-badge st-stable">
+        <span class="dot"></span>稳定
       </div>
       <div class="hd-r">
         <select v-model="windowSel" class="win-sel" @change="reload">
@@ -305,10 +315,44 @@ onMounted(reload);
 
 <style scoped>
 .cr { display: flex; flex-direction: column; gap: 16px; }
-.cr-hd { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; }
-.title { font-size: 22px; font-weight: 800; margin: 0 0 4px; color: var(--ink-900); }
-.lede { color: var(--ink-500); margin: 0; font-size: 13px; }
-.hd-r { display: flex; gap: 8px; align-items: center; }
+/* 顶部栏 (跟 AgentRunner 保持一致) */
+.run-hd {
+  display: flex; align-items: center; gap: 16px;
+  background: var(--surface-soft); backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: 14px 18px; box-shadow: var(--shadow-sm);
+}
+.back {
+  background: transparent; border: 1px solid var(--border);
+  padding: 6px 12px; border-radius: 8px;
+  color: var(--ink-700); font-size: 12.5px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.back:hover { background: var(--surface-sunken); color: var(--ink-900); }
+.run-title { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+.run-icon {
+  width: 44px; height: 44px; border-radius: 11px;
+  background: var(--primary-grad);
+  display: flex; align-items: center; justify-content: center; font-size: 22px;
+  box-shadow: var(--primary-shadow);
+  flex-shrink: 0;
+}
+.run-name { display: flex; align-items: baseline; gap: 8px; }
+.run-name > span:first-child { font-size: 18px; font-weight: 800; color: var(--ink-900); letter-spacing: -0.2px; }
+.run-ver { font-size: 12px; color: var(--ink-500); font-family: var(--font-mono); }
+.run-summary { font-size: 12.5px; color: var(--ink-700); margin-top: 2px; }
+.run-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: var(--radius-pill);
+  font-size: 11px; font-weight: 600;
+  background: var(--surface-sunken); color: var(--ink-700);
+  flex-shrink: 0;
+}
+.run-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.st-stable { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.st-beta { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.st-draft { background: var(--surface-sunken); color: var(--ink-500); }
 .win-sel, .reload {
   background: var(--surface); border: 1px solid var(--border);
   color: var(--ink-700); padding: 6px 12px; border-radius: 8px;
@@ -316,6 +360,13 @@ onMounted(reload);
 }
 .win-sel:hover, .reload:hover { background: var(--surface-sunken); color: var(--ink-900); }
 .reload:disabled { opacity: 0.5; cursor: not-allowed; }
+
+
+
+.hd-r { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+
+
+
 
 /* 状态警告卡 */
 .warn {
