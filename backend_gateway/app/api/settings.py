@@ -177,6 +177,31 @@ class EmbedOut(BaseModel):
     url: str
 
 
+
+
+@router.post("/test/pr_agent", response_model=SettingTestOut)
+async def test_pr_agent(_user: User = Depends(get_current_user)) -> SettingTestOut:
+    """用当前 DB 的 pr_agent 配置打 telemetry /health 端点."""
+    from app.core.settings_store import _rewrite_loopback
+    raw_url = (await get("pr_agent.base_url", "")) or ""
+    base_url = _rewrite_loopback(raw_url).rstrip("/") if raw_url else ""
+    api_token = await get("pr_agent.api_token", "") or ""
+    if not base_url:
+        return SettingTestOut(ok=False, status="off", message="未配置 base_url", detail=None)
+    try:
+        url = f"{base_url}/api/v1/telemetry/health"
+        headers = {"Accept": "application/json"}
+        if api_token:
+            headers["Authorization"] = f"Bearer {api_token}"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code == 200:
+                data = r.json() or {}
+                return SettingTestOut(ok=True, status="ok", message=f"连通 · backend={data.get('backend', '?')}", detail=data)
+            return SettingTestOut(ok=False, status="warn", message=f"HTTP {r.status_code}", detail={"text": r.text[:200]})
+    except Exception as e:
+        return SettingTestOut(ok=False, status="off", message=f"不可达: {type(e).__name__}: {e}", detail=None)
+
 @router.get("/embed/{key:path}", response_model=EmbedOut)
 async def build_embed_url(
     key: str,

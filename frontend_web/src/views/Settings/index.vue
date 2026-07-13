@@ -135,46 +135,73 @@
         <section v-if="activeTop === 'sec-agents'" :id="'sec-agents'" class="card grp">
           <h2>
             <span>🤖 智能体</span>
-            <span class="grp-cnt">{{ agentsMeta.length }} 个</span>
+            <span class="grp-cnt">{{ dataSourceItems.length + agentItems.length }} 项</span>
           </h2>
 
-          <!-- 智能体卡片网格 (类似广场 AgentCard) -->
-          <div class="agent-cards">
-            <div v-for="a in agentsMeta" :key="a.id"
-                 class="agent-card" :class="{ active: activeAgentId === a.id }"
-                 @click="onPickAgent(a.id)">
-              <div class="ac-icon">{{ a.icon }}</div>
-              <div class="ac-body">
-                <div class="ac-row1">
-                  <span class="ac-name">{{ a.name }}</span>
-                  <span class="ac-cnt mono">{{ itemsByAgentId(a.id).length }} 项</span>
-                </div>
-                <div class="ac-sub">{{ a.sub }}</div>
-                <div class="ac-summary">{{ a.summary }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 当前选中智能体的详细配置 -->
-          <div v-for="a in agentsMeta" :key="`detail-${a.id}`" v-show="activeAgentId === a.id" :id="'sec-agent-detail'" class="sub-grp">
-            <h3>{{ a.icon }} {{ a.name }} <span class="sub-cnt">{{ itemsByAgentId(a.id).length }} 项</span></h3>
-            <SettingRow v-for="(it, idx) in itemsByAgentId(a.id)" :key="it.key"
+          <!-- 前面: 数据源配置 (RAGFlow + Dify 视为对外数据源, 类似知识库 section 顶部) -->
+          <div class="sub-grp">
+            <h3>📡 数据源 <span class="sub-cnt">{{ dataSourceItems.length }} 项</span></h3>
+            <SettingRow v-for="(it, idx) in dataSourceItems" :key="it.key"
               :item="it" :is-first="idx === 0" :is-admin="isAdmin"
               :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
               :saving="saving === it.key" :secret-display="getInputValue(it)"
               @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
-            <div v-if="itemsByAgentId(a.id).length === 0" class="hint">
-              此智能体暂无可配置项.
+            <div class="hint">
+              💡 这组是所有智能体共享的对外数据源 (RAGFlow 知识库 API + Dify Workflow API). 改这里会同时影响知识库 / 智能体 / 知识检索 / 知识对话.
+            </div>
+
+            <!-- 数据源区测试按钮 (RAGFlow + Dify 各一个) -->
+            <div class="test-row">
+              <button class="test-btn" :disabled="!!testing" @click="onTest('knowledge-source')">
+                {{ testing === 'knowledge-source' ? '测试中…' : '🔌 测试 RAGFlow 连接' }}
+              </button>
+              <div v-if="testResults['knowledge-source']" class="test-result" :class="`s-${testResults['knowledge-source']?.status}`">
+                <span class="dot"></span>
+                <span class="msg">{{ testResults['knowledge-source']?.message }}</span>
+                <span v-if="testResults['knowledge-source']?.detail" class="det">
+                  {{ JSON.stringify(testResults['knowledge-source']?.detail) }}
+                </span>
+              </div>
             </div>
             <div class="test-row">
-              <button class="test-btn" :disabled="!!testing" @click="onTest(a.testKey)">
-                {{ testing === a.testKey ? '测试中…' : a.testLabel }}
+              <button class="test-btn" :disabled="!!testing" @click="onTest('agents')">
+                {{ testing === 'agents' ? '测试中…' : '🔌 测试 Dify 连接' }}
               </button>
-              <div v-if="testResults[a.testKey]" class="test-result" :class="`s-${testResults[a.testKey]?.status}`">
+              <div v-if="testResults['agents']" class="test-result" :class="`s-${testResults['agents']?.status}`">
                 <span class="dot"></span>
-                <span class="msg">{{ testResults[a.testKey]?.message }}</span>
-                <span v-if="testResults[a.testKey]?.detail" class="det">
-                  {{ JSON.stringify(testResults[a.testKey]?.detail) }}
+                <span class="msg">{{ testResults['agents']?.message }}</span>
+                <span v-if="testResults['agents']?.detail" class="det">
+                  {{ JSON.stringify(testResults['agents']?.detail) }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 分隔线 -->
+          <div class="sec-divider"></div>
+
+          <!-- 后面: 智能体业务配置 (代码检视 + 后续接入的智能体) -->
+          <div class="sub-grp">
+            <h3>🧪 智能体 <span class="sub-cnt">{{ agentItems.length }} 项</span></h3>
+            <SettingRow v-for="(it, idx) in agentItems" :key="it.key"
+              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+              :saving="saving === it.key" :secret-display="getInputValue(it)"
+              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+            <div v-if="agentItems.length === 0" class="hint">
+              暂无智能体业务配置.
+            </div>
+
+            <!-- 智能体业务区测试按钮 (pr-agent 等) -->
+            <div class="test-row">
+              <button class="test-btn" :disabled="!!testing" @click="onTest('pr-agent')">
+                {{ testing === 'pr-agent' ? '测试中…' : '🔌 测试 pr-agent 连接' }}
+              </button>
+              <div v-if="testResults['pr-agent']" class="test-result" :class="`s-${testResults['pr-agent']?.status}`">
+                <span class="dot"></span>
+                <span class="msg">{{ testResults['pr-agent']?.message }}</span>
+                <span v-if="testResults['pr-agent']?.detail" class="det">
+                  {{ JSON.stringify(testResults['pr-agent']?.detail) }}
                 </span>
               </div>
             </div>
@@ -260,7 +287,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { getSchema, updateSetting, testRagflow, testDify, type SettingItem, type TestResult } from '@/api/settings';
+import { getSchema, updateSetting, testRagflow, testDify, testPrAgent, type SettingItem, type TestResult } from '@/api/settings';
 import SettingRow from './components/SettingRow.vue';
 import { useUserStore } from '@/stores/user';
 
@@ -285,18 +312,11 @@ const searchItems = computed(() => itemsByCategory('search'));
 const chatItems = computed(() => itemsByCategory('chat'));
 const generalItems = computed(() => itemsByCategory('general'));
 
-// ===== 智能体 sub-view 配置 (前缀分组, 前端聚合, 后端 schema 不变) =====
-type AgentMeta = { id: string; icon: string; name: string; sub: string; summary: string; prefix: string; testKey: string; testLabel: string }
-const agentsMeta: AgentMeta[] = [
-  { id: 'sec-agent-dify',     icon: '🤖', name: 'Dify',           sub: 'Workflow 编排引擎',   summary: 'Dify API 基础地址 + Key + mock 开关. 走 Dify workflow 调 LLM.',
-    prefix: 'dify.',    testKey: 'agents',  testLabel: '🔌 测试 Dify 连接' },
-  { id: 'sec-agent-pr',       icon: '🧪', name: '代码检视',        sub: 'pr-agent telemetry', summary: 'pr-agent telemetry API 地址 + token. 供 /code-review 看板拉数据.',
-    prefix: 'pr_agent.',testKey: 'pr-agent',testLabel: '🔌 测试 pr-agent 连接' },
-  { id: 'sec-agent-ragflow',  icon: '📡', name: 'RAGFlow 数据源',   sub: '知识库底层引擎',      summary: 'RAGFlow API 地址 + Key. 知识库 (数据集 / 文档 / 分段) 都从这拉.',
-    prefix: 'ragflow.', testKey: 'knowledge-source', testLabel: '🔌 测试 RAGFlow 连接' },
-];
-
-const activeAgentId = ref<string>('sec-agent-dify');
+// ===== 智能体 section 拆分: 数据源 vs 业务智能体 =====
+// 数据源: 对外 API 连接 (RAGFlow / Dify), 跟知识库 section 的"数据源"概念一致
+// 业务智能体: 平台自带的智能体能力 (代码检视 / 后续接入), 各自独立 prefix
+const DATA_SOURCE_PREFIXES = ['ragflow.', 'dify.'];
+const AGENT_PREFIXES = ['pr_agent.'];  // 后续加新智能体就在这里 append
 
 function itemsByPrefix(prefix: string): SettingItem[] {
   const out: SettingItem[] = [];
@@ -307,22 +327,13 @@ function itemsByPrefix(prefix: string): SettingItem[] {
   }
   return out;
 }
-const difyItems      = computed(() => itemsByPrefix('dify.'));
-const prAgentItems   = computed(() => itemsByPrefix('pr_agent.'));
-const ragflowItems   = computed(() => itemsByPrefix('ragflow.'));
 
-function itemsByAgentId(id: string): SettingItem[] {
-  const m = agentsMeta.find(a => a.id === id);
-  return m ? itemsByPrefix(m.prefix) : [];
-}
-
-function onPickAgent(id: string) {
-  activeAgentId.value = id;
-  nextTick(() => {
-    const el = document.getElementById('sec-agent-detail');
-    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-}
+const dataSourceItems = computed(() =>
+  DATA_SOURCE_PREFIXES.flatMap(p => itemsByPrefix(p))
+);
+const agentItems = computed(() =>
+  AGENT_PREFIXES.flatMap(p => itemsByPrefix(p))
+);
 
 
 function itemsByCategory(cat: string): SettingItem[] {
@@ -345,10 +356,9 @@ const sections = computed(() => [
       { id: 'sec-chat',              label: '知识对话',         count: chatItems.value.length },
     ],
   },
-  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: agentsMeta.length, children: [
-    { id: 'sec-agent-dify',     label: '🤖 Dify',          count: difyItems.value.length },
-    { id: 'sec-agent-pr',       label: '🧪 代码检视',      count: prAgentItems.value.length },
-    { id: 'sec-agent-ragflow',  label: '📡 RAGFlow',       count: ragflowItems.value.length },
+  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: dataSourceItems.value.length + agentItems.value.length, children: [
+    { id: 'sec-agent-source', label: '📡 数据源', count: dataSourceItems.value.length },
+    { id: 'sec-agent-self',   label: '🧪 智能体', count: agentItems.value.length },
   ]},
   { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length,  children: [] },
   { id: 'sec-notification', icon: '🔔', label: '通知',   count: 0,                          children: [] },
@@ -438,6 +448,7 @@ async function onTest(category: string) {
     let r: TestResult;
     if (category === 'knowledge-source') r = await testRagflow();
     else if (category === 'agents') r = await testDify();
+    else if (category === 'pr-agent') r = await testPrAgent();
     else r = { ok: false, status: 'off', message: '未知分类', detail: null };
     testResults[category] = r;
   } catch (e: any) {
@@ -452,7 +463,15 @@ onMounted(load);
 
 <style scoped>
 
-/* ===== 智能体卡片网格 (Settings 专属, 类似广场 AgentCard) ===== */
+/* ===== 智能体 section: 数据源区 / 业务智能体区 分割线 ===== */
+.sec-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border), transparent);
+  margin: 20px 0;
+}
+.sec-divider::before {
+  content: '';
+}
 .agent-cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
