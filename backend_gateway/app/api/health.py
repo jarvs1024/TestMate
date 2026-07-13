@@ -147,4 +147,11 @@ async def health_services() -> dict:
         dify_key = (await get("dify.api_key", "")) or ""
         dify = await _probe("dify", dify_base, dify_key)
 
-    return {"ragflow": rf_status, "dify": dify}
+    # pr-agent 也聚合到侧栏心跳 (Section: 数据/工具), 只在配过 base_url 时探
+    from app.core import pr_agent_client
+    if await pr_agent_client.is_configured():
+        pr_status, _ = await pr_agent_client.probe()
+    else:
+        pr_status = "off"
+
+    return {"ragflow": rf_status, "dify": dify, "pr_agent": pr_status}

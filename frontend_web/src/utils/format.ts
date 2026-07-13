@@ -97,3 +97,26 @@ export function sourceLabel(type: string): string {
     default: return type || '—';
   }
 }
+
+/** 把 ISO 8601 字符串 / epoch ms 转 'YYYY-MM-DD HH:mm' (无时区 → 当本地时间) */
+export function fmtIso(v: string | number | null | undefined): string {
+  if (v === null || v === undefined || v === '') return '—';
+  const d = typeof v === 'number' ? new Date(v) : new Date(v);
+  const t = d.getTime();
+  if (Number.isNaN(t)) return '—';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 0-1 小数 → 百分比字符串 'xx.x%' */
+export function fmtPct(v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  return `${(v * 100).toFixed(1)}%`;
+}
+
+/** ms 时长 → '1.2s' / '456ms' */
+export function fmtMs(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || Number.isNaN(ms)) return '—';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}

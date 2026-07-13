@@ -13,6 +13,7 @@ const router = createRouter({
         // 默认进广场
         { path: '', redirect: '/plaza' },
         { path: 'plaza',       name: 'plaza',       meta: { title: '智能体广场', lede: 'SSD 测试域专用 AI 智能体 · 点击卡片进入运行页' },  component: () => import('@/views/Plaza/index.vue') },
+        { path: 'code-review', name: 'code-review', meta: { title: '代码检视', lede: 'pr-agent 评审数据看板 · MR / 建议采纳率 / 规则命中 / 作者分布' }, component: () => import('@/views/CodeReview/index.vue') },
         { path: 'agents/:code', name: 'agent-runner', meta: { title: '运行' },       component: () => import('@/views/AgentRunner/index.vue') },
         { path: 'kb-manage',   name: 'kb-manage',   meta: { title: '知识库', lede: '所有智能体共享的私有知识源 · 已对接 RAGFlow' },      component: () => import('@/views/KnowledgeManage/index.vue') },
         { path: 'settings',   name: 'settings',   meta: { title: '设置', lede: '平台配置 · RAGFlow / Dify / 用户管理' },         component: () => import('@/views/Settings/index.vue') },

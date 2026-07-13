@@ -108,6 +108,10 @@ services:
       RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-}
       RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:-}
 
+      # pr-agent (代码检视 telemetry) — 留空表示未配置, 前端看板会显示配置引导
+      PR_AGENT_BASE_URL: ${PR_AGENT_BASE_URL:-}
+      PR_AGENT_API_TOKEN: ${PR_AGENT_API_TOKEN:-}
+
       DINGTALK_DEFAULT_WEBHOOK: ${DINGTALK_DEFAULT_WEBHOOK:-}
 
       ADMIN_DEFAULT_PASSWORD: ${ADMIN_DEFAULT_PASSWORD:-ChangeMe@2026}

@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, kb, diagnose, machines, notify, health, agents, settings as settings_api
+from app.api import auth, kb, diagnose, machines, notify, health, agents, settings as settings_api, pr_agent
 from app.api.agents import seed_agents
 from app.core.settings_store import seed_defaults
 from app.db.session import init_db
@@ -55,6 +55,7 @@ app.include_router(diagnose.router, prefix="/api/v1/diagnose", tags=["diagnose"]
 app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(settings_api.router, prefix="/api/v1/settings", tags=["settings"])
+app.include_router(pr_agent.router, prefix="/api/v1/pr-agent", tags=["pr-agent"])
 
 
 @app.get("/", include_in_schema=False)

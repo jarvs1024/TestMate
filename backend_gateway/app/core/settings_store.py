@@ -50,6 +50,22 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": True,
     },
     {
+        "key": "pr_agent.base_url",
+        "category": "code-review",
+        "value_type": "url",
+        "default": settings.PR_AGENT_BASE_URL,
+        "description": "pr-agent telemetry API 基础地址 (例: http://host.docker.internal:5050)",
+        "is_secret": False,
+    },
+    {
+        "key": "pr_agent.api_token",
+        "category": "code-review",
+        "value_type": "secret",
+        "default": settings.PR_AGENT_API_TOKEN,
+        "description": "pr-agent telemetry Bearer token (对应 REVIEW_TELEMETRY_HTTP_TOKEN, 留空 = 不校验)",
+        "is_secret": True,
+    },
+    {
         "key": "dify.base_url",
         "category": "agents",
         "value_type": "url",
@@ -210,6 +226,12 @@ async def seed_defaults() -> None:
                 if existing.category != s["category"]:
                     logger.info("settings: fix category %s: %s -> %s", s["key"], existing.category, s["category"])
                     existing.category = s["category"]
+                # .env 后填的非空值同步到 DB (DB 是空时, 用户后续改了 UI 不会被覆盖)
+                env_v = s["default"]
+                cur_v = existing.value.get("v") if isinstance(existing.value, dict) else existing.value
+                if (cur_v in (None, "", [])) and env_v not in (None, "", []):
+                    logger.info("settings: sync empty DB value from env: %s", s["key"])
+                    existing.value = {"v": env_v} if not isinstance(env_v, (dict, list)) else env_v
                 continue
             row = SystemSetting(
                 key=s["key"],

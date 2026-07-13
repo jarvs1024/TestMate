@@ -16,7 +16,7 @@
 
       <div class="foot">
         <div class="ft-lbl">📡 数据 / 工具</div>
-        <div v-for="s in services" :key="s.key" class="src">
+        <div v-for="s in services" :key="s.key" class="src" v-show="s.visible !== false">
           <span class="dot" :class="`s-${s.status}`"></span>
           <span class="name">{{ s.label }}</span>
           <span class="state">{{ s.statusText }}</span>
@@ -37,11 +37,13 @@ const route = useRoute();
 
 const icoPlaza = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>`;
 const icoKb = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>`;
+const icoCr = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`;
 
 /* 设置已挪到顶栏用户菜单 (UserMenu), 侧栏只保留业务导航 */
 const groups = [
   { path: '/plaza',    label: '广场',   icon: icoPlaza },
   { path: '/kb-manage', label: '知识库', icon: icoKb },
+  { path: '/code-review', label: '代码检视', icon: icoCr },
 ];
 
 /* v-html 兜底: 即使将来 icon 来源切到后端 API, 也只放行白名单 svg 标签,
@@ -51,9 +53,12 @@ function safeIcon(html: string): string {
 }
 
 interface ServiceHealth { key: string; label: string; status: 'ok' | 'warn' | 'off' | 'unknown'; statusText: string }
+interface ServiceHealth { key: string; label: string; status: 'ok' | 'warn' | 'off' | 'unknown'; statusText: string; visible?: boolean }
 const services = ref<ServiceHealth[]>([
-  { key: 'ragflow', label: 'RAGFlow', status: 'unknown', statusText: '...' },
-  { key: 'dify',    label: 'Dify',    status: 'unknown', statusText: '...' },
+  { key: 'ragflow', label: 'RAGFlow',   status: 'unknown', statusText: '...' },
+  { key: 'dify',    label: 'Dify',      status: 'unknown', statusText: '...' },
+  // pr-agent 默认隐藏, 配过 base_url 才显示 (probe 返回 ok/warn/off 时设 visible=true)
+  { key: 'pr_agent', label: 'pr-agent', status: 'off',     statusText: '未配置', visible: false },
 ]);
 const lastCheck = ref('—');
 let pollTimer: number | null = null;
@@ -71,6 +76,16 @@ async function poll() {
     const { data } = await axios.get('/api/v1/health/services');
     setSvc('ragflow', data.ragflow);
     setSvc('dify', data.dify);
+    // pr-agent: 服务未返回字段 → 视为未配置
+    const pr = data.pr_agent || 'off';
+    const prMap: Record<string,string> = { ok: '正常', warn: '部分', off: '未配置' };
+    const i = services.value.findIndex(x => x.key === 'pr_agent');
+    if (i >= 0) {
+      services.value[i].status = pr;
+      services.value[i].statusText = prMap[pr] || '未知';
+      // 配过 (状态非 'off') 才显示, 未配时隐藏避免误导
+      services.value[i].visible = pr !== 'off';
+    }
   } catch {
     setSvc('ragflow', 'off');
     setSvc('dify', 'off');
