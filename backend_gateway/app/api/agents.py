@@ -111,7 +111,7 @@ SEED_AGENTS: list[dict] = [
         "code": "code-review",
         "name": "代码检视",
         "icon": "🧪",
-        "category": AgentCategory.ssd_fw.value,  # 借 FW 域 (代码 review 跟 FW 迭代强相关)
+        "category": AgentCategory.auto_code.value,  # 自动化代码 (代码检视 / 后续静态分析)
         "version": "v0.1.0",
         "status": AgentStatus.stable.value,
         "summary": "pr-agent 评审数据看板: MR 生命周期 / 建议采纳率 / 规则命中 / 作者分布",

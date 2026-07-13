@@ -51,7 +51,7 @@ SETTING_SCHEMA: list[dict] = [
     },
     {
         "key": "pr_agent.base_url",
-        "category": "code-review",
+        "category": "data-source",
         "value_type": "url",
         "default": settings.PR_AGENT_BASE_URL,
         "description": "pr-agent telemetry API 基础地址 (例: http://host.docker.internal:5050)",
@@ -59,7 +59,7 @@ SETTING_SCHEMA: list[dict] = [
     },
     {
         "key": "pr_agent.api_token",
-        "category": "code-review",
+        "category": "data-source",
         "value_type": "secret",
         "default": settings.PR_AGENT_API_TOKEN,
         "description": "pr-agent telemetry Bearer token (对应 REVIEW_TELEMETRY_HTTP_TOKEN, 留空 = 不校验)",
@@ -67,7 +67,7 @@ SETTING_SCHEMA: list[dict] = [
     },
     {
         "key": "dify.base_url",
-        "category": "agents",
+        "category": "data-source",
         "value_type": "url",
         "default": settings.DIFY_BASE_URL,
         "description": "Dify API 基础地址",
@@ -75,7 +75,7 @@ SETTING_SCHEMA: list[dict] = [
     },
     {
         "key": "dify.api_key",
-        "category": "agents",
+        "category": "data-source",
         "value_type": "secret",
         "default": settings.DIFY_API_KEY,
         "description": "Dify API Key (app-xxxxx)",
@@ -83,7 +83,7 @@ SETTING_SCHEMA: list[dict] = [
     },
     {
         "key": "dify.mock_mode",
-        "category": "agents",
+        "category": "data-source",
         "value_type": "bool",
         "default": settings.DIFY_MOCK,
         "description": "Dify mock 模式: 开则不调外部 Dify, 用 demo 流式返回 (沙箱环境用)",

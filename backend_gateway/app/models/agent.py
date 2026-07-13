@@ -32,6 +32,7 @@ class AgentCategory(str, enum.Enum):
     ssd_spec = "ssd-spec"             # 协议 / spec 问答
     ssd_report = "ssd-report"         # 测试报告 / 周报
     ssd_ops = "ssd-ops"               # 机台/环境运维
+    auto_code = "auto-code"           # 自动化代码 (代码检视 / PR-Agent / 静态分析等)
 
 
 class AgentEngine(str, enum.Enum):

@@ -45,6 +45,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   'ssd-spec': 'Spec 问答',
   'ssd-report': '测试报告',
   'ssd-ops': '机台运维',
+  'auto-code': '自动化代码',
 };
 const STATUS_LABELS: Record<string, string> = {
   draft: '建设中',
