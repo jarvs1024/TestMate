@@ -76,6 +76,21 @@ async def metrics_authors(
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@router.get("/metrics/severity")
+async def metrics_severity(
+    since: Optional[str] = None,
+    pr_url: Optional[str] = None,
+    _user: User = Depends(get_current_user),
+) -> list[dict]:
+    """严重等级分桶. 见 pr_agent.telemetry.store.severity_breakdown."""
+    if not await pr_agent_client.is_configured():
+        return []
+    try:
+        return await pr_agent_client.severity_breakdown(since=since, pr_url=pr_url)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @router.get("/mrs")
 async def list_mrs(
     limit: int = Query(50, ge=1, le=200),

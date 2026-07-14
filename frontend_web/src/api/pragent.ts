@@ -21,12 +21,24 @@ export interface OverviewRun {
   failed: number;
   success_rate: number;
 }
+export interface SeverityBucket {
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'unknown';
+  total: number;
+  applied: number;
+  dismissed: number;
+  open: number;
+  superseded: number;
+  adoption_rate: number;
+  dismissal_rate: number;
+}
+
 export interface OverviewResp {
   configured?: boolean;   // false = 后端没配 pr-agent base_url
   since?: string | null;
   mrs?: OverviewMr;
   suggestions?: OverviewSuggestion;
   runs?: OverviewRun;
+  severity_breakdown?: SeverityBucket[];   // 7d/30d/all 共用, 自带 since 过滤
 }
 
 export interface RuleStat {
@@ -70,6 +82,8 @@ export interface SuggestionRow {
   line?: number;
   label?: string;
   importance?: number;
+  severity?: 'critical' | 'high' | 'medium' | 'low' | 'unknown';   // 3 层解析后的桶
+  severity_source?: 'rule_file' | 'pattern' | 'importance' | 'default';  // 来源
   one_sentence_summary?: string;
   state?: string;
   posted_at?: string;
@@ -122,4 +136,10 @@ export async function listMrs(params: { limit?: number; project_id?: number; sta
 }
 export async function getTimeline(projectId: number, mrId: number): Promise<TimelineResp> {
   return (await request.get(`/pr-agent/mrs/${projectId}/${mrId}/timeline`)) as TimelineResp;
+}
+export async function getSeverity(since?: string, prUrl?: string): Promise<SeverityBucket[]> {
+  const params: Record<string, string> = {};
+  if (since) params.since = since;
+  if (prUrl) params.pr_url = prUrl;
+  return (await request.get('/pr-agent/metrics/severity', { params })) as SeverityBucket[];
 }

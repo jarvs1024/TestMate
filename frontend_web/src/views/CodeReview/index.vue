@@ -60,10 +60,72 @@
         <div class="lbl">建议采纳率</div>
         <div class="sub">已应用 / 总建议</div>
       </div>
+      <!-- 严重等级告警: 红色块 (critical.dismissed) + 黄 (critical.open) -->
+      <div class="stat alert" :class="{ hot: (sevBucket('critical')?.dismissed ?? 0) > 0 }">
+        <div class="num">
+          <span class="sev-dot"></span>{{ sevBucket('critical')?.dismissed ?? 0 }}
+        </div>
+        <div class="lbl">严重建议被忽略</div>
+        <div class="sub">
+          严重 {{ sevBucket('critical')?.total ?? 0 }} · 待处理 {{ sevBucket('critical')?.open ?? 0 }}
+        </div>
+      </div>
       <div class="stat">
         <div class="num">{{ fmtPct(overview.runs?.success_rate) }}</div>
         <div class="lbl">运行成功率</div>
         <div class="sub">{{ overview.runs?.total ?? 0 }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}</div>
+      </div>
+    </div>
+
+    <!-- 严重等级分布: 全宽卡 -->
+    <div class="card sev-card">
+      <div class="card-hd">
+        <h2>🔥 严重等级分布</h2>
+        <span class="cnt">{{ severityBuckets.length }} 桶</span>
+      </div>
+      <div v-if="severityBuckets.length === 0" class="empty">暂无严重等级数据</div>
+      <div v-else class="sev-body">
+        <!-- 横向 stacked bar -->
+        <div class="sev-bar">
+          <div v-for="b in severityBuckets" :key="b.severity"
+               class="sev-seg" :class="sevCls(b.severity)"
+               :style="{ flex: b.total || 1 }"
+               :title="`${sevLabel(b.severity)}: 总 ${b.total} · 采纳 ${b.applied} · 忽略 ${b.dismissed} · 待处理 ${b.open}`">
+            <span class="sev-ic">{{ sevIcon(b.severity) }}</span>
+            <span class="sev-n">{{ b.total }}</span>
+          </div>
+        </div>
+        <!-- 详情表 -->
+        <table class="tbl sev-tbl">
+          <thead>
+            <tr>
+              <th>等级</th>
+              <th class="r">总</th>
+              <th class="r">已采纳</th>
+              <th class="r">已忽略</th>
+              <th class="r">待处理</th>
+              <th class="r">已替代</th>
+              <th class="r">采纳率</th>
+              <th class="r">忽略率</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="b in SEV_ORDER" :key="b" v-show="sevBucket(b)">
+              <td>
+                <span class="sev-badge" :class="sevCls(b)">
+                  <span class="sev-ic">{{ sevIcon(b) }}</span>{{ sevLabel(b) }}
+                </span>
+              </td>
+              <td class="r mono">{{ sevBucket(b)?.total ?? 0 }}</td>
+              <td class="r mono ok">{{ sevBucket(b)?.applied ?? 0 }}</td>
+              <td class="r mono mute">{{ sevBucket(b)?.dismissed ?? 0 }}</td>
+              <td class="r mono warn">{{ sevBucket(b)?.open ?? 0 }}</td>
+              <td class="r mono">{{ sevBucket(b)?.superseded ?? 0 }}</td>
+              <td class="r mono">{{ fmtPct(sevBucket(b)?.adoption_rate) }}</td>
+              <td class="r mono">{{ fmtPct(sevBucket(b)?.dismissal_rate) }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -188,7 +250,10 @@
           <div v-for="(s, idx) in timeline.suggestions" :key="s.id ?? idx" class="sug-row" :class="`s-${s.state}`">
             <div class="sug-l">
               <span class="badge sm" :class="sugCls(s.state)">{{ sugLabel(s.state) }}</span>
-              <span class="imp mono" v-if="s.importance" :title="`importance=${s.importance}`">{{ '★'.repeat(Math.min(s.importance, 5)) }}</span>
+              <span v-if="s.severity" class="badge sm sev-pill" :class="sevCls(s.severity)"
+                    :title="`严重等级 ${sevLabel(s.severity)}${s.severity_source ? ' · 来源: ' + sevSrcLabel(s.severity_source) : ''}`">
+                {{ sevIcon(s.severity) }} {{ sevLabel(s.severity) }}
+              </span>
             </div>
             <div class="sug-body">
               <div class="sug-loc mono">{{ s.file || '?' }}:{{ s.line ?? '?' }}</div>
@@ -211,8 +276,9 @@
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
-  getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline,
+  getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity,
   type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type TimelineResp, type HealthResp,
+  type SeverityBucket,
 } from '@/api/pragent';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
 
@@ -223,6 +289,7 @@ const overview = ref<OverviewResp | null>(null);
 const rules = ref<RuleStat[]>([]);
 const authors = ref<AuthorStat[]>([]);
 const mrs = ref<MrRow[]>([]);
+const severities = ref<SeverityBucket[]>([]);
 
 const windowSel = ref<'all' | '7d' | '30d'>('all');
 
@@ -240,9 +307,12 @@ async function reload() {
     const since = sinceFor(windowSel.value);
     health.value = await getHealth();
     if (!health.value.configured) {
-      overview.value = null; rules.value = []; authors.value = []; mrs.value = [];
+      overview.value = null; rules.value = []; authors.value = []; mrs.value = []; severities.value = [];
       return;
     }
+    // severity 失败不应阻断其他 4 个, 单独 catch
+    let sev: SeverityBucket[] = [];
+    try { sev = await getSeverity(since); } catch (e: any) { /* 忽略: 单独显示在严重等级卡 */ }
     const [ov, rl, au, mr] = await Promise.all([
       getOverview(since),
       getRules(since),
@@ -253,6 +323,7 @@ async function reload() {
     rules.value = rl;
     authors.value = au;
     mrs.value = mr;
+    severities.value = sev;
   } catch (e: any) {
     loadError.value = (e?.response?.data?.detail || e?.message || '未知错误');
     ElMessage.error('代码检视加载失败: ' + loadError.value);
@@ -268,6 +339,35 @@ const rulesTop = computed(() => {
 const maxCited = computed(() => Math.max(1, ...rulesTop.value.map(r => r.cited_count ?? 0)));
 function rulePct(r: RuleStat): number {
   return Math.round(((r.cited_count ?? 0) / maxCited.value) * 100);
+}
+
+// ===== 严重等级 =====
+// 优先从 overview.severity_breakdown 读 (overview inline), 失败 / 缺失再 fallback 到独立 severities 请求
+const severityBuckets = computed<SeverityBucket[]>(() => {
+  const inline = overview.value?.severity_breakdown;
+  if (inline && inline.length) return inline;
+  return severities.value;
+});
+function sevBucket(name: string): SeverityBucket | undefined {
+  return severityBuckets.value.find(b => b.severity === name);
+}
+const SEV_ORDER = ['critical', 'high', 'medium', 'low'] as const;
+const SEV_META: Record<string, { icon: string; label: string; cls: string }> = {
+  critical: { icon: '🔴', label: '严重', cls: 'sev-critical' },
+  high:     { icon: '🟠', label: '高',   cls: 'sev-high' },
+  medium:   { icon: '🟡', label: '中',   cls: 'sev-medium' },
+  low:      { icon: '🟢', label: '低',   cls: 'sev-low' },
+};
+function sevLabel(s: string): string { return SEV_META[s]?.label || s; }
+function sevIcon(s: string): string { return SEV_META[s]?.icon || '⚪'; }
+function sevCls(s: string): string { return SEV_META[s]?.cls || 'sev-unknown'; }
+
+// severity 来源 (rule_file / pattern / importance / default) → 中文
+function sevSrcLabel(src?: string): string {
+  return src === 'rule_file' ? '规则文件'
+    : src === 'pattern' ? '配置 pattern'
+    : src === 'importance' ? '重要性阈值'
+    : '';
 }
 
 // 状态色
@@ -416,6 +516,70 @@ onMounted(reload);
 .empty { padding: 40px 12px; text-align: center; color: var(--ink-500); font-size: 12.5px; }
 .empty.sm { padding: 14px; }
 .loading { padding: 30px; text-align: center; color: var(--ink-500); font-size: 12.5px; }
+
+/* 严重等级告警 stat 卡 (.alert 默认灰, .hot 变红边框) */
+.alert { border-color: rgba(245, 158, 11, 0.35); }
+.alert .num { color: var(--warn, #f59e0b); }
+.alert .sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--warn, #f59e0b); margin-right: 6px; vertical-align: middle; }
+.alert.hot { border-color: rgba(239, 68, 68, 0.6); background: rgba(239, 68, 68, 0.04); }
+.alert.hot .num { color: var(--err, #ef4444); }
+.alert.hot .sev-dot { background: var(--err, #ef4444); box-shadow: 0 0 6px rgba(239, 68, 68, 0.6); }
+
+/* 严重等级分布卡 */
+.sev-card { margin-bottom: 16px; }
+.sev-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+.sev-bar {
+  display: flex;
+  width: 100%;
+  height: 28px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-sunken, rgba(0,0,0,0.03));
+}
+.sev-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12.5px;
+  color: #fff;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity 0.15s ease;
+}
+.sev-seg:hover { opacity: 0.85; }
+.sev-ic { font-size: 13px; }
+.sev-critical { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+.sev-high     { background: linear-gradient(135deg, #f97316, #c2410c); }
+.sev-medium   { background: linear-gradient(135deg, #eab308, #a16207); }
+.sev-low      { background: linear-gradient(135deg, #10b981, #047857); }
+.sev-unknown  { background: linear-gradient(135deg, #94a3b8, #475569); }
+
+.sev-tbl th, .sev-tbl td { padding: 8px 10px; font-size: 12.5px; }
+.sev-tbl .ok   { color: #10b981; }
+.sev-tbl .mute { color: #94a3b8; }
+.sev-tbl .warn { color: #f59e0b; }
+.sev-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #fff;
+}
+.sev-badge.sev-critical { background: rgba(239, 68, 68, 0.85); }
+.sev-badge.sev-high     { background: rgba(249, 115, 22, 0.85); }
+.sev-badge.sev-medium   { background: rgba(234, 179, 8, 0.85); }
+.sev-badge.sev-low      { background: rgba(16, 185, 129, 0.85); }
+.sev-badge.sev-unknown  { background: rgba(148, 163, 184, 0.85); }
+
+/* 时间线抽屉 severity pill (复用 sev-badge 配色) */
+.sev-pill.sev-critical { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+.sev-pill.sev-high     { background: rgba(249, 115, 22, 0.15); color: #f97316; }
+.sev-pill.sev-medium   { background: rgba(234, 179, 8, 0.18); color: #b45309; }
+.sev-pill.sev-low      { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+.sev-pill.sev-unknown  { background: rgba(148, 163, 184, 0.18); color: #64748b; }
 
 /* 规则柱图 */
 .rules { display: flex; flex-direction: column; gap: 6px; }

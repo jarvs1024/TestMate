@@ -95,6 +95,16 @@ async def per_author_stats(since: str | None = None) -> list[dict]:
     return await _get("/metrics/authors", params)
 
 
+async def severity_breakdown(since: str | None = None, pr_url: str | None = None) -> list[dict]:
+    """严重等级分桶 (critical / high / medium / low / unknown).
+    pr_url 用于从 git provider 拉项目级 rule file (e.g. .agents/rules/*.md).
+    """
+    params: dict[str, Any] = {}
+    if since: params["since"] = since
+    if pr_url: params["pr_url"] = pr_url
+    return await _get("/metrics/severity", params or None)
+
+
 async def list_mrs(
     limit: int = 50,
     project_id: int | None = None,
