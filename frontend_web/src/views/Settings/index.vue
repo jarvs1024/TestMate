@@ -143,46 +143,33 @@
             </div>
           </div>
 
-          <!-- 📡 数据源 (RAGFlow / Dify / pr-agent 统一配置入口) -->
+          <!-- 📡 数据源 (RAGFlow / Dify / pr-agent 统一配置入口, 按 prefix 分组) -->
           <div id="sec-general-data-source" class="sub-grp">
             <h3>📡 数据源 <span class="sub-cnt">{{ dataSourceItems.length }} 项</span></h3>
-            <SettingRow v-for="(it, idx) in dataSourceItems" :key="it.key"
-              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
-              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
-              :saving="saving === it.key" :secret-display="getInputValue(it)"
-              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
             <div class="hint">
-              💡 所有外部数据源统一入口: RAGFlow (知识库 API) / Dify (Workflow API) / pr-agent (代码检视 telemetry). 后续接入新外部服务也在此分组.
+              💡 所有外部数据源统一入口: 每个数据源一组配置 + 一个测试连接, 后续接入新外部服务在 SOURCE_GROUPS 数组里加一项即可.
             </div>
-            <!-- 测试按钮 -->
-            <div class="test-row">
-              <button class="test-btn" :disabled="!!testing" @click="onTest('knowledge-source')">
-                {{ testing === 'knowledge-source' ? '测试中…' : '🔌 测试 RAGFlow 连接' }}
-              </button>
-              <div v-if="testResults['knowledge-source']" class="test-result" :class="`s-${testResults['knowledge-source']?.status}`">
-                <span class="dot"></span>
-                <span class="msg">{{ testResults['knowledge-source']?.message }}</span>
-                <span v-if="testResults['knowledge-source']?.detail" class="det">{{ JSON.stringify(testResults['knowledge-source']?.detail) }}</span>
+            <div v-for="grp in sourceGroups" :key="grp.id" class="ds-grp">
+              <div class="ds-head">
+                <span class="ds-icon">{{ grp.icon }}</span>
+                <span class="ds-label">{{ grp.label }}</span>
+                <span class="sub-cnt">{{ grp.items.length }} 项</span>
+                <span class="ds-hint">{{ grp.hint }}</span>
               </div>
-            </div>
-            <div class="test-row">
-              <button class="test-btn" :disabled="!!testing" @click="onTest('agents')">
-                {{ testing === 'agents' ? '测试中…' : '🔌 测试 Dify 连接' }}
-              </button>
-              <div v-if="testResults['agents']" class="test-result" :class="`s-${testResults['agents']?.status}`">
-                <span class="dot"></span>
-                <span class="msg">{{ testResults['agents']?.message }}</span>
-                <span v-if="testResults['agents']?.detail" class="det">{{ JSON.stringify(testResults['agents']?.detail) }}</span>
-              </div>
-            </div>
-            <div class="test-row">
-              <button class="test-btn" :disabled="!!testing" @click="onTest('pr-agent')">
-                {{ testing === 'pr-agent' ? '测试中…' : '🔌 测试 pr-agent 连接' }}
-              </button>
-              <div v-if="testResults['pr-agent']" class="test-result" :class="`s-${testResults['pr-agent']?.status}`">
-                <span class="dot"></span>
-                <span class="msg">{{ testResults['pr-agent']?.message }}</span>
-                <span v-if="testResults['pr-agent']?.detail" class="det">{{ JSON.stringify(testResults['pr-agent']?.detail) }}</span>
+              <SettingRow v-for="(it, idx) in grp.items" :key="it.key"
+                :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+                :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+                :saving="saving === it.key" :secret-display="getInputValue(it)"
+                @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+              <div class="test-row">
+                <button class="test-btn" :disabled="!!testing" @click="onTest(grp.testKey)">
+                  {{ testing === grp.testKey ? '测试中…' : '🔌 测试连接' }}
+                </button>
+                <div v-if="testResults[grp.testKey]" class="test-result" :class="`s-${testResults[grp.testKey]?.status}`">
+                  <span class="dot"></span>
+                  <span class="msg">{{ testResults[grp.testKey]?.message }}</span>
+                  <span v-if="testResults[grp.testKey]?.detail" class="det">{{ JSON.stringify(testResults[grp.testKey]?.detail) }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -258,15 +245,33 @@ function itemsByPrefix(prefix: string): SettingItem[] {
   return out;
 }
 
-const dataSourceItems = computed(() => {
-  const out: SettingItem[] = [];
-  for (const g of groups.value) {
-    for (const it of g.items) {
-      if (it.category === 'data-source') out.push(it);
-    }
-  }
-  return out;
-});
+// ===== 数据源 sub-group: 按 prefix 拆 3 个子组 (RAGFlow / Dify / pr-agent) =====
+// 配置项都标 category='data-source', 这里按 key 前缀再细分, 让"测试连接"按钮紧贴对应配置.
+// 后续接新数据源: 在 SOURCE_GROUPS 数组里加一项即可.
+const dataSourceItems = computed(() => itemsByCategory('data-source'));
+
+interface DataSourceGroup {
+  id: string;          // 模板里渲染用, 也是测试结果 key
+  prefix: string;      // key 必须以这个开头
+  icon: string;
+  label: string;       // 显示名
+  testKey: string;     // 调用 settings.onTest 用的分类
+  hint: string;
+  items: SettingItem[];   // 经 vue computed 注入实际匹配项
+}
+// SOURCE_GROUPS 是静态声明 (没有 items 字段), 经 sourceGroups computed 注入实际匹配项.
+type SourceGroupDef = Omit<DataSourceGroup, 'items'>;
+const SOURCE_GROUPS: SourceGroupDef[] = [
+  { id: 'ragflow',  prefix: 'ragflow.',  icon: '📚', label: 'RAGFlow (知识库 API)', testKey: 'ragflow',  hint: 'KB 知识库 · 数据集 / 文档 / chunking API' },
+  { id: 'dify',     prefix: 'dify.',     icon: '🤖', label: 'Dify (Workflow API)',   testKey: 'dify',     hint: '智能体广场 · workflow / 对话 API' },
+  { id: 'pr-agent', prefix: 'pr_agent.', icon: '🧪', label: 'pr-agent (代码检视)',   testKey: 'pr-agent', hint: '代码检视 · telemetry / 健康检查' },
+];
+const sourceGroups = computed<DataSourceGroup[]>(() =>
+  SOURCE_GROUPS.map(g => ({
+    ...g,
+    items: dataSourceItems.value.filter(it => it.key.startsWith(g.prefix)),
+  })).filter(g => g.items.length > 0),
+);
 
 const agentItems = computed(() =>
   AGENT_PREFIXES.flatMap(p => itemsByPrefix(p))
@@ -377,17 +382,21 @@ async function onSave(it: SettingItem) {
   }
 }
 
-async function onTest(category: string) {
-  testing.value = category;
+// ===== 数据源连接测试 =====
+// testKey 跟 SOURCE_GROUPS[i].testKey 对齐: 'ragflow' / 'dify' / 'pr-agent'.
+const _testClients: Record<string, () => Promise<TestResult>> = {
+  'ragflow':  testRagflow,
+  'dify':     testDify,
+  'pr-agent': testPrAgent,
+};
+async function onTest(testKey: string) {
+  const fn = _testClients[testKey];
+  if (!fn) return;
+  testing.value = testKey;
   try {
-    let r: TestResult;
-    if (category === 'knowledge-source') r = await testRagflow();
-    else if (category === 'agents') r = await testDify();
-    else if (category === 'pr-agent') r = await testPrAgent();
-    else r = { ok: false, status: 'off', message: '未知分类', detail: null };
-    testResults[category] = r;
+    testResults[testKey] = await fn();
   } catch (e: any) {
-    testResults[category] = { ok: false, status: 'off', message: e?.message || '请求失败', detail: null };
+    testResults[testKey] = { ok: false, status: 'off', message: e?.message || '请求失败', detail: null };
   } finally {
     testing.value = null;
   }
@@ -739,6 +748,24 @@ onMounted(load);
 
 
 
+
+/* ===== 数据源 sub-group: 每个 prefix 一个子区 ===== */
+.ds-grp {
+  margin-top: 14px;
+  padding: 14px 14px 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 10px);
+}
+.ds-grp .test-row { border-top-color: color-mix(in srgb, var(--border) 60%, transparent); }
+.ds-head {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.ds-icon { font-size: 16px; }
+.ds-label { font-weight: 600; color: var(--ink-900); font-size: 13.5px; }
+.ds-hint { color: var(--ink-500); font-size: 11.5px; margin-left: 4px; }
 
 .test-row {
   display: flex; align-items: center; gap: 12px;
