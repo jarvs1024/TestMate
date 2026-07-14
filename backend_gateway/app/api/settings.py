@@ -26,7 +26,6 @@ router = APIRouter()
 CATEGORY_LABELS: dict[str, str] = {
     "agents":     "🤖 智能体 / Dify",
     "knowledge":       "📚 知识库 / RAGFlow",
-    "knowledge-source": "📡 数据源 (RAGFlow)",
     "notification": "🔔 通知 / 钉钉",
     "general":    "⚙️ 通用",
     "search":     "🔎 知识检索",
@@ -55,6 +54,7 @@ async def get_schema(_user: User = Depends(get_current_user)) -> dict:
     for s in SETTING_SCHEMA:
         item = {
             "key": s["key"],
+            "category": s["category"],
             "value": _mask(values.get(s["key"], s["default"]), s["is_secret"]),
             "value_type": s["value_type"],
             "description": s["description"],

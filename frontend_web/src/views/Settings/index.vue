@@ -40,68 +40,9 @@
         <section v-if="activeTop === 'sec-knowledge'" :id="'sec-knowledge'" class="card grp">
           <h2>
             <span>📚 知识库</span>
-            <span class="grp-cnt">{{ knowledgeSource.length + searchItems.length + chatItems.length }} 项</span>
+            <span class="grp-cnt">{{ searchItems.length + chatItems.length }} 项</span>
           </h2>
-
-          <!-- 子组: 数据源 -->
-          <div :id="'sec-knowledge-source'" class="sub-grp">
-            <h3>📡 数据源 (RAGFlow) <span class="sub-cnt">{{ knowledgeSource.length }} 项</span></h3>
-            <div v-for="(it, idx) in knowledgeSource" :key="it.key" class="row" :class="{ first: idx === 0 }">
-              <div class="lbl-col">
-                <div class="k">
-                  <code>{{ it.key }}</code>
-                  <span v-if="it.is_secret" class="secret-tag">secret</span>
-                  <span v-if="!it.is_default" class="custom-tag">已定制</span>
-                </div>
-                <div class="d">{{ it.description }}</div>
-              </div>
-              <div class="inp-col">
-                <label v-if="it.value_type === 'bool'" class="switch">
-                  <input type="checkbox" :checked="!!drafts[it.key]"
-                    :disabled="!isAdmin"
-                    @change="setDraft(it.key, ($event.target as HTMLInputElement).checked)" />
-                  <span class="sl"></span>
-                  <span class="stxt">{{ drafts[it.key] ? 'ON' : 'OFF' }}</span>
-                </label>
-                <template v-else-if="it.value_type === 'secret'">
-                  <div class="secret-wrap">
-                    <input :type="showSecrets[it.key] ? 'text' : 'password'"
-                      :value="getInputValue(it)"
-                      :placeholder="it.is_default ? '(使用 .env 默认值)' : '已设置, 留空不改'"
-                      :disabled="!isAdmin"
-                      @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-                    <button class="eye" type="button" @click="showSecrets[it.key] = !showSecrets[it.key]" :title="showSecrets[it.key] ? '隐藏' : '显示'">
-                      {{ showSecrets[it.key] ? '🙈' : '👁' }}
-                    </button>
-                  </div>
-                </template>
-                <input v-else
-                  :type="it.value_type === 'int' ? 'number' : 'text'"
-                  :value="drafts[it.key]"
-                  :placeholder="it.description"
-                  :disabled="!isAdmin"
-                  @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-              </div>
-              <div class="act-col" v-if="isAdmin">
-                <button class="primary" :disabled="!isDirty(it) || !!saving" @click="onSave(it)">
-                  {{ saving === it.key ? '保存中…' : '保存' }}
-                </button>
-                <button v-if="isDirty(it)" class="ghost" @click="revert(it)">取消</button>
-              </div>
-            </div>
-            <div class="test-row">
-              <button class="test-btn" :disabled="!!testing" @click="onTest('knowledge-source')">
-                {{ testing === 'knowledge-source' ? '测试中…' : '🔌 测试 RAGFlow 连接' }}
-              </button>
-              <div v-if="testResults['knowledge-source']" class="test-result" :class="`s-${testResults['knowledge-source']?.status}`">
-                <span class="dot"></span>
-                <span class="msg">{{ testResults['knowledge-source']?.message }}</span>
-                <span v-if="testResults['knowledge-source']?.detail" class="det">
-                  {{ JSON.stringify(testResults['knowledge-source']?.detail) }}
-                </span>
-              </div>
-            </div>
-          </div>
+          
 
           <!-- 子组: 知识检索 -->
           <div :id="'sec-search'" class="sub-grp">
@@ -295,10 +236,9 @@ const testResults = reactive<Record<string, TestResult | null>>({});
 
 // 当前选中的顶级 section + 子级 (sub group)
 const activeTop = ref<string>('sec-knowledge');
-const activeSub = ref<string>('sec-knowledge-source');
+const activeSub = ref<string>('sec-search');
 
 // ===== 按 category 拆分 (后端 schema 是单一来源) =====
-const knowledgeSource = computed(() => itemsByCategory('knowledge-source'));
 const searchItems = computed(() => itemsByCategory('search'));
 const chatItems = computed(() => itemsByCategory('chat'));
 const generalItems = computed(() => itemsByCategory('general'));
@@ -348,7 +288,6 @@ const sections = computed(() => [
     label: '知识库',
     count: 0, // 父级不显示数字, 子级显示
     children: [
-      { id: 'sec-knowledge-source', label: '数据源 (RAGFlow)', count: knowledgeSource.value.length },
       { id: 'sec-search',            label: '知识检索',         count: searchItems.value.length },
       { id: 'sec-chat',              label: '知识对话',         count: chatItems.value.length },
     ],

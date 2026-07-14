@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 SETTING_SCHEMA: list[dict] = [
     {
         "key": "ragflow.base_url",
-        "category": "knowledge-source",
+        "category": "data-source",
         "value_type": "url",
         "default": settings.RAGFLOW_BASE_URL,
         "description": "RAGFlow API 基础地址 (例: http://host:9380/api/v1)",
@@ -43,7 +43,7 @@ SETTING_SCHEMA: list[dict] = [
     },
     {
         "key": "ragflow.api_key",
-        "category": "knowledge-source",
+        "category": "data-source",
         "value_type": "secret",
         "default": settings.RAGFLOW_API_KEY,
         "description": "RAGFlow API Key (ragflow-xxxxx)",
