@@ -119,7 +119,7 @@
               <td class="r mono">{{ sevBucket(b)?.total ?? 0 }}</td>
               <td class="r mono ok">{{ sevBucket(b)?.applied ?? 0 }}</td>
               <td class="r mono mute">{{ sevBucket(b)?.dismissed ?? 0 }}</td>
-              <td class="r mono warn">{{ sevBucket(b)?.open ?? 0 }}</td>
+              <td class="r mono" :class="(sevBucket(b)?.open ?? 0) > 0 ? 'open-warn' : 'zero'">{{ sevBucket(b)?.open ?? 0 }}</td>
               <td class="r mono">{{ sevBucket(b)?.superseded ?? 0 }}</td>
               <td class="r mono">{{ fmtPct(sevBucket(b)?.adoption_rate) }}</td>
               <td class="r mono">{{ fmtPct(sevBucket(b)?.dismissal_rate) }}</td>
@@ -480,17 +480,18 @@ onMounted(reload);
 .warn-d code { font-family: var(--font-mono); background: var(--surface-sunken); padding: 1px 6px; border-radius: 4px; }
 
 /* 概览卡片 */
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-@media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+.stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+@media (max-width: 1200px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 700px)  { .stats { grid-template-columns: repeat(2, 1fr); } }
 .stat {
   background: var(--surface-soft); backdrop-filter: blur(8px);
   border: 1px solid var(--border); border-radius: var(--radius-card);
   padding: 14px 18px; box-shadow: var(--shadow-sm);
   display: flex; flex-direction: column; gap: 4px;
 }
-.stat .num { font-size: 28px; font-weight: 800; color: var(--ink-900); font-family: var(--font-mono); letter-spacing: -0.5px; }
-.stat .lbl { font-size: 12px; color: var(--ink-500); font-weight: 600; }
-.stat .sub { font-size: 11.5px; color: var(--ink-500); font-family: var(--font-mono); }
+.stat .num { font-size: 22px; font-weight: 800; color: var(--ink-900); font-family: var(--font-mono); letter-spacing: -0.3px; }
+.stat .lbl { font-size: 11.5px; color: var(--ink-500); font-weight: 600; }
+.stat .sub { font-size: 11px; color: var(--ink-500); font-family: var(--font-mono); }
 .stat.highlight { background: var(--primary-grad-soft); }
 .stat.highlight .num {
   background: var(--primary-grad-text);
@@ -518,12 +519,12 @@ onMounted(reload);
 .loading { padding: 30px; text-align: center; color: var(--ink-500); font-size: 12.5px; }
 
 /* 严重等级告警 stat 卡 (.alert 默认灰, .hot 变红边框) */
-.alert { border-color: rgba(245, 158, 11, 0.35); }
-.alert .num { color: var(--warn, #f59e0b); }
-.alert .sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--warn, #f59e0b); margin-right: 6px; vertical-align: middle; }
-.alert.hot { border-color: rgba(239, 68, 68, 0.6); background: rgba(239, 68, 68, 0.04); }
-.alert.hot .num { color: var(--err, #ef4444); }
-.alert.hot .sev-dot { background: var(--err, #ef4444); box-shadow: 0 0 6px rgba(239, 68, 68, 0.6); }
+.alert { border-color: rgba(161, 98, 7, 0.4); }
+.alert .num { color: #d4a017; }
+.alert .sev-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d4a017; margin-right: 5px; vertical-align: middle; }
+.alert.hot { border-color: rgba(185, 28, 28, 0.6); background: rgba(185, 28, 28, 0.05); }
+.alert.hot .num { color: #f87171; }
+.alert.hot .sev-dot { background: #b91c1c; box-shadow: 0 0 6px rgba(185, 28, 28, 0.5); }
 
 /* 严重等级分布卡 */
 .sev-card { margin-bottom: 16px; }
@@ -531,8 +532,8 @@ onMounted(reload);
 .sev-bar {
   display: flex;
   width: 100%;
-  height: 28px;
-  border-radius: 8px;
+  height: 22px;
+  border-radius: 6px;
   overflow: hidden;
   background: var(--surface-sunken, rgba(0,0,0,0.03));
 }
@@ -541,25 +542,27 @@ onMounted(reload);
   align-items: center;
   justify-content: center;
   gap: 4px;
-  font-size: 12.5px;
-  color: #fff;
+  font-size: 11.5px;
+  color: rgba(255,255,255,0.95);
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   transition: opacity 0.15s ease;
 }
 .sev-seg:hover { opacity: 0.85; }
-.sev-ic { font-size: 13px; }
-.sev-critical { background: linear-gradient(135deg, #ef4444, #b91c1c); }
-.sev-high     { background: linear-gradient(135deg, #f97316, #c2410c); }
-.sev-medium   { background: linear-gradient(135deg, #eab308, #a16207); }
-.sev-low      { background: linear-gradient(135deg, #10b981, #047857); }
-.sev-unknown  { background: linear-gradient(135deg, #94a3b8, #475569); }
+.sev-ic { font-size: 12px; }
+/* 实色, 降饱和度, 跟深色背景协调但不再扎眼 */
+.sev-critical { background: #b91c1c; }
+.sev-high     { background: #c2410c; }
+.sev-medium   { background: #a16207; }
+.sev-low      { background: #047857; }
+.sev-unknown  { background: #475569; }
 
 .sev-tbl th, .sev-tbl td { padding: 8px 10px; font-size: 12.5px; }
-.sev-tbl .ok   { color: #10b981; }
-.sev-tbl .mute { color: #94a3b8; }
-.sev-tbl .warn { color: #f59e0b; }
+.sev-tbl .ok        { color: #10b981; }
+.sev-tbl .mute      { color: #94a3b8; }
+.sev-tbl .open-warn { color: #d4a017; }    /* 只在 open > 0 时上色, 降一档饱和度 */
+.sev-tbl .zero      { color: var(--ink-500, #94a3b8); opacity: 0.5; }   /* 0 不再触发焦点框错觉 */
 .sev-badge {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 2px 10px;
@@ -568,18 +571,18 @@ onMounted(reload);
   font-weight: 600;
   color: #fff;
 }
-.sev-badge.sev-critical { background: rgba(239, 68, 68, 0.85); }
-.sev-badge.sev-high     { background: rgba(249, 115, 22, 0.85); }
-.sev-badge.sev-medium   { background: rgba(234, 179, 8, 0.85); }
-.sev-badge.sev-low      { background: rgba(16, 185, 129, 0.85); }
-.sev-badge.sev-unknown  { background: rgba(148, 163, 184, 0.85); }
+.sev-badge.sev-critical { background: #b91c1c; }
+.sev-badge.sev-high     { background: #c2410c; }
+.sev-badge.sev-medium   { background: #a16207; }
+.sev-badge.sev-low      { background: #047857; }
+.sev-badge.sev-unknown  { background: #475569; }
 
 /* 时间线抽屉 severity pill (复用 sev-badge 配色) */
-.sev-pill.sev-critical { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-.sev-pill.sev-high     { background: rgba(249, 115, 22, 0.15); color: #f97316; }
-.sev-pill.sev-medium   { background: rgba(234, 179, 8, 0.18); color: #b45309; }
-.sev-pill.sev-low      { background: rgba(16, 185, 129, 0.15); color: #10b981; }
-.sev-pill.sev-unknown  { background: rgba(148, 163, 184, 0.18); color: #64748b; }
+.sev-pill.sev-critical { background: rgba(185, 28, 28, 0.18); color: #f87171; }
+.sev-pill.sev-high     { background: rgba(194, 65, 12, 0.18); color: #fb923c; }
+.sev-pill.sev-medium   { background: rgba(161, 98, 7, 0.18); color: #d4a017; }
+.sev-pill.sev-low      { background: rgba(4, 120, 87, 0.18); color: #34d399; }
+.sev-pill.sev-unknown  { background: rgba(71, 85, 105, 0.18); color: #94a3b8; }
 
 /* 规则柱图 */
 .rules { display: flex; flex-direction: column; gap: 6px; }
