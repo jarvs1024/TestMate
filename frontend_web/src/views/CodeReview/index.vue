@@ -543,7 +543,7 @@ onMounted(reload);
   justify-content: center;
   gap: 4px;
   font-size: 11.5px;
-  color: rgba(255,255,255,0.92);
+  color: rgba(255,255,255,0.85);
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -551,16 +551,17 @@ onMounted(reload);
 }
 .sev-seg:hover { opacity: 0.9; }
 .sev-ic { font-size: 11px; opacity: 0.85; }
-/* 阶梯: critical 最深 → low 最浅, 同一暖色系 (red→amber→slate), 强度递减 */
-.sev-c1 { background: #b45454; }   /* critical: 暗红, 协调 */
-.sev-c2 { background: #c47a4a; }   /* high:    暖橙, 较浅 */
-.sev-c3 { background: #b58e4a; }   /* medium:  琥珀, 更浅 */
-.sev-c4 { background: #6f7a86; }   /* low/unknown: 中性灰, 最浅 */
+/* 阶梯: critical 最深 → low 最浅, 同一暖色系再降一档明度 (red→amber→slate),
+   不再夺主元素, 只作等级提示 */
+.sev-c1 { background: #b07878; }   /* critical: 暗红, 柔和 */
+.sev-c2 { background: #c08654; }   /* high:    暖橙, 较浅 */
+.sev-c3 { background: #b89455; }   /* medium:  琥珀, 更浅 */
+.sev-c4 { background: #7e8a96; }   /* low/unknown: 中性灰, 最浅 */
 
 .sev-tbl th, .sev-tbl td { padding: 8px 10px; font-size: 12.5px; }
 .sev-tbl .ok        { color: color-mix(in srgb, var(--ok) 80%, var(--ink-700)); }   /* applied: 用 --ok 主题色 */
 .sev-tbl .mute      { color: var(--ink-500); }   /* dismissed: 中性 */
-.sev-tbl .open-warn { color: #b45454; }          /* open>0: 跟 sev-c1 一致 */
+.sev-tbl .open-warn { color: #b07878; }          /* open>0: 跟 sev-c1 一致 */
 .sev-tbl .zero      { color: var(--ink-500); opacity: 0.5; }
 .sev-badge {
   display: inline-flex; align-items: center; gap: 5px;
@@ -578,16 +579,16 @@ onMounted(reload);
   border-radius: 50%;
   background: currentColor;
 }
-.sev-badge.sev-c1 { background: rgba(180, 84, 84, 0.15); color: #b45454; }
-.sev-badge.sev-c2 { background: rgba(196, 122, 74, 0.15); color: #c47a4a; }
-.sev-badge.sev-c3 { background: rgba(181, 142, 74, 0.15); color: #b58e4a; }
-.sev-badge.sev-c4 { background: rgba(111, 122, 134, 0.15); color: #6f7a86; }
+.sev-badge.sev-c1 { background: rgba(176, 120, 120, 0.13); color: #b07878; }
+.sev-badge.sev-c2 { background: rgba(192, 134, 84, 0.13); color: #c08654; }
+.sev-badge.sev-c3 { background: rgba(184, 148, 85, 0.13); color: #b89455; }
+.sev-badge.sev-c4 { background: rgba(126, 138, 150, 0.13); color: #7e8a96; }
 
 /* 时间线抽屉 severity pill (复用 sev-badge 配色) */
-.sev-pill.sev-c1 { background: rgba(180, 84, 84, 0.18); color: #b45454; }
-.sev-pill.sev-c2 { background: rgba(196, 122, 74, 0.18); color: #c47a4a; }
-.sev-pill.sev-c3 { background: rgba(181, 142, 74, 0.18); color: #b58e4a; }
-.sev-pill.sev-c4 { background: rgba(111, 122, 134, 0.18); color: #6f7a86; }
+.sev-pill.sev-c1 { background: rgba(176, 120, 120, 0.16); color: #b07878; }
+.sev-pill.sev-c2 { background: rgba(192, 134, 84, 0.16); color: #c08654; }
+.sev-pill.sev-c3 { background: rgba(184, 148, 85, 0.16); color: #b89455; }
+.sev-pill.sev-c4 { background: rgba(126, 138, 150, 0.16); color: #7e8a96; }
 
 /* 规则柱图 */
 .rules { display: flex; flex-direction: column; gap: 6px; }
