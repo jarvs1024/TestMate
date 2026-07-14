@@ -62,8 +62,8 @@
       </div>
       <!-- 严重等级告警: 红色块 (critical.dismissed) + 黄 (critical.open) -->
       <div class="stat alert" :class="{ hot: (sevBucket('critical')?.dismissed ?? 0) > 0 }">
-        <div class="num">
-          <span class="sev-dot"></span>{{ sevBucket('critical')?.dismissed ?? 0 }}
+        <div class="num" :class="{ zero: (sevBucket('critical')?.dismissed ?? 0) === 0 }">
+          {{ sevBucket('critical')?.dismissed ?? 0 }}
         </div>
         <div class="lbl">严重建议被忽略</div>
         <div class="sub">
@@ -353,14 +353,14 @@ function sevBucket(name: string): SeverityBucket | undefined {
 }
 const SEV_ORDER = ['critical', 'high', 'medium', 'low'] as const;
 const SEV_META: Record<string, { icon: string; label: string; cls: string }> = {
-  critical: { icon: '🔴', label: '严重', cls: 'sev-critical' },
-  high:     { icon: '🟠', label: '高',   cls: 'sev-high' },
-  medium:   { icon: '🟡', label: '中',   cls: 'sev-medium' },
-  low:      { icon: '🟢', label: '低',   cls: 'sev-low' },
+  critical: { icon: '●', label: '严重', cls: 'sev-c1' },
+  high:     { icon: '●', label: '高',   cls: 'sev-c2' },
+  medium:   { icon: '●', label: '中',   cls: 'sev-c3' },
+  low:      { icon: '●', label: '低',   cls: 'sev-c4' },
 };
 function sevLabel(s: string): string { return SEV_META[s]?.label || s; }
 function sevIcon(s: string): string { return SEV_META[s]?.icon || '⚪'; }
-function sevCls(s: string): string { return SEV_META[s]?.cls || 'sev-unknown'; }
+function sevCls(s: string): string { return SEV_META[s]?.cls || 'sev-c4'; }
 
 // severity 来源 (rule_file / pattern / importance / default) → 中文
 function sevSrcLabel(src?: string): string {
@@ -518,13 +518,13 @@ onMounted(reload);
 .empty.sm { padding: 14px; }
 .loading { padding: 30px; text-align: center; color: var(--ink-500); font-size: 12.5px; }
 
-/* 严重等级告警 stat 卡 (.alert 默认灰, .hot 变红边框) */
-.alert { border-color: rgba(161, 98, 7, 0.4); }
-.alert .num { color: #d4a017; }
-.alert .sev-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d4a017; margin-right: 5px; vertical-align: middle; }
-.alert.hot { border-color: rgba(185, 28, 28, 0.6); background: rgba(185, 28, 28, 0.05); }
-.alert.hot .num { color: #f87171; }
-.alert.hot .sev-dot { background: #b91c1c; box-shadow: 0 0 6px rgba(185, 28, 28, 0.5); }
+/* 严重等级告警 stat 卡 (.alert 通用, .hot 仅当 dismissed > 0 边缘提一档)
+   色板: critical 用主题 --err 弱化, hot 时换成 --err 强色; 整体不刺眼 */
+.alert { border-color: var(--border); }
+.alert .num { color: var(--ink-900); }
+.alert .num.zero { opacity: 0.45; }   /* dismissed=0 时数字淡化, 不当告警 */
+.alert.hot { border-color: color-mix(in srgb, var(--err) 35%, var(--border)); background: color-mix(in srgb, var(--err) 4%, var(--surface-soft)); }
+.alert.hot .num { color: var(--err); }
 
 /* 严重等级分布卡 */
 .sev-card { margin-bottom: 16px; }
@@ -543,46 +543,51 @@ onMounted(reload);
   justify-content: center;
   gap: 4px;
   font-size: 11.5px;
-  color: rgba(255,255,255,0.95);
+  color: rgba(255,255,255,0.92);
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   transition: opacity 0.15s ease;
 }
-.sev-seg:hover { opacity: 0.85; }
-.sev-ic { font-size: 12px; }
-/* 实色, 降饱和度, 跟深色背景协调但不再扎眼 */
-.sev-critical { background: #b91c1c; }
-.sev-high     { background: #c2410c; }
-.sev-medium   { background: #a16207; }
-.sev-low      { background: #047857; }
-.sev-unknown  { background: #475569; }
+.sev-seg:hover { opacity: 0.9; }
+.sev-ic { font-size: 11px; opacity: 0.85; }
+/* 阶梯: critical 最深 → low 最浅, 同一暖色系 (red→amber→slate), 强度递减 */
+.sev-c1 { background: #b45454; }   /* critical: 暗红, 协调 */
+.sev-c2 { background: #c47a4a; }   /* high:    暖橙, 较浅 */
+.sev-c3 { background: #b58e4a; }   /* medium:  琥珀, 更浅 */
+.sev-c4 { background: #6f7a86; }   /* low/unknown: 中性灰, 最浅 */
 
 .sev-tbl th, .sev-tbl td { padding: 8px 10px; font-size: 12.5px; }
-.sev-tbl .ok        { color: #10b981; }
-.sev-tbl .mute      { color: #94a3b8; }
-.sev-tbl .open-warn { color: #d4a017; }    /* 只在 open > 0 时上色, 降一档饱和度 */
-.sev-tbl .zero      { color: var(--ink-500, #94a3b8); opacity: 0.5; }   /* 0 不再触发焦点框错觉 */
+.sev-tbl .ok        { color: color-mix(in srgb, var(--ok) 80%, var(--ink-700)); }   /* applied: 用 --ok 主题色 */
+.sev-tbl .mute      { color: var(--ink-500); }   /* dismissed: 中性 */
+.sev-tbl .open-warn { color: #b45454; }          /* open>0: 跟 sev-c1 一致 */
+.sev-tbl .zero      { color: var(--ink-500); opacity: 0.5; }
 .sev-badge {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center; gap: 5px;
   padding: 2px 10px;
   border-radius: 999px;
   font-size: 11.5px;
   font-weight: 600;
-  color: #fff;
+  background: var(--surface-sunken);
+  color: var(--ink-700);
 }
-.sev-badge.sev-critical { background: #b91c1c; }
-.sev-badge.sev-high     { background: #c2410c; }
-.sev-badge.sev-medium   { background: #a16207; }
-.sev-badge.sev-low      { background: #047857; }
-.sev-badge.sev-unknown  { background: #475569; }
+.sev-badge::before {
+  content: '';
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.sev-badge.sev-c1 { background: rgba(180, 84, 84, 0.15); color: #b45454; }
+.sev-badge.sev-c2 { background: rgba(196, 122, 74, 0.15); color: #c47a4a; }
+.sev-badge.sev-c3 { background: rgba(181, 142, 74, 0.15); color: #b58e4a; }
+.sev-badge.sev-c4 { background: rgba(111, 122, 134, 0.15); color: #6f7a86; }
 
 /* 时间线抽屉 severity pill (复用 sev-badge 配色) */
-.sev-pill.sev-critical { background: rgba(185, 28, 28, 0.18); color: #f87171; }
-.sev-pill.sev-high     { background: rgba(194, 65, 12, 0.18); color: #fb923c; }
-.sev-pill.sev-medium   { background: rgba(161, 98, 7, 0.18); color: #d4a017; }
-.sev-pill.sev-low      { background: rgba(4, 120, 87, 0.18); color: #34d399; }
-.sev-pill.sev-unknown  { background: rgba(71, 85, 105, 0.18); color: #94a3b8; }
+.sev-pill.sev-c1 { background: rgba(180, 84, 84, 0.18); color: #b45454; }
+.sev-pill.sev-c2 { background: rgba(196, 122, 74, 0.18); color: #c47a4a; }
+.sev-pill.sev-c3 { background: rgba(181, 142, 74, 0.18); color: #b58e4a; }
+.sev-pill.sev-c4 { background: rgba(111, 122, 134, 0.18); color: #6f7a86; }
 
 /* 规则柱图 */
 .rules { display: flex; flex-direction: column; gap: 6px; }
