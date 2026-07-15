@@ -812,58 +812,71 @@ onMounted(reload);
 /* 严重等级分布卡 */
 .sev-card { margin-bottom: 16px; }
 .sev-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
-/* 严重等级比例堆叠条: 轻盈型, 高度 12, 不抢主元素.
-   整条 = 总建议数堆叠 (按状态), 严重等级只在前面用极小 chip 标签和列内颜色区分 */
-.sev-bar-nested {
+/* legend: 颜色语义图例 (applied / dismissed / open / superseded) */
+.sev-legend { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; font-size: 11.5px; color: var(--ink-500); flex-wrap: wrap; }
+.sev-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.legend-swatch.seg-applied   { background: color-mix(in srgb, var(--ok)      55%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 70%, transparent); }
+.legend-swatch.seg-dismissed { background: color-mix(in srgb, var(--ink-500) 50%, transparent); border: 1px solid color-mix(in srgb, var(--ink-500) 70%, transparent); }
+.legend-swatch.seg-open      { background: color-mix(in srgb, var(--warn)    60%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 70%, transparent); }
+.legend-swatch.seg-superseded{ background: color-mix(in srgb, var(--primary) 30%, transparent); border: 1px solid color-mix(in srgb, var(--primary) 50%, transparent); }
+.sev-legend-summary { margin-left: auto; color: var(--ink-700); font-weight: 600; }
+
+/* 严重等级行级列表: 每个 severity 一行, 行内堆叠 state segment (整行宽度 = 100%) */
+.sev-rows-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.sev-row-line { display: flex; flex-direction: column; gap: 5px; }
+.sev-row-hd { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; }
+.sev-row-name { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-900); font-weight: 600; }
+.sev-row-meta { display: inline-flex; align-items: baseline; gap: 10px; }
+.sev-row-total { font-size: 11.5px; color: var(--ink-500); font-family: var(--font-mono); }
+.sev-row-rate { font-size: 12.5px; color: var(--ok); font-family: var(--font-mono); font-weight: 700; }
+
+/* bar 行: 全宽, 堆 state segment */
+.sev-row-bar {
   display: flex;
   width: 100%;
-  height: 12px;
+  height: 22px;
   border-radius: 4px;
   overflow: hidden;
   background: var(--surface-sunken);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-900) 6%, transparent);
 }
-.sev-row {
-  display: flex;
-  min-width: 0;
-  height: 100%;
-  position: relative;
-}
-.sev-row + .sev-row::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 1px;
-  background: rgba(255,255,255,0.45);
-}
 .seg {
   height: 100%;
   min-width: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; font-weight: 700;
+  color: rgba(255,255,255,0.92);
+  font-family: var(--font-mono);
+  border-right: 1px solid rgba(255,255,255,0.45);
   transition: opacity 0.15s ease;
 }
+.seg:last-child { border-right: none; }
 .seg:hover { opacity: 0.78; }
 .seg-applied   { background: color-mix(in srgb, var(--ok)      55%, transparent); }
 .seg-dismissed { background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
 .seg-open      { background: color-mix(in srgb, var(--warn)    60%, transparent); }
 .seg-superseded{ background: color-mix(in srgb, var(--primary) 30%, transparent); }
-/* sev-ic 留给表格 badge 用, 不在 bar 上 */
-.sev-ic { display: none; }
 
-/* bar 左侧严重等级 legend (critical/high/medium/low 比例尺), 跟 bar 一起一行 */
-.sev-legend { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 11.5px; color: var(--ink-500); flex-wrap: wrap; }
-.sev-legend-item { display: inline-flex; align-items: center; gap: 4px; }
-.sev-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+/* 行级 dot (legend 重用) */
+.sev-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; display: inline-block; }
 .sev-legend-dot.sev-c1 { background: var(--err); }
 .sev-legend-dot.sev-c2 { background: var(--warn); }
 .sev-legend-dot.sev-c3 { background: var(--primary); }
 .sev-legend-dot.sev-c4 { background: var(--ink-500); }
-.sev-legend-n { font-family: var(--font-mono); color: var(--ink-700); font-weight: 700; }
+/* sev-ic 留给表格 badge 用, 不在 bar 上 */
+.sev-ic { display: none; }
 
 .sev-tbl th, .sev-tbl td { padding: 8px 10px; font-size: 12.5px; }
-.sev-tbl .ok        { color: color-mix(in srgb, var(--ok) 80%, var(--ink-700)); }   /* applied: 用 --ok 主题色 */
-.sev-tbl .mute      { color: var(--ink-500); }   /* dismissed: 中性 */
-.sev-tbl .open-warn { color: color-mix(in srgb, var(--err) 80%, var(--ink-700)); }   /* open>0: 跟 sev-c1 一致 (用 --err) */
-.sev-tbl .zero      { color: var(--ink-500); opacity: 0.5; }
+.sev-tbl .ok   { color: color-mix(in srgb, var(--ok) 80%, var(--ink-700)); }   /* applied: --ok 主题色 */
+.sev-tbl .mute { color: var(--ink-500); }                                            /* dismissed: 中性 */
+.sev-tbl .sev-tbl-open { color: color-mix(in srgb, var(--err) 80%, var(--ink-700)); }/* open>0: --err 主题色 */
+
+/* 表格行的"采纳率" mini 列: 短 bar + 百分数, 一眼比出谁差 */
+.sev-rate { display: inline-flex; align-items: center; gap: 8px; }
+.sev-rate-bar { width: 60px; height: 6px; background: var(--surface-sunken); border-radius: 3px; overflow: hidden; }
+.sev-rate-fill { height: 100%; background: var(--ok); border-radius: 3px; transition: width 0.3s ease; }
+.sev-rate-n { font-size: 11.5px; color: var(--ok); font-weight: 700; min-width: 38px; text-align: right; }
 .sev-badge {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 2px 10px;
