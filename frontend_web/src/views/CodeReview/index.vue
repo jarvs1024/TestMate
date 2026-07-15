@@ -152,38 +152,7 @@
         </div>
         <div v-else class="empty">暂无建议数据</div>
         <!-- 详情表 (4 列紧凑: 总 / 采纳 / 忽略 / 待处理; 替代超10条也看不常见, 折叠到 tooltip) -->
-        <!-- 详情表: 加采纳率 mini bar, 一眼比出谁差 -->
-        <table class="tbl sev-tbl">
-          <thead>
-            <tr>
-              <th>等级</th>
-              <th class="r">总</th>
-              <th class="r">采纳</th>
-              <th class="r">忽略</th>
-              <th class="r">待处理</th>
-              <th class="r">采纳率</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="b in SEV_ORDER" :key="b" v-show="(sevBucket(b)?.total || 0) > 0">
-              <td>
-                <span class="sev-badge" :class="sevCls(b)">
-                  <span class="sev-ic">{{ sevIcon(b) }}</span>{{ sevLabel(b) }}
-                </span>
-              </td>
-              <td class="r mono">{{ sevBucket(b)?.total ?? 0 }}</td>
-              <td class="r mono ok">{{ sevBucket(b)?.applied ?? 0 }}</td>
-              <td class="r mono mute">{{ sevBucket(b)?.dismissed ?? 0 }}</td>
-              <td class="r mono" :class="{ 'sev-tbl-open': (sevBucket(b)?.open ?? 0) > 0 }">{{ sevBucket(b)?.open ?? 0 }}</td>
-              <td class="r">
-                <div class="sev-rate">
-                  <div class="sev-rate-bar"><div class="sev-rate-fill" :style="{ width: Math.round((sevBucket(b)?.adoption_rate || 0) * 100) + '%' }"></div></div>
-                  <span class="mono sev-rate-n">{{ fmtPct(sevBucket(b)?.adoption_rate) }}</span>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <!-- (详情表删除 — 上方行级 bar 已表达全部字段: 总数 / 采纳数 / 忽略数 / 待处理数 / 整体采纳率 / segment 内数字) -->
       </div>
     </div>
 
@@ -877,19 +846,6 @@ onMounted(reload);
 .sev-legend-dot.sev-c2 { background: var(--warn); }
 .sev-legend-dot.sev-c3 { background: var(--primary); }
 .sev-legend-dot.sev-c4 { background: var(--ink-500); }
-/* sev-ic 留给表格 badge 用, 不在 bar 上 */
-.sev-ic { display: none; }
-
-.sev-tbl th, .sev-tbl td { padding: 8px 10px; font-size: 12.5px; }
-.sev-tbl .ok   { color: color-mix(in srgb, var(--ok) 80%, var(--ink-700)); }   /* applied: --ok 主题色 */
-.sev-tbl .mute { color: var(--ink-500); }                                            /* dismissed: 中性 */
-.sev-tbl .sev-tbl-open { color: color-mix(in srgb, var(--err) 80%, var(--ink-700)); }/* open>0: --err 主题色 */
-
-/* 表格行的"采纳率" mini 列: 短 bar + 百分数, 一眼比出谁差 */
-.sev-rate { display: inline-flex; align-items: center; gap: 8px; }
-.sev-rate-bar { width: 60px; height: 6px; background: var(--surface-sunken); border-radius: 3px; overflow: hidden; }
-.sev-rate-fill { height: 100%; background: var(--ok); border-radius: 3px; transition: width 0.3s ease; }
-.sev-rate-n { font-size: 11.5px; color: var(--ok); font-weight: 700; min-width: 38px; text-align: right; }
 .sev-badge {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 2px 10px;
