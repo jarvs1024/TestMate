@@ -124,13 +124,6 @@
         <!-- legend: 颜色语义图例 (applied=绿 / dismissed=灰 / open=黄 / superseded=品牌色弱化)
              每个 severity 一行, 行内堆叠 state segment. 整张卡片直观表达:
              哪个 severity 采纳率低 + 哪个 severity 有 open 待处理 -->
-        <div class="sev-legend">
-          <span class="sev-legend-item"><span class="legend-swatch seg-applied"></span>已采纳</span>
-          <span class="sev-legend-item"><span class="legend-swatch seg-dismissed"></span>已忽略</span>
-          <span class="sev-legend-item"><span class="legend-swatch seg-open"></span>待处理</span>
-          <span class="sev-legend-item"><span class="legend-swatch seg-superseded"></span>已替代</span>
-          <span class="sev-legend-summary" :title="`${totalSuggestions} 条建议总采纳率`">{{ fmtPct(severityAdoption) }} 整体采纳</span>
-        </div>
         <div class="sev-rows-list" v-if="totalSuggestions > 0">
           <div v-for="b in SEV_ORDER" :key="b" class="sev-row-line"
                :class="sevCls(b)"
@@ -151,6 +144,13 @@
           </div>
         </div>
         <div v-else class="empty">暂无建议数据</div>
+        <div class="sev-legend">
+          <span class="sev-legend-item"><span class="legend-swatch seg-applied"></span>已采纳</span>
+          <span class="sev-legend-item"><span class="legend-swatch seg-dismissed"></span>已忽略</span>
+          <span class="sev-legend-item"><span class="legend-swatch seg-open"></span>待处理</span>
+          <span class="sev-legend-item"><span class="legend-swatch seg-superseded"></span>已替代</span>
+          <span class="sev-legend-summary" :title="`${totalSuggestions} 条建议总采纳率`">{{ fmtPct(severityAdoption) }} 整体采纳</span>
+        </div>
         <!-- 详情表 (4 列紧凑: 总 / 采纳 / 忽略 / 待处理; 替代超10条也看不常见, 折叠到 tooltip) -->
         <!-- (详情表删除 — 上方行级 bar 已表达全部字段: 总数 / 采纳数 / 忽略数 / 待处理数 / 整体采纳率 / segment 内数字) -->
       </div>
@@ -794,14 +794,22 @@ onMounted(reload);
 /* 严重等级分布卡 */
 .sev-card { margin-bottom: 16px; }
 .sev-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
-/* legend: 颜色语义图例 (applied / dismissed / open / superseded) */
-.sev-legend { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; font-size: 11.5px; color: var(--ink-500); flex-wrap: wrap; }
-.sev-legend-item { display: inline-flex; align-items: center; gap: 5px; }
-.legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
-.legend-swatch.seg-applied   { background: color-mix(in srgb, var(--ok)      55%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 70%, transparent); }
-.legend-swatch.seg-dismissed { background: color-mix(in srgb, var(--ink-500) 50%, transparent); border: 1px solid color-mix(in srgb, var(--ink-500) 70%, transparent); }
-.legend-swatch.seg-open      { background: color-mix(in srgb, var(--warn)    60%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 70%, transparent); }
-.legend-swatch.seg-superseded{ background: color-mix(in srgb, var(--primary) 30%, transparent); border: 1px solid color-mix(in srgb, var(--primary) 50%, transparent); }
+/* legend: 移到 bar 列表下方, 字号更小, 颜色更弱 (整体不抢主元素)
+   swatch 也减薄, 边框去掉 (实心色块已识别) */
+.sev-legend {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px; color: var(--ink-500);
+  flex-wrap: wrap;
+}
+.sev-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+/* swatch 色调跟 bar segment 严格一致, 但更薄 */
+.legend-swatch.seg-applied   { background: color-mix(in srgb, var(--ok)      35%, transparent); }
+.legend-swatch.seg-dismissed { background: color-mix(in srgb, var(--ink-500) 30%, transparent); }
+.legend-swatch.seg-open      { background: color-mix(in srgb, var(--warn)    35%, transparent); }
+.legend-swatch.seg-superseded{ background: color-mix(in srgb, var(--primary) 25%, transparent); }
 .sev-legend-summary { margin-left: auto; color: var(--ink-700); font-weight: 600; }
 
 /* 严重等级行级列表: 每个 severity 一行, 行内堆叠 state segment (整行宽度 = 100%) */
@@ -835,10 +843,10 @@ onMounted(reload);
 }
 .seg:last-child { border-right: none; }
 .seg:hover { opacity: 0.78; }
-.seg-applied   { background: color-mix(in srgb, var(--ok)      55%, transparent); }
-.seg-dismissed { background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
-.seg-open      { background: color-mix(in srgb, var(--warn)    60%, transparent); }
-.seg-superseded{ background: color-mix(in srgb, var(--primary) 30%, transparent); }
+.seg-applied   { background: color-mix(in srgb, var(--ok)      35%, transparent); }
+.seg-dismissed { background: color-mix(in srgb, var(--ink-500) 30%, transparent); }
+.seg-open      { background: color-mix(in srgb, var(--warn)    40%, transparent); }
+.seg-superseded{ background: color-mix(in srgb, var(--primary) 22%, transparent); }
 
 /* 行级 dot (legend 重用) */
 .sev-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; display: inline-block; }
