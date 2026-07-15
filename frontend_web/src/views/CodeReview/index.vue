@@ -121,8 +121,17 @@
       </div>
       <div v-if="severityBuckets.length === 0" class="empty">暂无严重等级数据</div>
       <div v-else class="sev-body">
-        <!-- 嵌套条: 整条 = 总建议数, 按严重等级嵌套; 每条 severity 内 applied/dismissed/open 三段.
+        <!-- legend: 严重等级颜色识别 (legend 充当 bar 顶部 chart key)
+             嵌套条: 整条 = 总建议数, 按严重等级嵌套; 每条 severity 内 applied/dismissed/open 三段.
              整体一眼看出采纳率; 表头读数跟细节表行序对齐 -->
+        <div class="sev-legend" v-if="totalSuggestions > 0">
+          <span class="sev-legend-item" v-for="b in SEV_ORDER" :key="b" v-show="(sevBucket(b)?.total || 0) > 0">
+            <span class="sev-legend-dot" :class="sevCls(b)"></span>
+            <span>{{ sevLabel(b) }}</span>
+            <span class="sev-legend-n">{{ sevBucket(b)?.total }}</span>
+          </span>
+          <span style="margin-left: auto; color: var(--ink-700);" :title="`基于 ${totalSuggestions} 条建议`">{{ fmtPct(severityAdoption) }} 采纳</span>
+        </div>
         <div class="sev-bar-nested" v-if="totalSuggestions > 0">
           <div v-for="b in SEV_ORDER" :key="b" class="sev-row" :class="sevCls(b)"
                :style="{ flex: sevBucket(b)?.total || 0 }"
@@ -315,7 +324,7 @@
             <span class="dt-h-stat"><b>{{ tlTotal }}</b><span>建议</span></span>
             <span class="dt-h-stat ok"><b>{{ tlApplied }}</b><span>采纳</span></span>
             <span class="dt-h-stat mute"><b>{{ tlDismissed }}</b><span>忽略</span></span>
-            <span class="dt-h-stat" :class="{ warn: tlOpenCount > 0 }"><b>{{ tlOpenCount }}</b><span>待处理</span></span>
+            <span class="dt-h-stat" :class="{ 'dt-h-warn': tlOpenCount > 0 }"><b>{{ tlOpenCount }}</b><span>待处理</span></span>
             <span v-if="timeline.runs?.length" class="dt-h-stat last-run" :class="{ bad: tlLastRun?.status === 'failed' }">
               <span class="run-dot"></span>{{ tlLastRun?.command }} · {{ tlLastRun?.status }}
             </span>
@@ -365,7 +374,9 @@
                 <code v-for="k in s.rule_keys" :key="k">{{ k }}</code>
               </div>
               <div v-if="s.state === 'dismissed' && s.dismissed_reason" class="sug-reason">
-                <span class="sug-reason-k">忽略原因</span>{{ s.dismissed_reason }}
+                <span class="sug-reason-k">忽略原因</span>
+                <span v-if="isCommitSha(s.dismissed_reason)" class="sug-reason-auto" :title="`原始 reason: ${s.dismissed_reason}`">🤖 自动忽略 (因 commit 合并)</span>
+                <span v-else>{{ s.dismissed_reason }}</span>
               </div>
             </div>
           </div>
@@ -513,6 +524,12 @@ function rulePct(r: RuleStat): number {
 // 严重等级 nested bar 用: 总建议数 (applied+dismissed+open+superseded), 整条 flex 比例
 const totalSuggestions = computed(() => severityBuckets.value.reduce((s, b) =>
   s + (b.applied || 0) + (b.dismissed || 0) + (b.open || 0) + (b.superseded || 0), 0));
+// 严重等级 整体采纳率 (legend 右侧展示)
+const severityAdoption = computed(() => {
+  const t = severityBuckets.value.reduce((s, b) => s + (b.applied || 0) + (b.dismissed || 0) + (b.open || 0) + (b.superseded || 0), 0);
+  const a = severityBuckets.value.reduce((s, b) => s + (b.applied || 0), 0);
+  return t > 0 ? a / t : 0;
+});
 
 // ===== 严重等级 =====
 // 优先从 overview.severity_breakdown 读 (overview inline), 失败 / 缺失再 fallback 到独立 severities 请求
@@ -524,6 +541,11 @@ const severityBuckets = computed<SeverityBucket[]>(() => {
 // bar 渐变 stop 位置: p1/p2/p3 是 4 段分割线 (单位 %), 0/100 是两端
 
 // severity 来源 (rule_file / pattern / importance / default) → 中文
+// 40-hex git commit SHA 检测 (pr-agent auto-apply-suggestion 触发 dismiss 时 note 写成 SHA)
+function isCommitSha(s: string): boolean {
+  return /^commit [0-9a-f]{7,40}$/i.test(s) || /^[0-9a-f]{40}$/i.test(s);
+}
+
 function sevSrcLabel(src?: string): string {
   return src === 'rule_file' ? '规则文件'
     : src === 'pattern' ? '配置 pattern'
@@ -790,13 +812,13 @@ onMounted(reload);
 /* 严重等级分布卡 */
 .sev-card { margin-bottom: 16px; }
 .sev-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
-/* 嵌套条: 整条 = 总建议数, 按 severity 横向嵌套; 每条 severity 内分 applied / dismissed / open / superseded.
-   颜色跟状态语义绑定 (applied=ok, dismissed=mute, open=warn, superseded=info), 严重等级靠行边框颜色带出. */
+/* 严重等级比例堆叠条: 轻盈型, 高度 12, 不抢主元素.
+   整条 = 总建议数堆叠 (按状态), 严重等级只在前面用极小 chip 标签和列内颜色区分 */
 .sev-bar-nested {
   display: flex;
   width: 100%;
-  height: 28px;
-  border-radius: 6px;
+  height: 12px;
+  border-radius: 4px;
   overflow: hidden;
   background: var(--surface-sunken);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-900) 6%, transparent);
@@ -805,33 +827,37 @@ onMounted(reload);
   display: flex;
   min-width: 0;
   height: 100%;
-  border-right: 1px solid rgba(255,255,255,0.45);
   position: relative;
 }
-.sev-row:last-child { border-right: none; }
+.sev-row + .sev-row::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 1px;
+  background: rgba(255,255,255,0.45);
+}
 .seg {
   height: 100%;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  color: rgba(255,255,255,0.92);
   transition: opacity 0.15s ease;
 }
-.seg:hover { opacity: 0.85; }
-.seg-applied  { background: color-mix(in srgb, var(--ok)    55%, transparent); }
-.seg-dismissed{ background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
-.seg-open     { background: color-mix(in srgb, var(--warn) 60%, transparent); }
+.seg:hover { opacity: 0.78; }
+.seg-applied   { background: color-mix(in srgb, var(--ok)      55%, transparent); }
+.seg-dismissed { background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
+.seg-open      { background: color-mix(in srgb, var(--warn)    60%, transparent); }
 .seg-superseded{ background: color-mix(in srgb, var(--primary) 30%, transparent); }
-/* 整 severity 行的严重等级, 用左边色条带出 (critical 红, high 琥珀, medium 品牌, low 中性) */
-.sev-row.sev-c1 { box-shadow: inset 4px 0 0 var(--err); }
-.sev-row.sev-c2 { box-shadow: inset 4px 0 0 var(--warn); }
-.sev-row.sev-c3 { box-shadow: inset 4px 0 0 var(--primary); }
-.sev-row.sev-c4 { box-shadow: inset 4px 0 0 var(--ink-500); }
 /* sev-ic 留给表格 badge 用, 不在 bar 上 */
 .sev-ic { display: none; }
+
+/* bar 左侧严重等级 legend (critical/high/medium/low 比例尺), 跟 bar 一起一行 */
+.sev-legend { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 11.5px; color: var(--ink-500); flex-wrap: wrap; }
+.sev-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.sev-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.sev-legend-dot.sev-c1 { background: var(--err); }
+.sev-legend-dot.sev-c2 { background: var(--warn); }
+.sev-legend-dot.sev-c3 { background: var(--primary); }
+.sev-legend-dot.sev-c4 { background: var(--ink-500); }
+.sev-legend-n { font-family: var(--font-mono); color: var(--ink-700); font-weight: 700; }
 
 .sev-tbl th, .sev-tbl td { padding: 8px 10px; font-size: 12.5px; }
 .sev-tbl .ok        { color: color-mix(in srgb, var(--ok) 80%, var(--ink-700)); }   /* applied: 用 --ok 主题色 */
@@ -978,7 +1004,7 @@ onMounted(reload);
 .dt-h-stat b { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--ink-900); }
 .dt-h-stat.ok   b { color: var(--ok); }
 .dt-h-stat.mute b { color: var(--ink-500); }
-.dt-h-stat.warn b { color: var(--warn); }
+.dt-h-stat.dt-h-warn b { color: var(--warn); }
 .dt-h-stat.last-run { font-size: 11px; }
 .dt-h-stat.last-run .run-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block; margin-right: 4px; }
 .dt-h-stat.last-run.bad .run-dot { background: var(--err); }
@@ -1003,6 +1029,7 @@ onMounted(reload);
 .sug-rules code { font-family: var(--font-mono); font-size: 10px; background: var(--surface); border: 1px solid var(--border); padding: 0 5px; border-radius: 4px; color: var(--ink-700); }
 .sug-reason { font-size: 11px; color: var(--ink-700); line-height: 1.5; word-break: break-word; margin-top: 2px; }
 .sug-reason-k { color: var(--ink-500); margin-right: 6px; }
+.sug-reason-auto { color: var(--primary); font-weight: 600; }   /* pr-agent auto-apply-commit 触发的 dismiss, 替人类决策时不显示 SHA, 显示成友好占位 */
 
 /* 被忽略规则汇总卡 (按 reason 分布) */
 .reason-tbl .cell-k { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
