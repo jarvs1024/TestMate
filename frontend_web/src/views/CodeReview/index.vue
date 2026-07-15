@@ -21,18 +21,45 @@
           <option value="all">全部时间</option>
           <option value="7d">近 7 天</option>
           <option value="30d">近 30 天</option>
+          <option value="custom">自定义…</option>
         </select>
-        <button class="reload" @click="reload" :disabled="loading">↻ 刷新</button>
+        <input v-if="windowSel === 'custom'" v-model.number="customDays" type="number" min="1" max="365" class="win-custom" @change="reload" title="自定义天数 (1-365)" />
+        <span class="last-updated" :title="`刷新时间: ${lastUpdatedLabel}`">{{ lastUpdatedRel }} · 更新</span>
+        <button class="reload" @click="reload" :disabled="loading">
+          <span :class="{ spinning: loading }">↻</span> 刷新
+        </button>
       </div>
     </div>
 
-    <!-- 评审失败 banner: 顶部醒目提示, 点击展开对应 MR -->
-    <div v-if="failedMrCount > 0" class="banner banner-err" @click="scrollToMrTable" role="button" :title="`共 ${failedMrCount} 个 MR 最近一次评审失败`">
-      <span class="b-icon">⚠</span>
-      <span class="b-text">
-        <b>{{ failedMrCount }}</b> 个 Merge Request 最近一次 pr-agent 评审失败
-      </span>
-      <span class="b-hint">点击查看 ↓</span>
+    <!-- 评审失败 banner: 顶部醒目提示, 点击展开 inline failed MR list (不必滚到 MR 表) -->
+    <div v-if="failedMrCount > 0" class="banner banner-err" :class="{ open: bannerOpen }" role="region" :aria-expanded="bannerOpen">
+      <button class="banner-hd" type="button" @click="bannerOpen = !bannerOpen" :aria-controls="'failed-mr-list'">
+        <span class="b-icon">{{ bannerOpen ? '▾' : '▸' }}</span>
+        <span class="b-text">
+          <b>{{ failedMrCount }}</b> 个 Merge Request 最近一次 pr-agent 评审失败
+        </span>
+        <span class="b-hint">{{ bannerOpen ? '收起' : '展开' }} {{ bannerOpen ? '' : '↓' }}</span>
+      </button>
+      <div v-show="bannerOpen" id="failed-mr-list" class="failed-mr-list">
+        <table class="tbl">
+          <thead>
+            <tr><th>MR</th><th>作者</th><th>分支</th><th class="r">上次命令</th><th class="r">错误</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in failedMrs" :key="`${m.project_id}/${m.mr_id}`">
+              <td><span class="mr-link mono">!{{ m.mr_id }}</span></td>
+              <td>{{ m.author || '—' }}</td>
+              <td class="mono branches">{{ m.source_branch || '—' }} → {{ m.target_branch || '—' }}</td>
+              <td class="r mono cmd-tag-s">{{ m.last_run?.command || '—' }}</td>
+              <td class="err-cell" :title="m.last_run?.error || ''">{{ truncate(m.last_run?.error, 60) || '—' }}</td>
+            </tr>
+            <tr v-if="failedMrs.length === 0"><td colspan="5" class="empty">无</td></tr>
+          </tbody>
+        </table>
+        <div class="banner-foot">
+          <button class="link-btn" type="button" @click="scrollToMrTable">查看完整 MR 列表 ↓</button>
+        </div>
+      </div>
     </div>
 
     <!-- 未配置 / 连不上 提示 -->
@@ -90,36 +117,36 @@
     <div class="card sev-card">
       <div class="card-hd">
         <h2>🔥 严重等级分布</h2>
-        <span class="cnt">{{ severityBuckets.length }} 桶</span>
+        <span class="cnt">{{ severityBuckets.filter(b => (b.total || 0) > 0).length }} 桶 (有数据)</span>
       </div>
       <div v-if="severityBuckets.length === 0" class="empty">暂无严重等级数据</div>
       <div v-else class="sev-body">
-        <!-- 横向 stacked bar — 单条 linear-gradient (4 主题色, 按 count 切分) -->
-        <div class="sev-bar" :style="severityStops">
-          <div v-for="b in severityBucketsOrdered" :key="b.severity"
-               class="sev-seg" :class="sevCls(b.severity)"
-               :style="{ flex: b.total || 1 }"
-               :title="`${sevLabel(b.severity)}: 总 ${b.total} · 采纳 ${b.applied} · 忽略 ${b.dismissed} · 待处理 ${b.open}`">
-            <span class="sev-ic">{{ sevIcon(b.severity) }}</span>
-            <span class="sev-n">{{ b.total }}</span>
+        <!-- 嵌套条: 整条 = 总建议数, 按严重等级嵌套; 每条 severity 内 applied/dismissed/open 三段.
+             整体一眼看出采纳率; 表头读数跟细节表行序对齐 -->
+        <div class="sev-bar-nested" v-if="totalSuggestions > 0">
+          <div v-for="b in SEV_ORDER" :key="b" class="sev-row" :class="sevCls(b)"
+               :style="{ flex: sevBucket(b)?.total || 0 }"
+               v-show="(sevBucket(b)?.total || 0) > 0">
+            <div class="seg seg-applied"  :style="{ flex: sevBucket(b)?.applied || 0 }"  :title="`严重等级 ${sevLabel(b)} · 已采纳 ${sevBucket(b)?.applied || 0}`"></div>
+            <div class="seg seg-dismissed" :style="{ flex: sevBucket(b)?.dismissed || 0 }" :title="segTitle(b, '已忽略')"></div>
+            <div class="seg seg-open"     :style="{ flex: sevBucket(b)?.open || 0 }" :title="`严重等级 ${sevLabel(b)} · 待处理 ${sevBucket(b)?.open || 0}`"></div>
+            <div class="seg seg-superseded" :style="{ flex: sevBucket(b)?.superseded || 0 }" :title="segTitle(b, '已替代')"></div>
           </div>
         </div>
-        <!-- 详情表 -->
+        <div v-else class="empty">暂无建议数据</div>
+        <!-- 详情表 (4 列紧凑: 总 / 采纳 / 忽略 / 待处理; 替代超10条也看不常见, 折叠到 tooltip) -->
         <table class="tbl sev-tbl">
           <thead>
             <tr>
               <th>等级</th>
               <th class="r">总</th>
-              <th class="r">已采纳</th>
-              <th class="r">已忽略</th>
+              <th class="r">采纳</th>
+              <th class="r">忽略</th>
               <th class="r">待处理</th>
-              <th class="r">已替代</th>
-              <th class="r">采纳率</th>
-              <th class="r">忽略率</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="b in SEV_ORDER" :key="b" v-show="sevBucket(b)">
+            <tr v-for="b in SEV_ORDER" :key="b" v-show="(sevBucket(b)?.total || 0) > 0">
               <td>
                 <span class="sev-badge" :class="sevCls(b)">
                   <span class="sev-ic">{{ sevIcon(b) }}</span>{{ sevLabel(b) }}
@@ -129,9 +156,6 @@
               <td class="r mono ok">{{ sevBucket(b)?.applied ?? 0 }}</td>
               <td class="r mono mute">{{ sevBucket(b)?.dismissed ?? 0 }}</td>
               <td class="r mono" :class="(sevBucket(b)?.open ?? 0) > 0 ? 'open-warn' : 'zero'">{{ sevBucket(b)?.open ?? 0 }}</td>
-              <td class="r mono">{{ sevBucket(b)?.superseded ?? 0 }}</td>
-              <td class="r mono">{{ fmtPct(sevBucket(b)?.adoption_rate) }}</td>
-              <td class="r mono">{{ fmtPct(sevBucket(b)?.dismissal_rate) }}</td>
             </tr>
           </tbody>
         </table>
@@ -147,10 +171,14 @@
       <div v-if="dismissalsByRule.length === 0" class="empty">近 {{ sinceLabel }} 无人忽略建议</div>
       <table v-else class="tbl reason-tbl">
         <thead>
-          <tr><th>规则</th><th class="r">次数</th><th>原因分布</th></tr>
+          <tr>
+            <th><button class="sort-btn" @click="setDismissSort('key')">规则 <span class="sort-marker">{{ dismissSortKey === 'key' ? (dismissSortAsc ? '▲' : '▼') : '⇅' }}</span></button></th>
+            <th class="r"><button class="sort-btn" @click="setDismissSort('count')">次数 <span class="sort-marker">{{ dismissSortKey === 'count' ? (dismissSortAsc ? '▲' : '▼') : '⇅' }}</span></button></th>
+            <th>原因分布</th>
+          </tr>
         </thead>
         <tbody>
-          <tr v-for="r in dismissalsByRule.slice(0, 10)" :key="r.rule_key">
+          <tr v-for="r in dismissalsSorted.slice(0, 10)" :key="r.rule_key">
             <td class="mono cell-k" :title="r.rule_key">{{ r.rule_key }}</td>
             <td class="r mono cell-n" :class="{ 'cell-n-hot': r.dismissal_count >= 5 }">{{ r.dismissal_count }}</td>
             <td class="cell-r">
@@ -246,9 +274,9 @@
                   <span class="ms-k">建议</span>
                 </div>
                 <div class="ms-line">
-                  <span class="ms-ok" :title="`已采纳 ${m.suggestion_counts.applied ?? 0}`">✓ {{ m.suggestion_counts.applied ?? 0 }}</span>
-                  <span class="ms-dismissed" :title="`已忽略 ${m.suggestion_counts.dismissed ?? 0}`">✗ {{ m.suggestion_counts.dismissed ?? 0 }}</span>
-                  <span class="ms-open" :title="`待处理 ${m.suggestion_counts.open ?? 0}`">⏵ {{ m.suggestion_counts.open ?? 0 }}</span>
+                  <span class="ms-ok" :title="'已采纳 ' + ((m.suggestion_counts && m.suggestion_counts.applied) || 0)">✓ {{ m.suggestion_counts.applied ?? 0 }}</span>
+                  <span class="ms-dismissed" :title="'已忽略 ' + ((m.suggestion_counts && m.suggestion_counts.dismissed) || 0)">✗ {{ m.suggestion_counts.dismissed ?? 0 }}</span>
+                  <span class="ms-open" :title="'待处理 ' + ((m.suggestion_counts && m.suggestion_counts.open) || 0)">⏵ {{ m.suggestion_counts.open ?? 0 }}</span>
                 </div>
               </div>
               <span v-else class="ms-empty">—</span>
@@ -275,6 +303,25 @@
     <!-- 时间线抽屉 -->
     <el-drawer v-model="tlOpen" :title="tlTitle" size="640px" direction="rtl">
       <template v-if="timeline">
+        <!-- MR 健康摘要: 应用率 + 4 stat mini -->
+        <div class="dt-health">
+          <div v-if="timeline.suggestions?.length" class="dt-h-bar" :title="tlHealthTitle">
+            <div class="dt-h-seg dt-h-applied" :style="{ flex: tlApplied }" :title="tlSegTitle('已采纳', tlApplied)"></div>
+            <div class="dt-h-seg dt-h-dismissed" :style="{ flex: tlDismissed }" :title="tlSegTitle('已忽略', tlDismissed)"></div>
+            <div class="dt-h-seg dt-h-open" :style="{ flex: tlOpenCount }" :title="tlSegTitle('待处理', tlOpenCount)"></div>
+            <div class="dt-h-seg dt-h-superseded" :style="{ flex: tlSuperseded }" :title="tlSegTitle('已替代', tlSuperseded)"></div>
+          </div>
+          <div class="dt-h-mini">
+            <span class="dt-h-stat"><b>{{ tlTotal }}</b><span>建议</span></span>
+            <span class="dt-h-stat ok"><b>{{ tlApplied }}</b><span>采纳</span></span>
+            <span class="dt-h-stat mute"><b>{{ tlDismissed }}</b><span>忽略</span></span>
+            <span class="dt-h-stat" :class="{ warn: tlOpenCount > 0 }"><b>{{ tlOpenCount }}</b><span>待处理</span></span>
+            <span v-if="timeline.runs?.length" class="dt-h-stat last-run" :class="{ bad: tlLastRun?.status === 'failed' }">
+              <span class="run-dot"></span>{{ tlLastRun?.command }} · {{ tlLastRun?.status }}
+            </span>
+          </div>
+        </div>
+
         <!-- MR 元信息 -->
         <div class="dt">
           <div class="dt-row"><span class="dt-k">ID</span><span class="dt-v mono">!{{ timeline.mr?.mr_id }} · {{ timeline.mr?.project_id }}</span></div>
@@ -303,11 +350,11 @@
         <div class="dt-sep">评审建议 ({{ timeline.suggestions?.length || 0 }})</div>
         <div v-if="!timeline.suggestions?.length" class="empty sm">无</div>
         <div v-else class="sugs">
-          <div v-for="(s, idx) in timeline.suggestions" :key="s.id ?? idx" class="sug-row" :class="`s-${s.state}`">
+          <div v-for="(s, idx) in timeline.suggestions" :key="s.id ?? idx" class="sug-row" :class="sugRowCls(s.state || 'open')">
             <div class="sug-l">
               <span class="badge sm" :class="sugCls(s.state)">{{ sugLabel(s.state) }}</span>
               <span v-if="s.severity" class="badge sm sev-pill" :class="sevCls(s.severity)"
-                    :title="`严重等级 ${sevLabel(s.severity)}${s.severity_source ? ' · 来源: ' + sevSrcLabel(s.severity_source) : ''}`">
+                    :title="sevTitleHint(s)">
                 {{ sevIcon(s.severity) }} {{ sevLabel(s.severity) }}
               </span>
             </div>
@@ -332,7 +379,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity, getDismissalsByRule,
@@ -348,28 +395,77 @@ const overview = ref<OverviewResp | null>(null);
 const rules = ref<RuleStat[]>([]);
 const authors = ref<AuthorStat[]>([]);
 const mrs = ref<MrRow[]>([]);
-const failedMrCount = ref(0);   // 最近一次评审失败的 MR 数 (顶部 banner 用)
-const severities = ref<SeverityBucket[]>([]);
-const dismissalsByRule = ref<DismissalsByRuleItem[]>([]);  // 近期被忽略规则聚合 (按 reason 汇总)
-const totalDismissals = computed(() => dismissalsByRule.value.reduce((s, r) => s + r.dismissal_count, 0));
-const sinceLabel = computed(() =>
-  windowSel.value === 'all' ? '全部时间' : windowSel.value === '7d' ? '7 天' : '30 天'
+const failedMrCount = ref(0);
+const bannerOpen = ref(false);
+
+// 失败 MR 子集, banner 展开时用 (取每条 last_run.status==='failed')
+const failedMrs = computed(() =>
+  mrs.value.filter(m => (m.last_run as any)?.status === 'failed')
 );
 
-const windowSel = ref<'all' | '7d' | '30d'>('all');
+// 错误信息截断
+function truncate(s: string | null | undefined, n: number): string {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}   // 最近一次评审失败的 MR 数 (顶部 banner 用)
+const severities = ref<SeverityBucket[]>([]);
+const dismissalsByRule = ref<DismissalsByRuleItem[]>([]);
 
-function sinceFor(sel: string): string | undefined {
+// dismiss 卡: 列点击排序
+const dismissSortKey = ref<'key' | 'count'>('count');
+const dismissSortAsc = ref(false);
+function setDismissSort(k: 'key' | 'count') {
+  if (dismissSortKey.value === k) dismissSortAsc.value = !dismissSortAsc.value;
+  else { dismissSortKey.value = k; dismissSortAsc.value = k === 'key'; }
+}
+const dismissalsSorted = computed(() => {
+  const arr = [...dismissalsByRule.value];
+  const dir = dismissSortAsc.value ? 1 : -1;
+  if (dismissSortKey.value === 'key') {
+    arr.sort((a, b) => dir * (a.rule_key || '').localeCompare(b.rule_key || ''));
+  } else {
+    arr.sort((a, b) => dir * ((b.dismissal_count || 0) - (a.dismissal_count || 0)));
+  }
+  return arr;
+});
+// 总忽略次数 (按 reason 汇总)
+const totalDismissals = computed(() => dismissalsByRule.value.reduce((s, r) => s + (r.dismissal_count || 0), 0));
+const sinceLabel = computed(() => windowSel.value === 'all' ? '全部时间' : windowSel.value === '7d' ? '7 天' : '30 天');
+
+const windowSel = ref<'all' | '7d' | '30d' | 'custom'>('all');
+
+function sinceFor(sel: string, customDaysVal?: number): string | undefined {
   if (sel === 'all') return undefined;
-  const days = sel === '7d' ? 7 : 30;
+  let days = 7;
+  if (sel === '7d') days = 7;
+  else if (sel === '30d') days = 30;
+  else if (sel === 'custom') days = Math.max(1, Math.min(365, customDaysVal || 30));
   const d = new Date(Date.now() - days * 86400_000);
   return d.toISOString();
 }
+const customDays = ref(14);
+
+// 上次刷新时间 (相对显示)
+const lastUpdated = ref<Date | null>(null);
+const lastUpdatedRel = computed(() => {
+  if (!lastUpdated.value) return '尚未加载';
+  const sec = Math.round((Date.now() - lastUpdated.value.getTime()) / 1000);
+  if (sec < 60) return `${sec} 秒前`;
+  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时前`;
+  return `${Math.floor(sec / 86400)} 天前`;
+});
+const lastUpdatedLabel = computed(() => lastUpdated.value ? lastUpdated.value.toLocaleString('zh-CN') : '—');
+// 每 30s 刷新相对时间显示
+let _relTimer: number | null = null;
+onMounted(() => { _relTimer = window.setInterval(() => { void lastUpdatedRel.value; }, 30000); });
+onUnmounted(() => { if (_relTimer) window.clearInterval(_relTimer); });
 
 async function reload() {
   loading.value = true;
   loadError.value = '';
   try {
-    const since = sinceFor(windowSel.value);
+    const since = sinceFor(windowSel.value, customDays.value);
     health.value = await getHealth();
     if (!health.value.configured) {
       overview.value = null; rules.value = []; authors.value = []; mrs.value = []; severities.value = [];
@@ -401,6 +497,7 @@ async function reload() {
     ElMessage.error('代码检视加载失败: ' + loadError.value);
   } finally {
     loading.value = false;
+    lastUpdated.value = new Date();
   }
 }
 
@@ -413,6 +510,10 @@ function rulePct(r: RuleStat): number {
   return Math.round(((r.cited_count ?? 0) / maxCited.value) * 100);
 }
 
+// 严重等级 nested bar 用: 总建议数 (applied+dismissed+open+superseded), 整条 flex 比例
+const totalSuggestions = computed(() => severityBuckets.value.reduce((s, b) =>
+  s + (b.applied || 0) + (b.dismissed || 0) + (b.open || 0) + (b.superseded || 0), 0));
+
 // ===== 严重等级 =====
 // 优先从 overview.severity_breakdown 读 (overview inline), 失败 / 缺失再 fallback 到独立 severities 请求
 const severityBuckets = computed<SeverityBucket[]>(() => {
@@ -420,43 +521,7 @@ const severityBuckets = computed<SeverityBucket[]>(() => {
   if (inline && inline.length) return inline;
   return severities.value;
 });
-// bar 渲染: 按 critical→high→medium→low→unknown 固定顺序 (API 可能乱序)
-const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 };
-const severityBucketsOrdered = computed<SeverityBucket[]>(() => {
-  return [...severityBuckets.value].sort(
-    (a, b) => (SEV_RANK[a.severity] ?? 99) - (SEV_RANK[b.severity] ?? 99),
-  );
-});
 // bar 渐变 stop 位置: p1/p2/p3 是 4 段分割线 (单位 %), 0/100 是两端
-const severityStops = computed<Record<string, string>>(() => {
-  const buckets = severityBucketsOrdered.value;
-  const total = buckets.reduce((s, b) => s + (b.total || 0), 0);
-  if (total === 0) return { '--p1': '25%', '--p2': '50%', '--p3': '75%' };
-  let acc = 0;
-  const stops: string[] = [];
-  for (const b of buckets) {
-    acc += b.total || 0;
-    stops.push(`${(acc / total) * 100}%`);
-  }
-  return {
-    '--p1': stops[0] ?? '25%',
-    '--p2': stops[1] ?? '50%',
-    '--p3': stops[2] ?? '75%',
-  };
-});
-function sevBucket(name: string): SeverityBucket | undefined {
-  return severityBuckets.value.find(b => b.severity === name);
-}
-const SEV_ORDER = ['critical', 'high', 'medium', 'low'] as const;
-const SEV_META: Record<string, { icon: string; label: string; cls: string }> = {
-  critical: { icon: '●', label: '严重', cls: 'sev-c1' },
-  high:     { icon: '●', label: '高',   cls: 'sev-c2' },
-  medium:   { icon: '●', label: '中',   cls: 'sev-c3' },
-  low:      { icon: '●', label: '低',   cls: 'sev-c4' },
-};
-function sevLabel(s: string): string { return SEV_META[s]?.label || s; }
-function sevIcon(s: string): string { return SEV_META[s]?.icon || '⚪'; }
-function sevCls(s: string): string { return SEV_META[s]?.cls || 'sev-c4'; }
 
 // severity 来源 (rule_file / pattern / importance / default) → 中文
 function sevSrcLabel(src?: string): string {
@@ -465,6 +530,30 @@ function sevSrcLabel(src?: string): string {
     : src === 'importance' ? '重要性阈值'
     : '';
 }
+function sevBucket(name: string): SeverityBucket | undefined {
+  return severityBuckets.value.find(b => b.severity === name);
+}
+const SEV_ORDER = ['critical', 'high', 'medium', 'low'] as const;
+const SEV_META: Record<string, { icon: string; label: string; cls: string }> = {
+  critical: { icon: '\u25cf', label: '严重', cls: 'sev-c1' },
+  high:     { icon: '\u25cf', label: '高',   cls: 'sev-c2' },
+  medium:   { icon: '\u25cf', label: '中',   cls: 'sev-c3' },
+  low:      { icon: '\u25cf', label: '低',   cls: 'sev-c4' },
+};
+function sevLabel(s: string): string { return SEV_META[s]?.label || s; }
+function sevIcon(s: string): string { return SEV_META[s]?.icon || '⚪'; }
+function sevCls(s: string): string { return SEV_META[s]?.cls || 'sev-c4'; }
+
+function sugRowCls(state: string): string { return 's-' + (state || 'open'); }
+function sevTitleHint(s: any): string {
+  const base = '严重等级 ' + sevLabel(s.severity);
+  return s.severity_source ? base + ' · 来源: ' + sevSrcLabel(s.severity_source) : base;
+}
+function segTitle(b: string, state: string): string {
+  return '严重等级 ' + sevLabel(b) + ' · ' + state + ' ' + ((sevBucket(b) as any)?.[state === '已采纳' ? 'applied' : state === '已忽略' ? 'dismissed' : state === '待处理' ? 'open' : 'superseded'] || 0);
+}
+function tlSegTitle(label: string, n: any): string { return label + ' ' + Number(n || 0); }
+
 
 // 状态色
 function stateLabel(s?: string): string {
@@ -501,6 +590,16 @@ const tlOpen = ref(false);
 const tlLoading = ref('');
 const tlTitle = ref('MR 时间线');
 const timeline = ref<TimelineResp | null>(null);
+
+// 抽屉 MR 健康摘要 mini stat
+const tlApplied = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'applied').length);
+const tlDismissed = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'dismissed').length);
+const tlOpenCount = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'open').length);
+const tlSuperseded = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'superseded').length);
+const tlTotal = computed(() => (timeline.value?.suggestions || []).length);
+const tlAdoptionRate = computed(() => tlTotal.value > 0 ? Math.round(tlApplied.value / tlTotal.value * 100) + '%' : '—');
+const tlLastRun = computed(() => (timeline.value?.runs || [])[0]);
+const tlHealthTitle = computed(() => '采纳率 ' + tlAdoptionRate.value + ' / ' + tlApplied.value + '/' + tlTotal.value);
 async function openTimeline(m: MrRow) {
   const key = `${m.project_id}/${m.mr_id}`;
   tlLoading.value = key;
@@ -573,6 +672,13 @@ onMounted(reload);
 }
 .win-sel:hover, .reload:hover { background: var(--surface-sunken); color: var(--ink-900); }
 .reload:disabled { opacity: 0.5; cursor: not-allowed; }
+.win-custom { background: var(--surface); border: 1px solid var(--border); color: var(--ink-900); padding: 6px 8px; border-radius: 8px; font-size: 12.5px; font-family: var(--font-mono); width: 70px; }
+.last-updated { font-size: 11.5px; color: var(--ink-500); padding: 6px 0; white-space: nowrap; }
+.spinning { display: inline-block; animation: spin 0.8s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.sort-btn { background: transparent; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.sort-btn:hover { color: var(--ink-900); }
+.sort-marker { font-size: 10px; opacity: 0.6; }
 
 
 
@@ -594,18 +700,26 @@ onMounted(reload);
 
 /* 评审失败顶部 banner: 醒目但不刺眼, 跟 .warn 同级, 实心 (可点跳转) */
 .banner {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 18px;
+  padding: 0;
   border-radius: var(--radius-card);
   font-size: 13px;
-  font-weight: 500;
   border: 1px solid;
-  cursor: pointer;
   user-select: none;
   transition: filter 0.15s ease;
+  overflow: hidden;
 }
-.banner:hover { filter: brightness(0.97); }
-.banner .b-icon { font-size: 18px; flex-shrink: 0; }
+.banner-hd {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 12px 18px;
+  font: inherit; color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.banner-hd:hover { filter: brightness(0.97); }
+.banner .b-icon { font-size: 16px; flex-shrink: 0; }
 .banner .b-text { flex: 1; }
 .banner .b-text b { font-size: 15px; font-weight: 800; }
 .banner .b-hint { font-size: 11.5px; opacity: 0.7; }
@@ -615,6 +729,16 @@ onMounted(reload);
   color: color-mix(in srgb, var(--err) 75%, var(--ink-900));
 }
 .banner-err .b-icon { color: var(--err); }
+.failed-mr-list {
+  padding: 8px 18px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--err) 25%, var(--border));
+}
+.failed-mr-list .tbl { margin-top: 8px; }
+.failed-mr-list th { font-size: 11px; }
+.failed-mr-list td { padding: 6px 8px; font-size: 12px; }
+.failed-mr-list .err-cell { color: var(--err); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.failed-mr-list .cmd-tag-s { background: var(--surface-sunken); padding: 1px 6px; border-radius: 4px; font-size: 10.5px; color: var(--ink-700); }
+.banner-foot { padding-top: 8px; display: flex; justify-content: flex-end; }
 
 /* 概览卡片 */
 .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
@@ -666,44 +790,48 @@ onMounted(reload);
 /* 严重等级分布卡 */
 .sev-card { margin-bottom: 16px; }
 .sev-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
-/* 暗→亮渐变条: 4 主题色 (--err / --warn / --primary / --ink-500) 各自 10% 与 --surface-soft 混合成浅底,
-   段分割点由 --p1/--p2/--p3 动态注入. 跟 .banner-err 同款 — 不夺主, 严重等级靠文字色带出.
-   段是透明 overlay (用来放数字), 渐变在 .sev-bar 自身. */
-.sev-bar {
+/* 嵌套条: 整条 = 总建议数, 按 severity 横向嵌套; 每条 severity 内分 applied / dismissed / open / superseded.
+   颜色跟状态语义绑定 (applied=ok, dismissed=mute, open=warn, superseded=info), 严重等级靠行边框颜色带出. */
+.sev-bar-nested {
   display: flex;
   width: 100%;
-  height: 22px;
-  border-radius: 7px;
+  height: 28px;
+  border-radius: 6px;
   overflow: hidden;
-  background: linear-gradient(to right,
-    color-mix(in srgb, var(--err)      10%, var(--surface-soft))  0%,  color-mix(in srgb, var(--err)      10%, var(--surface-soft))  var(--p1, 25%),
-    color-mix(in srgb, var(--warn)     10%, var(--surface-soft))  var(--p1, 25%)  var(--p2, 50%),
-    color-mix(in srgb, var(--primary)  10%, var(--surface-soft))  var(--p2, 50%)  var(--p3, 75%),
-    color-mix(in srgb, var(--ink-500)  10%, var(--surface-soft))  var(--p3, 75%)  100%
-  );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-900) 6%, transparent);  /* 微细边, 让色块跟卡片底色有切割 */
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-900) 6%, transparent);
 }
-.sev-seg {
+.sev-row {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  border-right: 1px solid rgba(255,255,255,0.45);
+  position: relative;
+}
+.sev-row:last-child { border-right: none; }
+.seg {
+  height: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  font-size: 11.5px;
+  font-size: 10px;
   font-weight: 700;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  background: transparent;
-  position: relative;
-  transition: background 0.15s ease;
+  color: rgba(255,255,255,0.92);
+  transition: opacity 0.15s ease;
 }
-.sev-seg:hover { background: rgba(255,255,255,0.35); }   /* hover: 整段提亮 (浅底也安全, 不刺眼) */
-.sev-ic { font-size: 11px; opacity: 0.9; }
-/* 文字带出等级 — 浅底上用饱和色, 整体不刺眼, 但能看出"critical 比 low 严重" */
-.sev-c1 { color: color-mix(in srgb, var(--err)     85%, var(--ink-900)); }   /* critical: 强红 */
-.sev-c2 { color: color-mix(in srgb, var(--warn)    85%, var(--ink-900)); }   /* high:     强琥珀 */
-.sev-c3 { color: var(--primary); }                                            /* medium:   品牌色 */
-.sev-c4 { color: var(--ink-700); }                                            /* low:      中性暗灰 */
+.seg:hover { opacity: 0.85; }
+.seg-applied  { background: color-mix(in srgb, var(--ok)    55%, transparent); }
+.seg-dismissed{ background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
+.seg-open     { background: color-mix(in srgb, var(--warn) 60%, transparent); }
+.seg-superseded{ background: color-mix(in srgb, var(--primary) 30%, transparent); }
+/* 整 severity 行的严重等级, 用左边色条带出 (critical 红, high 琥珀, medium 品牌, low 中性) */
+.sev-row.sev-c1 { box-shadow: inset 4px 0 0 var(--err); }
+.sev-row.sev-c2 { box-shadow: inset 4px 0 0 var(--warn); }
+.sev-row.sev-c3 { box-shadow: inset 4px 0 0 var(--primary); }
+.sev-row.sev-c4 { box-shadow: inset 4px 0 0 var(--ink-500); }
+/* sev-ic 留给表格 badge 用, 不在 bar 上 */
+.sev-ic { display: none; }
 
 .sev-tbl th, .sev-tbl td { padding: 8px 10px; font-size: 12.5px; }
 .sev-tbl .ok        { color: color-mix(in srgb, var(--ok) 80%, var(--ink-700)); }   /* applied: 用 --ok 主题色 */
@@ -836,6 +964,24 @@ onMounted(reload);
 .dt-v { color: var(--ink-900); }
 .dt-v.mono { font-family: var(--font-mono); font-size: 11.5px; }
 .dt-sep { font-size: 12.5px; font-weight: 700; color: var(--ink-700); margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* 抽屉 MR 健康摘要 */
+.dt-health { background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 8px; }
+.dt-h-bar { display: flex; height: 10px; border-radius: 4px; overflow: hidden; background: var(--surface); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-900) 6%, transparent); }
+.dt-h-seg { min-width: 0; }
+.dt-h-applied    { background: color-mix(in srgb, var(--ok)      55%, transparent); }
+.dt-h-dismissed  { background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
+.dt-h-open       { background: color-mix(in srgb, var(--warn)    60%, transparent); }
+.dt-h-superseded { background: color-mix(in srgb, var(--primary) 30%, transparent); }
+.dt-h-mini { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; }
+.dt-h-stat { display: inline-flex; align-items: baseline; gap: 4px; color: var(--ink-700); }
+.dt-h-stat b { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--ink-900); }
+.dt-h-stat.ok   b { color: var(--ok); }
+.dt-h-stat.mute b { color: var(--ink-500); }
+.dt-h-stat.warn b { color: var(--warn); }
+.dt-h-stat.last-run { font-size: 11px; }
+.dt-h-stat.last-run .run-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block; margin-right: 4px; }
+.dt-h-stat.last-run.bad .run-dot { background: var(--err); }
 
 .runs { display: flex; flex-direction: column; gap: 4px; }
 .run-row { display: flex; gap: 8px; align-items: center; font-size: 11.5px; padding: 5px 0; border-bottom: 1px dashed var(--border); flex-wrap: wrap; }
