@@ -117,6 +117,21 @@ export interface SuggestionRow {
   state?: string;
   posted_at?: string;
   rule_keys?: string[];
+  /** 用户在 /dismiss 时附带的忽略原因 (来自 pr-agent suggestions.dismissed_reason) */
+  dismissed_reason?: string;
+}
+
+/** 单条 reason 计数字段, 见 /dismissals/by-rule.reasons. */
+export interface DismissReasonBucket {
+  reason: string;
+  count: number;
+}
+
+/** 一条规则的聚合, 见 /dismissals/by-rule. */
+export interface DismissalsByRuleItem {
+  rule_key: string;
+  dismissal_count: number;
+  reasons: DismissReasonBucket[];
 }
 
 export interface RunRow {
@@ -171,4 +186,9 @@ export async function getSeverity(since?: string, prUrl?: string): Promise<Sever
   if (since) params.since = since;
   if (prUrl) params.pr_url = prUrl;
   return (await request.get('/pr-agent/metrics/severity', { params })) as SeverityBucket[];
+}
+
+/** 按 rule_key 聚合 dismiss 计数 + reason 分布 (来自 pr-agent /dismissals/by-rule). */
+export async function getDismissalsByRule(since?: string): Promise<DismissalsByRuleItem[]> {
+  return (await request.get('/pr-agent/dismissals/by-rule', { params: since ? { since } : {} })) as DismissalsByRuleItem[];
 }

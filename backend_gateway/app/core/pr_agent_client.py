@@ -127,3 +127,12 @@ async def mr_timeline(project_id: int, mr_id: int) -> dict:
 
 async def mr_stats(project_id: int, mr_id: int) -> dict:
     return await _get(f"/mrs/{project_id}/{mr_id}/stats")
+
+
+async def dismissals_by_rule(since: str | None = None) -> list[dict]:
+    """按 rule_key 聚合 dismiss 计数 + reason 分布 (来自 pr-agent /dismissals/by-rule).
+
+    用于前端"近期被忽略规则"汇总卡. 透传 pr-agent 响应, 不做字段裁剪.
+    """
+    params = {"since": since} if since else None
+    return await _get("/dismissals/by-rule", params)

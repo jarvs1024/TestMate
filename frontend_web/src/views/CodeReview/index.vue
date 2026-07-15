@@ -138,6 +138,32 @@
       </div>
     </div>
 
+    <!-- 被忽略的规则 (按 reason 汇总, 来自 pr-agent /dismissals/by-rule) -->
+    <div v-if="overview" class="card">
+      <div class="card-hd">
+        <h2>✗ 近期被忽略的规则</h2>
+        <span class="cnt">{{ dismissalsByRule.length }} 条 · {{ totalDismissals }} 次忽略</span>
+      </div>
+      <div v-if="dismissalsByRule.length === 0" class="empty">近 {{ sinceLabel }} 无人忽略建议</div>
+      <table v-else class="tbl reason-tbl">
+        <thead>
+          <tr><th>规则</th><th class="r">次数</th><th>原因分布</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in dismissalsByRule.slice(0, 10)" :key="r.rule_key">
+            <td class="mono cell-k" :title="r.rule_key">{{ r.rule_key }}</td>
+            <td class="r mono cell-n" :class="{ 'cell-n-hot': r.dismissal_count >= 5 }">{{ r.dismissal_count }}</td>
+            <td class="cell-r">
+              <span v-for="(rv, i) in r.reasons.slice(0, 3)" :key="rv.reason + i" class="reason-pill" :title="rv.reason">
+                {{ rv.reason.length > 18 ? rv.reason.slice(0, 18) + '…' : rv.reason }}<b>×{{ rv.count }}</b>
+              </span>
+              <span v-if="r.reasons.length > 3" class="reason-more">+{{ r.reasons.length - 3 }}</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- 主区两列: 规则 + 作者 -->
     <div v-if="overview" class="cols">
       <!-- 规则柱图 (横向 bar, 纯 CSS) -->
@@ -291,6 +317,9 @@
               <div v-if="s.rule_keys?.length" class="sug-rules">
                 <code v-for="k in s.rule_keys" :key="k">{{ k }}</code>
               </div>
+              <div v-if="s.state === 'dismissed' && s.dismissed_reason" class="sug-reason">
+                <span class="sug-reason-k">忽略原因</span>{{ s.dismissed_reason }}
+              </div>
             </div>
           </div>
         </div>
@@ -306,9 +335,9 @@
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
-  getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity,
+  getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity, getDismissalsByRule,
   type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type MrListResp, type TimelineResp, type HealthResp,
-  type SeverityBucket,
+  type SeverityBucket, type DismissalsByRuleItem,
 } from '@/api/pragent';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
 
@@ -321,6 +350,11 @@ const authors = ref<AuthorStat[]>([]);
 const mrs = ref<MrRow[]>([]);
 const failedMrCount = ref(0);   // 最近一次评审失败的 MR 数 (顶部 banner 用)
 const severities = ref<SeverityBucket[]>([]);
+const dismissalsByRule = ref<DismissalsByRuleItem[]>([]);  // 近期被忽略规则聚合 (按 reason 汇总)
+const totalDismissals = computed(() => dismissalsByRule.value.reduce((s, r) => s + r.dismissal_count, 0));
+const sinceLabel = computed(() =>
+  windowSel.value === 'all' ? '全部时间' : windowSel.value === '7d' ? '7 天' : '30 天'
+);
 
 const windowSel = ref<'all' | '7d' | '30d'>('all');
 
@@ -339,17 +373,19 @@ async function reload() {
     health.value = await getHealth();
     if (!health.value.configured) {
       overview.value = null; rules.value = []; authors.value = []; mrs.value = []; severities.value = [];
+      dismissalsByRule.value = [];
       failedMrCount.value = 0;
       return;
     }
     // severity 失败不应阻断其他 4 个, 单独 catch
     let sev: SeverityBucket[] = [];
     try { sev = await getSeverity(since); } catch (e: any) { /* 忽略: 单独显示在严重等级卡 */ }
-    const [ov, rl, au, mr] = await Promise.all([
+    const [ov, rl, au, mr, dbr] = await Promise.all([
       getOverview(since),
       getRules(since),
       getAuthors(since),
       listMrs({ limit: 50, since }),
+      getDismissalsByRule(since).catch(() => [] as DismissalsByRuleItem[]),  // 单独失败不阻塞其他卡
     ]);
     overview.value = ov;
     rules.value = rl;
@@ -359,6 +395,7 @@ async function reload() {
     mrs.value = mrResp.items || [];
     failedMrCount.value = mrResp.failed_mr_count || 0;
     severities.value = sev;
+    dismissalsByRule.value = dbr || [];
   } catch (e: any) {
     loadError.value = (e?.response?.data?.detail || e?.message || '未知错误');
     ElMessage.error('代码检视加载失败: ' + loadError.value);
@@ -818,4 +855,15 @@ onMounted(reload);
 .sug-sum { font-size: 12.5px; color: var(--ink-900); }
 .sug-rules { display: flex; gap: 4px; flex-wrap: wrap; }
 .sug-rules code { font-family: var(--font-mono); font-size: 10px; background: var(--surface); border: 1px solid var(--border); padding: 0 5px; border-radius: 4px; color: var(--ink-700); }
+.sug-reason { font-size: 11px; color: var(--ink-700); line-height: 1.5; word-break: break-word; margin-top: 2px; }
+.sug-reason-k { color: var(--ink-500); margin-right: 6px; }
+
+/* 被忽略规则汇总卡 (按 reason 分布) */
+.reason-tbl .cell-k { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reason-tbl .cell-n { font-weight: 600; }
+.reason-tbl .cell-n-hot { color: var(--warn); }
+.reason-tbl .cell-r { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.reason-pill { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--surface-sunken); color: var(--ink-700); border: 1px solid var(--border); }
+.reason-pill b { color: var(--ink-500); margin-left: 4px; font-weight: 500; }
+.reason-more { font-size: 11px; color: var(--ink-500); padding: 1px 4px; }
 </style>

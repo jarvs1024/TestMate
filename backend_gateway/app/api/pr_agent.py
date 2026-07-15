@@ -186,3 +186,21 @@ async def mr_stats(
         return await pr_agent_client.mr_stats(project_id, mr_id)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/dismissals/by-rule")
+async def dismissals_by_rule(
+    since: Optional[str] = None,
+    _user: User = Depends(get_current_user),
+) -> list[dict]:
+    """按规则聚合 dismiss 次数 + reason 分布.
+
+    pr-agent 端点返回 [{rule_key, dismissal_count, reasons: [{reason, count}]}],
+    前端"近期被忽略规则"汇总卡用.
+    """
+    if not await pr_agent_client.is_configured():
+        _unconfigured()
+    try:
+        return await pr_agent_client.dismissals_by_rule(since=since)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
