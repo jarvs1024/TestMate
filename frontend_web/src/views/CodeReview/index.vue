@@ -176,10 +176,19 @@
             <td class="mono cell-k" :title="r.rule_key">{{ r.rule_key }}</td>
             <td class="r mono cell-n" :class="{ 'cell-n-hot': r.dismissal_count >= 5 }">{{ r.dismissal_count }}</td>
             <td class="cell-r">
-              <span v-for="(rv, i) in r.reasons.slice(0, 3)" :key="rv.reason + i" class="reason-pill" :title="rv.reason">
-                {{ rv.reason.length > 18 ? rv.reason.slice(0, 18) + '…' : rv.reason }}<b>×{{ rv.count }}</b>
-              </span>
-              <span v-if="r.reasons.length > 3" class="reason-more">+{{ r.reasons.length - 3 }}</span>
+              <div class="reason-wrap">
+                <span v-for="(rv, i) in r.reasons.slice(0, 2)" :key="rv.reason + i" class="reason-pill" :title="rv.reason">
+                  {{ rv.reason }}<b>&times;{{ rv.count }}</b>
+                </span>
+                <details v-if="r.reasons.length > 2" class="reason-more-wrap">
+                  <summary class="reason-more">+{{ r.reasons.length - 2 }}</summary>
+                  <div class="reason-extra">
+                    <span v-for="(rv, i) in r.reasons.slice(2)" :key="'x' + rv.reason + i" class="reason-pill" :title="rv.reason">
+                      {{ rv.reason }}<b>&times;{{ rv.count }}</b>
+                    </span>
+                  </div>
+                </details>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -1021,8 +1030,31 @@ onMounted(reload);
 .reason-tbl .cell-k { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reason-tbl .cell-n { font-weight: 600; }
 .reason-tbl .cell-n-hot { color: var(--warn); }
-.reason-tbl .cell-r { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
-.reason-pill { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--surface-sunken); color: var(--ink-700); border: 1px solid var(--border); }
-.reason-pill b { color: var(--ink-500); margin-left: 4px; font-weight: 500; }
-.reason-more { font-size: 11px; color: var(--ink-500); padding: 1px 4px; }
+.reason-tbl .cell-r { vertical-align: top; }
+.reason-wrap { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; max-width: 340px; }
+.reason-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; line-height: 1.5;
+  padding: 2px 8px; border-radius: 10px;
+  background: var(--surface-sunken); color: var(--ink-700);
+  border: 1px solid var(--border);
+  max-width: 100%; overflow-wrap: anywhere; white-space: normal;
+}
+.reason-pill b { color: var(--ink-500); font-weight: 500; }
+.reason-more-wrap { display: inline-flex; }
+.reason-more-wrap > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  font-size: 11px; color: var(--ink-500);
+  padding: 2px 8px; border-radius: 10px;
+  background: var(--surface); border: 1px dashed var(--border);
+  transition: color .12s, background .12s;
+}
+.reason-more-wrap > summary::-webkit-details-marker { display: none; }
+.reason-more-wrap > summary:hover { color: var(--primary); background: var(--surface-sunken); }
+.reason-more-wrap[open] > summary { color: var(--primary); background: var(--surface-sunken); border-style: solid; }
+.reason-extra {
+  display: flex; gap: 4px; flex-wrap: wrap; align-items: center;
+  width: 100%; margin-top: 4px;
+  padding-top: 4px; border-top: 1px dashed var(--border);
+}
 </style>
