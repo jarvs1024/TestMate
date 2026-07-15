@@ -115,9 +115,16 @@
 
     <!-- 严重等级分布: 全宽卡 -->
     <div class="card sev-card">
-      <div class="card-hd">
+      <div class="card-hd sev-card-hd">
         <h2>🔥 严重等级分布</h2>
-        <span class="cnt">{{ severityBuckets.filter(b => (b.total || 0) > 0).length }} 桶 (有数据)</span>
+        <span class="sev-head-count">{{ severityBuckets.filter(b => (b.total || 0) > 0).length }} 桶 (有数据)</span>
+        <span class="sev-head-legend" v-if="totalSuggestions > 0">
+          <span class="sev-legend-item"><span class="legend-swatch seg-applied"></span>已采纳</span>
+          <span class="sev-legend-item"><span class="legend-swatch seg-dismissed"></span>已忽略</span>
+          <span class="sev-legend-item"><span class="legend-swatch seg-open"></span>待处理</span>
+          <span class="sev-legend-item"><span class="legend-swatch seg-superseded"></span>已替代</span>
+        </span>
+        <span class="sev-head-summary" :title="`${totalSuggestions} 条建议总采纳率`">{{ fmtPct(severityAdoption) }} 整体采纳</span>
       </div>
       <div v-if="severityBuckets.length === 0" class="empty">暂无严重等级数据</div>
       <div v-else class="sev-body">
@@ -144,13 +151,6 @@
           </div>
         </div>
         <div v-else class="empty">暂无建议数据</div>
-        <div class="sev-legend">
-          <span class="sev-legend-item"><span class="legend-swatch seg-applied"></span>已采纳</span>
-          <span class="sev-legend-item"><span class="legend-swatch seg-dismissed"></span>已忽略</span>
-          <span class="sev-legend-item"><span class="legend-swatch seg-open"></span>待处理</span>
-          <span class="sev-legend-item"><span class="legend-swatch seg-superseded"></span>已替代</span>
-          <span class="sev-legend-summary" :title="`${totalSuggestions} 条建议总采纳率`">{{ fmtPct(severityAdoption) }} 整体采纳</span>
-        </div>
         <!-- 详情表 (4 列紧凑: 总 / 采纳 / 忽略 / 待处理; 替代超10条也看不常见, 折叠到 tooltip) -->
         <!-- (详情表删除 — 上方行级 bar 已表达全部字段: 总数 / 采纳数 / 忽略数 / 待处理数 / 整体采纳率 / segment 内数字) -->
       </div>
@@ -794,15 +794,11 @@ onMounted(reload);
 /* 严重等级分布卡 */
 .sev-card { margin-bottom: 16px; }
 .sev-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
-/* legend: 移到 bar 列表下方, 字号更小, 颜色更弱 (整体不抢主元素)
-   swatch 也减薄, 边框去掉 (实心色块已识别) */
-.sev-legend {
-  display: flex; align-items: center; gap: 12px;
-  margin-top: 10px; padding-top: 8px;
-  border-top: 1px dashed var(--border);
-  font-size: 11px; color: var(--ink-500);
-  flex-wrap: wrap;
-}
+/* sev-card 标题行: 标题 / 桶数 / 内联 legend / 整体采纳率, 都同一 row,
+   让 legend 跟着 header 走, 不再占独立行 */
+.sev-card-hd { flex-wrap: wrap; row-gap: 6px; column-gap: 12px; }
+.sev-head-count { color: var(--ink-500); font-family: var(--font-mono); font-size: 11.5px; }
+.sev-head-legend { display: inline-flex; align-items: center; gap: 10px; margin-left: 8px; padding-left: 12px; border-left: 1px solid var(--border); font-size: 11px; color: var(--ink-500); flex-wrap: wrap; }
 .sev-legend-item { display: inline-flex; align-items: center; gap: 4px; }
 .legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
 /* swatch 色调跟 bar segment 严格一致, 但更薄 */
@@ -810,7 +806,7 @@ onMounted(reload);
 .legend-swatch.seg-dismissed { background: color-mix(in srgb, var(--ink-500) 30%, transparent); }
 .legend-swatch.seg-open      { background: color-mix(in srgb, var(--warn)    35%, transparent); }
 .legend-swatch.seg-superseded{ background: color-mix(in srgb, var(--primary) 25%, transparent); }
-.sev-legend-summary { margin-left: auto; color: var(--ink-700); font-weight: 600; }
+.sev-head-summary { margin-left: auto; color: var(--ink-700); font-weight: 600; font-size: 12.5px; }
 
 /* 严重等级行级列表: 每个 severity 一行, 行内堆叠 state segment (整行宽度 = 100%) */
 .sev-rows-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
