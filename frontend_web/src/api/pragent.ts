@@ -74,6 +74,35 @@ export interface MrRow {
   merged_at?: string | null;
   url?: string;
   head_sha?: string | null;
+  last_run?: MrRun | null;
+  suggestion_counts?: SuggestionCounts | null;
+}
+
+/** MR 建议统计: 总 / 采纳 / 忽略 / 待处理. 自 pr-agent /stats.suggestion_counts. */
+export interface SuggestionCounts {
+  total?: number;
+  applied?: number;
+  dismissed?: number;
+  open?: number;
+}
+
+/** MR 最近一次 pr-agent 评审 run, 拍平自 /mrs/{pid}/{mr_id}/stats.runs[0]. */
+export interface MrRun {
+  run_id?: string;
+  command?: string;
+  status?: 'success' | 'failed' | 'empty' | string;   // success / failed / empty
+  model?: string;
+  started_at?: string;
+  duration_ms?: number | null;
+  error?: string | null;
+  suggestion_count?: number;
+}
+
+/** listMrs 响应: items + 失败 MR 计数 (顶部 banner 用). */
+export interface MrListResp {
+  items: MrRow[];
+  failed_mr_count?: number;
+  total?: number;
 }
 
 export interface SuggestionRow {
@@ -131,8 +160,8 @@ export async function getRules(since?: string): Promise<RuleStat[]> {
 export async function getAuthors(since?: string): Promise<AuthorStat[]> {
   return (await request.get('/pr-agent/metrics/authors', { params: since ? { since } : {} })) as AuthorStat[];
 }
-export async function listMrs(params: { limit?: number; project_id?: number; state?: string; since?: string } = {}): Promise<MrRow[]> {
-  return (await request.get('/pr-agent/mrs', { params })) as MrRow[];
+export async function listMrs(params: { limit?: number; project_id?: number; state?: string; since?: string } = {}): Promise<MrListResp> {
+  return (await request.get('/pr-agent/mrs', { params })) as MrListResp;
 }
 export async function getTimeline(projectId: number, mrId: number): Promise<TimelineResp> {
   return (await request.get(`/pr-agent/mrs/${projectId}/${mrId}/timeline`)) as TimelineResp;

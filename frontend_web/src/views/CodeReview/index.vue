@@ -26,6 +26,15 @@
       </div>
     </div>
 
+    <!-- 评审失败 banner: 顶部醒目提示, 点击展开对应 MR -->
+    <div v-if="failedMrCount > 0" class="banner banner-err" @click="scrollToMrTable" role="button" :title="`共 ${failedMrCount} 个 MR 最近一次评审失败`">
+      <span class="b-icon">⚠</span>
+      <span class="b-text">
+        <b>{{ failedMrCount }}</b> 个 Merge Request 最近一次 pr-agent 评审失败
+      </span>
+      <span class="b-hint">点击查看 ↓</span>
+    </div>
+
     <!-- 未配置 / 连不上 提示 -->
     <div v-if="health && !health.configured" class="card warn">
       <div class="warn-ic">🧪</div>
@@ -85,9 +94,9 @@
       </div>
       <div v-if="severityBuckets.length === 0" class="empty">暂无严重等级数据</div>
       <div v-else class="sev-body">
-        <!-- 横向 stacked bar -->
-        <div class="sev-bar">
-          <div v-for="b in severityBuckets" :key="b.severity"
+        <!-- 横向 stacked bar — 单条 linear-gradient (4 主题色, 按 count 切分) -->
+        <div class="sev-bar" :style="severityStops">
+          <div v-for="b in severityBucketsOrdered" :key="b.severity"
                class="sev-seg" :class="sevCls(b.severity)"
                :style="{ flex: b.total || 1 }"
                :title="`${sevLabel(b.severity)}: 总 ${b.total} · 采纳 ${b.applied} · 忽略 ${b.dismissed} · 待处理 ${b.open}`">
@@ -189,11 +198,12 @@
       <table v-else class="tbl mr-tbl">
         <thead>
           <tr>
-            <th>MR</th><th>作者</th><th>源 → 目标</th><th>状态</th><th>开启</th><th>最后活动</th><th class="r">操作</th>
+            <th>MR</th><th>作者</th><th>源 → 目标</th><th>建议</th><th>状态</th><th>开启</th><th>最后活动</th><th class="r">操作</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="m in mrs" :key="`${m.project_id}/${m.mr_id}`" :class="{ merged: m.state === 'merged' }">
+          <tr v-for="m in mrs" :key="`${m.project_id}/${m.mr_id}`"
+              :class="{ merged: m.state === 'merged' || m.state === 'closed', 'run-failed': m.last_run?.status === 'failed' }">
             <td>
               <div class="mr-t">
                 <a v-if="m.url" :href="m.url" target="_blank" rel="noopener" class="mr-link">!{{ m.mr_id }}</a>
@@ -203,13 +213,33 @@
             </td>
             <td>{{ m.author || '—' }}</td>
             <td class="mono branches">{{ m.source_branch || '—' }} → {{ m.target_branch || '—' }}</td>
+            <td class="mr-sug-cell">
+              <div v-if="m.suggestion_counts" class="mr-sug">
+                <div class="ms-total">
+                  <span class="ms-n">{{ m.suggestion_counts.total ?? 0 }}</span>
+                  <span class="ms-k">建议</span>
+                </div>
+                <div class="ms-line">
+                  <span class="ms-ok" :title="`已采纳 ${m.suggestion_counts.applied ?? 0}`">✓ {{ m.suggestion_counts.applied ?? 0 }}</span>
+                  <span class="ms-dismissed" :title="`已忽略 ${m.suggestion_counts.dismissed ?? 0}`">✗ {{ m.suggestion_counts.dismissed ?? 0 }}</span>
+                  <span class="ms-open" :title="`待处理 ${m.suggestion_counts.open ?? 0}`">⏵ {{ m.suggestion_counts.open ?? 0 }}</span>
+                </div>
+              </div>
+              <span v-else class="ms-empty">—</span>
+            </td>
             <td>
               <span class="badge" :class="stateCls(m.state)">{{ stateLabel(m.state) }}</span>
             </td>
             <td class="mono">{{ fmtIso(m.opened_at) }}</td>
             <td class="mono">{{ fmtIso(m.last_seen_at) }}</td>
             <td class="r">
-              <button class="link-btn" @click="openTimeline(m)" :disabled="tlLoading === `${m.project_id}/${m.mr_id}`">查看时间线</button>
+              <button class="link-btn"
+                      :class="{ 'link-btn-err': m.last_run?.status === 'failed' }"
+                      :title="mrLastRunTitle(m)"
+                      @click="openTimeline(m)"
+                      :disabled="tlLoading === `${m.project_id}/${m.mr_id}`">
+                <span v-if="m.last_run?.status === 'failed'" class="btn-warn">⚠</span>查看时间线
+              </button>
             </td>
           </tr>
         </tbody>
@@ -277,7 +307,7 @@ import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity,
-  type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type TimelineResp, type HealthResp,
+  type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type MrListResp, type TimelineResp, type HealthResp,
   type SeverityBucket,
 } from '@/api/pragent';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
@@ -289,6 +319,7 @@ const overview = ref<OverviewResp | null>(null);
 const rules = ref<RuleStat[]>([]);
 const authors = ref<AuthorStat[]>([]);
 const mrs = ref<MrRow[]>([]);
+const failedMrCount = ref(0);   // 最近一次评审失败的 MR 数 (顶部 banner 用)
 const severities = ref<SeverityBucket[]>([]);
 
 const windowSel = ref<'all' | '7d' | '30d'>('all');
@@ -308,6 +339,7 @@ async function reload() {
     health.value = await getHealth();
     if (!health.value.configured) {
       overview.value = null; rules.value = []; authors.value = []; mrs.value = []; severities.value = [];
+      failedMrCount.value = 0;
       return;
     }
     // severity 失败不应阻断其他 4 个, 单独 catch
@@ -322,7 +354,10 @@ async function reload() {
     overview.value = ov;
     rules.value = rl;
     authors.value = au;
-    mrs.value = mr;
+    // mr 是 { items, failed_mr_count, total } — 后端已给每条 MR 拍平 last_run
+    const mrResp = mr as unknown as MrListResp;
+    mrs.value = mrResp.items || [];
+    failedMrCount.value = mrResp.failed_mr_count || 0;
     severities.value = sev;
   } catch (e: any) {
     loadError.value = (e?.response?.data?.detail || e?.message || '未知错误');
@@ -347,6 +382,30 @@ const severityBuckets = computed<SeverityBucket[]>(() => {
   const inline = overview.value?.severity_breakdown;
   if (inline && inline.length) return inline;
   return severities.value;
+});
+// bar 渲染: 按 critical→high→medium→low→unknown 固定顺序 (API 可能乱序)
+const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 };
+const severityBucketsOrdered = computed<SeverityBucket[]>(() => {
+  return [...severityBuckets.value].sort(
+    (a, b) => (SEV_RANK[a.severity] ?? 99) - (SEV_RANK[b.severity] ?? 99),
+  );
+});
+// bar 渐变 stop 位置: p1/p2/p3 是 4 段分割线 (单位 %), 0/100 是两端
+const severityStops = computed<Record<string, string>>(() => {
+  const buckets = severityBucketsOrdered.value;
+  const total = buckets.reduce((s, b) => s + (b.total || 0), 0);
+  if (total === 0) return { '--p1': '25%', '--p2': '50%', '--p3': '75%' };
+  let acc = 0;
+  const stops: string[] = [];
+  for (const b of buckets) {
+    acc += b.total || 0;
+    stops.push(`${(acc / total) * 100}%`);
+  }
+  return {
+    '--p1': stops[0] ?? '25%',
+    '--p2': stops[1] ?? '50%',
+    '--p3': stops[2] ?? '75%',
+  };
 });
 function sevBucket(name: string): SeverityBucket | undefined {
   return severityBuckets.value.find(b => b.severity === name);
@@ -374,13 +433,24 @@ function sevSrcLabel(src?: string): string {
 function stateLabel(s?: string): string {
   return s === 'opened' ? '开放'
     : s === 'merged' ? '已合并'
+    : s === 'closed' ? '已关闭'
     : s === 'updated' ? '更新' : (s || '—');
 }
 function stateCls(s?: string): string {
-  return s === 'merged' ? 'b-ok' : s === 'opened' ? 'b-info' : 'b-mute';
+  return s === 'merged' ? 'b-ok'
+    : s === 'opened' ? 'b-info'
+    : s === 'closed' ? 'b-err-soft'   // 淡红 (10% 透明度)
+    : 'b-mute';
 }
 function runCls(s: string): string {
   return s === 'success' ? 'b-ok' : s === 'failed' ? 'b-err' : s === 'empty' ? 'b-mute' : 'b-info';
+}
+// MR 最近一次评审失败的简短原因 (查看时间线按钮 title 用)
+function mrLastRunTitle(m: MrRow): string {
+  const lr = m.last_run;
+  if (!lr || lr.status !== 'failed') return '查看时间线';
+  const err = (lr.error || '').split('\n')[0].slice(0, 120) || '评审失败';
+  return `最近一次评审失败: ${err}`;
 }
 function sugLabel(s?: string): string {
   return s === 'applied' ? '已采纳' : s === 'dismissed' ? '已忽略' : s === 'superseded' ? '已替代' : '开放';
@@ -408,6 +478,12 @@ async function openTimeline(m: MrRow) {
   } finally {
     tlLoading.value = '';
   }
+}
+
+// 点 banner → 滚到 MR 列表 (失败行已用 .run-failed 红框高亮)
+function scrollToMrTable() {
+  const el = document.querySelector('.mr-tbl');
+  if (el) (el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 onMounted(reload);
@@ -479,6 +555,30 @@ onMounted(reload);
 .warn-d { font-size: 12.5px; color: var(--ink-700); line-height: 1.6; }
 .warn-d code { font-family: var(--font-mono); background: var(--surface-sunken); padding: 1px 6px; border-radius: 4px; }
 
+/* 评审失败顶部 banner: 醒目但不刺眼, 跟 .warn 同级, 实心 (可点跳转) */
+.banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 18px;
+  border-radius: var(--radius-card);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid;
+  cursor: pointer;
+  user-select: none;
+  transition: filter 0.15s ease;
+}
+.banner:hover { filter: brightness(0.97); }
+.banner .b-icon { font-size: 18px; flex-shrink: 0; }
+.banner .b-text { flex: 1; }
+.banner .b-text b { font-size: 15px; font-weight: 800; }
+.banner .b-hint { font-size: 11.5px; opacity: 0.7; }
+.banner-err {
+  background: color-mix(in srgb, var(--err) 10%, var(--surface-soft));
+  border-color: color-mix(in srgb, var(--err) 45%, var(--border));
+  color: color-mix(in srgb, var(--err) 75%, var(--ink-900));
+}
+.banner-err .b-icon { color: var(--err); }
+
 /* 概览卡片 */
 .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
 @media (max-width: 1200px) { .stats { grid-template-columns: repeat(3, 1fr); } }
@@ -529,13 +629,22 @@ onMounted(reload);
 /* 严重等级分布卡 */
 .sev-card { margin-bottom: 16px; }
 .sev-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+/* 暗→亮渐变条: 4 主题色 (--err / --warn / --primary / --ink-500) 各自 10% 与 --surface-soft 混合成浅底,
+   段分割点由 --p1/--p2/--p3 动态注入. 跟 .banner-err 同款 — 不夺主, 严重等级靠文字色带出.
+   段是透明 overlay (用来放数字), 渐变在 .sev-bar 自身. */
 .sev-bar {
   display: flex;
   width: 100%;
   height: 22px;
-  border-radius: 6px;
+  border-radius: 7px;
   overflow: hidden;
-  background: var(--surface-sunken, rgba(0,0,0,0.03));
+  background: linear-gradient(to right,
+    color-mix(in srgb, var(--err)      10%, var(--surface-soft))  0%,  color-mix(in srgb, var(--err)      10%, var(--surface-soft))  var(--p1, 25%),
+    color-mix(in srgb, var(--warn)     10%, var(--surface-soft))  var(--p1, 25%)  var(--p2, 50%),
+    color-mix(in srgb, var(--primary)  10%, var(--surface-soft))  var(--p2, 50%)  var(--p3, 75%),
+    color-mix(in srgb, var(--ink-500)  10%, var(--surface-soft))  var(--p3, 75%)  100%
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-900) 6%, transparent);  /* 微细边, 让色块跟卡片底色有切割 */
 }
 .sev-seg {
   display: flex;
@@ -543,25 +652,26 @@ onMounted(reload);
   justify-content: center;
   gap: 4px;
   font-size: 11.5px;
-  color: rgba(255,255,255,0.85);
+  font-weight: 700;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
-  transition: opacity 0.15s ease;
+  background: transparent;
+  position: relative;
+  transition: background 0.15s ease;
 }
-.sev-seg:hover { opacity: 0.9; }
-.sev-ic { font-size: 11px; opacity: 0.85; }
-/* 阶梯: critical 最深 → low 最浅, 同一暖色系再降一档明度 (red→amber→slate),
-   不再夺主元素, 只作等级提示 */
-.sev-c1 { background: #b07878; }   /* critical: 暗红, 柔和 */
-.sev-c2 { background: #c08654; }   /* high:    暖橙, 较浅 */
-.sev-c3 { background: #b89455; }   /* medium:  琥珀, 更浅 */
-.sev-c4 { background: #7e8a96; }   /* low/unknown: 中性灰, 最浅 */
+.sev-seg:hover { background: rgba(255,255,255,0.35); }   /* hover: 整段提亮 (浅底也安全, 不刺眼) */
+.sev-ic { font-size: 11px; opacity: 0.9; }
+/* 文字带出等级 — 浅底上用饱和色, 整体不刺眼, 但能看出"critical 比 low 严重" */
+.sev-c1 { color: color-mix(in srgb, var(--err)     85%, var(--ink-900)); }   /* critical: 强红 */
+.sev-c2 { color: color-mix(in srgb, var(--warn)    85%, var(--ink-900)); }   /* high:     强琥珀 */
+.sev-c3 { color: var(--primary); }                                            /* medium:   品牌色 */
+.sev-c4 { color: var(--ink-700); }                                            /* low:      中性暗灰 */
 
 .sev-tbl th, .sev-tbl td { padding: 8px 10px; font-size: 12.5px; }
 .sev-tbl .ok        { color: color-mix(in srgb, var(--ok) 80%, var(--ink-700)); }   /* applied: 用 --ok 主题色 */
 .sev-tbl .mute      { color: var(--ink-500); }   /* dismissed: 中性 */
-.sev-tbl .open-warn { color: #b07878; }          /* open>0: 跟 sev-c1 一致 */
+.sev-tbl .open-warn { color: color-mix(in srgb, var(--err) 80%, var(--ink-700)); }   /* open>0: 跟 sev-c1 一致 (用 --err) */
 .sev-tbl .zero      { color: var(--ink-500); opacity: 0.5; }
 .sev-badge {
   display: inline-flex; align-items: center; gap: 5px;
@@ -579,16 +689,17 @@ onMounted(reload);
   border-radius: 50%;
   background: currentColor;
 }
-.sev-badge.sev-c1 { background: rgba(176, 120, 120, 0.13); color: #b07878; }
-.sev-badge.sev-c2 { background: rgba(192, 134, 84, 0.13); color: #c08654; }
-.sev-badge.sev-c3 { background: rgba(184, 148, 85, 0.13); color: #b89455; }
-.sev-badge.sev-c4 { background: rgba(126, 138, 150, 0.13); color: #7e8a96; }
+/* 主题化 — 用 color-mix 跟 .b-ok/.b-info/.b-warn/.b-err 同款 */
+.sev-badge.sev-c1 { background: color-mix(in srgb, var(--err)     13%, transparent); color: var(--err); }
+.sev-badge.sev-c2 { background: color-mix(in srgb, var(--warn)    18%, transparent); color: color-mix(in srgb, var(--warn) 80%, var(--ink-900)); }
+.sev-badge.sev-c3 { background: color-mix(in srgb, var(--primary) 13%, transparent); color: var(--primary); }
+.sev-badge.sev-c4 { background: color-mix(in srgb, var(--ink-500) 13%, transparent); color: var(--ink-700); }
 
-/* 时间线抽屉 severity pill (复用 sev-badge 配色) */
-.sev-pill.sev-c1 { background: rgba(176, 120, 120, 0.16); color: #b07878; }
-.sev-pill.sev-c2 { background: rgba(192, 134, 84, 0.16); color: #c08654; }
-.sev-pill.sev-c3 { background: rgba(184, 148, 85, 0.16); color: #b89455; }
-.sev-pill.sev-c4 { background: rgba(126, 138, 150, 0.16); color: #7e8a96; }
+/* 时间线抽屉 severity pill (复用 sev-badge 配色, 透明度稍强以便在浅色卡上突出) */
+.sev-pill.sev-c1 { background: color-mix(in srgb, var(--err)     16%, transparent); color: var(--err); }
+.sev-pill.sev-c2 { background: color-mix(in srgb, var(--warn)    22%, transparent); color: color-mix(in srgb, var(--warn) 80%, var(--ink-900)); }
+.sev-pill.sev-c3 { background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary); }
+.sev-pill.sev-c4 { background: color-mix(in srgb, var(--ink-500) 16%, transparent); color: var(--ink-700); }
 
 /* 规则柱图 */
 .rules { display: flex; flex-direction: column; gap: 6px; }
@@ -621,7 +732,19 @@ onMounted(reload);
 .mr-link:hover { text-decoration: underline; }
 .mr-title { font-size: 12.5px; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 .branches { font-size: 11.5px; color: var(--ink-700); }
-.mr-tbl tr.merged { opacity: 0.7; }
+.mr-tbl tr.merged { opacity: 0.7; }   /* merged + closed 共用置灰 */
+
+/* 建议列: 紧凑两行 (主: 建议总数 / 副: ✓采纳 ✗忽略 ⏵待处理) */
+.mr-sug-cell { vertical-align: middle; min-width: 120px; }
+.mr-sug { display: flex; flex-direction: column; gap: 2px; line-height: 1.25; }
+.ms-total { display: flex; align-items: baseline; gap: 4px; }
+.ms-n { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--ink-900); }
+.ms-k { font-size: 10.5px; color: var(--ink-500); }
+.ms-line { display: flex; gap: 8px; font-size: 10.5px; font-family: var(--font-mono); }
+.ms-ok       { color: var(--ok); }   /* 采纳 — 绿 */
+.ms-dismissed{ color: var(--ink-500); }  /* 忽略 — 中性灰 */
+.ms-open     { color: var(--primary); }  /* 待处理 — 蓝 */
+.ms-empty    { color: var(--ink-500); font-size: 12px; }
 
 .link-btn {
   background: transparent; border: 1px solid var(--border); color: var(--primary);
@@ -629,6 +752,28 @@ onMounted(reload);
 }
 .link-btn:hover { background: var(--primary-grad-soft); border-color: transparent; }
 .link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* 评审失败: 按钮变红 + 醒目 ⚠ 标, 点进去看时间线详情 */
+.link-btn.link-btn-err {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 50%, transparent);
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+  font-weight: 600;
+}
+.link-btn.link-btn-err:hover {
+  background: color-mix(in srgb, var(--err) 16%, transparent);
+  border-color: color-mix(in srgb, var(--err) 70%, transparent);
+}
+.link-btn .btn-warn { margin-right: 3px; font-size: 12px; }
+
+/* MR 行评审失败: 左侧红边 + 极淡红底, 不夺主但一眼能看见 */
+.mr-tbl tbody tr.run-failed {
+  box-shadow: inset 3px 0 0 0 var(--err);
+  background: color-mix(in srgb, var(--err) 4%, transparent);
+}
+.mr-tbl tbody tr.run-failed:hover {
+  background: color-mix(in srgb, var(--err) 9%, var(--surface-sunken));
+}
+.mr-tbl tbody tr.run-failed .mr-link { color: var(--err); }
 
 /* badge */
 .badge {
@@ -643,6 +788,8 @@ onMounted(reload);
 .b-info { background: color-mix(in srgb, var(--primary) 15%, transparent); color: var(--primary); }
 .b-warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
 .b-err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+/* 淡红: closed MR 用, 比 .b-err 弱, 不刺眼 */
+.b-err-soft { background: color-mix(in srgb, var(--err) 10%, transparent); color: color-mix(in srgb, var(--err) 80%, var(--ink-700)); }
 .b-mute { background: var(--surface-sunken); color: var(--ink-500); }
 
 /* drawer 样式复用 KnowledgeManage 的 .dt-* / .dt-pre 等 */
