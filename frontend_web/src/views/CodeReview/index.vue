@@ -121,29 +121,38 @@
       </div>
       <div v-if="severityBuckets.length === 0" class="empty">暂无严重等级数据</div>
       <div v-else class="sev-body">
-        <!-- legend: 严重等级颜色识别 (legend 充当 bar 顶部 chart key)
-             嵌套条: 整条 = 总建议数, 按严重等级嵌套; 每条 severity 内 applied/dismissed/open 三段.
-             整体一眼看出采纳率; 表头读数跟细节表行序对齐 -->
-        <div class="sev-legend" v-if="totalSuggestions > 0">
-          <span class="sev-legend-item" v-for="b in SEV_ORDER" :key="b" v-show="(sevBucket(b)?.total || 0) > 0">
-            <span class="sev-legend-dot" :class="sevCls(b)"></span>
-            <span>{{ sevLabel(b) }}</span>
-            <span class="sev-legend-n">{{ sevBucket(b)?.total }}</span>
-          </span>
-          <span style="margin-left: auto; color: var(--ink-700);" :title="`基于 ${totalSuggestions} 条建议`">{{ fmtPct(severityAdoption) }} 采纳</span>
+        <!-- legend: 颜色语义图例 (applied=绿 / dismissed=灰 / open=黄 / superseded=品牌色弱化)
+             每个 severity 一行, 行内堆叠 state segment. 整张卡片直观表达:
+             哪个 severity 采纳率低 + 哪个 severity 有 open 待处理 -->
+        <div class="sev-legend">
+          <span class="sev-legend-item"><span class="legend-swatch seg-applied"></span>已采纳</span>
+          <span class="sev-legend-item"><span class="legend-swatch seg-dismissed"></span>已忽略</span>
+          <span class="sev-legend-item"><span class="legend-swatch seg-open"></span>待处理</span>
+          <span class="sev-legend-item"><span class="legend-swatch seg-superseded"></span>已替代</span>
+          <span class="sev-legend-summary" :title="`${totalSuggestions} 条建议总采纳率`">{{ fmtPct(severityAdoption) }} 整体采纳</span>
         </div>
-        <div class="sev-bar-nested" v-if="totalSuggestions > 0">
-          <div v-for="b in SEV_ORDER" :key="b" class="sev-row" :class="sevCls(b)"
-               :style="{ flex: sevBucket(b)?.total || 0 }"
+        <div class="sev-rows-list" v-if="totalSuggestions > 0">
+          <div v-for="b in SEV_ORDER" :key="b" class="sev-row-line"
+               :class="sevCls(b)"
                v-show="(sevBucket(b)?.total || 0) > 0">
-            <div class="seg seg-applied"  :style="{ flex: sevBucket(b)?.applied || 0 }"  :title="`严重等级 ${sevLabel(b)} · 已采纳 ${sevBucket(b)?.applied || 0}`"></div>
-            <div class="seg seg-dismissed" :style="{ flex: sevBucket(b)?.dismissed || 0 }" :title="segTitle(b, '已忽略')"></div>
-            <div class="seg seg-open"     :style="{ flex: sevBucket(b)?.open || 0 }" :title="`严重等级 ${sevLabel(b)} · 待处理 ${sevBucket(b)?.open || 0}`"></div>
-            <div class="seg seg-superseded" :style="{ flex: sevBucket(b)?.superseded || 0 }" :title="segTitle(b, '已替代')"></div>
+            <div class="sev-row-hd">
+              <span class="sev-row-name"><span class="sev-legend-dot" :class="sevCls(b)"></span>{{ sevLabel(b) }}</span>
+              <span class="sev-row-meta">
+                <span class="sev-row-total">{{ sevBucket(b)?.total }} 条</span>
+                <span class="sev-row-rate" :title="`采纳率`">{{ fmtPct(sevBucket(b)?.adoption_rate) }}</span>
+              </span>
+            </div>
+            <div class="sev-row-bar">
+              <div class="seg seg-applied"   :style="{ flex: sevBucket(b)?.applied || 0 }"   :title="`已采纳 ${sevBucket(b)?.applied || 0}`">{{ (sevBucket(b)?.applied || 0) > 0 ? sevBucket(b)?.applied : '' }}</div>
+              <div class="seg seg-dismissed" :style="{ flex: sevBucket(b)?.dismissed || 0 }" :title="`已忽略 ${sevBucket(b)?.dismissed || 0}`">{{ (sevBucket(b)?.dismissed || 0) > 0 ? sevBucket(b)?.dismissed : '' }}</div>
+              <div class="seg seg-open"      :style="{ flex: sevBucket(b)?.open || 0 }"      :title="`待处理 ${sevBucket(b)?.open || 0}`">{{ (sevBucket(b)?.open || 0) > 0 ? sevBucket(b)?.open : '' }}</div>
+              <div class="seg seg-superseded" :style="{ flex: sevBucket(b)?.superseded || 0 }" :title="`已替代 ${sevBucket(b)?.superseded || 0}`">{{ (sevBucket(b)?.superseded || 0) > 0 ? sevBucket(b)?.superseded : '' }}</div>
+            </div>
           </div>
         </div>
         <div v-else class="empty">暂无建议数据</div>
         <!-- 详情表 (4 列紧凑: 总 / 采纳 / 忽略 / 待处理; 替代超10条也看不常见, 折叠到 tooltip) -->
+        <!-- 详情表: 加采纳率 mini bar, 一眼比出谁差 -->
         <table class="tbl sev-tbl">
           <thead>
             <tr>
@@ -152,6 +161,7 @@
               <th class="r">采纳</th>
               <th class="r">忽略</th>
               <th class="r">待处理</th>
+              <th class="r">采纳率</th>
             </tr>
           </thead>
           <tbody>
@@ -164,7 +174,13 @@
               <td class="r mono">{{ sevBucket(b)?.total ?? 0 }}</td>
               <td class="r mono ok">{{ sevBucket(b)?.applied ?? 0 }}</td>
               <td class="r mono mute">{{ sevBucket(b)?.dismissed ?? 0 }}</td>
-              <td class="r mono" :class="(sevBucket(b)?.open ?? 0) > 0 ? 'open-warn' : 'zero'">{{ sevBucket(b)?.open ?? 0 }}</td>
+              <td class="r mono" :class="{ 'sev-tbl-open': (sevBucket(b)?.open ?? 0) > 0 }">{{ sevBucket(b)?.open ?? 0 }}</td>
+              <td class="r">
+                <div class="sev-rate">
+                  <div class="sev-rate-bar"><div class="sev-rate-fill" :style="{ width: Math.round((sevBucket(b)?.adoption_rate || 0) * 100) + '%' }"></div></div>
+                  <span class="mono sev-rate-n">{{ fmtPct(sevBucket(b)?.adoption_rate) }}</span>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -570,9 +586,6 @@ function sugRowCls(state: string): string { return 's-' + (state || 'open'); }
 function sevTitleHint(s: any): string {
   const base = '严重等级 ' + sevLabel(s.severity);
   return s.severity_source ? base + ' · 来源: ' + sevSrcLabel(s.severity_source) : base;
-}
-function segTitle(b: string, state: string): string {
-  return '严重等级 ' + sevLabel(b) + ' · ' + state + ' ' + ((sevBucket(b) as any)?.[state === '已采纳' ? 'applied' : state === '已忽略' ? 'dismissed' : state === '待处理' ? 'open' : 'superseded'] || 0);
 }
 function tlSegTitle(label: string, n: any): string { return label + ' ' + Number(n || 0); }
 
