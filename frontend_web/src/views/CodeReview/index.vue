@@ -186,13 +186,16 @@
             <td class="r mono cell-n" :class="{ 'cell-n-hot': r.dismissal_count >= 5 }">{{ r.dismissal_count }}</td>
             <td class="cell-r">
               <div class="reason-wrap">
-                <span v-for="(rv, i) in r.reasons.slice(0, 2)" :key="rv.reason + i" class="reason-pill" :title="rv.reason">
-                  {{ rv.reason }}<b>&times;{{ rv.count }}</b>
-                </span>
-                <details v-if="r.reasons.length > 2" class="reason-more-wrap">
-                  <summary class="reason-more">+{{ r.reasons.length - 2 }}</summary>
+                <template v-for="(rv, i) in r.reasons" :key="rv.reason + i">
+                  <!-- 多数 < 6 全展开; >= 6 时前 4 直接展示, 余下进 +N 折叠 (避免单行表行高过高) -->
+                  <span v-if="r.reasons.length < 6 || i < 4" class="reason-pill" :title="rv.reason">
+                    {{ rv.reason }}<b>&times;{{ rv.count }}</b>
+                  </span>
+                </template>
+                <details v-if="r.reasons.length >= 6" class="reason-more-wrap">
+                  <summary class="reason-more">+{{ r.reasons.length - 4 }}</summary>
                   <div class="reason-extra">
-                    <span v-for="(rv, i) in r.reasons.slice(2)" :key="'x' + rv.reason + i" class="reason-pill" :title="rv.reason">
+                    <span v-for="(rv, i) in r.reasons.slice(4)" :key="'x' + rv.reason + i" class="reason-pill" :title="rv.reason">
                       {{ rv.reason }}<b>&times;{{ rv.count }}</b>
                     </span>
                   </div>
