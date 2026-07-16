@@ -47,11 +47,20 @@
           </thead>
           <tbody>
             <tr v-for="m in failedMrs" :key="`${m.project_id}/${m.mr_id}`">
-              <td><span class="mr-link mono">!{{ m.mr_id }}</span></td>
+              <td>
+                <a v-if="m.url" :href="m.url" target="_blank" rel="noopener" class="mr-link mono">!{{ m.mr_id }}</a>
+                <span v-else class="mr-link mono">!{{ m.mr_id }}</span>
+              </td>
               <td>{{ m.author || '—' }}</td>
               <td class="mono branches">{{ m.source_branch || '—' }} → {{ m.target_branch || '—' }}</td>
-              <td class="r mono cmd-tag-s">{{ m.last_run?.command || '—' }}</td>
-              <td class="err-cell" :title="m.last_run?.error || ''">{{ truncate(m.last_run?.error, 60) || '—' }}</td>
+              <td class="r"><span class="cmd-tag-s">{{ m.last_run?.command || '—' }}</span></td>
+              <td class="err-cell">
+                <details v-if="m.last_run?.error">
+                  <summary class="err-summary" :title="m.last_run?.error">{{ truncate(m.last_run?.error, 60) }}</summary>
+                  <pre class="err-full">{{ m.last_run?.error }}</pre>
+                </details>
+                <span v-else>—</span>
+              </td>
             </tr>
             <tr v-if="failedMrs.length === 0"><td colspan="5" class="empty">无</td></tr>
           </tbody>
@@ -753,8 +762,28 @@ onMounted(reload);
 .failed-mr-list .tbl { margin-top: 8px; }
 .failed-mr-list th { font-size: 11px; }
 .failed-mr-list td { padding: 6px 8px; font-size: 12px; }
-.failed-mr-list .err-cell { color: var(--err); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.failed-mr-list .cmd-tag-s { background: var(--surface-sunken); padding: 1px 6px; border-radius: 4px; font-size: 10.5px; color: var(--ink-700); }
+.failed-mr-list .err-cell { color: var(--err); max-width: 360px; }
+.failed-mr-list .err-cell summary { list-style: none; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.failed-mr-list .err-cell summary::-webkit-details-marker { display: none; }
+.failed-mr-list .err-cell summary:hover { text-decoration: underline; }
+.failed-mr-list .err-cell pre.err-full {
+  margin: 6px 0 0; padding: 8px 10px;
+  background: color-mix(in srgb, var(--err) 8%, var(--surface-sunken));
+  border: 1px solid color-mix(in srgb, var(--err) 30%, transparent);
+  border-radius: 6px;
+  font-family: var(--font-mono); font-size: 11.5px;
+  color: var(--ink-900); line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 220px; overflow: auto;
+}
+/* 上次命令: 失败语境用 err 淡色, 浅深主题都清晰 */
+.failed-mr-list .cmd-tag-s {
+  display: inline-block;
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+  color: color-mix(in srgb, var(--err) 80%, var(--ink-900));
+  border: 1px solid color-mix(in srgb, var(--err) 30%, transparent);
+  padding: 1px 8px; border-radius: 4px; font-size: 10.5px; font-family: var(--font-mono);
+}
 .banner-foot { padding-top: 8px; display: flex; justify-content: flex-end; }
 
 /* 概览卡片 */
