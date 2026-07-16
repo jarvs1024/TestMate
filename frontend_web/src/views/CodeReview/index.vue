@@ -577,8 +577,9 @@ function stateLabel(s?: string): string {
 }
 function stateCls(s?: string): string {
   return s === 'merged' ? 'b-ok'
-    : s === 'opened' ? 'b-info'
-    : s === 'closed' ? 'b-err-soft'   // 淡红 (10% 透明度)
+    : s === 'opened' ? 'b-info-strong'   // 蓝色明显态
+    : s === 'closed' ? 'b-err-soft'      // 淡红 (10% 透明度)
+    : s === 'updated' ? 'b-progress'     // 进行中: 蓝绿
     : 'b-mute';
 }
 function runCls(s: string): string {
@@ -972,8 +973,10 @@ onMounted(reload);
 .badge.sm { padding: 0 6px; font-size: 10px; }
 .b-ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
 .b-info { background: color-mix(in srgb, var(--primary) 15%, transparent); color: var(--primary); }
+.b-info-strong { background: color-mix(in srgb, var(--primary) 22%, white); color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent); }
 .b-warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
 .b-err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+.b-progress { background: color-mix(in srgb, var(--primary-2) 18%, transparent); color: var(--primary-2); }
 /* 淡红: closed MR 用, 比 .b-err 弱, 不刺眼 */
 .b-err-soft { background: color-mix(in srgb, var(--err) 10%, transparent); color: color-mix(in srgb, var(--err) 80%, var(--ink-700)); }
 .b-mute { background: var(--surface-sunken); color: var(--ink-500); }
