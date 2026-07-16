@@ -219,8 +219,8 @@
             <div class="rule-bar">
               <div class="bar-fill" :style="{ width: rulePct(r) + '%' }"></div>
             </div>
-            <div class="rule-n mono">{{ r.cited_count ?? 0 }}</div>
-            <div class="rule-ap mono">{{ fmtPct(r.adoption_rate) }}</div>
+            <div class="rule-n mono" :title="`规则被引用 ${r.cited_count ?? 0} 次`">{{ r.cited_count ?? 0 }}<span class="unit"> 次</span></div>
+            <div class="rule-ap mono" :class="ruleAdoptedClass(r)" :title="ruleAdoptedTitle(r)">{{ ruleAdoptedLabel(r) }}</div>
           </div>
         </div>
       </div>
@@ -525,6 +525,25 @@ const rulesTop = computed(() => {
 const maxCited = computed(() => Math.max(1, ...rulesTop.value.map(r => r.cited_count ?? 0)));
 function rulePct(r: RuleStat): number {
   return Math.round(((r.cited_count ?? 0) / maxCited.value) * 100);
+}
+// 采纳率: 无引用时无意义, 不显示 100% 误导
+function ruleAdoptedLabel(r: RuleStat): string {
+  const n = r.cited_count ?? 0;
+  if (n === 0) return '—';     // 引用 0 次 → 没法算采纳率
+  return fmtPct(r.adoption_rate);
+}
+function ruleAdoptedClass(r: RuleStat): string {
+  const n = r.cited_count ?? 0;
+  if (n === 0) return 'muted';
+  const ad = r.adoption_rate ?? 0;
+  if (ad >= 0.7) return 'high';
+  if (ad < 0.3) return 'low';
+  return 'mid';
+}
+function ruleAdoptedTitle(r: RuleStat): string {
+  const n = r.cited_count ?? 0;
+  if (n === 0) return '未被引用, 无采纳率';
+  return `引用 ${n} 次, 采纳率 ${fmtPct(r.adoption_rate)}`;
 }
 
 // 严重等级 nested bar 用: 总建议数 (applied+dismissed+open+superseded), 整条 flex 比例
@@ -927,7 +946,12 @@ onMounted(reload);
 .rule-bar { height: 6px; background: var(--surface-sunken); border-radius: 4px; overflow: hidden; }
 .bar-fill { height: 100%; background: var(--primary-grad); border-radius: 4px; transition: width 0.3s ease; }
 .rule-n { color: var(--ink-700); text-align: right; font-size: 11.5px; }
+.rule-n .unit { color: var(--ink-500); font-size: 10px; margin-left: 1px; }
 .rule-ap { color: var(--ink-700); text-align: right; font-size: 11.5px; }
+.rule-ap.muted { color: var(--ink-500); font-weight: 400; }
+.rule-ap.high  { color: var(--ok); font-weight: 600; }
+.rule-ap.mid   { color: var(--ink-900); font-weight: 600; }
+.rule-ap.low   { color: var(--warn); font-weight: 600; }
 
 /* 表格 */
 .tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
