@@ -56,7 +56,7 @@ const services = ref<ServiceHealth[]>([
   { key: 'ragflow', label: 'RAGFlow',   status: 'unknown', statusText: '...' },
   { key: 'dify',    label: 'Dify',      status: 'unknown', statusText: '...' },
   // pr-agent 默认隐藏, 配过 base_url 才显示 (probe 返回 ok/warn/off 时设 visible=true)
-  { key: 'pr_agent', label: 'pr-agent', status: 'off',     statusText: '未配置', visible: false },
+  { key: 'pr_agent', label: 'PR-Agent', status: 'off',     statusText: '未配置', visible: false },
 ]);
 const lastCheck = ref('—');
 let pollTimer: number | null = null;
