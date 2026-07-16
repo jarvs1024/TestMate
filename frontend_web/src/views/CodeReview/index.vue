@@ -452,7 +452,10 @@ const customDays = ref(14);
 
 // 上次刷新时间 (相对显示)
 const lastUpdated = ref<Date | null>(null);
+const nowTick = ref(0);
 const lastUpdatedRel = computed(() => {
+  // 读 nowTick.value 让 interval tick 触发本 computed 重算 + template 重渲染
+  void nowTick.value;
   if (!lastUpdated.value) return '尚未加载';
   const sec = Math.round((Date.now() - lastUpdated.value.getTime()) / 1000);
   if (sec < 60) return `${sec} 秒前`;
@@ -461,9 +464,9 @@ const lastUpdatedRel = computed(() => {
   return `${Math.floor(sec / 86400)} 天前`;
 });
 const lastUpdatedLabel = computed(() => lastUpdated.value ? lastUpdated.value.toLocaleString('zh-CN') : '—');
-// 每 30s 刷新相对时间显示
+// 每 30s 刷新相对时间显示 — 显式 bump nowTick 触发 lastUpdatedRel 重算 + template 重渲染
 let _relTimer: number | null = null;
-onMounted(() => { _relTimer = window.setInterval(() => { void lastUpdatedRel.value; }, 30000); });
+onMounted(() => { _relTimer = window.setInterval(() => { nowTick.value++; }, 30000); });
 onUnmounted(() => { if (_relTimer) window.clearInterval(_relTimer); });
 
 async function reload() {
@@ -976,7 +979,11 @@ onMounted(reload);
 .b-info-strong { background: color-mix(in srgb, var(--primary) 22%, white); color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent); }
 .b-warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
 .b-err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
-.b-progress { background: color-mix(in srgb, var(--primary-2) 18%, transparent); color: var(--primary-2); }
+.b-progress { background: color-mix(in srgb, #F59E0B 22%, transparent); color: #B45309; border: 1px solid color-mix(in srgb, #F59E0B 35%, transparent); }
+
+/* 深色主题覆盖: 亮橙文字 + 深橙底 */
+:root[data-theme="dark"] .b-progress,
+[data-theme="dark"] .b-progress { background: color-mix(in srgb, #FBBF24 22%, transparent); color: #FBBF24; border-color: color-mix(in srgb, #FBBF24 40%, transparent); }
 /* 淡红: closed MR 用, 比 .b-err 弱, 不刺眼 */
 .b-err-soft { background: color-mix(in srgb, var(--err) 10%, transparent); color: color-mix(in srgb, var(--err) 80%, var(--ink-700)); }
 .b-mute { background: var(--surface-sunken); color: var(--ink-500); }
