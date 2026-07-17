@@ -55,10 +55,7 @@
               <td class="mono branches">{{ m.source_branch || '—' }} → {{ m.target_branch || '—' }}</td>
               <td class="r"><span class="cmd-tag-s">{{ m.last_run?.command || '—' }}</span></td>
               <td class="err-cell">
-                <details v-if="m.last_run?.error">
-                  <summary class="err-summary" :title="m.last_run?.error">{{ truncate(m.last_run?.error, 60) }}</summary>
-                  <pre class="err-full">{{ m.last_run?.error }}</pre>
-                </details>
+                <span v-if="m.last_run?.error" class="err-text" :title="m.last_run?.error">{{ m.last_run?.error }}</span>
                 <span v-else>—</span>
               </td>
             </tr>
@@ -420,11 +417,7 @@ const failedMrs = computed(() =>
   mrs.value.filter(m => (m.last_run as any)?.status === 'failed')
 );
 
-// 错误信息截断
-function truncate(s: string | null | undefined, n: number): string {
-  if (!s) return '';
-  return s.length > n ? s.slice(0, n) + '…' : s;
-}   // 最近一次评审失败的 MR 数 (顶部 banner 用)
+// 最近一次评审失败的 MR 数 (顶部 banner 用)
 const severities = ref<SeverityBucket[]>([]);
 const dismissalsByRule = ref<DismissalsByRuleItem[]>([]);
 
@@ -784,19 +777,12 @@ onMounted(reload);
 .failed-mr-list .tbl { margin-top: 8px; }
 .failed-mr-list th { font-size: 11px; }
 .failed-mr-list td { padding: 6px 8px; font-size: 12px; }
-.failed-mr-list .err-cell { color: var(--err); max-width: 360px; }
-.failed-mr-list .err-cell summary { list-style: none; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.failed-mr-list .err-cell summary::-webkit-details-marker { display: none; }
-.failed-mr-list .err-cell summary:hover { text-decoration: underline; }
-.failed-mr-list .err-cell pre.err-full {
-  margin: 6px 0 0; padding: 8px 10px;
-  background: color-mix(in srgb, var(--err) 8%, var(--surface-sunken));
-  border: 1px solid color-mix(in srgb, var(--err) 30%, transparent);
-  border-radius: 6px;
-  font-family: var(--font-mono); font-size: 11.5px;
-  color: var(--ink-900); line-height: 1.5;
-  white-space: pre-wrap; word-break: break-word;
-  max-height: 220px; overflow: auto;
+.failed-mr-list .err-cell { color: var(--err); max-width: 480px; }
+.failed-mr-list .err-text {
+  display: inline-block;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5;
+  color: color-mix(in srgb, var(--err) 85%, var(--ink-900));
+  word-break: break-word; white-space: pre-wrap;
 }
 /* 上次命令: 失败语境用 err 淡色, 浅深主题都清晰 */
 .failed-mr-list .cmd-tag-s {
@@ -944,7 +930,7 @@ onMounted(reload);
 
 /* 规则柱图 */
 .rules { display: flex; flex-direction: column; gap: 6px; }
-.rule-row { display: grid; grid-template-columns: 140px 1fr 44px 56px; gap: 8px; align-items: center; font-size: 12px; }
+.rule-row { display: grid; grid-template-columns: 220px 1fr 56px 64px; gap: 10px; align-items: center; font-size: 12px; }
 .rule-k { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rule-bar { height: 6px; background: var(--surface-sunken); border-radius: 4px; overflow: hidden; }
 .bar-fill { height: 100%; background: var(--primary-grad); border-radius: 4px; transition: width 0.3s ease; }
