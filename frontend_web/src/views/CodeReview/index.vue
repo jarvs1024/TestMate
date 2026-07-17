@@ -55,7 +55,7 @@
               <td class="mono branches">{{ m.source_branch || '—' }} → {{ m.target_branch || '—' }}</td>
               <td class="r"><span class="cmd-tag-s">{{ m.last_run?.command || '—' }}</span></td>
               <td class="err-cell">
-                <span v-if="m.last_run?.error" class="err-text" :title="m.last_run?.error">{{ m.last_run?.error }}</span>
+                <ErrorView v-if="m.last_run?.error" :raw="m.last_run?.error" />
                 <span v-else>—</span>
               </td>
             </tr>
@@ -354,7 +354,7 @@
             <span class="mono small">{{ fmtIso(r.started_at) }}</span>
             <span class="mono small">{{ fmtMs(r.duration_ms) }}</span>
             <span v-if="r.model" class="mono small model">{{ r.model }}</span>
-            <span v-if="r.error" class="err mono small" :title="r.error">⚠ {{ r.error }}</span>
+            <ErrorView v-if="r.error" :raw="r.error" class="run-err" />
           </div>
         </div>
 
@@ -400,6 +400,7 @@ import {
   type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type MrListResp, type TimelineResp, type HealthResp,
   type SeverityBucket, type DismissalsByRuleItem,
 } from '@/api/pragent';
+import ErrorView from '@/components/ErrorView.vue';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
 
 const loading = ref(false);

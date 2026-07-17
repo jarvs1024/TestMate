@@ -120,3 +120,25 @@ export function fmtMs(ms: number | null | undefined): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
+
+/** 长错误信息抽取摘要: { head, root, traceback }
+ * - head: 截断在 Traceback: 前的可读消息 (一般是 Exception: + Last error 简介)
+ * - root: " -> " 链最后一节 (HTTPStatusError: 401 ...), 没有链就 null
+ * - traceback: 完整 stack trace 段 (含 Traceback: 头), 没有就 null
+ * 短错误 (<10 行 or <200 字): traceback=null, head=原全文 */
+export function summarizeError(raw: string | null | undefined): { head: string; root: string | null; traceback: string | null; short: boolean } {
+  if (!raw) return { head: '', root: null, traceback: null, short: true };
+  const tbIdx = raw.indexOf('Traceback:');
+  if (tbIdx < 0) return { head: raw.trim(), root: null, traceback: null, short: raw.length < 200 };
+  const head = raw.slice(0, tbIdx).trim();
+  const tbBlock = raw.slice(tbIdx);
+  // " -> " 链末节 = 根因 (HTTPStatusError / AuthenticationError 这类最后一条)
+  const parts = tbBlock.split(' -> ');
+  let root: string | null = null;
+  if (parts.length > 1) {
+    const last = parts[parts.length - 1].trim();
+    // 只在最后一段看起来是 error 总结时拿来用 (例如 "HTTPStatusError: Client error '401' ...")
+    if (/^[A-Z][A-Za-z]+(?:Error|Exception|Warning):/.test(last)) root = last;
+  }
+  return { head, root, traceback: tbBlock, short: false };
+}
