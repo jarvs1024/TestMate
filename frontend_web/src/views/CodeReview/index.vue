@@ -25,6 +25,11 @@
         </select>
         <input v-if="windowSel === 'custom'" v-model.number="customDays" type="number" min="1" max="365" class="win-custom" @change="reload" title="自定义天数 (1-365)" />
         <span class="last-updated" :title="`刷新时间: ${lastUpdatedLabel}`">{{ lastUpdatedRel }} · 更新</span>
+        <label class="auto-ref" :title="autoRefresh ? '点击暂停自动刷新' : '点击开启自动刷新 (每 30s)'">
+          <input type="checkbox" v-model="autoRefresh" />
+          <span class="auto-label">自动</span>
+          <span v-if="autoRefresh" class="auto-cd">{{ autoCountdown }}s</span>
+        </label>
         <button class="reload" @click="reload" :disabled="loading">
           <span :class="{ spinning: loading }">↻</span> 刷新
         </button>
@@ -182,21 +187,27 @@
             <td class="mono cell-k" :title="r.rule_key">{{ r.rule_key }}</td>
             <td class="r mono cell-n" :class="{ 'cell-n-hot': r.dismissal_count >= 5 }">{{ r.dismissal_count }}</td>
             <td class="cell-r">
+              <!-- 合并后的 reasons (按 label 去重) → 紧凑 pill, 完整原文走 title hover.
+                   > 5 个时前 4 展示, 余下进 +N 折叠 (避免单行过高) -->
               <div class="reason-wrap">
-                <template v-for="(rv, i) in r.reasons" :key="rv.reason + i">
-                  <!-- 多数 < 6 全展开; >= 6 时前 4 直接展示, 余下进 +N 折叠 (避免单行表行高过高) -->
-                  <span v-if="r.reasons.length < 6 || i < 4" class="reason-pill" :title="rv.reason">
-                    {{ rv.reason }}<b>&times;{{ rv.count }}</b>
+                <template v-for="(rv, i) in (reasonsByRule[r.rule_key] || [])" :key="rv.label + i">
+                  <span v-if="(reasonsByRule[r.rule_key] || []).length <= 5 || i < 4"
+                        class="reason-pill" :title="rv.full"
+                        :class="reasonPillCls(rv.label)">
+                    <span class="reason-label">{{ rv.label }}</span><b>&times;{{ rv.count }}</b>
                   </span>
                 </template>
-                <details v-if="r.reasons.length >= 6" class="reason-more-wrap">
-                  <summary class="reason-more">+{{ r.reasons.length - 4 }}</summary>
+                <details v-if="(reasonsByRule[r.rule_key] || []).length > 5" class="reason-more-wrap">
+                  <summary class="reason-more">+{{ (reasonsByRule[r.rule_key] || []).length - 4 }}</summary>
                   <div class="reason-extra">
-                    <span v-for="(rv, i) in r.reasons.slice(4)" :key="'x' + rv.reason + i" class="reason-pill" :title="rv.reason">
-                      {{ rv.reason }}<b>&times;{{ rv.count }}</b>
+                    <span v-for="(rv, i) in (reasonsByRule[r.rule_key] || []).slice(4)" :key="'x' + rv.label + i"
+                          class="reason-pill" :title="rv.full"
+                          :class="reasonPillCls(rv.label)">
+                      <span class="reason-label">{{ rv.label }}</span><b>&times;{{ rv.count }}</b>
                     </span>
                   </div>
                 </details>
+                <span v-if="!(reasonsByRule[r.rule_key] || []).length" class="reason-empty">—</span>
               </div>
             </td>
           </tr>
@@ -257,7 +268,7 @@
     <div class="card">
       <div class="card-hd">
         <h2>📋 Merge Request</h2>
-        <span class="cnt">{{ mrs.length }} 条</span>
+        <span class="cnt">{{ mrCntLabel }}</span>
       </div>
       <div v-if="loading && mrs.length === 0" class="loading">加载中...</div>
       <div v-else-if="mrs.length === 0" class="empty">暂无 MR 记录</div>
@@ -310,6 +321,30 @@
           </tr>
         </tbody>
       </table>
+      <!-- MR 列表分页: 每页大小可调 (10/20/50/100), 显示范围 + 上/下/末页.
+           后端 limit 上限 200, 故 pageSize 最大给 100 (超出会被后端 422). -->
+      <div v-if="mrTotal > 0" class="mr-pager">
+        <div class="pg-l">
+          <span class="pg-info">{{ mrRangeLabel }}</span>
+          <label class="pg-size">
+            每页
+            <select v-model.number="mrPageSize" class="pg-sel" @change="onMrPageSizeChange">
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+              <option :value="100">100</option>
+            </select>
+            条
+          </label>
+        </div>
+        <div class="pg-r">
+          <button class="pg-btn" :disabled="mrPage <= 1 || loading" @click="gotoMrPage(1)" title="首页">«</button>
+          <button class="pg-btn" :disabled="mrPage <= 1 || loading" @click="gotoMrPage(mrPage - 1)" title="上一页">‹</button>
+          <span class="pg-cur">第 {{ mrPage }} / {{ mrTotalPages }} 页</span>
+          <button class="pg-btn" :disabled="mrPage >= mrTotalPages || loading" @click="gotoMrPage(mrPage + 1)" title="下一页">›</button>
+          <button class="pg-btn" :disabled="mrPage >= mrTotalPages || loading" @click="gotoMrPage(mrTotalPages)" title="末页">»</button>
+        </div>
+      </div>
     </div>
 
     <!-- 时间线抽屉 -->
@@ -393,7 +428,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity, getDismissalsByRule,
@@ -411,14 +446,42 @@ const rules = ref<RuleStat[]>([]);
 const authors = ref<AuthorStat[]>([]);
 const mrs = ref<MrRow[]>([]);
 const failedMrCount = ref(0);
+// MR 列表分页: 后端 limit 上限 200, 默认 pageSize=20 (与图里 "20 条" 一致).
+const mrTotal = ref(0);          // 后端返回的 total (含跨页估算)
+const mrPage = ref(1);
+const mrPageSize = ref(20);
+const mrTotalPages = computed(() => Math.max(1, Math.ceil(mrTotal.value / mrPageSize.value)));
+const mrCntLabel = computed(() => {
+  if (loading.value && mrs.value.length === 0) return '加载中…';
+  if (mrTotal.value === 0) return '0 条';
+  return `共 ${mrTotal.value} 条`;
+});
+// "第 1 - 20 条" / "第 21 - 23 条" / 空时 "—"
+const mrRangeLabel = computed(() => {
+  if (mrTotal.value === 0) return '—';
+  const start = (mrPage.value - 1) * mrPageSize.value + 1;
+  const end = Math.min(mrPage.value * mrPageSize.value, mrTotal.value);
+  return `第 ${start} - ${end} 条`;
+});
+function gotoMrPage(p: number) {
+  const target = Math.min(Math.max(1, p), mrTotalPages.value);
+  if (target === mrPage.value) return;
+  mrPage.value = target;
+  reloadKeepPage();
+}
+function onMrPageSizeChange() {
+  // 切每页大小: page 回归 1 (后续 pageSize 影响每页内容, 直接归位最直观)
+  mrPage.value = 1;
+  reloadKeepPage();
+}
 const bannerOpen = ref(false);
 
-// 失败 MR 子集, banner 展开时用 (取每条 last_run.status==='failed')
+// 失败 MR 子集, banner 展开时用 (取每条 last_run.status==='failed').
+// 注意: 分页后只统计当前页, 顶部 banner 数字另由后端 failed_mr_count 给出 (跨页).
 const failedMrs = computed(() =>
   mrs.value.filter(m => (m.last_run as any)?.status === 'failed')
 );
 
-// 最近一次评审失败的 MR 数 (顶部 banner 用)
 const severities = ref<SeverityBucket[]>([]);
 const dismissalsByRule = ref<DismissalsByRuleItem[]>([]);
 
@@ -441,6 +504,51 @@ const dismissalsSorted = computed(() => {
 });
 // 总忽略次数 (按 reason 汇总)
 const totalDismissals = computed(() => dismissalsByRule.value.reduce((s, r) => s + (r.dismissal_count || 0), 0));
+
+// reason 短摘要: pr-agent 给的 reason 可能是几百字的 "Suggestion: ... + dismiss 模板",
+// 也可能是用户手写的 "测试"/"忽略print"。统一抽第一行非空 + 截前 24 字符,
+// 让 pill 紧凑且能扫读. 完整原文仍走 title / popover 看.
+const REASON_LABEL_MAX = 24;
+function summarizeReason(text: string): string {
+  if (!text) return '(无 reason)';
+  // 去掉 markdown 标记 (** ` ```) 和 pr-agent 注入的 "**Suggestion:**" 前缀
+  let s = text.replace(/\*\*Suggestion:\*\*\s*/i, '').replace(/`/g, '').trim();
+  // 取第一段 (按换行 / ```code block``` 切)
+  s = s.split(/\n|```/)[0].trim();
+  // 折叠多余空白
+  s = s.replace(/\s+/g, ' ');
+  if (!s) return '(空 reason)';
+  if (s.length <= REASON_LABEL_MAX) return s;
+  return s.slice(0, REASON_LABEL_MAX) + '…';
+}
+
+// 按 label 合并: 同一 rule 内多条 reason 摘要相同 → count 合并,
+// 避免 pr-agent 每次 suggestion 原文不同但用户给的忽略原因本质相同时被拆成 N 个 pill.
+const reasonsByRule = computed(() => {
+  const out: Record<string, Array<{ label: string; count: number; full: string }>> = {};
+  for (const r of dismissalsByRule.value) {
+    const merged = new Map<string, { label: string; count: number; full: string }>();
+    for (const rv of (r.reasons || [])) {
+      const lbl = summarizeReason(rv.reason || '');
+      const ex = merged.get(lbl);
+      if (ex) ex.count += (rv.count || 0);
+      else merged.set(lbl, { label: lbl, count: rv.count || 0, full: rv.reason || '' });
+    }
+    const arr = [...merged.values()].sort((a, b) => b.count - a.count);
+    out[r.rule_key] = arr;
+  }
+  return out;
+});
+
+// 按 label 关键字给 pill 一个语义色 (扫读更友好, 也能看出哪类是探索/误报/暂时跳过)
+function reasonPillCls(label: string): string {
+  const l = label.toLowerCase();
+  if (/测试|test/.test(l))              return 'rp-test';      // 探索性 — 蓝
+  if (/忽略|ignore|skip/.test(l))        return 'rp-ignore';    // 主动跳过 — 灰
+  if (/误报|false|wrong|no reason/.test(l)) return 'rp-warn';   // 可能是规则问题 — 黄
+  if (/暂时|临时|todo|temporar/.test(l)) return 'rp-later';    // 待回看 — 紫
+  return 'rp-default';
+}
 const sinceLabel = computed(() => windowSel.value === 'all' ? '全部时间' : windowSel.value === '7d' ? '7 天' : '30 天');
 
 const windowSel = ref<'all' | '7d' | '30d' | 'custom'>('all');
@@ -475,7 +583,41 @@ let _relTimer: number | null = null;
 onMounted(() => { _relTimer = window.setInterval(() => { nowTick.value++; }, 30000); });
 onUnmounted(() => { if (_relTimer) window.clearInterval(_relTimer); });
 
+// ==================== 自动刷新 ====================
+// 主页 autoRefresh: 每 30s 调一次 reloadKeepPage (保留当前页).
+// 时间线 tlAuto: 抽屉打开时按状态分频轮询 (进行中 5s / 已结束 15s).
+const AUTO_INTERVAL_SEC = 30;
+const autoRefresh = ref(true);
+const autoCountdown = ref(AUTO_INTERVAL_SEC);
+let _autoTimer: number | null = null;
+// 抽屉关闭 / 用户手动调 reload / 手动刷新按钮都重置倒计时, 避免"刚刷完又立刻再刷".
+function bumpAutoCountdown() { autoCountdown.value = AUTO_INTERVAL_SEC; }
+function startAutoTimer() {
+  if (_autoTimer != null) return;
+  _autoTimer = window.setInterval(() => {
+    if (!autoRefresh.value || loading.value) return;
+    autoCountdown.value--;
+    if (autoCountdown.value <= 0) {
+      bumpAutoCountdown();
+      reloadKeepPage();   // 主页: 不重置 mrPage, 不弹错误 toast (网络抖动静默)
+    }
+  }, 1000);
+}
+function stopAutoTimer() {
+  if (_autoTimer != null) { window.clearInterval(_autoTimer); _autoTimer = null; }
+}
+onMounted(startAutoTimer);
+onUnmounted(stopAutoTimer);
+// 手动刷新按钮 / 时间窗切换 触发 reload 后, 把倒计时拨回原值避免重复刷
+watch(() => lastUpdated.value, () => bumpAutoCountdown());
+
 async function reload() {
+  // 顶栏刷新 / 时间窗 / onMounted → 回到第 1 页, 再走主加载逻辑.
+  mrPage.value = 1;
+  await reloadKeepPage();
+}
+// 翻页 / 切 pageSize 时用: 不重置 mrPage, 走同样的并行加载.
+async function reloadKeepPage() {
   loading.value = true;
   loadError.value = '';
   try {
@@ -490,11 +632,12 @@ async function reload() {
     // severity 失败不应阻断其他 4 个, 单独 catch
     let sev: SeverityBucket[] = [];
     try { sev = await getSeverity(since); } catch (e: any) { /* 忽略: 单独显示在严重等级卡 */ }
+    const mrOffset = (mrPage.value - 1) * mrPageSize.value;
     const [ov, rl, au, mr, dbr] = await Promise.all([
       getOverview(since),
       getRules(since),
       getAuthors(since),
-      listMrs({ limit: 50, since }),
+      listMrs({ limit: mrPageSize.value, offset: mrOffset, since }),
       getDismissalsByRule(since).catch(() => [] as DismissalsByRuleItem[]),  // 单独失败不阻塞其他卡
     ]);
     overview.value = ov;
@@ -504,6 +647,7 @@ async function reload() {
     const mrResp = mr as unknown as MrListResp;
     mrs.value = mrResp.items || [];
     failedMrCount.value = mrResp.failed_mr_count || 0;
+    mrTotal.value = mrResp.total || 0;
     severities.value = sev;
     dismissalsByRule.value = dbr || [];
   } catch (e: any) {
@@ -657,6 +801,41 @@ async function openTimeline(m: MrRow) {
     tlLoading.value = '';
   }
 }
+// 时间线抽屉自动刷新: 进行中 (started) 每 5s, 已结束每 15s, 抽屉关闭即停.
+const TL_FAST_MS = 5000;
+const TL_SLOW_MS = 15000;
+let _tlTimer: number | null = null;
+let _tlCurrent: { pid: number; mid: number } | null = null;
+async function refreshTimeline() {
+  if (!tlOpen.value || !_tlCurrent) return;
+  try {
+    timeline.value = await getTimeline(_tlCurrent.pid, _tlCurrent.mid);
+  } catch { /* 静默: 网络抖动不打扰用户, 下次 tick 再试 */ }
+  scheduleNextTlTick();   // 不论成败都排下一次, 避免一次失败就停轮询
+}
+function scheduleNextTlTick() {
+  stopTlTimer();
+  if (!tlOpen.value || !_tlCurrent) return;
+  const running = tlLastRun.value?.status === 'started';
+  const ms = running ? TL_FAST_MS : TL_SLOW_MS;
+  _tlTimer = window.setTimeout(refreshTimeline, ms);
+}
+function stopTlTimer() {
+  if (_tlTimer != null) { window.clearTimeout(_tlTimer); _tlTimer = null; }
+}
+function startTlTimer() {
+  // 重置 _tlCurrent 到当前 drawer 的 MR, 然后立刻刷一次再排下次
+  const m = timeline.value?.mr;
+  if (m) _tlCurrent = { pid: m.project_id, mid: m.mr_id };
+  scheduleNextTlTick();
+}
+// 抽屉开关 + 当前 MR 变化都重排 timer
+watch(tlOpen, (open) => { if (open) startTlTimer(); else { stopTlTimer(); _tlCurrent = null; } });
+// 抽屉标题对应的 MR 变化时 (用户在不同 MR 间切), 同步 _tlCurrent 并重排
+watch(() => timeline.value?.mr?.mr_id, () => {
+  if (tlOpen.value) startTlTimer();
+});
+onUnmounted(stopTlTimer);
 
 // 点 banner → 滚到 MR 列表 (失败行已用 .run-failed 红框高亮)
 function scrollToMrTable() {
@@ -716,6 +895,22 @@ onMounted(reload);
 .reload:disabled { opacity: 0.5; cursor: not-allowed; }
 .win-custom { background: var(--surface); border: 1px solid var(--border); color: var(--ink-900); padding: 6px 8px; border-radius: 8px; font-size: 12.5px; font-family: var(--font-mono); width: 70px; }
 .last-updated { font-size: 11.5px; color: var(--ink-500); padding: 6px 0; white-space: nowrap; }
+/* 自动刷新开关: checkbox + "自动" 文字 + 倒计时. 关掉时灰, 开启时 primary 色 */
+.auto-ref {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); cursor: pointer; user-select: none;
+  font-size: 12px; color: var(--ink-700);
+}
+.auto-ref input { cursor: pointer; margin: 0; }
+.auto-ref:has(input:checked) {
+  border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+.auto-cd {
+  font-family: var(--font-mono); font-size: 11px; padding: 1px 5px;
+  background: var(--surface-sunken); border-radius: 4px;
+  color: var(--ink-500); min-width: 28px; text-align: center;
+}
 .spinning { display: inline-block; animation: spin 0.8s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .sort-btn { background: transparent; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
@@ -967,6 +1162,35 @@ onMounted(reload);
 .branches { font-size: 11.5px; color: var(--ink-700); }
 .mr-tbl tr.merged { opacity: 0.7; }   /* merged + closed 共用置灰 */
 
+/* MR 列表分页 footer: 左侧范围 + 每页大小, 右侧翻页 */
+.mr-pager {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 4px 2px; border-top: 1px dashed var(--border); margin-top: 4px;
+  font-size: 11.5px; color: var(--ink-500); font-family: var(--font-mono);
+}
+.mr-pager .pg-l { display: flex; align-items: center; gap: 14px; }
+.mr-pager .pg-info { color: var(--ink-700); }
+.mr-pager .pg-size { display: inline-flex; align-items: center; gap: 6px; }
+.mr-pager .pg-sel {
+  font-family: var(--font-mono); font-size: 11.5px; padding: 2px 6px;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--surface);
+  color: var(--ink-900); cursor: pointer;
+}
+.mr-pager .pg-r { display: flex; align-items: center; gap: 6px; }
+.mr-pager .pg-cur {
+  padding: 0 8px; color: var(--ink-700); font-weight: 600;
+}
+.mr-pager .pg-btn {
+  min-width: 26px; height: 24px; padding: 0 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 5px;
+  font-family: var(--font-mono); font-size: 13px; line-height: 1; color: var(--ink-700);
+  cursor: pointer;
+}
+.mr-pager .pg-btn:hover:not(:disabled) {
+  border-color: var(--primary); color: var(--primary); background: var(--primary-50, var(--surface));
+}
+.mr-pager .pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* 建议列: 紧凑两行 (主: 建议总数 / 副: ✓采纳 ✗忽略 ⏵待处理) */
 .mr-sug-cell { vertical-align: middle; min-width: 120px; }
 .mr-sug { display: flex; flex-direction: column; gap: 2px; line-height: 1.25; }
@@ -1084,16 +1308,29 @@ onMounted(reload);
 .reason-tbl .cell-n { font-weight: 600; }
 .reason-tbl .cell-n-hot { color: var(--warn); }
 .reason-tbl .cell-r { vertical-align: top; }
-.reason-wrap { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; max-width: 340px; }
+.reason-wrap { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; max-width: 360px; }
 .reason-pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 11px; line-height: 1.5;
-  padding: 2px 8px; border-radius: 10px;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; line-height: 1.4;
+  padding: 1px 8px; border-radius: 10px;
   background: var(--surface-sunken); color: var(--ink-700);
   border: 1px solid var(--border);
-  max-width: 100%; overflow-wrap: anywhere; white-space: normal;
+  max-width: 100%;
+  cursor: help;       /* hint: title 里有完整 reason */
 }
-.reason-pill b { color: var(--ink-500); font-weight: 500; }
+.reason-label {
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reason-pill b { color: var(--ink-500); font-weight: 600; font-size: 10.5px; }
+/* 语义色 (按 reasonPillCls) */
+.reason-pill.rp-test    { background: color-mix(in srgb, var(--primary) 12%, var(--surface)); color: var(--primary); border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); }
+.reason-pill.rp-test b  { color: var(--primary); opacity: .8; }
+.reason-pill.rp-ignore  { background: var(--surface); color: var(--ink-500); border-style: dashed; }
+.reason-pill.rp-warn    { background: color-mix(in srgb, var(--warn) 15%, var(--surface)); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--border)); }
+.reason-pill.rp-warn b  { color: var(--warn); opacity: .8; }
+.reason-pill.rp-later   { background: color-mix(in srgb, #8b5cf6 12%, var(--surface)); color: #8b5cf6; border-color: color-mix(in srgb, #8b5cf6 30%, var(--border)); }
+.reason-pill.rp-later b { color: #8b5cf6; opacity: .8; }
+.reason-empty { color: var(--ink-500); font-size: 11.5px; }
 .reason-more-wrap { display: inline-flex; }
 .reason-more-wrap > summary {
   list-style: none; cursor: pointer; user-select: none;
