@@ -99,6 +99,7 @@ async def metrics_severity(
 @router.get("/mrs")
 async def list_mrs(
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     project_id: Optional[int] = None,
     state: Optional[str] = None,
     since: Optional[str] = None,
@@ -107,6 +108,13 @@ async def list_mrs(
     """MR 列表 + 每条 MR 的最近一次 run (含失败状态) + 建议统计.
 
     返回 {items: [...], failed_mr_count: N, total: N}.
+    分页: limit/offset (前端用 page * pageSize 算 offset).
+    注意: pr-agent /mrs 不支持 offset (实测: 传 offset=N 仍返回前 N 条),
+      所以 pr_agent_client.list_mrs 必须传 limit=200 一次拿全, 后端自己切片.
+      limit 上限 200 即 pr-agent 单次返回上限; 若真实 MR > 200, 后端只取前 200,
+      前端分页只覆盖这 200 条 — 不够用时再考虑 pr-agent 端加 offset 支持.
+    failed_mr_count 只统计当前页里有失败评审的 MR (避免跨页拉 stats 太重),
+      banner 数字与本页一致; 如需真实失败总数走 /metrics/overview.runs.failed.
     每条 MR 拍平:
       - last_run         自 /mrs/{pid}/{mr_id}/stats.runs[0], 字段: run_id / command /
                          status / model / started_at / duration_ms / error / suggestion_count
@@ -116,8 +124,9 @@ async def list_mrs(
     if not await pr_agent_client.is_configured():
         return {"items": [], "failed_mr_count": 0, "total": 0}
     try:
+        # 一次拿全: limit=200 即 pr-agent 上限, offset 透传过去也被忽略, 不影响.
         mrs = await pr_agent_client.list_mrs(
-            limit=limit, project_id=project_id, state=state, since=since,
+            limit=200, project_id=project_id, state=state, since=since,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -155,9 +164,15 @@ async def list_mrs(
             mr["suggestion_counts"] = None
         return mr
 
+    # pr-agent /mrs 不支持 offset (实测: 传 offset=N 仍返回前 N 条),
+    # 所以 mrs 永远是 "前 limit 条" — 不能用 offset/limit 直接拿分页片段.
+    # 改成: limit=200 一次拿完所有 MR (上限即 pr-agent 支持的最大值),
+    # 后端在内存里按 offset/limit 切片返回, total = 全量长度.
     items = await asyncio.gather(*[_attach_last_run(m) for m in mrs])
     failed = sum(1 for m in items if (m.get("last_run") or {}).get("status") == "failed")
-    return {"items": items, "failed_mr_count": failed, "total": len(items)}
+    total = len(items)
+    page_items = items[offset:offset + limit]
+    return {"items": page_items, "failed_mr_count": failed, "total": total}
 
 
 @router.get("/mrs/{project_id}/{mr_id}/timeline")

@@ -175,7 +175,7 @@ export async function getRules(since?: string): Promise<RuleStat[]> {
 export async function getAuthors(since?: string): Promise<AuthorStat[]> {
   return (await request.get('/pr-agent/metrics/authors', { params: since ? { since } : {} })) as AuthorStat[];
 }
-export async function listMrs(params: { limit?: number; project_id?: number; state?: string; since?: string } = {}): Promise<MrListResp> {
+export async function listMrs(params: { limit?: number; offset?: number; project_id?: number; state?: string; since?: string } = {}): Promise<MrListResp> {
   return (await request.get('/pr-agent/mrs', { params })) as MrListResp;
 }
 export async function getTimeline(projectId: number, mrId: number): Promise<TimelineResp> {

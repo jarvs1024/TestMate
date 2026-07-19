@@ -110,8 +110,14 @@ async def list_mrs(
     project_id: int | None = None,
     state: str | None = None,
     since: str | None = None,
+    offset: int = 0,
 ) -> list[dict]:
+    """MR 列表. offset: 跳过前 N 条 (从 0 起), 用于前端分页.
+    pr-agent 不支持 offset 时会被忽略 (回退为 limit 单页).
+    """
     params: dict[str, Any] = {"limit": limit}
+    if offset > 0:
+        params["offset"] = offset
     if project_id is not None:
         params["project_id"] = project_id
     if state:
