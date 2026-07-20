@@ -230,7 +230,7 @@
             <div class="rule-bar">
               <div class="bar-fill" :style="{ width: rulePct(r) + '%' }"></div>
             </div>
-            <div class="rule-n mono" :title="`规则被引用 ${r.cited_count ?? 0} 次`">{{ r.cited_count ?? 0 }}<span class="unit"> 次</span></div>
+            <div class="rule-n mono" :title="`规则被引用 ${ruleCited(r)} 次`">{{ ruleCited(r) }}<span class="unit"> 次</span></div>
             <div class="rule-ap mono" :class="ruleAdoptedClass(r)" :title="ruleAdoptedTitle(r)">{{ ruleAdoptedLabel(r) }}</div>
           </div>
         </div>
@@ -659,22 +659,28 @@ async function reloadKeepPage() {
   }
 }
 
-// 规则: 取前 10, 按 cited_count 降序
+// 抽个 ruleCited() 兼容新旧 pr-agent schema:
+//  - 新: total / applied / dismissed / open
+//  - 旧: cited_count / applied_count / dismissed_count / open_count
+function ruleCited(r: RuleStat): number {
+  return r.total ?? r.cited_count ?? 0;
+}
+// 规则: 取前 10, 按引用次数降序
 const rulesTop = computed(() => {
-  return [...rules.value].sort((a, b) => (b.cited_count ?? 0) - (a.cited_count ?? 0)).slice(0, 10);
+  return [...rules.value].sort((a, b) => ruleCited(b) - ruleCited(a)).slice(0, 10);
 });
-const maxCited = computed(() => Math.max(1, ...rulesTop.value.map(r => r.cited_count ?? 0)));
+const maxCited = computed(() => Math.max(1, ...rulesTop.value.map(ruleCited)));
 function rulePct(r: RuleStat): number {
-  return Math.round(((r.cited_count ?? 0) / maxCited.value) * 100);
+  return Math.round((ruleCited(r) / maxCited.value) * 100);
 }
 // 采纳率: 无引用时无意义, 不显示 100% 误导
 function ruleAdoptedLabel(r: RuleStat): string {
-  const n = r.cited_count ?? 0;
+  const n = ruleCited(r);
   if (n === 0) return '—';     // 引用 0 次 → 没法算采纳率
   return fmtPct(r.adoption_rate);
 }
 function ruleAdoptedClass(r: RuleStat): string {
-  const n = r.cited_count ?? 0;
+  const n = ruleCited(r);
   if (n === 0) return 'muted';
   const ad = r.adoption_rate ?? 0;
   if (ad >= 0.7) return 'high';
@@ -682,7 +688,7 @@ function ruleAdoptedClass(r: RuleStat): string {
   return 'mid';
 }
 function ruleAdoptedTitle(r: RuleStat): string {
-  const n = r.cited_count ?? 0;
+  const n = ruleCited(r);
   if (n === 0) return '未被引用, 无采纳率';
   return `引用 ${n} 次, 采纳率 ${fmtPct(r.adoption_rate)}`;
 }

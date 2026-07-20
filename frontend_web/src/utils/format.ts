@@ -121,24 +121,116 @@ export function fmtMs(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** 长错误信息抽取摘要: { head, root, traceback }
- * - head: 截断在 Traceback: 前的可读消息 (一般是 Exception: + Last error 简介)
+/** 长错误信息抽取摘要: { head, root, traceback, short }
+ * - head: 截断在 Traceback 段前的可读消息 (一般是 Exception: + Last error 简介)
  * - root: " -> " 链最后一节 (HTTPStatusError: 401 ...), 没有链就 null
- * - traceback: 完整 stack trace 段 (含 Traceback: 头), 没有就 null
- * 短错误 (<10 行 or <200 字): traceback=null, head=原全文 */
+ * - traceback: 完整 stack trace 段 (含 Traceback 头), 没有就 null
+ * 短错误 (<200 字): traceback=null, head=原全文
+ *
+ * 支持 3 种 pr-agent 错误格式:
+ * 1) Python 标准 traceback: "Traceback (most recent call last):\n  File ..." (带括号)
+ * 2) 单行 traceback 头:    "Traceback: ..." (冒号紧贴, 老式)
+ * 3) 纯 chain (无 traceback): "A: msg1 -> B: msg2 -> C: msg3" (pr-agent format_exception_chain)
+ */
 export function summarizeError(raw: string | null | undefined): { head: string; root: string | null; traceback: string | null; short: boolean } {
   if (!raw) return { head: '', root: null, traceback: null, short: true };
-  const tbIdx = raw.indexOf('Traceback:');
-  if (tbIdx < 0) return { head: raw.trim(), root: null, traceback: null, short: raw.length < 200 };
-  const head = raw.slice(0, tbIdx).trim();
-  const tbBlock = raw.slice(tbIdx);
-  // " -> " 链末节 = 根因 (HTTPStatusError / AuthenticationError 这类最后一条)
-  const parts = tbBlock.split(' -> ');
-  let root: string | null = null;
-  if (parts.length > 1) {
-    const last = parts[parts.length - 1].trim();
-    // 只在最后一段看起来是 error 总结时拿来用 (例如 "HTTPStatusError: Client error '401' ...")
-    if (/^[A-Z][A-Za-z]+(?:Error|Exception|Warning):/.test(last)) root = last;
+  // 找 traceback 起始位置: 支持 "Traceback:" 和 "Traceback (most recent call last):"
+  const m = raw.match(/Traceback\s*(?::|\(most recent call last\))/i);
+  if (m && m.index !== undefined) {
+    const tbIdx = m.index;
+    const head = raw.slice(0, tbIdx).trim();
+    const tbBlock = raw.slice(tbIdx);
+    // 优先级: tbBlock 的 -> 链 → head 的 -> 链 → head 的 "Last error: ..." 段
+    const root = pickChainRoot(tbBlock) ?? pickChainRoot(head) ?? pickLastErrorRoot(head);
+    return { head, root, traceback: tbBlock, short: false };
   }
-  return { head, root, traceback: tbBlock, short: false };
+  // 无 traceback: 走纯 chain 解析 + Last error 兜底
+  const head = raw.trim();
+  const root = pickChainRoot(head) ?? pickLastErrorRoot(head);
+  return { head, root, traceback: null, short: raw.length < 200 };
+}
+
+/** 从 " -> " 链里挑最后一节作为根因 (符合 ErrorType: 格式才算).
+ *  例: "A: x -> B: y -> HTTPStatusError: 401" → root="HTTPStatusError: 401"
+ *  注意: 跳过纯链节本身 (length<=1) 和不像 error 总结的最后节 (例如纯路径含 "->")
+ */
+function pickChainRoot(block: string): string | null {
+  const parts = block.split(' -> ');
+  if (parts.length <= 1) return null;
+  const last = parts[parts.length - 1].trim();
+  if (/^[A-Z][A-Za-z._]+(?:Error|Exception|Warning):/.test(last)) return last;
+  return null;
+}
+
+/** 从 pr-agent 风格的 "Last error: TypeName: msg" 抽根因.
+ *  pr-agent 把 format_exception_chain 的结果存到 _run_status["error"], 但实际只存了
+ *  最后一节 (没有 " -> " 前缀) 加上 "Last error: " 前缀. 例:
+ *    "Exception: Failed to ...\nLast error: RateLimitError: too many"
+ *  → 抽 "RateLimitError: too many" 作为根因展示.
+ *  也兼容 "RateLimitError: litellm.X: y" 这种嵌套: 拿最后那段 (litellm.X: y).
+ */
+function pickLastErrorRoot(head: string): string | null {
+  // 1) 找 "Last error: " 段
+  const m = head.match(/Last error:\s*(.+?)(?:\n|$)/i);
+  if (!m) return null;
+  const tail = m[1].trim();
+  // 2) 嵌套的 "TypeA: msg1 TypeB: msg2" 里挑最像 error 总结的一段 (按 ":" 切, 倒序遍历)
+  //    例: "RateLimitError: litellm.RateLimitError: OpenAIException - 已达... (2062)"
+  //    切: ["RateLimitError", "litellm.RateLimitError", "OpenAIException - 已达... (2062)"]
+  //    最后一段 "OpenAIException - ..." 是真正的根因.
+  const parts = tail.split(/(?<=\S):\s+/);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i].trim();
+    if (i === parts.length - 1) return p;  // 最后一段就是根因
+    // 中间段必须像 TypeName (大写开头 + 字母/点) 才能算
+    if (/^[A-Z][A-Za-z._]*$/.test(p)) return parts.slice(i).join(': ');
+  }
+  return tail;  // fallback: 整段
+}
+
+/** 智能识别错误类别 — 给 ErrorView 一个友好标签 (限流 / 鉴权 / 超时 等) */
+export type ErrCategory = 'rate_limit' | 'auth' | 'server' | 'timeout' | 'network' | 'unknown';
+export interface ErrMeta {
+  category: ErrCategory;
+  httpStatus: number | null;
+  rootType: string | null;   // 错误类名 (e.g. "HTTPStatusError", "AuthenticationError")
+  icon: string;
+  label: string;
+}
+const ERR_META: Record<ErrCategory, Omit<ErrMeta, 'httpStatus' | 'rootType'>> = {
+  rate_limit: { category: 'rate_limit', icon: '🚦', label: '限流' },
+  auth:       { category: 'auth',       icon: '🔑', label: '鉴权失败' },
+  server:     { category: 'server',     icon: '💥', label: '服务端错误' },
+  timeout:    { category: 'timeout',    icon: '⏱️', label: '超时' },
+  network:    { category: 'network',    icon: '🌐', label: '网络错误' },
+  unknown:    { category: 'unknown',    icon: '❗', label: '错误' },
+};
+export function categorizeError(head: string, root: string | null): ErrMeta {
+  const text = `${root || ''}\n${head}`.toLowerCase();
+  // 抽 HTTP 状态码: 4xx 客户端错 (401/403/404/429), 5xx 服务端错 (500-599).
+  // 兼容 "Error code: 500" / "'429 Too Many Requests'" / "status=502" 等格式.
+  const HTTP4XX = '(?:400|401|403|404|429)';
+  const HTTP5XX = '(?:5\\d{2})';
+  const statusMatch = text.match(new RegExp(`(?:^|[^\\d])(${HTTP4XX}|${HTTP5XX})(?=[^\\d]|$)`, 'i'));
+  const httpStatus = statusMatch ? Number(statusMatch[1]) : null;
+  // 类型名: 先看 root (可能是 "HTTPStatusError: 401" 或 "OpenAIException - msg"),
+  // root 拿不到 "大写开头标识符:" 就 fallback 到 head (例: "Exception: ...").
+  // 覆盖 "Exception:" 裸异常 和 "ValueError: ..." 带后缀, 也覆盖 root 是无 ":" 描述的情况.
+  function pickType(s: string | null): string | null {
+    if (!s) return null;
+    const m = s.match(/^([A-Z][A-Za-z._]+?)\s*:/);
+    return m && /^[A-Z][A-Za-z._]+$/.test(m[1]) ? m[1] : null;
+  }
+  const rootType = pickType(root) ?? pickType(head);
+  // 类别判定
+  let category: ErrCategory = 'unknown';
+  if (httpStatus === 429) category = 'rate_limit';
+  else if (httpStatus === 401 || httpStatus === 403) category = 'auth';
+  else if (httpStatus && httpStatus >= 500) category = 'server';
+  else if (/ratelimit|rate.?limit|too.?many.?requests|quota/i.test(text)) category = 'rate_limit';
+  else if (/authentication|invalid.?api.?key|unauthorized|forbidden/i.test(text)) category = 'auth';
+  else if (/connect.?timeout|read.?timeout|timeout/i.test(text)) category = 'timeout';
+  else if (/connection.?error|connection.?refused|connection.?reset|network|httpx|httperror/i.test(text)) category = 'network';
+  else if (rootType && /(Error|Exception)/.test(rootType) && httpStatus === null) category = 'unknown';
+  return { ...ERR_META[category], httpStatus, rootType };
 }

@@ -41,12 +41,19 @@ export interface OverviewResp {
   severity_breakdown?: SeverityBucket[];   // 7d/30d/all 共用, 自带 since 过滤
 }
 
+/** 规则命中聚合 — pr-agent 返回字段: total / applied / dismissed / open / superseded / adoption_rate
+ *  兼容旧 schema (cited_count / applied_count / dismissed_count / open_count), 函数里 fallback */
 export interface RuleStat {
   rule_key: string;
+  total?: number;            // 规则被引用次数 (旧: cited_count)
   cited_count?: number;
+  applied?: number;          // 旧: applied_count
   applied_count?: number;
+  dismissed?: number;        // 旧: dismissed_count
   dismissed_count?: number;
+  open?: number;             // 旧: open_count
   open_count?: number;
+  superseded?: number;
   adoption_rate?: number;
 }
 
