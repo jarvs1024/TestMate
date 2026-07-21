@@ -167,8 +167,10 @@
       </div>
     </div>
 
-    <!-- 被忽略的规则 (按 reason 汇总, 来自 pr-agent /dismissals/by-rule) -->
-    <div v-if="overview" class="card">
+    <!-- 三卡组合: 规则(被忽略 + 命中) 左列纵向聚合, 作者 右列跨 2 行独占 -->
+    <div v-if="overview" class="cluster-grid">
+      <!-- 被忽略的规则 (按 reason 汇总, 来自 pr-agent /dismissals/by-rule) -->
+      <div class="card card-dismiss">
       <div class="card-hd">
         <h2>✗ 近期被忽略的规则</h2>
         <span class="cnt">{{ dismissalsByRule.length }} 条 · {{ totalDismissals }} 次忽略</span>
@@ -215,10 +217,8 @@
       </table>
     </div>
 
-    <!-- 主区两列: 规则 + 作者 -->
-    <div v-if="overview" class="cols">
       <!-- 规则柱图 (横向 bar, 纯 CSS) -->
-      <div class="card">
+      <div class="card card-rules">
         <div class="card-hd">
           <h2>📐 规则命中</h2>
           <span class="cnt">{{ rules.length }} 条</span>
@@ -236,8 +236,8 @@
         </div>
       </div>
 
-      <!-- 作者表 -->
-      <div class="card">
+      <!-- 作者表 (右侧跨 2 行) -->
+      <div class="card card-author">
         <div class="card-hd">
           <h2>👤 作者分布</h2>
           <span class="cnt">{{ authors.length }} 人</span>
@@ -1016,9 +1016,32 @@ onMounted(reload);
   -webkit-text-fill-color: transparent; color: transparent;
 }
 
-/* 主区两列 */
-.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 1100px) { .cols { grid-template-columns: 1fr; } }
+/* 三卡组合: 左列 2 行(规则) + 右列跨 2 行(作者); 1.6:1 列比让规则类有足够横向空间堆 pill */
+.cluster-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  grid-template-areas:
+    "dismiss author"
+    "rules   author";
+  gap: 16px;
+  align-items: stretch;
+}
+.cluster-grid .card-dismiss { grid-area: dismiss; min-width: 0; }
+.cluster-grid .card-rules   { grid-area: rules;   min-width: 0; }
+.cluster-grid .card-author  { grid-area: author;  min-width: 0; }
+/* 视觉轻提示: 规则类左缘蓝, 作者右缘紫 — 靠细微色条带出维度聚类, 不抢卡片整体观感 */
+.cluster-grid .card-dismiss,
+.cluster-grid .card-rules   { border-left: 2px solid rgba(56, 139, 253, 0.35); }
+.cluster-grid .card-author  { border-left: 2px solid rgba(139, 92, 246, 0.30); }
+@media (max-width: 1100px) {
+  .cluster-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "dismiss"
+      "rules"
+      "author";
+  }
+}
 
 /* 通用 card */
 .card {
