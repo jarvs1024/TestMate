@@ -14,7 +14,9 @@ const props = defineProps<{
 const sum = computed(() => summarizeError(props.raw));
 const meta = computed(() => categorizeError(sum.value.head, sum.value.root));
 // 单行 (inline) 模式下, 短于阈值直显; 长出 head 摘要 + root 因; traceback 进 <details>
-const isLong = computed(() => !sum.value.short && (sum.value.head.length + (sum.value.root?.length || 0)) > (props.inlineThresh ?? 160));
+// 旧版按 head+root 长度判定, 但 traceback 经常很长而 head 很短, 导致 raw 1KB+ 仍走 inline 全显.
+// 改成按 raw 总长度: raw 超阈值就折叠, 不依赖 head 抽取是否"精简".
+const isLong = computed(() => (props.raw?.length ?? 0) > (props.inlineThresh ?? 200));
 /** 按词边界切, 不要硬切到半个词 (像 "litellm.Ra..." 这种残词)
  *  优先在标点 (: , ; . 空格) 处切, 找不到就硬切 */
 const HEAD_SHORT_MAX = 140;
