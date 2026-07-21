@@ -1023,9 +1023,8 @@ onMounted(reload);
   grid-template-areas:
     "dismiss author"
     "rules   author";
-  grid-template-rows: auto auto;       /* 显式让 2 行都按内容定高, 避免被 stretch 挤变形 */
-  align-items: start;                  /* 卡按内容高度, 不撑满; 空白退到 cluster-grid 背景上, 适配动态数据 */
   gap: 16px;
+  align-items: stretch;
 }
 .cluster-grid .card-dismiss { grid-area: dismiss; min-width: 0; }
 .cluster-grid .card-rules   { grid-area: rules;   min-width: 0; }
