@@ -118,7 +118,7 @@ async def list_mrs(
     每条 MR 拍平:
       - last_run         自 /mrs/{pid}/{mr_id}/stats.runs[0], 字段: run_id / command /
                          status / model / started_at / duration_ms / error / suggestion_count
-      - suggestion_counts 自 stats.suggestion_counts, 字段: total / applied / dismissed / open
+      - suggestion_counts 自 stats.suggestion_counts, 字段: total / applied / dismissed / open / superseded / adopted_implicitly
     stats 调用失败时 last_run / suggestion_counts 置 None, 不影响其他 MR.
     """
     if not await pr_agent_client.is_configured():
@@ -152,11 +152,17 @@ async def list_mrs(
                 mr["last_run"] = None
             # 2) suggestion_counts (前端列展示用)
             sc = stats.get("suggestion_counts") or {}
+            # 字段来自 pr-agent /stats.suggestion_counts:
+            #   total / applied / dismissed / open — 老字段
+            #   superseded — 已替代数 (pr-agent 增量字段)
+            #   adopted_implicitly — 其中通过 /adopt 手动采纳数 (已包含在 applied 中, 仅展示用, 不参与采纳率)
             mr["suggestion_counts"] = {
                 "total": int(sc.get("total", 0) or 0),
                 "applied": int(sc.get("applied", 0) or 0),
                 "dismissed": int(sc.get("dismissed", 0) or 0),
                 "open": int(sc.get("open", 0) or 0),
+                "superseded": int(sc.get("superseded", 0) or 0),
+                "adopted_implicitly": int(sc.get("adopted_implicitly", 0) or 0),
             }
         except Exception:
             # stats 拉失败不阻断, last_run / suggestion_counts 置 None

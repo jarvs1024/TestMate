@@ -85,12 +85,20 @@ export interface MrRow {
   suggestion_counts?: SuggestionCounts | null;
 }
 
-/** MR 建议统计: 总 / 采纳 / 忽略 / 待处理. 自 pr-agent /stats.suggestion_counts. */
+/** MR 建议统计 — 字段来自 pr-agent /stats.suggestion_counts, 经 backend gateway 白名单透传.
+ *  字段语义:
+ *  - applied 已包含 adopted_implicitly (GitLab Apply + 用户 /adopt 都计入 applied)
+ *  - adoption_rate = applied / total, **不要**把 adopted_implicitly 再加一次
+ *    (否则 /adopt 会被重复计算; 详见 pr_agent.py whitelist)
+ *  - adopted_implicitly 仅用于展示或下钻分析, 不参与采纳率
+ */
 export interface SuggestionCounts {
   total?: number;
-  applied?: number;
+  applied?: number;                  // 全部采纳数 (GitLab Apply + 用户 /adopt)
   dismissed?: number;
   open?: number;
+  superseded?: number;               // 已替代 (pr-agent 增量字段)
+  adopted_implicitly?: number;       // 其中通过 /adopt 手动采纳 — 仅展示用
 }
 
 /** MR 最近一次 pr-agent 评审 run, 拍平自 /mrs/{pid}/{mr_id}/stats.runs[0]. */
