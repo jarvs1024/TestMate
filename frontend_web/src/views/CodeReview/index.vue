@@ -393,18 +393,6 @@
           </div>
         </div>
 
-        <!-- 操作记录 (timeline.actions — 来自 pr-agent /timeline, 区分自动 applied vs 手动 /adopt) -->
-        <div class="dt-sep">操作记录 ({{ timeline.actions?.length || 0 }})</div>
-        <div v-if="!timeline.actions?.length" class="empty sm">无</div>
-        <div v-else class="actions">
-          <div v-for="(a, idx) in timeline.actions" :key="(a.at || '') + idx" class="act-row">
-            <span class="badge sm" :class="actionCls(a.action)" :title="a.action || ''">{{ actionLabel(a.action) }}</span>
-            <span class="act-actor">{{ a.actor || '—' }}</span>
-            <span class="act-at">{{ fmtIso(a.at) }}</span>
-            <span v-if="a.note" class="act-note" :title="a.note">{{ a.note }}</span>
-          </div>
-        </div>
-
         <!-- 建议列表 -->
         <div class="dt-sep">评审建议 ({{ timeline.suggestions?.length || 0 }})</div>
         <div v-if="!timeline.suggestions?.length" class="empty sm">无</div>
@@ -787,13 +775,6 @@ function sugLabel(s?: string): string {
 }
 function sugCls(s?: string): string {
   return s === 'applied' ? 'b-ok' : s === 'dismissed' ? 'b-mute' : s === 'superseded' ? 'b-warn' : 'b-info';
-}
-/** timeline actions 渲染辅助 — 区分自动 GitLab Apply vs 手动 /adopt */
-function actionLabel(a?: string): string {
-  return a === 'applied' ? 'applied' : a === 'adopted_implicitly' ? '/adopt' : (a || '?');
-}
-function actionCls(a?: string): string {
-  return a === 'applied' ? 'b-ok' : a === 'adopted_implicitly' ? 'b-adopt' : 'b-info';
 }
 
 // 时间线抽屉
@@ -1301,9 +1282,7 @@ onMounted(reload);
 [data-theme="dark"] .b-progress { background: color-mix(in srgb, #FBBF24 22%, transparent); color: #FBBF24; border-color: color-mix(in srgb, #FBBF24 40%, transparent); }
 /* 淡红: closed MR 用, 比 .b-err 弱, 不刺眼 */
 .b-err-soft { background: color-mix(in srgb, var(--err) 10%, transparent); color: color-mix(in srgb, var(--err) 80%, var(--ink-700)); }
-.b-mute  { background: var(--surface-sunken); color: var(--ink-500); }
-/* /adopt 手动采纳 — 蓝色系区分自动 applied (绿), 暗示'用户主动行为' */
-.b-adopt { background: color-mix(in srgb, var(--primary) 18%, transparent); color: var(--primary); }
+.b-mute { background: var(--surface-sunken); color: var(--ink-500); }
 
 /* drawer 样式复用 KnowledgeManage 的 .dt-* / .dt-pre 等 */
 .dt { display: flex; flex-direction: column; gap: 8px; }
@@ -1337,12 +1316,6 @@ onMounted(reload);
 .run-row .small { color: var(--ink-500); }
 .run-row .model { color: var(--ink-700); }
 .run-row .err { color: var(--err); }
-/* 操作记录行: badge + actor + 时间 + note (跟 run-row 同款节奏, 视觉不打架) */
-.act-row { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; padding: 5px 0; border-bottom: 1px dashed var(--border); flex-wrap: wrap; }
-.act-row:last-child { border-bottom: none; }
-.act-row .act-actor { color: var(--ink-700); font-weight: 600; }
-.act-row .act-at { color: var(--ink-500); font-family: var(--font-mono); font-size: 10.5px; }
-.act-row .act-note { color: var(--ink-500); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sugs { display: flex; flex-direction: column; gap: 6px; }
 .sug-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 8px 10px; background: var(--surface-sunken); border-radius: 8px; align-items: start; }

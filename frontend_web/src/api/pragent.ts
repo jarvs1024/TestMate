@@ -161,18 +161,7 @@ export interface RunRow {
   error?: string | null;
 }
 
-/** 时间线事件 — 来自 pr-agent /timeline.actions (gateway 透传, 无白名单).
- *  典型值:
- *  - action = "applied"           GitLab 「应用建议」按钮 (review-bot 自动, note 带 commit SHA)
- *  - action = "adopted_implicitly" 用户回复 /adopt 手动采纳 (note 带人类理由)
- *  前端 drawer 会渲染此列表为「操作记录」区; 类型先清晰化避免从 any 里猜字段.
- */
 export interface ActionRow {
-  action?: string;                   // 'applied' | 'adopted_implicitly' | ...
-  suggestion_id?: string;
-  actor?: string;
-  note?: string;
-  at?: string;
   [k: string]: any;
 }
 
