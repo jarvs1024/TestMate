@@ -397,9 +397,13 @@
         <div class="dt-sep">评审建议 ({{ timeline.suggestions?.length || 0 }})</div>
         <div v-if="!timeline.suggestions?.length" class="empty sm">无</div>
         <div v-else class="sugs">
-          <div v-for="(s, idx) in timeline.suggestions" :key="s.id ?? idx" class="sug-row" :class="sugRowCls(s.state || 'open')">
+          <div v-for="(s, idx) in timeline.suggestions" :key="s.id ?? idx" class="sug-row" :class="sugRowCls(s)">
             <div class="sug-l">
-              <span class="badge sm" :class="sugCls(s.state)">{{ sugLabel(s.state) }}</span>
+              <span class="badge sm" :class="sugCls(s)">{{ sugLabel(s) }}</span>
+              <!-- 手动采纳标记: 单独一行小 chip, 跟 [已采纳] 同列居中, 不挤压右侧数据 -->
+              <span v-if="s.state === 'applied' && adoptKind(s) === 'manual'"
+                    class="adopt-mark"
+                    title="用户回复 /adopt 手动采纳">手工</span>
               <span v-if="s.severity" class="badge sm sev-pill" :class="sevCls(s.severity)"
                     :title="sevTitleHint(s)">
                 {{ sevIcon(s.severity) }} {{ sevLabel(s.severity) }}
@@ -415,6 +419,11 @@
                 <span class="sug-reason-k">忽略原因</span>
                 <span v-if="isCommitSha(s.dismissed_reason)" class="sug-reason-auto" :title="`原始 reason: ${s.dismissed_reason}`">🤖 自动忽略 (因 commit 合并)</span>
                 <span v-else>{{ s.dismissed_reason }}</span>
+              </div>
+              <!-- 手动采纳原因 (note 来自 action_events; auto 采纳的 commit 信息走 tooltip 不重复显示) -->
+              <div v-if="s.state === 'applied' && adoptKind(s) === 'manual' && adoptNote(s)" class="sug-reason">
+                <span class="sug-reason-k">采纳原因</span>
+                <span>{{ adoptNote(s) }}</span>
               </div>
             </div>
           </div>
@@ -433,7 +442,7 @@ import { ElMessage } from 'element-plus';
 import {
   getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity, getDismissalsByRule,
   type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type MrListResp, type TimelineResp, type HealthResp,
-  type SeverityBucket, type DismissalsByRuleItem,
+  type SeverityBucket, type DismissalsByRuleItem, type SuggestionRow, type ActionRow,
 } from '@/api/pragent';
 import ErrorView from '@/components/ErrorView.vue';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
@@ -738,7 +747,10 @@ function sevLabel(s: string): string { return SEV_META[s]?.label || s; }
 function sevIcon(s: string): string { return SEV_META[s]?.icon || '⚪'; }
 function sevCls(s: string): string { return SEV_META[s]?.cls || 'sev-c4'; }
 
-function sugRowCls(state: string): string { return 's-' + (state || 'open'); }
+function sugRowCls(s: SuggestionRow): string {
+  // 手动/自动 已采纳 行样式一致 (正常 opacity), 仅靠 [手工] 小标 + 采纳原因区分
+  return 's-' + (s.state || 'open');
+}
 function sevTitleHint(s: any): string {
   const base = '严重等级 ' + sevLabel(s.severity);
   return s.severity_source ? base + ' · 来源: ' + sevSrcLabel(s.severity_source) : base;
@@ -770,11 +782,36 @@ function mrLastRunTitle(m: MrRow): string {
   const err = (lr.error || '').split('\n')[0].slice(0, 120) || '评审失败';
   return `最近一次评审失败: ${err}`;
 }
-function sugLabel(s?: string): string {
-  return s === 'applied' ? '已采纳' : s === 'dismissed' ? '已忽略' : s === 'superseded' ? '已替代' : '开放';
+function sugLabel(s: SuggestionRow): string {
+  // 手动/自动 都用 "已采纳" (跟 auto 视觉对齐), "手工" 单独小标跟在徽章下面
+  return s.state === 'applied' ? '已采纳' : s.state === 'dismissed' ? '已忽略' : s.state === 'superseded' ? '已替代' : '开放';
 }
-function sugCls(s?: string): string {
-  return s === 'applied' ? 'b-ok' : s === 'dismissed' ? 'b-mute' : s === 'superseded' ? 'b-warn' : 'b-info';
+function sugCls(s: SuggestionRow): string {
+  // 手动/自动 已采纳 都用 b-ok 绿徽章
+  return s.state === 'applied' ? 'b-ok' : s.state === 'dismissed' ? 'b-mute' : s.state === 'superseded' ? 'b-warn' : 'b-info';
+}
+/** timeline.actions 按 suggestion_id 索引 (last-write-wins, 同一建议多次采纳取最近一次) */
+const actionsBySugId = computed(() => {
+  const m = new Map<string, ActionRow>();
+  for (const a of (timeline.value?.actions || [])) {
+    if (!a.suggestion_id) continue;
+    m.set(String(a.suggestion_id), a);
+  }
+  return m;
+});
+/** 区分自动 vs 手动采纳, null = 未匹配到 action (老数据 / 缺失记录) */
+function adoptKind(s: SuggestionRow): 'auto' | 'manual' | null {
+  if (!s.suggestion_id) return null;
+  const a = actionsBySugId.value.get(s.suggestion_id);
+  if (!a) return null;
+  if (a.action === 'applied') return 'auto';
+  if (a.action === 'adopted_implicitly') return 'manual';
+  return null;
+}
+/** 采纳事件的 note: auto = "commit {sha}", manual = 人类理由 */
+function adoptNote(s: SuggestionRow): string {
+  if (!s.suggestion_id) return '';
+  return actionsBySugId.value.get(s.suggestion_id)?.note || '';
 }
 
 // 时间线抽屉
@@ -1322,6 +1359,8 @@ onMounted(reload);
 .sug-row.s-applied { opacity: 0.65; }
 .sug-row.s-dismissed { opacity: 0.45; }
 .sug-l { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+/* 手动采纳小标: 紧跟 [已采纳] 徽章下面, 居中. 文字用 primary 提色, 跟 [已采纳] 区分但低调 */
+.adopt-mark   { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; font-family: var(--font-mono); letter-spacing: 0.2px; color: var(--primary); background: color-mix(in srgb, var(--primary) 18%, transparent); }
 .sug-l .imp { color: var(--warn); font-size: 10px; letter-spacing: -1px; }
 .sug-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .sug-loc { font-size: 11px; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

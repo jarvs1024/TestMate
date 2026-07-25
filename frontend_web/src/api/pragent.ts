@@ -121,6 +121,8 @@ export interface MrListResp {
 }
 
 export interface SuggestionRow {
+  /** pr-agent 主键, 形如 "sug-5d2e44773903". 与 timeline.actions[].suggestion_id 对齐. */
+  suggestion_id?: string;
   id?: number;
   file?: string;
   line?: number;
