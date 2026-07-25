@@ -100,7 +100,7 @@
       <div class="stat">
         <div class="num">{{ overview.suggestions?.total ?? 0 }}</div>
         <div class="lbl">建议</div>
-        <div class="sub">采纳 {{ overview.suggestions?.applied ?? 0 }} · 忽略 {{ overview.suggestions?.dismissed ?? 0 }} · 待处理 {{ overview.suggestions?.open ?? 0 }}</div>
+        <div class="sub">采 {{ overview.suggestions?.applied ?? 0 }} · 忽 {{ overview.suggestions?.dismissed ?? 0 }} · 待 {{ overview.suggestions?.open ?? 0 }}</div>
       </div>
       <div class="stat highlight">
         <div class="num">{{ fmtPct(overview.suggestions?.adoption_rate) }}</div>
