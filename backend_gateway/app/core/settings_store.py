@@ -66,6 +66,14 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": True,
     },
     {
+        "key": "review_agent.db_path",
+        "category": "data-source",
+        "value_type": "string",
+        "default": settings.REVIEW_AGENT_DB_PATH,
+        "description": "ReviewAgent SQLite 文件绝对路径 (默认 /data/reviewagent/telemetry.db)",
+        "is_secret": False,
+    },
+    {
         "key": "dify.base_url",
         "category": "data-source",
         "value_type": "url",

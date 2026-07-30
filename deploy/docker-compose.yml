@@ -114,9 +114,16 @@ services:
 
       DINGTALK_DEFAULT_WEBHOOK: ${DINGTALK_DEFAULT_WEBHOOK:-}
 
+      # ReviewAgent (代码检视 V2 telemetry) — 本地 SQLite, docker 挂载进容器
+      REVIEW_AGENT_DB_PATH: ${REVIEW_AGENT_DB_PATH:-/data/reviewagent/telemetry.db}
+
       ADMIN_DEFAULT_PASSWORD: ${ADMIN_DEFAULT_PASSWORD:-ChangeMe@2026}
     ports:
       - "${BACKEND_HOST_PORT:-18000}:8000"
+    # ReviewAgent SQLite: 容器内读 /data/reviewagent/telemetry.db, 来源宿主机 ReviewAgent 项目
+    # 宿主路径默认 ~/ReviewAgent/data (Mac dev), 可在 deploy/.env 改 REVIEW_AGENT_HOST_DATA_DIR
+    volumes:
+      - ${REVIEW_AGENT_HOST_DATA_DIR:-${HOME}/ReviewAgent/data}:/data/reviewagent:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/health/ready"]
       interval: 15s

@@ -126,6 +126,25 @@ SEED_AGENTS: list[dict] = [
         "is_featured": True,
         "route": "page:code-review",
     },
+    {
+        "code": "code-review-v2",
+        "name": "代码检视 V2",
+        "icon": "🧬",
+        "category": AgentCategory.auto_code.value,  # 同 V1 分类, V2 = 新数据源同视图
+        "version": "v0.2.0",
+        "status": AgentStatus.beta.value,            # V2 还在迭代, 先 beta
+        "summary": "ReviewAgent 评审数据看板: 同 V1 视图, 数据源换成本地 SQLite (reviewagent/telemetry.db)",
+        "use_when": "看 ReviewAgent 跑过的 MR 评审 + 建议采纳, 或跟 V1 (pr-agent) 数据对比",
+        "not_for": "要看 GitLab MR 详情 diff / 评论 / 提交记录, 仍走 V1 (pr-agent 直连 GitLab)",
+        "tags": ["代码", "检视", "V2", "看板"],
+        "engine": AgentEngine.builtin.value,
+        "engine_config": {},
+        "input_schema": [],
+        "data_sources": ["review_agent:telemetry"],
+        "tools": [],
+        "is_featured": False,
+        "route": "page:code-review-v2",
+    },
 ]
 
 
