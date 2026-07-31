@@ -265,7 +265,7 @@ const SOURCE_GROUPS: SourceGroupDef[] = [
   { id: 'ragflow',  prefix: 'ragflow.',  icon: '📚', label: 'RAGFlow (知识库 API)', testKey: 'ragflow',  hint: 'KB 知识库 · 数据集 / 文档 / chunking API' },
   { id: 'dify',     prefix: 'dify.',     icon: '🤖', label: 'Dify (Workflow API)',   testKey: 'dify',     hint: '智能体广场 · workflow / 对话 API' },
   { id: 'pr-agent', prefix: 'pr_agent.', icon: '🧪', label: 'pr-agent (代码检视)',   testKey: 'pr-agent', hint: '代码检视 · telemetry / 健康检查' },
-  { id: 'review-agent', prefix: 'review_agent.', icon: '🧬', label: 'ReviewAgent (代码检视 V2)', testKey: 'review-agent', hint: '代码检视 V2 · SQLite 直读 / 健康检查' },
+  { id: 'review-agent', prefix: 'review_agent.', icon: '🧬', label: 'ReviewAgent (代码检视 V2)', testKey: 'review-agent', hint: '代码检视 V2 · HTTP / 健康检查' },
 ];
 const sourceGroups = computed<DataSourceGroup[]>(() =>
   SOURCE_GROUPS.map(g => ({

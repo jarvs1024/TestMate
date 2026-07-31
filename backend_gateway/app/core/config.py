@@ -60,10 +60,10 @@ class Settings(BaseSettings):
     PR_AGENT_BASE_URL: str = ""
     PR_AGENT_API_TOKEN: str = ""
 
-    # ReviewAgent (代码检视 V2 telemetry) — 本地 SQLite 路径
-    # docker compose 里 mount /Users/jarvs/ReviewAgent/data → /data/reviewagent
-    # 默认 /data/reviewagent/telemetry.db (容器内); 本地直接跑用绝对路径
-    REVIEW_AGENT_DB_PATH: str = "/data/reviewagent/telemetry.db"
+    # ReviewAgent (代码检视 V2 telemetry) — HTTP 服务地址
+    # 对齐 pr-agent.base_url: ReviewAgent 跑在 host:3000,容器内走 host.docker.internal:3000
+    REVIEW_AGENT_BASE_URL: str = "http://host.docker.internal:3000"
+    REVIEW_AGENT_API_TOKEN: str = ""
 
     # DingTalk
     DINGTALK_DEFAULT_WEBHOOK: str = ""

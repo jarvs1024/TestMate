@@ -21,7 +21,7 @@ router = APIRouter()
 def _unconfigured() -> None:
     raise HTTPException(
         status_code=503,
-        detail="review-agent 未配置 (env REVIEW_AGENT_DB_PATH 或 settings_store 'review_agent.db_path')",
+        detail="review-agent 未配置 (env REVIEW_AGENT_BASE_URL 或 settings_store \"review_agent.base_url\")",
     )
 
 
@@ -29,7 +29,7 @@ def _unconfigured() -> None:
 async def health(_user: User = Depends(get_current_user)) -> dict:
     configured = await review_agent_client.is_configured()
     if not configured:
-        return {"configured": False, "status": "off", "message": "未配置 db_path"}
+        return {"configured": False, "status": "off", "message": "未配置 base_url"}
     status, msg = await review_agent_client.probe()
     return {"configured": True, "status": status, "message": msg}
 

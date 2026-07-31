@@ -1,168 +1,207 @@
-"""ReviewAgent telemetry SQLite client — 直读本地 SQLite 文件.
+"""ReviewAgent telemetry HTTP client — 跟 pr_agent_client 同款 httpx 架构.
 
-ReviewAgent (/Users/jarvs/ReviewAgent) 现在是 Python 库 + 本地 SQLite, 不跑 HTTP 服务.
-为不引入新进程, 我们直接读它的 telemetry.db (docker compose 里 mount 进 backend 容器).
-接口形态对齐 pr_agent_client (overview / list_mrs / mr_timeline / ...), 前端共用视图.
-
-路径配置优先级: settings_store('review_agent.db_path') > env REVIEW_AGENT_DB_PATH > config 默认.
-默认空表示未配置, 调用 is_configured() 返回 False.
-
-SQLite 字段说明 (reviewagent/telemetry):
-  mr_activity: project_id, mr_iid, title, author_username, source_branch, target_branch,
-               state, created_at, updated_at, merged_at, author_sticky, last_review_at, ...
-  suggestions: id, project_id, mr_iid, note_id, file_path, target_line, target_line_end,
-               existing_code, improved_code, header, severity, head_sha, state,
-               created_at, updated_at, applied_at, dismissed_at, dismissed_by, dismissed_reason,
-               rule_keys, one_sentence_summary, importance, score, fingerprint, cohort_key,
-               severity_source, label, posted_at
-  review_runs: id, project_id, mr_iid, command, triggered_by, actor_username, started_at,
-               finished_at, status, error, model, prompt_tokens, completion_tokens,
-               total_tokens, duration_ms, rule_keys_cited, suggestion_count
-  suggestion_actions: id, project_id, mr_iid, suggestion_note_id, file_path, target_line,
-               action, actor_username, reason, validation_status, head_sha_posted,
-               head_sha_current, created_at
-
-immutable=1: 跨进程只读访问 + ReviewAgent 本体可能正在写, immutable 跳过 WAL/journal 写锁.
+ReviewAgent 跑 HTTP 服务 (默认 host:3000), 后端容器走 host.docker.internal:3000.
+base_url + api_token 实时从 settings_store 读, 兜底 .env.
+返回字段尽量对齐 pr-agent schema, V2 视图可直接消费.
 """
 from __future__ import annotations
 import asyncio
 import logging
 import os
-import sqlite3
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.core.settings_store import get
+import httpx
+
+from app.core.settings_store import _rewrite_loopback, get
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_BASE_URL = "http://127.0.0.1:3000"
+V2_RECENT_WINDOW = timedelta(hours=24)
 
-async def _db_path() -> str:
-    p = (await get("review_agent.db_path", "")) or os.environ.get("REVIEW_AGENT_DB_PATH", "")
-    return p.strip()
+
+# ===== 配置/连接层 =====
+
+async def _config() -> tuple[str, str]:
+    """(base_url, token) — DB 优先, env 兜底, 代码默认兜底."""
+    base = (
+        (await get("review_agent.base_url", "")) or ""
+        or os.environ.get("REVIEW_AGENT_BASE_URL", "") or ""
+    )
+    token = (
+        (await get("review_agent.api_token", "")) or ""
+        or os.environ.get("REVIEW_AGENT_API_TOKEN", "") or ""
+    )
+    if not base:
+        base = DEFAULT_BASE_URL
+    return _rewrite_loopback(base).rstrip("/"), token
+
+
+async def _headers() -> dict[str, str]:
+    _, token = await _config()
+    h = {"Accept": "application/json"}
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
 
 
 async def is_configured() -> bool:
-    p = await _db_path()
-    return bool(p) and Path(p).exists()
-
-
-def _query_sync(path: str, sql: str, params: tuple, fetchone: bool):
-    """同步 query — 必须包到 asyncio.to_thread 里跑. fetchone=True 时只取第一行."""
-    uri = f"file:{path}?mode=ro&immutable=1"
-    conn = sqlite3.connect(uri, uri=True, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    try:
-        cur = conn.execute(sql, params)
-        rows = cur.fetchall()
-        if fetchone:
-            return dict(rows[0]) if rows else None
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
-
-
-async def _fetchall(sql: str, params: tuple = ()) -> list[dict]:
-    p = await _db_path()
-    if not p:
-        return []
-    return await asyncio.to_thread(_query_sync, p, sql, params, False)
-
-
-async def _fetchone(sql: str, params: tuple = ()) -> dict | None:
-    p = await _db_path()
-    if not p:
-        return None
-    return await asyncio.to_thread(_query_sync, p, sql, params, True)
+    base, _ = await _config()
+    return bool(base)
 
 
 async def probe() -> tuple[str, str]:
-    if not await is_configured():
-        return "off", "未配置 db_path 或文件不存在"
+    """探 /api/v1/telemetry/health, 返回 (status, message)."""
+    base, _ = await _config()
+    if not base:
+        return "off", "未配置 base_url"
     try:
-        await _fetchall("SELECT 1 FROM mr_activity LIMIT 1")
-        return "ok", "可读"
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{base}/api/v1/telemetry/health", headers=await _headers())
+            if r.status_code == 200:
+                data = r.json() or {}
+                return "ok", (
+                    f"backend={data.get('backend', '?')}, "
+                    f"db={data.get('db_path', '?')}, "
+                    f"mr={data.get('mr_records', '?')}, "
+                    f"run={data.get('run_records', '?')}"
+                )
+            return "warn", f"HTTP {r.status_code}"
     except Exception as e:
         return "off", f"{type(e).__name__}: {e}"
 
 
-# ===== 数据映射 =====
+async def _get(path: str, params: dict[str, Any] | None = None) -> Any:
+    base, _ = await _config()
+    url = f"{base}/api/v1/telemetry{path}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url, headers=await _headers(), params=params or {})
+    except Exception as e:
+        raise RuntimeError(f"review-agent 不可达 ({base}): {type(e).__name__}: {e}")
+    if r.status_code == 404:
+        raise RuntimeError(f"review-agent 404: {path}")
+    if r.status_code >= 400:
+        msg = r.text[:300] if r.text else ""
+        raise RuntimeError(f"review-agent HTTP {r.status_code}: {msg}")
+    try:
+        return r.json()
+    except Exception as e:
+        raise RuntimeError(f"review-agent 返回非 JSON: {e}; body={r.text[:200]}")
+
+
+# ===== pr-agent 字段兼容的 mapping 层 =====
+
+def _v2_state(db_state: str | None, last_review_at: str | None) -> str:
+    """ReviewAgent 没有 'updated' 标识. 基于 last_review_at 时间窗补 'updated' (24h 内)."""
+    if not db_state:
+        return "opened"
+    if db_state != "opened":
+        return db_state
+    if not last_review_at:
+        return "opened"
+    try:
+        ts_s = last_review_at
+        if ts_s.endswith("Z"):
+            ts_s = ts_s[:-1] + "+00:00"
+        ts = datetime.fromisoformat(ts_s.split("+")[0].split(".")[0])
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if now - ts <= V2_RECENT_WINDOW:
+            return "updated"
+    except Exception:
+        return "opened"
+    return "opened"
+
+
+def _map_mr_row(m: dict) -> dict:
+    return {
+        "project_id": m.get("project_id"),
+        "mr_id": m.get("mr_iid"),
+        "title": m.get("title"),
+        "author": m.get("author_sticky") or m.get("author_username") or "",
+        "source_branch": m.get("source_branch"),
+        "target_branch": m.get("target_branch"),
+        "state": m.get("state") or "opened",
+        "opened_at": m.get("created_at"),
+        "last_seen_at": m.get("updated_at"),
+        "merged_at": m.get("merged_at"),
+        "url": m.get("url"),
+        "_v2_state": _v2_state(m.get("state"), m.get("last_review_at")),
+        "last_run": None,
+        "suggestion_counts": None,
+    }
+
+
+# ===== 数据查询 API =====
 
 async def overview(since: str | None = None) -> dict:
-    """汇总指标: MR / 建议 / runs / 严重等级分桶. 对齐 pr-agent /metrics/overview."""
-    params: list[Any] = []
-    where_sug = ""
+    """对齐 pr-agent /metrics/overview 形态: mrs / suggestions / runs / severity_breakdown."""
+    params_mrs: dict[str, Any] = {"limit": 200}
+    params_summary: dict[str, Any] = {}
     if since:
-        where_sug = " WHERE created_at >= ?"
-        params.append(since)
+        params_mrs["since"] = since
+        params_summary["since"] = since
 
-    mrs_total = await _fetchone("SELECT COUNT(*) AS n FROM mr_activity") or {"n": 0}
-    mrs_open = await _fetchone("SELECT COUNT(*) AS n FROM mr_activity WHERE state='opened'") or {"n": 0}
-    mrs_merged = await _fetchone("SELECT COUNT(*) AS n FROM mr_activity WHERE state='merged'") or {"n": 0}
-    mrs_closed = await _fetchone("SELECT COUNT(*) AS n FROM mr_activity WHERE state='closed'") or {"n": 0}
+    mrs_raw = await _get("/mrs", params_mrs) or {}
+    items = mrs_raw.get("mrs") if isinstance(mrs_raw, dict) else (mrs_raw or [])
+    state_count = {"opened": 0, "merged": 0, "closed": 0}
+    for m in items:
+        s = (m.get("state") or "opened").lower()
+        if s in state_count:
+            state_count[s] += 1
+        else:
+            state_count["closed"] += 1
 
-    sug_total = await _fetchone(f"SELECT COUNT(*) AS n FROM suggestions{where_sug}", tuple(params)) or {"n": 0}
-    sug_applied = await _fetchone(f"SELECT COUNT(*) AS n FROM suggestions WHERE state='applied'{(' AND created_at >= ?' if since else '')}", tuple(params)) or {"n": 0}
-    sug_dismissed = await _fetchone(f"SELECT COUNT(*) AS n FROM suggestions WHERE state='dismissed'{(' AND created_at >= ?' if since else '')}", tuple(params)) or {"n": 0}
-    sug_open = await _fetchone(f"SELECT COUNT(*) AS n FROM suggestions WHERE state='open'{(' AND created_at >= ?' if since else '')}", tuple(params)) or {"n": 0}
+    ov_data = await _get("/metrics/overview", params_summary or None) or {}
+    by_status = ov_data.get("by_status") or {}
+    runs_total = int(ov_data.get("total_runs") or 0)
+    runs_failed = int(by_status.get("failed") or 0)
+    runs_success_n = int(by_status.get("success") or 0)
+    runs_skipped = int(by_status.get("skipped") or 0)
+    success_rate = round((runs_success_n + runs_skipped) / runs_total, 4) if runs_total else 0.0
 
-    total_n = int(sug_total["n"] or 0)
-    applied_n = int(sug_applied["n"] or 0)
-    dismissed_n = int(sug_dismissed["n"] or 0)
-    open_n = int(sug_open["n"] or 0)
-    adoption_rate = round(applied_n / total_n, 4) if total_n else 0.0
-    dismissal_rate = round(dismissed_n / total_n, 4) if total_n else 0.0
+    sev_data = await _get("/metrics/severity") or {}
+    sev_counts = sev_data.get("severity_counts") or {}
 
-    runs_total = await _fetchone("SELECT COUNT(*) AS n FROM review_runs") or {"n": 0}
-    runs_failed = await _fetchone("SELECT COUNT(*) AS n FROM review_runs WHERE status='failed'") or {"n": 0}
-    runs_total_n = int(runs_total["n"] or 0)
-    runs_failed_n = int(runs_failed["n"] or 0)
-    success_rate = round((runs_total_n - runs_failed_n) / runs_total_n, 4) if runs_total_n else 0.0
+    sev_breakdown = [
+        {
+            "severity": sev,
+            "total": int(total),
+            "applied": 0,
+            "dismissed": 0,
+            "open": int(total),
+            "superseded": 0,
+            "adoption_rate": 0.0,
+            "dismissal_rate": 0.0,
+        }
+        for sev, total in sev_counts.items()
+    ]
+    sev_breakdown.sort(key=lambda x: -x["total"])
 
-    sev_rows = await _fetchall(
-        f"""SELECT COALESCE(severity, 'unspecified') AS severity,
-                  COUNT(*) AS total,
-                  SUM(CASE WHEN state='applied' THEN 1 ELSE 0 END) AS applied,
-                  SUM(CASE WHEN state='dismissed' THEN 1 ELSE 0 END) AS dismissed,
-                  SUM(CASE WHEN state='open' THEN 1 ELSE 0 END) AS open
-            FROM suggestions{' WHERE created_at >= ?' if since else ''}
-            GROUP BY COALESCE(severity, 'unspecified')""",
-        tuple(params),
-    )
-    sev_breakdown: list[dict] = []
-    for r in sev_rows:
-        total = int(r["total"] or 0)
-        applied = int(r["applied"] or 0)
-        dismissed = int(r["dismissed"] or 0)
-        sev_breakdown.append({
-            "severity": r["severity"],
-            "total": total,
-            "applied": applied,
-            "dismissed": dismissed,
-            "open": int(r["open"] or 0),
-            "adoption_rate": round(applied / total, 4) if total else 0.0,
-            "dismissal_rate": round(dismissed / total, 4) if total else 0.0,
-        })
+    sug_total = sum(int(v or 0) for v in sev_counts.values())
 
     return {
         "since": since,
         "mrs": {
-            "total": int(mrs_total["n"] or 0),
-            "merged": int(mrs_merged["n"] or 0),
-            "open": int(mrs_open["n"] or 0),
-            "closed": int(mrs_closed["n"] or 0),
+            "total": len(items),
+            "merged": state_count["merged"],
+            "open": state_count["opened"],
+            "closed": state_count["closed"],
         },
         "suggestions": {
-            "total": total_n,
-            "applied": applied_n,
-            "dismissed": dismissed_n,
-            "open": open_n,
-            "adoption_rate": adoption_rate,
-            "dismissal_rate": dismissal_rate,
+            "total": sug_total,
+            "applied": 0,
+            "dismissed": 0,
+            "open": sug_total,
+            "adoption_rate": 0.0,
+            "dismissal_rate": 0.0,
         },
         "runs": {
-            "total": runs_total_n,
-            "failed": runs_failed_n,
+            "total": runs_total,
+            "failed": runs_failed,
             "success_rate": success_rate,
         },
         "severity_breakdown": sev_breakdown,
@@ -170,345 +209,167 @@ async def overview(since: str | None = None) -> dict:
 
 
 async def per_rule_stats(since: str | None = None) -> list[dict]:
-    params: list[Any] = []
-    where = ""
+    """/metrics/rules → pr-agent RuleStat 形状.
+
+    ReviewAgent 此端点只有 {rule_key, count}, 没有按 state 拆分,
+    留 applied/dismissed/open = 0 (前端 V2 视图容错).
+    """
+    params: dict[str, Any] = {}
     if since:
-        where = " WHERE created_at >= ?"
-        params.append(since)
-    rows = await _fetchall(f"SELECT rule_keys, state FROM suggestions{where}", tuple(params))
-    bucket: dict[str, dict] = {}
-    for r in rows:
-        keys = [k.strip() for k in (r["rule_keys"] or "").split(",") if k.strip()]
-        if not keys:
-            keys = ["(no_rule_key)"]
-        for k in keys:
-            slot = bucket.setdefault(k, {"rule_key": k, "total": 0, "applied": 0, "dismissed": 0, "open": 0})
-            slot["total"] += 1
-            state = r["state"]
-            if state == "applied":
-                slot["applied"] += 1
-            elif state == "dismissed":
-                slot["dismissed"] += 1
-            elif state == "open":
-                slot["open"] += 1
-    out = []
-    for v in bucket.values():
-        v["adoption_rate"] = round(v["applied"] / v["total"], 4) if v["total"] else 0.0
-        out.append(v)
+        params["since"] = since
+    data = await _get("/metrics/rules", params or None) or {}
+    return [
+        {
+            "rule_key": r.get("rule_key"),
+            "total": int(r.get("count") or 0),
+            "applied": 0,
+            "dismissed": 0,
+            "open": 0,
+            "adoption_rate": 0.0,
+        }
+        for r in (data.get("rules") or [])
+    ]
+
+
+async def per_author_stats(since: str | None = None) -> list[dict]:
+    """/metrics/authors.{author, runs} → pr-agent AuthorStat 形状."""
+    params: dict[str, Any] = {}
+    if since:
+        params["since"] = since
+    data = await _get("/metrics/authors", params or None) or {}
+    return [
+        {
+            "author": r.get("author"),
+            "mr_count": 0,
+            "suggestion_count": int(r.get("runs") or 0),
+            "applied": 0,
+            "dismissed": 0,
+            "runs_by_command": {},
+            "adoption_rate": 0.0,
+        }
+        for r in (data.get("authors") or [])
+    ]
+
+
+async def severity_breakdown(since: str | None = None, pr_url: str | None = None) -> list[dict]:
+    """/metrics/severity → pr-agent severity_breakdown 形状."""
+    params: dict[str, Any] = {}
+    if since:
+        params["since"] = since
+    data = await _get("/metrics/severity", params or None) or {}
+    counts = data.get("severity_counts") or {}
+    out = [
+        {
+            "severity": sev,
+            "total": int(total),
+            "applied": 0,
+            "dismissed": 0,
+            "open": int(total),
+            "superseded": 0,
+            "adoption_rate": 0.0,
+            "dismissal_rate": 0.0,
+        }
+        for sev, total in counts.items()
+    ]
     out.sort(key=lambda x: -x["total"])
     return out
 
 
-async def per_author_stats(since: str | None = None) -> list[dict]:
-    mr_rows = await _fetchall(
-        f"""SELECT project_id, mr_iid, author_username, author_sticky
-            FROM mr_activity{('WHERE updated_at >= ?' if since else '')}""",
-        (since,) if since else (),
-    )
-    sug_rows = await _fetchall(
-        f"""SELECT project_id, mr_iid, state FROM suggestions
-            {('WHERE created_at >= ?' if since else '')}""",
-        (since,) if since else (),
-    )
-    by_mr: dict[tuple[int, int], dict] = {}
-    for s in sug_rows:
-        key = (int(s["project_id"]), int(s["mr_iid"]))
-        slot = by_mr.setdefault(key, {"applied": 0, "dismissed": 0, "open": 0})
-        state = s["state"]
-        if state == "applied":
-            slot["applied"] += 1
-        elif state == "dismissed":
-            slot["dismissed"] += 1
-        elif state == "open":
-            slot["open"] += 1
-    by_author: dict[str, dict] = {}
-    for r in mr_rows:
-        author = (r["author_sticky"] or r["author_username"] or "unknown").strip()
-        slot = by_author.setdefault(author, {
-            "author": author, "mr_count": 0, "suggestion_count": 0,
-            "applied": 0, "dismissed": 0,
-        })
-        slot["mr_count"] += 1
-        s = by_mr.get((int(r["project_id"]), int(r["mr_iid"])), {})
-        sug_total = int(s.get("applied", 0)) + int(s.get("dismissed", 0)) + int(s.get("open", 0))
-        slot["suggestion_count"] += sug_total
-        slot["applied"] += int(s.get("applied", 0))
-        slot["dismissed"] += int(s.get("dismissed", 0))
-    out = []
-    for v in by_author.values():
-        total = v["applied"] + v["dismissed"]
-        v["adoption_rate"] = round(v["applied"] / total, 4) if total else 0.0
-        out.append(v)
-    out.sort(key=lambda x: -x["suggestion_count"])
-    return out
-
-
-async def severity_breakdown(since: str | None = None, pr_url: str | None = None) -> list[dict]:
-    ov = await overview(since=since)
-    return ov.get("severity_breakdown") or []
-
-
-def _v2_state(db_state: str | None, updated_at: str | None) -> str:
-    """ReviewAgent 没有 'updated' 状态. 基于 last_review_at / updated_at 时间窗补一个 (24h 内视为'刚更新')."""
-    if not db_state:
-        return "opened"
-    if db_state != "opened":
-        return db_state
-    if not updated_at:
-        return "opened"
-    try:
-        from datetime import datetime, timezone, timedelta
-        ts = updated_at.replace("Z", "+00:00") if isinstance(updated_at, str) else None
-        if not ts:
-            return "opened"
-        dt = datetime.fromisoformat(ts)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) - dt < timedelta(hours=24):
-            return "updated"
-    except Exception:
-        pass
-    return "opened"
-
-
 async def list_mrs(
-    limit: int = 50,
-    project_id: int | None = None,
-    state: str | None = None,
-    since: str | None = None,
-    offset: int = 0,
+    limit: int = 50, offset: int = 0, project_id: int | None = None,
+    state: str | None = None, since: str | None = None,
 ) -> list[dict]:
-    """MR 列表, 附带最近一次 run + 建议计数 (对齐 pr-agent 拍平后的 MR row)."""
-    params: list[Any] = []
-    clauses: list[str] = []
+    """/mrs → pr-agent MrRow 形态, 附 last_run + suggestion_counts.
+
+    并发 (sem=8) 给每条 MR 拉 /mr/{}/+ /stats 补全 last_run/suggestion_counts.
+    单条 MR 拉取失败不阻断列表.
+    """
+    params: dict[str, Any] = {"limit": max(limit + offset, 50)}
     if project_id is not None:
-        clauses.append("project_id = ?")
-        params.append(project_id)
+        params["project_id"] = project_id
     if state:
-        clauses.append("state = ?")
-        params.append(state)
+        params["state"] = state
     if since:
-        clauses.append("updated_at >= ?")
-        params.append(since)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    rows = await _fetchall(
-        f"""SELECT project_id, mr_iid, title, author_username, author_sticky,
-                   source_branch, target_branch, state,
-                   created_at, updated_at, merged_at, last_review_at
-            FROM mr_activity{where}
-            ORDER BY updated_at DESC, mr_iid DESC""",
-        tuple(params),
-    )
+        params["since"] = since
+    raw = await _get("/mrs", params) or {}
+    items = raw.get("mrs") if isinstance(raw, dict) else (raw or [])
+    rows = [_map_mr_row(m) for m in items]
 
-    out: list[dict] = []
-    for r in rows:
-        pid, iid = int(r["project_id"]), int(r["mr_iid"])
-        sug_rows = await _fetchall(
-            "SELECT state, COUNT(*) AS n FROM suggestions WHERE project_id=? AND mr_iid=? GROUP BY state",
-            (pid, iid),
-        )
-        sc = {"total": 0, "applied": 0, "dismissed": 0, "open": 0, "superseded": 0}
-        for s in sug_rows:
-            st = s["state"]
-            n = int(s["n"] or 0)
-            sc["total"] += n
-            if st in sc:
-                sc[st] = n
-        last_run_row = await _fetchone(
-            """SELECT id, command, status, model, started_at, finished_at, duration_ms, error, suggestion_count
-               FROM review_runs WHERE project_id=? AND mr_iid=? ORDER BY started_at DESC LIMIT 1""",
-            (pid, iid),
-        )
-        last_run = None
-        if last_run_row:
-            last_run = {
-                "run_id": str(last_run_row.get("id")),
-                "command": last_run_row.get("command"),
-                "status": last_run_row.get("status"),
-                "model": last_run_row.get("model"),
-                "started_at": last_run_row.get("started_at"),
-                "duration_ms": last_run_row.get("duration_ms"),
-                "error": last_run_row.get("error"),
-                "suggestion_count": last_run_row.get("suggestion_count"),
+    sem = asyncio.Semaphore(8)
+
+    async def enrich(row: dict) -> None:
+        pid, iid = row["project_id"], row["mr_id"]
+        if pid is None or iid is None:
+            return
+        try:
+            detail = await _get(f"/mr/{pid}/{iid}") or {}
+            recent = detail.get("recent_runs") or []
+            if recent:
+                r = recent[0]
+                row["last_run"] = {
+                    "run_id": str(r.get("id") or ""),
+                    "command": r.get("command"),
+                    "status": r.get("status"),
+                    "model": r.get("model"),
+                    "started_at": r.get("started_at"),
+                    "finished_at": r.get("finished_at"),
+                    "duration_ms": r.get("duration_ms"),
+                }
+        except Exception:
+            row["last_run"] = None
+        try:
+            stats = await _get(f"/mr/{pid}/{iid}/stats") or {}
+            state_counts = stats.get("state_counts") or {}
+            action_counts = stats.get("action_counts") or {}
+            adopted = stats.get("adopted")
+            if isinstance(adopted, int) and adopted > 0:
+                applied = adopted
+            else:
+                applied = int(action_counts.get("applied", 0)) or int(state_counts.get("applied", 0))
+            row["suggestion_counts"] = {
+                "total": int(stats.get("total") or 0),
+                "applied": applied,
+                "dismissed": int(stats.get("dismissed") or 0),
+                "open": int(stats.get("open") or 0),
+                "superseded": 0,
             }
-        author = (r["author_sticky"] or r["author_username"] or "unknown")
-        out.append({
-            "project_id": pid,
-            "mr_id": iid,
-            "title": r["title"] or "",
-            "author": author,
-            "source_branch": r["source_branch"] or "",
-            "target_branch": r["target_branch"] or "",
-            "state": r["state"] or "opened",
-            "opened_at": r["created_at"],
-            "last_seen_at": r["updated_at"],
-            "merged_at": r["merged_at"],
-            "last_review_at": r["last_review_at"],
-            "last_run": last_run,
-            "suggestion_counts": sc,
-            "_v2_state": _v2_state(r["state"], r["updated_at"]),
-            "url": f"/-/merge_requests/{iid}",
-        })
+        except Exception:
+            row["suggestion_counts"] = None
 
-    return out[offset:offset + limit]
+    async def bounded(row: dict) -> None:
+        async with sem:
+            await enrich(row)
+
+    await asyncio.gather(*[bounded(r) for r in rows])
+    return rows[offset:offset + limit]
 
 
 async def mr_timeline(project_id: int, mr_id: int) -> dict:
-    """MR 详情: MR 元信息 + suggestions + runs + actions.
-
-    用 note_id 作 suggestion ↔ actions 链接键 (ReviewAgent actions.suggestion_note_id = suggestions.note_id).
-    """
-    mr_row = await _fetchone(
-        "SELECT * FROM mr_activity WHERE project_id=? AND mr_iid=?",
-        (project_id, mr_id),
-    )
-    if not mr_row:
-        raise RuntimeError(f"MR not found: {project_id}/{mr_id}")
-
-    sug_rows = await _fetchall(
-        """SELECT id, project_id, mr_iid, note_id, file_path, target_line, target_line_end,
-                  existing_code, improved_code, header, severity, head_sha, state,
-                  created_at, updated_at, applied_at, dismissed_at, dismissed_by,
-                  dismissed_reason, rule_keys, one_sentence_summary, importance, score,
-                  fingerprint, cohort_key, severity_source, label, posted_at
-           FROM suggestions WHERE project_id=? AND mr_iid=?
-           ORDER BY created_at ASC, id ASC""",
-        (project_id, mr_id),
-    )
-    run_rows = await _fetchall(
-        """SELECT id, project_id, mr_iid, command, triggered_by, actor_username,
-                  started_at, finished_at, status, error, model, prompt_tokens,
-                  completion_tokens, total_tokens, duration_ms, suggestion_count, rule_keys_cited
-           FROM review_runs WHERE project_id=? AND mr_iid=?
-           ORDER BY started_at DESC""",
-        (project_id, mr_id),
-    )
-
-    actions: list[dict] = []
-    if sug_rows:
-        note_ids = [str(s["note_id"]) for s in sug_rows if s.get("note_id")]
-        if note_ids:
-            placeholders = ",".join("?" for _ in note_ids)
-            act_rows = await _fetchall(
-                f"""SELECT id, suggestion_note_id, action, actor_username, reason, created_at
-                    FROM suggestion_actions
-                    WHERE suggestion_note_id IN ({placeholders})
-                    ORDER BY created_at DESC""",
-                tuple(note_ids),
-            )
-            actions = [
-                {
-                    "id": int(r["id"]),
-                    "suggestion_id": str(r["suggestion_note_id"]),
-                    "action": r["action"],
-                    "actor": r["actor_username"],
-                    "note": r["reason"],
-                    "at": r["created_at"],
-                }
-                for r in act_rows
-            ]
-
-    # suggestions 拍平到 V1 兼容字段 (id=null, suggestion_id=note_id 字符串)
-    sugs_v1 = []
-    for s in sug_rows:
-        sugs_v1.append({
-            "id": None,
-            "suggestion_id": str(s["note_id"]),
-            "file": s["file_path"],
-            "line": s["target_line"],
-            "label": s["label"] or s["header"],
-            "header": s["header"],
-            "importance": s["importance"],
-            "score": s["score"],
-            "severity": s["severity"] or "unknown",
-            "severity_source": s["severity_source"],
-            "rule_keys": [k.strip() for k in (s["rule_keys"] or "").split(",") if k.strip()],
-            "one_sentence_summary": s["one_sentence_summary"],
-            "state": s["state"],
-            "posted_at": s["posted_at"] or s["created_at"],
-            "applied_at": s["applied_at"],
-            "dismissed_at": s["dismissed_at"],
-            "dismissed_by": s["dismissed_by"],
-            "dismissed_reason": s["dismissed_reason"],
-        })
-
-    runs_v1 = [
-        {
-            "run_id": str(r["id"]),
-            "command": r["command"],
-            "status": r["status"],
-            "model": r["model"],
-            "started_at": r["started_at"],
-            "finished_at": r["finished_at"],
-            "duration_ms": r["duration_ms"],
-            "error": r["error"],
-            "suggestion_count": r["suggestion_count"],
-            "triggered_by": r["triggered_by"],
-        }
-        for r in run_rows
-    ]
-
+    """透传 /mr/{pid}/{iid}/timeline. 标准化 {events, summary} 包一层."""
+    raw = await _get(f"/mr/{project_id}/{mr_id}/timeline") or {}
     return {
-        "mr": {
-            "project_id": int(mr_row["project_id"]),
-            "mr_id": int(mr_row["mr_iid"]),
-            "title": mr_row["title"] or "",
-            "author": (mr_row["author_sticky"] or mr_row["author_username"] or ""),
-            "source_branch": mr_row["source_branch"] or "",
-            "target_branch": mr_row["target_branch"] or "",
-            "state": mr_row["state"] or "opened",
-            "opened_at": mr_row["created_at"],
-            "merged_at": mr_row["merged_at"],
-            "last_review_at": mr_row["last_review_at"],
-            "url": f"/-/merge_requests/{mr_row['mr_iid']}",
-        },
-        "suggestions": sugs_v1,
-        "runs": runs_v1,
-        "actions": actions,
+        "events": raw.get("events") or [],
+        "summary": raw.get("summary") or {},
     }
 
 
 async def mr_stats(project_id: int, mr_id: int) -> dict:
-    tl = await mr_timeline(project_id, mr_id)
-    sc: dict[str, int] = {"total": 0, "applied": 0, "dismissed": 0, "open": 0, "superseded": 0}
-    for s in tl["suggestions"]:
-        st = s.get("state") or "open"
-        sc["total"] += 1
-        if st in sc:
-            sc[st] += 1
-    adopted_imp = sum(1 for a in tl["actions"] if a["action"] == "adopted")
-    sc["adopted_implicitly"] = adopted_imp
-    last_run = tl["runs"][0] if tl["runs"] else None
-    return {
-        "suggestion_counts": sc,
-        "runs": [last_run] if last_run else [],
-    }
+    """透传 /mr/{pid}/{iid}/stats."""
+    return await _get(f"/mr/{project_id}/{mr_id}/stats") or {}
 
 
 async def dismissals_by_rule(since: str | None = None) -> list[dict]:
-    params: list[Any] = []
-    where = " WHERE state='dismissed'"
+    """/dismissals/by-rule → pr-agent 形态."""
+    params: dict[str, Any] = {}
     if since:
-        where += " AND dismissed_at >= ?"
-        params.append(since)
-    rows = await _fetchall(
-        f"SELECT rule_keys, dismissed_reason FROM suggestions{where}",
-        tuple(params),
-    )
-    bucket: dict[str, dict] = {}
-    for r in rows:
-        keys = [k.strip() for k in (r["rule_keys"] or "").split(",") if k.strip()]
-        if not keys:
-            keys = ["(no_rule_key)"]
-        reason = (r["dismissed_reason"] or "（未填写原因）").strip() or "（未填写原因）"
-        for k in keys:
-            slot = bucket.setdefault(k, {"rule_key": k, "dismissal_count": 0, "reasons": []})
-            slot["dismissal_count"] += 1
-            rs = next((rr for rr in slot["reasons"] if rr["reason"] == reason), None)
-            if rs:
-                rs["count"] += 1
-            else:
-                slot["reasons"].append({"reason": reason, "count": 1})
-    for v in bucket.values():
-        v["reasons"].sort(key=lambda r: -r["count"])
-    return sorted(bucket.values(), key=lambda r: -r["dismissal_count"])
+        params["since"] = since
+    raw = await _get("/dismissals/by-rule", params or None) or {}
+    rules = raw.get("rules") or []
+    return [
+        {
+            "rule_key": r.get("rule_key"),
+            "dismissal_count": int(r.get("dismissal_count") or 0),
+            "reasons": r.get("reasons") or [],
+        }
+        for r in rules
+    ]
