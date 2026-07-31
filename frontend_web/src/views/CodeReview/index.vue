@@ -589,7 +589,7 @@ const lastUpdatedRel = computed(() => {
 const lastUpdatedLabel = computed(() => lastUpdated.value ? lastUpdated.value.toLocaleString('zh-CN') : '—');
 // 每 30s 刷新相对时间显示 — 显式 bump nowTick 触发 lastUpdatedRel 重算 + template 重渲染
 let _relTimer: number | null = null;
-onMounted(() => { _relTimer = window.setInterval(() => { nowTick.value++; }, 30000); });
+onMounted(() => { _relTimer = window.setInterval(() => { nowTick.value++; }, 1000); });
 onUnmounted(() => { if (_relTimer) window.clearInterval(_relTimer); });
 
 // ==================== 自动刷新 ====================
@@ -608,7 +608,7 @@ function startAutoTimer() {
     autoCountdown.value--;
     if (autoCountdown.value <= 0) {
       bumpAutoCountdown();
-      reloadKeepPage();   // 主页: 不重置 mrPage, 不弹错误 toast (网络抖动静默)
+      reloadKeepPage({ silent: true });   // 主页: 不弹错误 toast (网络抖动静默), 失败时 store 到 loadError 即可
     }
   }, 1000);
 }
@@ -626,7 +626,7 @@ async function reload() {
   await reloadKeepPage();
 }
 // 翻页 / 切 pageSize 时用: 不重置 mrPage, 走同样的并行加载.
-async function reloadKeepPage() {
+async function reloadKeepPage(opts: { silent?: boolean } = {}) {
   loading.value = true;
   loadError.value = '';
   try {
@@ -661,7 +661,9 @@ async function reloadKeepPage() {
     dismissalsByRule.value = dbr || [];
   } catch (e: any) {
     loadError.value = (e?.response?.data?.detail || e?.message || '未知错误');
-    ElMessage.error('代码检视加载失败: ' + loadError.value);
+    if (!opts.silent) {
+      ElMessage.error('代码检视加载失败: ' + loadError.value);
+    }
   } finally {
     loading.value = false;
     lastUpdated.value = new Date();
