@@ -62,7 +62,7 @@ class Settings(BaseSettings):
 
     # ReviewAgent (代码检视 V2 telemetry) — HTTP 服务地址
     # 对齐 pr-agent.base_url: ReviewAgent 跑在 host:3000,容器内走 host.docker.internal:3000
-    REVIEW_AGENT_BASE_URL: str = "http://host.docker.internal:3000"
+    REVIEW_AGENT_BASE_URL: str = "http://host.docker.internal:5052"
     REVIEW_AGENT_API_TOKEN: str = ""
 
     # DingTalk

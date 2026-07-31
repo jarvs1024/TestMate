@@ -344,12 +344,124 @@ async def list_mrs(
     return rows[offset:offset + limit]
 
 
-async def mr_timeline(project_id: int, mr_id: int) -> dict:
-    """透传 /mr/{pid}/{iid}/timeline. 标准化 {events, summary} 包一层."""
-    raw = await _get(f"/mr/{project_id}/{mr_id}/timeline") or {}
+# ===== V2 视图 TimelineResp 字段映射 =====
+# MR (raw → MrRow) 字段映射借 _map_mr_row, suggestions / runs / actions
+# 从 ReviewAgent 服务各端点单独拉 + 字段 rename, 拼成 pr-agent 兼容结构.
+
+def _map_suggestion(s: dict) -> dict:
+    """ReviewAgent /mr/{pid}/{iid}/suggestions[] → pr-agent SuggestionRow."""
+    rule_keys = s.get("rule_keys") or ""
+    rule_arr = [k.strip() for k in rule_keys.split(",") if k.strip()] if rule_keys else []
+    importance = s.get("importance")
+    score = s.get("score")
     return {
-        "events": raw.get("events") or [],
-        "summary": raw.get("summary") or {},
+        "id": s.get("id"),
+        "suggestion_id": s.get("note_id"),
+        "file": s.get("file_path"),
+        "line": s.get("target_line"),
+        "label": s.get("header"),
+        "importance": float(importance) if importance is not None else None,
+        "score": float(score) if score is not None else None,
+        "severity": (s.get("severity") or "unknown"),
+        "severity_source": s.get("severity_source"),
+        "rule_keys": rule_arr,
+        "one_sentence_summary": s.get("one_sentence_summary"),
+        "state": s.get("state"),
+        "posted_at": s.get("created_at") or s.get("posted_at"),
+        "applied_at": s.get("applied_at"),
+        "dismissed_at": s.get("dismissed_at"),
+        "dismissed_by": s.get("dismissed_by"),
+        "dismissed_reason": s.get("dismissed_reason"),
+    }
+
+
+def _map_run(r: dict) -> dict:
+    """ReviewAgent /mr/{pid}/{iid}/runs[] 或 /mr/{pid}/{iid}.recent_runs[] → pr-agent RunRow."""
+    return {
+        "run_id": str(r.get("id") or r.get("run_id") or ""),
+        "command": r.get("command"),
+        "status": r.get("status"),
+        "model": r.get("model"),
+        "started_at": r.get("started_at"),
+        "finished_at": r.get("finished_at"),
+        "duration_ms": r.get("duration_ms"),
+        "error": r.get("error"),
+        "suggestion_count": r.get("suggestion_count"),
+        "triggered_by": r.get("triggered_by") or r.get("actor_username"),
+    }
+
+
+def _build_actions_from_events(events: list[dict]) -> list[dict]:
+    """从 /timeline events 提取 suggestion_action → ActionRow.
+    ReviewAgent event_type='suggestion_action' 的 event:
+      {at, event_type, event_id, detail, state}
+    不充分,没 actor / note, 所以本字段拼不出来就返回 [].
+    """
+    out = []
+    for e in events or []:
+        if e.get("event_type") == "suggestion_action":
+            out.append({
+                "id": int(e.get("event_id") or 0),
+                "suggestion_id": str(e.get("detail") or ""),
+                "action": e.get("state") or "adopted",
+                "actor": None,
+                "note": None,
+                "at": e.get("at"),
+            })
+    return out
+
+
+async def mr_timeline(project_id: int, mr_id: int) -> dict:
+    """组装 TimelineResp 形态: mr / suggestions / runs / actions / events.
+
+    并发拉 ReviewAgent 4 个端点补齐 V2 视图所需结构:
+      - /mr/{pid}/{iid}          → mr detail (含 recent_runs 补 runs)
+      - /mr/{pid}/{iid}/suggestions → 建议列表
+      - /mr/{pid}/{iid}/runs         → 全部运行
+      - /mr/{pid}/{iid}/timeline     → 原始 events
+    单端点失败不阻断, 拉不到的字段留空.
+    """
+    base_tl = f"/mr/{project_id}/{mr_id}"
+    async def _safe(path: str) -> Any:
+        try:
+            return await _get(path) or {}
+        except Exception:
+            return {}
+
+    detail_res, sugs_res, runs_res, tl_res = await asyncio.gather(
+        _safe(base_tl),
+        _safe(base_tl + "/suggestions"),
+        _safe(base_tl + "/runs"),
+        _safe(base_tl + "/timeline"),
+    )
+
+    # mr
+    mr_raw = detail_res.get("mr") or {}
+    mr_row = _map_mr_row(mr_raw) if mr_raw else None
+
+    # suggestions
+    sug_items = sugs_res.get("suggestions") if isinstance(sugs_res, dict) else (sugs_res or [])
+    suggestion_rows = [_map_suggestion(s) for s in (sug_items or [])]
+
+    # runs: 优先用 /runs 详情, fallback 到 detail.recent_runs
+    run_items = runs_res.get("runs") if isinstance(runs_res, dict) else (runs_res or [])
+    run_rows = [_map_run(r) for r in (run_items or [])]
+    if not run_rows:
+        recent = detail_res.get("recent_runs") or []
+        if recent:
+            run_rows = [_map_run(r) for r in recent]
+
+    # actions: 从 events 抽 suggestion_action events (字段可能不全)
+    events = tl_res.get("events") if isinstance(tl_res, dict) else []
+    action_rows = _build_actions_from_events(events)
+
+    return {
+        "mr": mr_row,
+        "suggestions": suggestion_rows,
+        "runs": run_rows,
+        "actions": action_rows,
+        "events": events or [],
+        "summary": (tl_res.get("summary") if isinstance(tl_res, dict) else {}) or {},
     }
 
 
