@@ -209,26 +209,65 @@ async def overview(since: str | None = None) -> dict:
 
 
 async def per_rule_stats(since: str | None = None) -> list[dict]:
-    """/metrics/rules → pr-agent RuleStat 形状.
+    """聚合真正的 rule_keys.
 
-    ReviewAgent 此端点只有 {rule_key, count}, 没有按 state 拆分,
-    留 applied/dismissed/open = 0 (前端 V2 视图容错).
+    ReviewAgent /metrics/rules 端点实际返回的 rule_key 是 severity
+    (medium/high/critical) 串, 不是真正的 SSD-RULE-XXX 规则名.
+    真正的规则名存在 suggestion.rule_keys 字段, 逗号分隔多键.
+    改方案: 拉所有 MR 的 suggestions, 聚合 suggestion.rule_keys.
+
+    per-MR 并发 (sem=8), since 暂不实现过滤 (留给 ReviewAgent 服务端补).
     """
-    params: dict[str, Any] = {}
-    if since:
-        params["since"] = since
-    data = await _get("/metrics/rules", params or None) or {}
-    return [
-        {
-            "rule_key": r.get("rule_key"),
-            "total": int(r.get("count") or 0),
-            "applied": 0,
-            "dismissed": 0,
-            "open": 0,
-            "adoption_rate": 0.0,
-        }
-        for r in (data.get("rules") or [])
-    ]
+    mrs_raw = await _get("/mrs", {"limit": 200}) or {}
+    mrs_list = mrs_raw.get("mrs") if isinstance(mrs_raw, dict) else (mrs_raw or [])
+
+    sem = asyncio.Semaphore(8)
+
+    async def fetch_sugs(mr: dict) -> list[dict]:
+        pid = mr.get("project_id")
+        iid = mr.get("mr_iid")
+        if pid is None or iid is None:
+            return []
+        async with sem:
+            try:
+                r = await _get(f"/mr/{pid}/{iid}/suggestions") or {}
+                items = r.get("suggestions") if isinstance(r, dict) else (r or [])
+                return items or []
+            except Exception:
+                return []
+
+    nested = await asyncio.gather(*[fetch_sugs(m) for m in mrs_list])
+
+    bucket: dict[str, dict] = {}
+    for sugs in nested:
+        for s in sugs or []:
+            rule_keys_str = s.get("rule_keys") or ""
+            rule_arr = [k.strip() for k in rule_keys_str.split(",") if k.strip()]
+            if not rule_arr:
+                rule_arr = ["(no_rule_key)"]
+            state = s.get("state") or "open"
+            for rk in rule_arr:
+                slot = bucket.setdefault(rk, {
+                    "rule_key": rk,
+                    "total": 0,
+                    "applied": 0,
+                    "dismissed": 0,
+                    "open": 0,
+                })
+                slot["total"] += 1
+                if state == "applied":
+                    slot["applied"] += 1
+                elif state == "dismissed":
+                    slot["dismissed"] += 1
+                elif state == "open":
+                    slot["open"] += 1
+
+    out = []
+    for v in bucket.values():
+        v["adoption_rate"] = round(v["applied"] / v["total"], 4) if v["total"] else 0.0
+        out.append(v)
+    out.sort(key=lambda x: -x["total"])
+    return out
 
 
 async def per_author_stats(since: str | None = None) -> list[dict]:
