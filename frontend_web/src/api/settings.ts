@@ -45,6 +45,10 @@ export async function testPrAgent(): Promise<TestResult> {
   return (await request.post('/settings/test/pr_agent')) as TestResult;
 }
 
+export async function testReviewAgent(): Promise<TestResult> {
+  return (await request.post('/settings/test/review_agent')) as TestResult;
+}
+
 // ===== 运行时拼 URL: 把 <prefix>.embed_url 拼上 userId (后端取当前用户) + theme (前端传) =====
 // 后端按 schema 中的 <prefix>.append_user_id / <prefix>.append_theme 开关决定是否拼
 // prefix: 配置项前缀 (search / chat / agent), 不带 .embed_url 后缀

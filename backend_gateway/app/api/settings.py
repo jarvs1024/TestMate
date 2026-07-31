@@ -203,6 +203,17 @@ async def test_pr_agent(_user: User = Depends(get_current_user)) -> SettingTestO
     except Exception as e:
         return SettingTestOut(ok=False, status="off", message=f"不可达: {type(e).__name__}: {e}", detail=None)
 
+@router.post("/test/review_agent", response_model=SettingTestOut)
+async def test_review_agent(_user: User = Depends(get_current_user)) -> SettingTestOut:
+    """用当前 DB 的 review_agent.db_path 测 SQLite 可读 (调 review_agent_client.probe)."""
+    from app.core import review_agent_client
+    if not await review_agent_client.is_configured():
+        return SettingTestOut(ok=False, status="off", message="未配置 db_path 或文件不存在", detail=None)
+    status, msg = await review_agent_client.probe()
+    if status == "ok":
+        return SettingTestOut(ok=True, status="ok", message=f"连通 · {msg}", detail=None)
+    return SettingTestOut(ok=False, status="warn", message=f"不可读: {msg}", detail=None)
+
 @router.get("/embed/{key:path}", response_model=EmbedOut)
 async def build_embed_url(
     key: str,
