@@ -53,8 +53,7 @@
           <tbody>
             <tr v-for="m in failedMrs" :key="`${m.project_id}/${m.mr_id}`">
               <td>
-                <a v-if="m.url" :href="m.url" target="_blank" rel="noopener" class="mr-link mono">!{{ m.mr_id }}</a>
-                <span v-else class="mr-link mono mr-link-clickable" @click="openTimeline(m)">!{{ m.mr_id }}</span>
+                <a :href="m.url" target="_blank" rel="noopener" class="mr-link mono">!{{ m.mr_id }}</a>
               </td>
               <td>{{ m.author || '—' }}</td>
               <td class="mono branches">{{ m.source_branch || '—' }} → {{ m.target_branch || '—' }}</td>
@@ -283,8 +282,7 @@
               :class="{ merged: m.state === 'merged' || m.state === 'closed', 'run-failed': m.last_run?.status === 'failed' }">
             <td>
               <div class="mr-t">
-                <a v-if="m.url" :href="m.url" target="_blank" rel="noopener" class="mr-link">!{{ m.mr_id }}</a>
-                <span v-else class="mr-link mr-link-clickable" @click="openTimeline(m)">!{{ m.mr_id }}</span>
+                <a :href="m.url" target="_blank" rel="noopener" class="mr-link">!{{ m.mr_id }}</a>
                 <div class="mr-title" :title="m.title">{{ m.title || '—' }}</div>
               </div>
             </td>
@@ -1224,7 +1222,6 @@ onMounted(reload);
 .mr-t { display: flex; flex-direction: column; gap: 2px; max-width: 380px; }
 .mr-link { font-family: var(--font-mono); font-weight: 700; color: var(--primary); text-decoration: none; font-size: 12px; }
 .mr-link:hover { text-decoration: underline; }
-.mr-link-clickable { cursor: pointer; }
 .mr-title { font-size: 12.5px; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 .branches { font-size: 11.5px; color: var(--ink-700); }
 .mr-tbl tr.merged { opacity: 0.7; }   /* merged + closed 共用置灰 */
