@@ -65,11 +65,6 @@ class Settings(BaseSettings):
     REVIEW_AGENT_BASE_URL: str = "http://host.docker.internal:3000"
     REVIEW_AGENT_API_TOKEN: str = ""
 
-    # ReviewAgent 的 MR 在 GitLab 实例上的 URL 模板. 默认走 project_id (数字) 而非 namespace,
-    # 因为 ReviewAgent telemetry 不存 namespace. 占位符 {iid} {project_id}.
-    # 用户可以在 settings UI 改成按自己 GitLab 命名规则拼.
-    REVIEW_AGENT_URL_TEMPLATE: str = "http://127.0.0.1:8929/projects/{project_id}/-/merge_requests/{iid}"
-
     # DingTalk
     DINGTALK_DEFAULT_WEBHOOK: str = ""
 

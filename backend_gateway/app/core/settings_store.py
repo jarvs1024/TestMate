@@ -82,14 +82,6 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": True,
     },
     {
-        "key": "review_agent.url_template",
-        "category": "data-source",
-        "value_type": "string",
-        "default": settings.REVIEW_AGENT_URL_TEMPLATE,
-        "description": "ReviewAgent MR 在 GitLab 上的 URL 模板, 占位符 {iid} {project_id}. 默认走数字 project_id; 如 GitLab 不接受可改 'https://gitlab/{namespace}/{project}/-/merge_requests/{iid}'",
-        "is_secret": False,
-    },
-    {
         "key": "dify.base_url",
         "category": "data-source",
         "value_type": "url",

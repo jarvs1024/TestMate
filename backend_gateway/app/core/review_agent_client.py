@@ -116,26 +116,10 @@ def _v2_state(db_state: str | None, last_review_at: str | None) -> str:
     return "opened"
 
 
-DEFAULT_MR_URL_TEMPLATE = "http://127.0.0.1:8929/projects/{project_id}/-/merge_requests/{iid}"
-
-
-def _build_mr_url(m: dict, template: str | None = None) -> str:
-    """拼 GitLab MR 详情 URL. 占位符 {iid} {project_id}.
-
-    ReviewAgent telemetry 不暴露 namespace, 只能走 project_id (数字) 拼 GitLab URL.
-    用户可在 settings (review_agent.url_template) 配自定义模板覆盖默认值.
+def _map_mr_row(m: dict) -> dict:
+    """ReviewAgent /mrs / /mr/{pid}/{iid} 都含 web_url 字段 (commit 67d6e22 加的).
+    直接透传, 不再需要 url_template 拼装.
     """
-    tpl = template or DEFAULT_MR_URL_TEMPLATE
-    try:
-        return tpl.format(
-            iid=int(m.get("mr_iid") or 0),
-            project_id=int(m.get("project_id") or 0),
-        )
-    except Exception:
-        return ""
-
-
-def _map_mr_row(m: dict, url: str | None = None) -> dict:
     return {
         "project_id": m.get("project_id"),
         "mr_id": m.get("mr_iid"),
@@ -147,7 +131,7 @@ def _map_mr_row(m: dict, url: str | None = None) -> dict:
         "opened_at": m.get("created_at"),
         "last_seen_at": m.get("updated_at"),
         "merged_at": m.get("merged_at"),
-        "url": url or m.get("url"),
+        "url": m.get("web_url") or m.get("url"),
         "_v2_state": _v2_state(m.get("state"), m.get("last_review_at")),
         "last_run": None,
         "suggestion_counts": None,
@@ -351,11 +335,7 @@ async def list_mrs(
         params["since"] = since
     raw = await _get("/mrs", params) or {}
     items = raw.get("mrs") if isinstance(raw, dict) else (raw or [])
-    tmpl = (
-        (await get("review_agent.url_template", "")) or ""
-        or DEFAULT_MR_URL_TEMPLATE
-    )
-    rows = [_map_mr_row(m, _build_mr_url(m, tmpl)) for m in items]
+    rows = [_map_mr_row(m) for m in items]
 
     sem = asyncio.Semaphore(8)
 
@@ -499,11 +479,7 @@ async def mr_timeline(project_id: int, mr_id: int) -> dict:
 
     # mr
     mr_raw = detail_res.get("mr") or {}
-    tmpl = (
-        (await get("review_agent.url_template", "")) or ""
-        or DEFAULT_MR_URL_TEMPLATE
-    )
-    mr_row = _map_mr_row(mr_raw, _build_mr_url(mr_raw, tmpl)) if mr_raw else None
+    mr_row = _map_mr_row(mr_raw) if mr_raw else None
 
     # suggestions
     sug_items = sugs_res.get("suggestions") if isinstance(sugs_res, dict) else (sugs_res or [])
