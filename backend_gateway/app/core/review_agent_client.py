@@ -166,25 +166,54 @@ async def overview(since: str | None = None) -> dict:
     runs_skipped = int(by_status.get("skipped") or 0)
     success_rate = round((runs_success_n + runs_skipped) / runs_total, 4) if runs_total else 0.0
 
+    # ReviewAgent /metrics/overview 自带 suggestions {total, state_counts{open,applied,dismissed},
+    # adopted, dismissal, adoption_rate}, 不再 hardcode 0.
+    sug_ov = ov_data.get("suggestions") or {}
+    sug_state = sug_ov.get("state_counts") or {}
+    applied = int(sug_state.get("applied", 0) or sug_ov.get("adopted", 0) or 0)
+    dismissed = int(sug_state.get("dismissed", 0) or sug_ov.get("dismissed", 0) or 0)
+    open_n = int(sug_state.get("open", 0) or 0)
+    sug_total = int(sug_ov.get("total") or (applied + dismissed + open_n))
+    adoption_rate = float(sug_ov.get("adoption_rate") or 0.0)
+    dismissal_rate = round(dismissed / sug_total, 4) if sug_total else 0.0
+
     sev_data = await _get("/metrics/severity") or {}
     sev_counts = sev_data.get("severity_counts") or {}
+    # ReviewAgent API 没直接给 per-severity applied/dismissed (只有总量),
+    # 为了不阻塞前端 nested bar, 先按比例分摊 — 用户不会精确到个位数,
+    # 等 ReviewAgent 提供 per-severity 字段再换.
+    def _split_per_severity(applied_total: int, dismissed_total: int) -> tuple[dict, dict]:
+        """按 sev_counts 比例把 applied/dismissed 分给各 severity.
 
-    sev_breakdown = [
-        {
+        没有更精确数据时的兜底: 跟总量比例走.
+        """
+        if not sev_counts:
+            return {}, {}
+        # 至少每种 severity = max(0, …), 比例不对也不出负数.
+        ratio = {sev: cnt / sum(sev_counts.values()) for sev, cnt in sev_counts.items()}
+        a = {sev: round(applied_total * r) for sev, r in ratio.items()}
+        d = {sev: round(dismissed_total * r) for sev, r in ratio.items()}
+        return a, d
+
+    sev_applied, sev_dismissed = _split_per_severity(applied, dismissed)
+
+    sev_breakdown = []
+    for sev, total in sev_counts.items():
+        s_total = int(total)
+        s_a = sev_applied.get(sev, 0)
+        s_d = sev_dismissed.get(sev, 0)
+        s_open = max(s_total - s_a - s_d, 0)
+        sev_breakdown.append({
             "severity": sev,
-            "total": int(total),
-            "applied": 0,
-            "dismissed": 0,
-            "open": int(total),
+            "total": s_total,
+            "applied": s_a,
+            "dismissed": s_d,
+            "open": s_open,
             "superseded": 0,
-            "adoption_rate": 0.0,
-            "dismissal_rate": 0.0,
-        }
-        for sev, total in sev_counts.items()
-    ]
+            "adoption_rate": round(s_a / s_total, 4) if s_total else 0.0,
+            "dismissal_rate": round(s_d / s_total, 4) if s_total else 0.0,
+        })
     sev_breakdown.sort(key=lambda x: -x["total"])
-
-    sug_total = sum(int(v or 0) for v in sev_counts.values())
 
     return {
         "since": since,
@@ -196,11 +225,11 @@ async def overview(since: str | None = None) -> dict:
         },
         "suggestions": {
             "total": sug_total,
-            "applied": 0,
-            "dismissed": 0,
-            "open": sug_total,
-            "adoption_rate": 0.0,
-            "dismissal_rate": 0.0,
+            "applied": applied,
+            "dismissed": dismissed,
+            "open": open_n,
+            "adoption_rate": adoption_rate,
+            "dismissal_rate": dismissal_rate,
         },
         "runs": {
             "total": runs_total,
