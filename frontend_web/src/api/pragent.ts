@@ -117,6 +117,8 @@ export interface MrRun {
 export interface MrListResp {
   items: MrRow[];
   failed_mr_count?: number;
+  /** 跨页, banner 列表同源, 不会出现 count=2, list=0 这种不一致. */
+  failed_items?: MrRow[];
   total?: number;
 }
 

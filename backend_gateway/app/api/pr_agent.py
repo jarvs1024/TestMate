@@ -175,10 +175,12 @@ async def list_mrs(
     # 改成: limit=200 一次拿完所有 MR (上限即 pr-agent 支持的最大值),
     # 后端在内存里按 offset/limit 切片返回, total = 全量长度.
     items = await asyncio.gather(*[_attach_last_run(m) for m in mrs])
-    failed = sum(1 for m in items if (m.get("last_run") or {}).get("status") == "failed")
+    # failed MR 跨页筛出来给 banner 用, 跟 page 是同一批数据的两份过滤, 不会出现 2 / 0 不一致.
+    failed_items = [m for m in items if (m.get("last_run") or {}).get("status") == "failed"]
+    failed = len(failed_items)
     total = len(items)
     page_items = items[offset:offset + limit]
-    return {"items": page_items, "failed_mr_count": failed, "total": total}
+    return {"items": page_items, "failed_mr_count": failed, "failed_items": failed_items, "total": total}
 
 
 @router.get("/mrs/{project_id}/{mr_id}/timeline")

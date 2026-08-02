@@ -485,11 +485,10 @@ function onMrPageSizeChange() {
 }
 const bannerOpen = ref(false);
 
-// 失败 MR 子集, banner 展开时用 (取每条 last_run.status==='failed').
-// 注意: 分页后只统计当前页, 顶部 banner 数字另由后端 failed_mr_count 给出 (跨页).
-const failedMrs = computed(() =>
-  mrs.value.filter(m => (m.last_run as any)?.status === 'failed')
-);
+// 失败 MR 列表 — 跨页 (后端 /mrs 一次性扫 limit=200 抽出来), banner 数字与列表同源.
+// 不再用 computed 从当前页 filter, 那种做法会让 banner 数字 ≠ 列表 (count 跨页但 list 只看当前页),
+// 用户看到"2 个失败, 但 banner 列表是空".
+const failedMrs = ref<MrRow[]>([]);
 
 const severities = ref<SeverityBucket[]>([]);
 const dismissalsByRule = ref<DismissalsByRuleItem[]>([]);
@@ -636,6 +635,7 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
       overview.value = null; rules.value = []; authors.value = []; mrs.value = []; severities.value = [];
       dismissalsByRule.value = [];
       failedMrCount.value = 0;
+      failedMrs.value = [];
       return;
     }
     // severity 失败不应阻断其他 4 个, 单独 catch
@@ -656,6 +656,7 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
     const mrResp = mr as unknown as MrListResp;
     mrs.value = mrResp.items || [];
     failedMrCount.value = mrResp.failed_mr_count || 0;
+    failedMrs.value = mrResp.failed_items || [];
     mrTotal.value = mrResp.total || 0;
     severities.value = sev;
     dismissalsByRule.value = dbr || [];

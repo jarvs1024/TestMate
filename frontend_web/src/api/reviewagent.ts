@@ -104,6 +104,8 @@ export interface MrRun {
 export interface MrListResp {
   items: MrRow[];
   failed_mr_count: number;
+  /** 跨页 (limit=200 扫一次拿全), banner 列表同源, 不会出现 count=2, list=0 这种不一致. */
+  failed_items: MrRow[];
   total: number;
 }
 /** V2 的 suggestion 多了 suggestion_id (字符串, sqlite row id), 跟 actions 对齐 */

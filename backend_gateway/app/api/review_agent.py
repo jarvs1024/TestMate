@@ -111,10 +111,13 @@ async def list_mrs(
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
-    failed = sum(1 for m in all_items if (m.get("last_run") or {}).get("status") == "failed")
+    # failed MR 跨页扫出来给 banner 用 (banner 数字与列表同源, 不会出现 2 / 0 这种不一致).
+    # 跟 page 是两份不同的过滤, 一致性优先.
+    failed_items = [m for m in all_items if (m.get("last_run") or {}).get("status") == "failed"]
+    failed = len(failed_items)
     total = len(all_items)
     page = all_items[offset:offset + limit]
-    return {"items": page, "failed_mr_count": failed, "total": total}
+    return {"items": page, "failed_mr_count": failed, "failed_items": failed_items, "total": total}
 
 
 @router.get("/mrs/{project_id}/{mr_id}/timeline")
