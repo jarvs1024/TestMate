@@ -37,21 +37,21 @@
     </div>
 
     <!-- 评审失败 banner: 顶部醒目提示, 点击展开 inline failed MR list (不必滚到 MR 表) -->
-    <div v-if="failedMrCount > 0" class="banner banner-err" :class="{ open: bannerOpen }" role="region" :aria-expanded="bannerOpen">
+    <div v-if="unackedFailedCount > 0" class="banner banner-err" :class="{ open: bannerOpen }" role="region" :aria-expanded="bannerOpen">
       <button class="banner-hd" type="button" @click="bannerOpen = !bannerOpen" :aria-controls="'failed-mr-list'">
         <span class="b-icon">{{ bannerOpen ? '▾' : '▸' }}</span>
         <span class="b-text">
-          <b>{{ failedMrCount }}</b> 个 Merge Request 最近一次 ReviewAgent 评审失败
+          <b>{{ unackedFailedCount }}</b> 个 Merge Request 最近一次 ReviewAgent 评审失败
         </span>
         <span class="b-hint">{{ bannerOpen ? '收起' : '展开' }} {{ bannerOpen ? '' : '↓' }}</span>
       </button>
       <div v-show="bannerOpen" id="failed-mr-list" class="failed-mr-list">
         <table class="tbl">
           <thead>
-            <tr><th>MR</th><th>作者</th><th>分支</th><th class="r">上次命令</th><th class="r">错误</th></tr>
+            <tr><th>MR</th><th>作者</th><th>分支</th><th class="r">上次命令</th><th class="r">错误</th><th class="r">操作</th></tr>
           </thead>
           <tbody>
-            <tr v-for="m in failedMrs" :key="`${m.project_id}/${m.mr_id}`">
+            <tr v-for="m in unackedFailedMrs" :key="`${m.project_id}/${m.mr_id}`">
               <td>
                 <a :href="m.url" target="_blank" rel="noopener" class="mr-link mono">!{{ m.mr_id }}</a>
               </td>
@@ -62,11 +62,13 @@
                 <ErrorView v-if="m.last_run?.error" :raw="m.last_run?.error" />
                 <span v-else>—</span>
               </td>
+              <td class="r"><button class="ack-btn" type="button" title="标记已读" @click="ackFailedMr(m.project_id, m.mr_id)">✕</button></td>
             </tr>
-            <tr v-if="failedMrs.length === 0"><td colspan="5" class="empty">无</td></tr>
+            <tr v-if="unackedFailedMrs.length === 0"><td colspan="6" class="empty">无</td></tr>
           </tbody>
         </table>
         <div class="banner-foot">
+          <button class="link-btn" type="button" @click="ackAllFailed">全部已读</button>
           <button class="link-btn" type="button" @click="scrollToMrTable">查看完整 MR 列表 ↓</button>
         </div>
       </div>
@@ -488,6 +490,32 @@ const bannerOpen = ref(false);
 // 用户看到"2 个失败, 但 banner 列表是空".
 const failedMrs = ref<MrRow[]>([]);
 
+// 已读 (ack) 失败 MR — localStorage 持久化, 只隐藏已读的; 新失败不在 set 里会重新出现.
+const ACK_KEY = 'crv2:acked-failed-mrs';
+const ackedFailedMrs = ref<Set<string>>(new Set(
+  (() => { try { return JSON.parse(localStorage.getItem(ACK_KEY) || '[]') as string[]; } catch { return []; } })()
+));
+const failedMrKey = (pid: number | string, mid: number | string) => `${pid}/${mid}`;
+const unackedFailedMrs = computed(() =>
+  failedMrs.value.filter(m => !ackedFailedMrs.value.has(failedMrKey(m.project_id, m.mr_id)))
+);
+const unackedFailedCount = computed(() => unackedFailedMrs.value.length);
+function persistAcked() {
+  localStorage.setItem(ACK_KEY, JSON.stringify([...ackedFailedMrs.value]));
+}
+function ackFailedMr(pid: number | string, mid: number | string) {
+  const next = new Set(ackedFailedMrs.value);
+  next.add(failedMrKey(pid, mid));
+  ackedFailedMrs.value = next;
+  persistAcked();
+}
+function ackAllFailed() {
+  const next = new Set(ackedFailedMrs.value);
+  for (const m of failedMrs.value) next.add(failedMrKey(m.project_id, m.mr_id));
+  ackedFailedMrs.value = next;
+  persistAcked();
+}
+
 const severities = ref<SeverityBucket[]>([]);
 const dismissalsByRule = ref<DismissalsByRuleItem[]>([]);
 
@@ -655,6 +683,13 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
     mrs.value = mrResp.items || [];
     failedMrCount.value = mrResp.failed_mr_count || 0;
     failedMrs.value = mrResp.failed_items || [];
+    // prune: 只保留当前仍失败的 MR (已恢复的 MR 移出 set, 下次再失败会重新提示)
+    const currentKeys = new Set(failedMrs.value.map(m => failedMrKey(m.project_id, m.mr_id)));
+    const pruned = new Set([...ackedFailedMrs.value].filter(k => currentKeys.has(k)));
+    if (pruned.size !== ackedFailedMrs.value.size) {
+      ackedFailedMrs.value = pruned;
+      persistAcked();
+    }
     mrTotal.value = mrResp.total || 0;
     severities.value = sev;
     dismissalsByRule.value = dbr || [];
@@ -1032,7 +1067,9 @@ onMounted(reload);
   border: 1px solid color-mix(in srgb, var(--err) 30%, transparent);
   padding: 1px 8px; border-radius: 4px; font-size: 10.5px; font-family: var(--font-mono);
 }
-.banner-foot { padding-top: 8px; display: flex; justify-content: flex-end; }
+.banner-foot { padding-top: 8px; display: flex; justify-content: flex-end; gap: 8px; }
+.ack-btn { border: 1px solid var(--border); background: transparent; color: var(--text-dim); border-radius: 4px; cursor: pointer; padding: 2px 7px; font-size: 12px; line-height: 1.2; }
+.ack-btn:hover { color: #e74c3c; border-color: #e74c3c; }
 
 /* 概览卡片 */
 .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
