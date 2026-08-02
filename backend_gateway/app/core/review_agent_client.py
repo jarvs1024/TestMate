@@ -303,23 +303,49 @@ async def per_rule_stats(since: str | None = None) -> list[dict]:
 
 
 async def per_author_stats(since: str | None = None) -> list[dict]:
-    """/metrics/authors.{author, runs} → pr-agent AuthorStat 形状."""
-    params: dict[str, Any] = {}
-    if since:
-        params["since"] = since
-    data = await _get("/metrics/authors", params or None) or {}
-    return [
-        {
-            "author": r.get("author"),
+    """/作者分布/ 表按 MR 作者聚合. 
+    ReviewAgent /metrics/authors 端点只返回每个 author 跑了多少次 review (runs 计数),
+    撑不起来 'MR / 建议 / 采纳率' 表. 这里从 list_mrs (limit=200, 已并发 enrich last_run +
+    suggestion_counts) 在 gateway 层聚合 per-MR-author 数据.
+    since 参数暂透传给 list_mrs, 未实现时不影响 main 行为."""
+    all_items = await list_mrs(limit=200, since=since)
+
+    by_author: dict[str, dict] = {}
+    for m in all_items:
+        author = m.get("author") or "(unknown)"
+        slot = by_author.setdefault(author, {
+            "author": author,
             "mr_count": 0,
-            "suggestion_count": int(r.get("runs") or 0),
+            "merged_count": 0,
+            "suggestion_total": 0,
             "applied": 0,
             "dismissed": 0,
-            "runs_by_command": {},
+            "runs_by_command": {},  # 命令分布: {command: {total, failed}}
             "adoption_rate": 0.0,
-        }
-        for r in (data.get("authors") or [])
-    ]
+        })
+        slot["mr_count"] += 1
+        if (m.get("state") or "") == "merged":
+            slot["merged_count"] += 1
+        sc = m.get("suggestion_counts") or {}
+        slot["suggestion_total"] += int(sc.get("total") or 0)
+        slot["applied"] += int(sc.get("applied") or 0)
+        slot["dismissed"] += int(sc.get("dismissed") or 0)
+        lr = m.get("last_run") or {}
+        cmd = lr.get("command") or "(unknown)"
+        cmd_slot = slot["runs_by_command"].setdefault(cmd, {"total": 0, "failed": 0})
+        cmd_slot["total"] += 1
+        if (lr.get("status") or "") == "failed":
+            cmd_slot["failed"] += 1
+
+    # 采纳率 (applied / suggestion_total), 仅在该作者有过建议时算
+    for slot in by_author.values():
+        total = slot["suggestion_total"]
+        slot["adoption_rate"] = round(slot["applied"] / total, 4) if total else 0.0
+        # 兼容老 AuthorStat 字段名 (V2 type 里有 suggestion_count / applied / dismissed)
+        slot["suggestion_count"] = slot["suggestion_total"]
+
+    # 按 mr_count desc, 跟 pr-agent /metrics/authors 默认排序一致
+    return sorted(by_author.values(), key=lambda x: (-x["mr_count"], x["author"]))
 
 
 async def severity_breakdown(since: str | None = None, pr_url: str | None = None) -> list[dict]:
