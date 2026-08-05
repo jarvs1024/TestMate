@@ -59,8 +59,9 @@
               <td class="mono branches">{{ m.source_branch || '—' }} → {{ m.target_branch || '—' }}</td>
               <td class="r"><span class="cmd-tag-s">{{ m.last_run?.command || '—' }}</span></td>
               <td class="err-cell">
-                <ErrorView v-if="m.last_run?.error" :raw="m.last_run?.error" />
-                <span v-else>—</span>
+                <ErrorView v-if="m.last_run?.error" :raw="m.last_run?.error" :inline-thresh="120" />
+                <!-- error 为空时: 后端没传错误详情, 引导用户去时间线看 run 全量日志 -->
+                <button v-else class="link-btn link-btn-s" type="button" title="查看该 MR 时间线, 查最近一次失败原因" @click="openTimeline(m)">查看时间线 →</button>
               </td>
               <td class="r"><button class="ack-btn" type="button" title="标记已读" @click="ackFailedMr(m.project_id, m.mr_id)">✕</button></td>
             </tr>
@@ -269,10 +270,20 @@
     <div class="card">
       <div class="card-hd">
         <h2>📋 Merge Request</h2>
-        <span class="cnt">{{ mrCntLabel }}</span>
+        <div class="mr-tools">
+          <input v-model="mrSearch" class="mr-search" placeholder="🔍 搜索 MR / 作者 / 分支 / 标题" />
+          <select v-model="mrStateFilter" class="mr-state-sel" title="按状态过滤">
+            <option value="">全部状态</option>
+            <option value="opened">开启</option>
+            <option value="merged">已合并</option>
+            <option value="closed">已关闭</option>
+          </select>
+          <span class="cnt">{{ mrCntLabel }}</span>
+        </div>
       </div>
       <div v-if="loading && mrs.length === 0" class="loading">加载中...</div>
       <div v-else-if="mrs.length === 0" class="empty">暂无 MR 记录</div>
+      <div v-else-if="filteredMrs.length === 0" class="empty">无匹配 (当前页 {{ mrs.length }} 条被过滤)</div>
       <table v-else class="tbl mr-tbl">
         <thead>
           <tr>
@@ -280,7 +291,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="m in mrs" :key="`${m.project_id}/${m.mr_id}`"
+          <tr v-for="m in filteredMrs" :key="`${m.project_id}/${m.mr_id}`"
               :class="{ merged: m.state === 'merged' || m.state === 'closed', 'run-failed': m.last_run?.status === 'failed' }">
             <td>
               <div class="mr-t">
@@ -460,10 +471,32 @@ const mrTotal = ref(0);          // 后端返回的 total (含跨页估算)
 const mrPage = ref(1);
 const mrPageSize = ref(20);
 const mrTotalPages = computed(() => Math.max(1, Math.ceil(mrTotal.value / mrPageSize.value)));
+// 搜索过滤 — 客户端按当前页 mrs 过滤 (mr_id / title / author / source / target branch)
+const mrSearch = ref('');
+const mrStateFilter = ref<string>('');
+const filteredMrs = computed(() => {
+  const q = mrSearch.value.trim().toLowerCase();
+  const st = mrStateFilter.value;
+  if (!q && !st) return mrs.value;
+  return mrs.value.filter(m => {
+    if (st && m.state !== st) return false;
+    if (!q) return true;
+    return (
+      String(m.mr_id).includes(q) ||
+      (m.title || '').toLowerCase().includes(q) ||
+      (m.author || '').toLowerCase().includes(q) ||
+      (m.source_branch || '').toLowerCase().includes(q) ||
+      (m.target_branch || '').toLowerCase().includes(q)
+    );
+  });
+});
 const mrCntLabel = computed(() => {
   if (loading.value && mrs.value.length === 0) return '加载中…';
-  if (mrTotal.value === 0) return '0 条';
-  return `共 ${mrTotal.value} 条`;
+  const total = mrTotal.value;
+  if (total === 0) return '0 条';
+  const filtered = filteredMrs.value.length;
+  if (filtered === mrs.value.length) return `共 ${total} 条`;
+  return `本页 ${filtered} / ${mrs.value.length} 条 · 总 ${total} 条`;
 });
 // "第 1 - 20 条" / "第 21 - 23 条" / 空时 "—"
 const mrRangeLabel = computed(() => {
@@ -1052,7 +1085,10 @@ onMounted(reload);
 .failed-mr-list .tbl { margin-top: 8px; }
 .failed-mr-list th { font-size: 11px; }
 .failed-mr-list td { padding: 6px 8px; font-size: 12px; }
-.failed-mr-list .err-cell { color: var(--err); max-width: 480px; }
+.failed-mr-list .err-cell { color: var(--err); max-width: 480px; max-height: 120px; overflow-y: auto; word-break: break-word; }
+.failed-mr-list .err-cell::-webkit-scrollbar { width: 4px; }
+.failed-mr-list .err-cell::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.failed-mr-list .link-btn-s { font-size: 11.5px; padding: 2px 8px; }
 .failed-mr-list .err-text {
   display: inline-block;
   font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5;
@@ -1128,6 +1164,19 @@ onMounted(reload);
 .card-hd { display: flex; justify-content: space-between; align-items: center; margin: 0; }
 .card-hd h2 { font-size: 14.5px; font-weight: 700; margin: 0; color: var(--ink-900); }
 .card-hd .cnt { font-size: 11.5px; color: var(--ink-500); font-family: var(--font-mono); }
+.card-hd .mr-tools { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: flex-end; }
+.mr-search {
+  background: var(--surface); border: 1px solid var(--border); color: var(--ink-900);
+  padding: 5px 10px; border-radius: 6px; font-size: 12px; min-width: 220px;
+  outline: none; transition: border-color .15s, box-shadow .15s;
+}
+.mr-search:focus { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 15%, transparent); }
+.mr-search::placeholder { color: var(--ink-500); }
+.mr-state-sel {
+  background: var(--surface); border: 1px solid var(--border); color: var(--ink-900);
+  padding: 5px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; outline: none;
+}
+.mr-state-sel:focus { border-color: var(--primary); }
 
 .empty { padding: 40px 12px; text-align: center; color: var(--ink-500); font-size: 12.5px; }
 .empty.sm { padding: 14px; }
