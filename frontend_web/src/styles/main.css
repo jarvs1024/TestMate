@@ -362,3 +362,13 @@ html[data-theme="dark"] .el-overlay {
     color: var(--ink-900) !important;
   }
 }
+
+/* 统一加固 drawer: 不依赖主题, 确保 panel 不透明 + modal 足够深, 防止背后 MR 列表透出 */
+.el-drawer__body { background-color: var(--surface) !important; }
+.el-overlay { background-color: rgba(0, 0, 0, 0.55) !important; }
+html[data-theme="dark"] .el-overlay,
+@media (prefers-color-scheme: dark) {
+  html[data-theme="auto"] .el-overlay {
+    background-color: rgba(0, 0, 0, 0.7) !important;
+  }
+}

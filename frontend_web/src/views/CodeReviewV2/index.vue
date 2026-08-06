@@ -410,16 +410,14 @@
         <div v-else class="sugs">
           <div v-for="(s, idx) in timeline.suggestions" :key="s.id ?? idx" class="sug-row" :class="sugRowCls(s)">
             <div class="sug-l">
-              <span class="badge sm" :class="sugCls(s)">
-                {{ sugLabel(s) }}<!--
-                  自动/手动采纳角标: 后端 suggestion.adoption_source 直接给 (ui_apply / manual_change / adopt_command)
-                  auto dimmed 不抢戏, manual 蓝色高亮让用户看到自己动手的痕迹
-                --><span v-if="s.state === 'applied' && adoptKind(s)"
-                      class="adopt-sub"
-                      :class="`adopt-sub-${adoptKind(s)}`"
-                      :title="`采纳来源: ${s.adoption_source_label || adoptKind(s)}`">
-                  ·{{ adoptKind(s) === 'auto' ? '自动' : '手动' }}
-                </span>
+              <span class="badge sm" :class="sugCls(s)">{{ sugLabel(s) }}</span>
+              <!-- 采纳来源角标: 独立一行, 在 [已采纳] 和 severity 之间垂直堆叠
+                   auto dimmed 不抢戏, manual 蓝色高亮 -->
+              <span v-if="s.state === 'applied' && adoptKind(s)"
+                    class="adopt-sub"
+                    :class="`adopt-sub-${adoptKind(s)}`"
+                    :title="`采纳来源: ${s.adoption_source_label || adoptKind(s)}`">
+                {{ adoptKind(s) === 'auto' ? '自动' : '手动' }}
               </span>
               <span v-if="s.severity" class="badge sm sev-pill" :class="sevCls(s.severity)"
                     :title="sevTitleHint(s)">
@@ -1463,9 +1461,9 @@ onMounted(reload);
 .sug-row.s-dismissed { opacity: 0.45; }
 .sug-l { display: flex; flex-direction: column; gap: 4px; align-items: center; }
 /* 手动采纳小标: 紧跟 [已采纳] 徽章下面, 居中. 文字用 primary 提色, 跟 [已采纳] 区分但低调 */
-.adopt-sub { font-size: 10.5px; opacity: .9; margin-left: 3px; font-weight: 500; letter-spacing: 0.02em; }
-.adopt-sub-auto   { color: color-mix(in srgb, var(--ink-700) 80%, var(--ink-500)); }
-.adopt-sub-manual { color: #0ea5e9; }
+.adopt-sub { font-size: 10.5px; opacity: .9; font-weight: 600; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 10px; border: 1px solid transparent; line-height: 1.4; white-space: nowrap; }
+.adopt-sub-auto   { color: color-mix(in srgb, var(--ink-700) 80%, var(--ink-500)); border-color: color-mix(in srgb, var(--ink-700) 25%, transparent); background: color-mix(in srgb, var(--ink-700) 6%, transparent); }
+.adopt-sub-manual { color: #0369a1; border-color: color-mix(in srgb, #0ea5e9 45%, transparent); background: color-mix(in srgb, #0ea5e9 12%, transparent); }
 .sug-l .imp { color: var(--warn); font-size: 10px; letter-spacing: -1px; }
 .sug-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .sug-loc { font-size: 11px; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
