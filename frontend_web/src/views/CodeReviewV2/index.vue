@@ -410,11 +410,17 @@
         <div v-else class="sugs">
           <div v-for="(s, idx) in timeline.suggestions" :key="s.id ?? idx" class="sug-row" :class="sugRowCls(s)">
             <div class="sug-l">
-              <span class="badge sm" :class="sugCls(s)">{{ sugLabel(s) }}</span>
-              <!-- 手动采纳标记: 单独一行小 chip, 跟 [已采纳] 同列居中, 不挤压右侧数据 -->
-              <span v-if="s.state === 'applied' && adoptKind(s) === 'manual'"
-                    class="adopt-mark"
-                    title="用户回复 /adopt 手动采纳">手工</span>
+              <span class="badge sm" :class="sugCls(s)">
+                {{ sugLabel(s) }}<!--
+                  自动/手动采纳角标: 后端 suggestion.adoption_source 直接给 (ui_apply / manual_change / adopt_command)
+                  auto dimmed 不抢戏, manual 蓝色高亮让用户看到自己动手的痕迹
+                --><span v-if="s.state === 'applied' && adoptKind(s)"
+                      class="adopt-sub"
+                      :class="`adopt-sub-${adoptKind(s)}`"
+                      :title="`采纳来源: ${s.adoption_source_label || adoptKind(s)}`">
+                  ·{{ adoptKind(s) === 'auto' ? '自动' : '手动' }}
+                </span>
+              </span>
               <span v-if="s.severity" class="badge sm sev-pill" :class="sevCls(s.severity)"
                     :title="sevTitleHint(s)">
                 {{ sevIcon(s.severity) }} {{ sevLabel(s.severity) }}
@@ -873,8 +879,13 @@ const actionsBySugId = computed(() => {
   }
   return m;
 });
-/** 区分自动 vs 手动采纳, null = 未匹配到 action (老数据 / 缺失记录) */
+/** 区分自动 vs 手动采纳; 优先用后端 suggestion.adoption_source (ui_apply=自动, manual_change/adopt_command=手动),
+ *  fallback 到 timeline.actions 查 (兼容老数据/旧 ReviewAgent 没写 adoption_source 的情况). */
 function adoptKind(s: SuggestionRow): 'auto' | 'manual' | null {
+  const src = s.adoption_source;
+  if (src === 'ui_apply') return 'auto';
+  if (src === 'manual_change' || src === 'adopt_command') return 'manual';
+  if (src && src !== 'unknown') return null;
   if (!s.suggestion_id) return null;
   const a = actionsBySugId.value.get(s.suggestion_id);
   if (!a) return null;
@@ -1452,7 +1463,9 @@ onMounted(reload);
 .sug-row.s-dismissed { opacity: 0.45; }
 .sug-l { display: flex; flex-direction: column; gap: 4px; align-items: center; }
 /* 手动采纳小标: 紧跟 [已采纳] 徽章下面, 居中. 文字用 primary 提色, 跟 [已采纳] 区分但低调 */
-.adopt-mark   { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; font-family: var(--font-mono); letter-spacing: 0.2px; color: var(--primary); background: color-mix(in srgb, var(--primary) 18%, transparent); }
+.adopt-sub { font-size: 10.5px; opacity: .9; margin-left: 3px; font-weight: 500; letter-spacing: 0.02em; }
+.adopt-sub-auto   { color: color-mix(in srgb, var(--ink-700) 80%, var(--ink-500)); }
+.adopt-sub-manual { color: #0ea5e9; }
 .sug-l .imp { color: var(--warn); font-size: 10px; letter-spacing: -1px; }
 .sug-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .sug-loc { font-size: 11px; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

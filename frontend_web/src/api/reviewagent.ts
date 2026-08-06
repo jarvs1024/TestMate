@@ -127,6 +127,10 @@ export interface SuggestionRow {
   dismissed_at?: string | null;
   dismissed_by?: string | null;
   dismissed_reason?: string | null;
+  /** 采纳来源: ui_apply (GitLab 按钮自动) / manual_change (人工改代码) / adopt_command (/adopt) / unknown */
+  adoption_source?: string | null;
+  /** 采纳来源中文标签: 自动采纳 / 手动修改 / etc. */
+  adoption_source_label?: string | null;
 }
 export interface DismissReasonBucket {
   reason: string;

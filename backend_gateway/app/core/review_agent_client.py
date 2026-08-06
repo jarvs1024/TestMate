@@ -469,6 +469,9 @@ def _map_suggestion(s: dict) -> dict:
         "dismissed_at": s.get("dismissed_at"),
         "dismissed_by": s.get("dismissed_by"),
         "dismissed_reason": s.get("dismissed_reason"),
+        # ReviewAgent 直接给: ui_apply (GitLab 按钮) / manual_change (用户改代码) / adopt_command (/adopt) / unknown
+        "adoption_source": s.get("adoption_source"),
+        "adoption_source_label": s.get("adoption_source_label"),
     }
 
 
