@@ -1,3 +1,4 @@
+from typing import Optional
 """登录 / 当前用户。"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -36,6 +37,47 @@ def require_role(*roles: UserRole):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
         return user
     return dep
+
+
+def _anonymous_user() -> User:
+    """匿名访问占位用户 (不入库, 内存构造).
+
+    用于 /code-review-v2 等公共只读看板: 没 token / token 无效 时返回这个,
+    后端 review-agent/pr-agent 路由用 get_optional_user 兼容 anonymous + 真实 user.
+    anonymous 角色严禁走任何写操作 (review-agent 全部是 GET, 安全边界天然 OK).
+    """
+    from datetime import datetime
+    now = datetime.utcnow()
+    return User(
+        id=0,
+        username="anonymous",
+        password_hash="",
+        role=UserRole.anonymous,
+        api_token=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+async def get_optional_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """跟 get_current_user 一样, 但没 token / token 无效 / 用户不存在 时返回 anonymous 用户, 不抛 401.
+
+    用于公共只读看板接口: 登录用户走真实身份, 匿名用户走 anonymous 占位, 后端统一处理.
+    """
+    if not token:
+        return _anonymous_user()
+    payload = decode_token(token)
+    if not payload:
+        return _anonymous_user()
+    try:
+        user_id = int(payload.get("sub", 0))
+    except (TypeError, ValueError):
+        return _anonymous_user()
+    user = await session.get(User, user_id)
+    return user or _anonymous_user()
 
 
 @router.post("/login", response_model=TokenResponse)

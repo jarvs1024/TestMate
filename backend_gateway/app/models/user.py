@@ -11,6 +11,8 @@ class UserRole(str, enum.Enum):
     admin = "admin"
     tester = "tester"
     viewer = "viewer"
+    # 匿名访问占位角色 (不入库, 仅用于 /code-review-v2 等公共只读看板, 由 get_optional_user 返回).
+    anonymous = "anonymous"
 
 
 class User(Base):

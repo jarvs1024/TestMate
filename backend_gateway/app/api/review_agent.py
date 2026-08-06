@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.auth import get_current_user
+from app.api.auth import get_optional_user
 from app.core import review_agent_client
 from app.models.user import User
 
@@ -26,7 +26,7 @@ def _unconfigured() -> None:
 
 
 @router.get("/health")
-async def health(_user: User = Depends(get_current_user)) -> dict:
+async def health(_user: User = Depends(get_optional_user)) -> dict:
     configured = await review_agent_client.is_configured()
     if not configured:
         return {"configured": False, "status": "off", "message": "未配置 base_url"}
@@ -37,7 +37,7 @@ async def health(_user: User = Depends(get_current_user)) -> dict:
 @router.get("/metrics/overview")
 async def metrics_overview(
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> dict:
     if not await review_agent_client.is_configured():
         return {"configured": False}
@@ -50,7 +50,7 @@ async def metrics_overview(
 @router.get("/metrics/rules")
 async def metrics_rules(
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> list[dict]:
     if not await review_agent_client.is_configured():
         return []
@@ -63,7 +63,7 @@ async def metrics_rules(
 @router.get("/metrics/authors")
 async def metrics_authors(
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> list[dict]:
     if not await review_agent_client.is_configured():
         return []
@@ -76,7 +76,7 @@ async def metrics_authors(
 @router.get("/metrics/severity")
 async def metrics_severity(
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> list[dict]:
     if not await review_agent_client.is_configured():
         return []
@@ -96,7 +96,7 @@ async def list_mrs(
     project_id: Optional[int] = None,
     state: Optional[str] = None,
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> dict:
     """MR 列表 + 每条 MR 的最近 run + 建议统计. 形态对齐 pr-agent /mrs.
 
@@ -124,7 +124,7 @@ async def list_mrs(
 async def mr_timeline(
     project_id: int,
     mr_id: int,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> dict:
     if not await review_agent_client.is_configured():
         raise HTTPException(status_code=503, detail="review-agent 未配置")
@@ -138,7 +138,7 @@ async def mr_timeline(
 async def mr_stats(
     project_id: int,
     mr_id: int,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> dict:
     if not await review_agent_client.is_configured():
         raise HTTPException(status_code=503, detail="review-agent 未配置")
@@ -151,7 +151,7 @@ async def mr_stats(
 @router.get("/dismissals/by-rule")
 async def dismissals_by_rule(
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> list[dict]:
     if not await review_agent_client.is_configured():
         _unconfigured()

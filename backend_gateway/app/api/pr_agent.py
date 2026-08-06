@@ -11,7 +11,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 
-from app.api.auth import get_current_user
+from app.api.auth import get_optional_user
 from app.core import pr_agent_client
 from app.core.config import settings
 from app.core.settings_store import get
@@ -29,7 +29,7 @@ def _unconfigured() -> None:
 
 
 @router.get("/health")
-async def health(_user: User = Depends(get_current_user)) -> dict:
+async def health(_user: User = Depends(get_optional_user)) -> dict:
     """健康检查: 是否配了 + 是否能连上."""
     configured = await pr_agent_client.is_configured()
     if not configured:
@@ -41,7 +41,7 @@ async def health(_user: User = Depends(get_current_user)) -> dict:
 @router.get("/metrics/overview")
 async def metrics_overview(
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> dict:
     if not await pr_agent_client.is_configured():
         return {"configured": False}
@@ -54,7 +54,7 @@ async def metrics_overview(
 @router.get("/metrics/rules")
 async def metrics_rules(
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> list[dict]:
     if not await pr_agent_client.is_configured():
         return []
@@ -67,7 +67,7 @@ async def metrics_rules(
 @router.get("/metrics/authors")
 async def metrics_authors(
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> list[dict]:
     if not await pr_agent_client.is_configured():
         return []
@@ -81,7 +81,7 @@ async def metrics_authors(
 async def metrics_severity(
     since: Optional[str] = None,
     pr_url: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> list[dict]:
     """严重等级分桶. 见 pr_agent.telemetry.store.severity_breakdown."""
     if not await pr_agent_client.is_configured():
@@ -103,7 +103,7 @@ async def list_mrs(
     project_id: Optional[int] = None,
     state: Optional[str] = None,
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> dict:
     """MR 列表 + 每条 MR 的最近一次 run (含失败状态) + 建议统计.
 
@@ -187,7 +187,7 @@ async def list_mrs(
 async def mr_timeline(
     project_id: int,
     mr_id: int,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> dict:
     if not await pr_agent_client.is_configured():
         raise HTTPException(status_code=503, detail="pr-agent 未配置")
@@ -201,7 +201,7 @@ async def mr_timeline(
 async def mr_stats(
     project_id: int,
     mr_id: int,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> dict:
     if not await pr_agent_client.is_configured():
         raise HTTPException(status_code=503, detail="pr-agent 未配置")
@@ -214,7 +214,7 @@ async def mr_stats(
 @router.get("/dismissals/by-rule")
 async def dismissals_by_rule(
     since: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> list[dict]:
     """按规则聚合 dismiss 次数 + reason 分布.
 
