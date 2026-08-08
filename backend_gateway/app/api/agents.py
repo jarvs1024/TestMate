@@ -109,7 +109,7 @@ SEED_AGENTS: list[dict] = [
     },
     {
         # 原 pr-agent 版代码检视已下线, 广场卡片只剩 ReviewAgent (ReviewAgent 数据更稳定 + 跟 pr-agent 数据可比)
-        "code": "code-review-v2",
+        "code": "code-review",
         "name": "代码检视",
         "icon": "🧬",
         "category": AgentCategory.auto_code.value,  # 自动化代码 (代码检视)
@@ -125,7 +125,7 @@ SEED_AGENTS: list[dict] = [
         "data_sources": ["review_agent:telemetry"],
         "tools": [],
         "is_featured": True,                        # 提到精选, 占原 pr-agent 版位置
-        "route": "page:code-review-v2",
+        "route": "page:code-review",
     },
 ]
 

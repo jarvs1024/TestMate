@@ -10,7 +10,7 @@ const ANONYMOUS_TOKEN = import.meta.env.VITE_ANONYMOUS_READ_TOKEN as string | un
 
 /** 当前路由是不是公共只读看板 (匿名访问, 用 ANONYMOUS_TOKEN 调 API) */
 function isPublicReadRoute(): boolean {
-  const m = window.location.pathname.match(/^\/code-review-v2/);
+  const m = window.location.pathname.match(/^\/code-review(\/|$)/);
   return !!m;
 }
 

@@ -7,7 +7,7 @@
         <div class="run-icon">🧪</div>
         <div>
           <div class="run-name">
-            <span>代码检视 V2</span>
+            <span>代码检视</span>
             <span class="run-ver">v0.2.0</span>
           </div>
           <div class="run-summary">ReviewAgent 评审数据看板 · MR / 建议采纳率 / 规则命中 / 作者分布</div>
@@ -34,6 +34,22 @@
           <span :class="{ spinning: loading }">↻</span> 刷新
         </button>
       </div>
+    </div>
+
+    <!-- 匿名访问友好提示: 仅未登录显示, ✕ 关闭后 localStorage 记忆, 不再骚扰.
+         提示匿名身份 + 引导登录, 不抢戏 (info 蓝, 顶部紧凑一行) -->
+    <div v-if="isAnon && !anonNoticeDismissed" class="banner banner-anon" role="region">
+      <div class="banner-anon-body">
+        <span class="b-icon">🔓</span>
+        <span class="b-text">
+          您正在匿名访问<strong>代码检视看板</strong>, 查看 MR / 建议 / 规则数据无需登录
+          <span class="b-sep">·</span>
+          部分交互功能 (标记已读 / 个人偏好) 需
+          <a href="/login?redirect=/code-review" class="anon-login-link">登录</a>
+          后使用
+        </span>
+      </div>
+      <button class="banner-close" type="button" title="关闭提示 (本次会话不再显示)" aria-label="关闭匿名访问提示" @click="dismissAnonNotice">✕</button>
     </div>
 
     <!-- 评审失败 banner: 顶部醒目提示, 点击展开 inline failed MR list (不必滚到 MR 表) -->
@@ -461,6 +477,18 @@ import {
 } from '@/api/reviewagent';
 import ErrorView from '@/components/ErrorView.vue';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
+import { useUserStore } from '@/stores/user';
+
+// 匿名访问提示: 未登录时顶部柔和提示, ✕ 关闭后 localStorage 记忆, 不再骚扰.
+// key 加 cr: 前缀 (CodeReview 看板), 即使后续拆 V2/V3 也共用同一份记忆.
+const ANON_NOTICE_KEY = 'cr:anon-notice-dismissed';
+const userStore = useUserStore();
+const isAnon = computed(() => !userStore.token);
+const anonNoticeDismissed = ref(localStorage.getItem(ANON_NOTICE_KEY) === '1');
+function dismissAnonNotice() {
+  anonNoticeDismissed.value = true;
+  try { localStorage.setItem(ANON_NOTICE_KEY, '1'); } catch { /* 隐私模式 quota 满 → 静默 */ }
+}
 
 const loading = ref(false);
 const loadError = ref('');
@@ -1087,6 +1115,32 @@ onMounted(reload);
   color: color-mix(in srgb, var(--err) 75%, var(--ink-900));
 }
 .banner-err .b-icon { color: var(--err); }
+/* 匿名访问提示: info 级淡蓝, 跟 .banner-err 同级, 一行紧凑不抢戏.
+   文案 + 登录链接 + 右侧 ✕ 关闭 (关闭后 localStorage 记忆, 不再骚扰). */
+.banner-anon {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 18px;
+  background: color-mix(in srgb, var(--info, var(--primary)) 10%, var(--surface-soft));
+  border-color: color-mix(in srgb, var(--info, var(--primary)) 40%, var(--border));
+  color: color-mix(in srgb, var(--info, var(--primary)) 70%, var(--ink-900));
+}
+.banner-anon-body { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.banner-anon .b-icon { font-size: 16px; flex-shrink: 0; color: var(--info, var(--primary)); }
+.banner-anon .b-text { font-size: 12.5px; line-height: 1.5; flex: 1; min-width: 0; }
+.banner-anon .b-text strong { font-weight: 700; }
+.banner-anon .b-sep { opacity: 0.5; margin: 0 4px; }
+.banner-anon .anon-login-link {
+  color: var(--info, var(--primary)); text-decoration: none; font-weight: 600;
+  border-bottom: 1px dashed currentColor;
+}
+.banner-anon .anon-login-link:hover { border-bottom-style: solid; }
+.banner-anon .banner-close {
+  border: none; background: transparent; color: inherit;
+  font-size: 14px; line-height: 1; cursor: pointer; opacity: 0.55;
+  padding: 4px 8px; border-radius: 4px; flex-shrink: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.banner-anon .banner-close:hover { opacity: 1; background: color-mix(in srgb, var(--info, var(--primary)) 12%, transparent); }
 .failed-mr-list {
   padding: 8px 18px 12px;
   border-top: 1px solid color-mix(in srgb, var(--err) 25%, var(--border));
