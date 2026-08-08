@@ -1,6 +1,6 @@
 <template>
   <!-- 通用滚动通知栏: 顶部统一收纳所有轻量提示 (匿名访问 / 系统公告 / 实验性功能等).
-       多个 notice 垂直堆叠, 每个独立可关, 关掉后写到 localStorage, 不再骚扰.
+       多个 notice 垂直堆叠, 每个独立可关, 关掉后写到 storage (localStorage / sessionStorage 均可, 走 dismissScope 配置).
        跟页面内容 (看板) 区分开, 不抢占状态徽章/筛选区的注意力. -->
   <div v-if="visibleNotices.length > 0" class="notice-bar" role="region" aria-label="通知栏">
     <div
@@ -41,8 +41,12 @@ export interface NoticeItem {
   type?: 'info' | 'warn' | 'err' | 'ok';
   /** 文本片段: 字符串里匹配 {{text}} 会渲染为 <strong>, 链接用 [text](href) */
   text: string;
-  /** 关闭后写 localStorage 的 key (传空 = 不记忆, 每次刷新都显示) */
+  /** 关闭后写 storage 的 key (传空 = 不记忆, 每次刷新都显示) */
   dismissKey?: string;
+  /** 关闭后写哪个 storage:
+   *  - 'local' (默认): 写入 localStorage, 关掉后长期不显示 (适合系统公告)
+   *  - 'session':     写入 sessionStorage, 关掉后当前 tab 内不显示, 刷新/新标签页/明天会再出现 (适合持续性提示如匿名访问) */
+  dismissScope?: 'local' | 'session';
   /** 是否可关闭 (默认 true) */
   dismissible?: boolean;
   /** 关闭按钮 title */
@@ -54,8 +58,18 @@ type Segment = { kind: 'text'; text: string } | { kind: 'strong'; text: string }
 
 const props = defineProps<{ notices: NoticeItem[] }>();
 
+function readDismiss(key: string, scope: 'local' | 'session'): boolean {
+  try {
+    return (scope === 'session' ? sessionStorage : localStorage).getItem(key) === '1';
+  } catch { return false; }
+}
+function writeDismiss(key: string, scope: 'local' | 'session') {
+  try { (scope === 'session' ? sessionStorage : localStorage).setItem(key, '1'); }
+  catch { /* 隐私模式 quota 满 → 静默 */ }
+}
+
 const visibleNotices = computed<NoticeItem[]>(() =>
-  props.notices.filter(n => !n.dismissKey || localStorage.getItem(n.dismissKey) !== '1')
+  props.notices.filter(n => !n.dismissKey || !readDismiss(n.dismissKey, n.dismissScope || 'local'))
 );
 
 function iconFor(type?: NoticeItem['type']): string {
@@ -90,9 +104,7 @@ function renderSegments(n: NoticeItem): Segment[] {
 }
 
 function dismiss(n: NoticeItem) {
-  if (n.dismissKey) {
-    try { localStorage.setItem(n.dismissKey, '1'); } catch { /* 隐私模式 quota 满 → 静默 */ }
-  }
+  if (n.dismissKey) writeDismiss(n.dismissKey, n.dismissScope || 'local');
   // 触发 computed 重算: 用 props.notices 的 mutation 不优雅 (父组件不知),
   // 这里走事件让父组件自己过滤, 保证数据流单向.
   emit('dismiss', n.id);

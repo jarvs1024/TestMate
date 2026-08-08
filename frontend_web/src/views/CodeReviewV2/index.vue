@@ -39,7 +39,7 @@
     </div>
 
     <!-- 顶部统一通知栏: 当前收纳匿名访问提示, 后续可加系统公告 / 实验功能提示等.
-         每条 notice 独立 ✕ + localStorage 记忆, 关闭后不骚扰. -->
+         每条 notice 独立 ✕, 关掉后写 sessionStorage/localStorage (走 dismissScope, 默认 local). -->
     <NoticeBar :notices="notices" @dismiss="onNoticeDismiss" />
 
     <!-- 评审失败 banner: 顶部醒目提示, 点击展开 inline failed MR list (不必滚到 MR 表) -->
@@ -472,6 +472,8 @@ import NoticeBar, { type NoticeItem } from '@/components/NoticeBar.vue';
 
 // 顶部通知栏数据源: 登录态返回 [], 匿名态追加 1 条匿名提示.
 // 后续要加系统公告 / 实验功能提示等, push 到 notices 即可, 不动模板.
+// 匿名提示用 dismissScope='session' — ✕ 只在当前 tab 生效, 刷新/新标签页/明天再来都会再次出现,
+// 避免用户一次 ✕ 之后彻底看不到这条持续性提示.
 const userStore = useUserStore();
 const dismissedNoticeIds = ref<Set<string>>(new Set());
 const notices = computed<NoticeItem[]>(() => {
@@ -483,10 +485,11 @@ const notices = computed<NoticeItem[]>(() => {
       // 文本里 {{x}} → strong, [x](href) → link; NoticeBar 解析渲染
       text: '您正在匿名访问,部分交互功能需 [登录](/login?redirect=/code-review) 后使用',
       dismissKey: 'cr:anon-notice-dismissed',
-      dismissTitle: '不再提示 (本次会话)',
+      dismissScope: 'session',
+      dismissTitle: '本次会话内不再提示 (刷新会重新出现)',
     });
   }
-  // 过滤掉本会话已 ✕ 掉的 (NoticeBar 自己管 localStorage; 这里只挡同一会话内连点)
+  // 过滤掉本会话已 ✕ 掉的 (NoticeBar 自己管 sessionStorage/localStorage; 这里只挡同一组件实例内连点)
   return list.filter(n => !dismissedNoticeIds.value.has(n.id));
 });
 function onNoticeDismiss(id: string) {
