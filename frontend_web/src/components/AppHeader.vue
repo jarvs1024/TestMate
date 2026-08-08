@@ -101,16 +101,32 @@ const notices = computed<NoticeItem[]>(() => {
   white-space: nowrap;
 }
 
-/* 通知栏: 撑满 page-title 和 right 之间的空隙, 跟顶栏高度协调.
-   高度比独立放置时更紧凑 (30px), 跟页面标题块视觉上平齐. */
+/* 通知栏 (header 内嵌版): 视觉上跟标题块/主题按钮同处一行, 但权重更轻 ——
+   不抢标题戏, 用微染色背景 + 细边框, 文字色走 ink-700 而不是 info 主色,
+   让它看起来像 AppHeader 的一部分, 而不是塞进去的卡片.
+   padding / height 跟 lede 一行高度对齐. */
 .tm-notice {
   margin-left: 18px;
   margin-bottom: 0;
   flex: 1;
   min-width: 0;
-  padding: 6px 12px;
-  min-height: 30px;
+  padding: 4px 8px 4px 12px;
+  min-height: 28px;
   font-size: 12px;
-  border-radius: 8px;
+  border-radius: 14px;
+  /* 覆盖 NoticeBar 默认的卡片样式: 微染色 + 细边 + ink-700 文字,
+     跟 AppHeader 的中性色更搭 */
+  background: color-mix(in srgb, var(--info, var(--primary)) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--info, var(--primary)) 20%, transparent);
+  color: color-mix(in srgb, var(--ink-700) 90%, var(--info, var(--primary)) 10%);
 }
+/* 通知内部元素轻量化: icon 小一号, ✕ 更隐形, link 不下划线虚线那么突出. */
+.tm-notice :deep(.nb-icon) { font-size: 13px; opacity: 0.85; }
+.tm-notice :deep(.nb-body) { font-weight: 500; }
+.tm-notice :deep(.nb-link) { border-bottom: 1px solid color-mix(in srgb, currentColor 35%, transparent); }
+.tm-notice :deep(.nb-link:hover) { border-bottom-color: currentColor; }
+.tm-notice :deep(.nb-nav-btn) { width: 20px; height: 20px; font-size: 12px; }
+.tm-notice :deep(.nb-count) { min-width: 30px; }
+.tm-notice :deep(.nb-close) { padding: 2px 6px; font-size: 12px; opacity: 0.45; }
+.tm-notice :deep(.nb-close:hover) { opacity: 0.9; }
 </style>
