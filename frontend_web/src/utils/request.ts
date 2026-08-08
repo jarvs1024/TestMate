@@ -20,12 +20,17 @@ const request = axios.create({
 });
 
 request.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  // publicRead 路由优先用 anonymous token (用户可能也登录了, 但公共路由走匿名保证后端一定放行)
-  if (isPublicReadRoute() && ANONYMOUS_TOKEN) {
-    config.headers.Authorization = `Bearer ${ANONYMOUS_TOKEN}`;
+  const userStore = useUserStore();
+  // publicRead 路由 (代码检视): 登录用 user token (保留登录态体验: ack 按钮等);
+  //  未登录用 ANONYMOUS_TOKEN (后端 get_optional_user 解码 sub=0 → anonymous user, 仍能调 review-agent/pr-agent GET)
+  if (isPublicReadRoute()) {
+    if (userStore.token) {
+      config.headers.Authorization = `Bearer ${userStore.token}`;
+    } else if (ANONYMOUS_TOKEN) {
+      config.headers.Authorization = `Bearer ${ANONYMOUS_TOKEN}`;
+    }
     return config;
   }
-  const userStore = useUserStore();
   if (userStore.token) {
     config.headers.Authorization = `Bearer ${userStore.token}`;
   }

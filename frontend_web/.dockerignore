@@ -6,7 +6,10 @@ build
 .cache
 .vite
 *.log
-.env
-.env.local
+# 注释: .env / .env.local 必须 COPY 进 builder 容器让 Vite 读 VITE_* 注入 build 产物
+# (docker 排除这些通常是为了防 secret 进镜像, 但 VITE_* 本身设计就是公开的, 注入后是打包进 dist 不算 leak;
+#  真正敏感的后端密钥放 backend_gateway/.env, 那里的 .dockerignore 该排除)
+#.env
+#.env.local
 tests
 e2e.mjs

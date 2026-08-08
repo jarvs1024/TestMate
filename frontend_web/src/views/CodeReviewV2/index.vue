@@ -63,13 +63,13 @@
                 <!-- error 为空时: 后端没传错误详情, 引导用户去时间线看 run 全量日志 -->
                 <button v-else class="link-btn link-btn-s" type="button" title="查看该 MR 时间线, 查最近一次失败原因" @click="openTimeline(m)">查看时间线 →</button>
               </td>
-              <td v-if="!isAnon" class="r"><button class="ack-btn" type="button" title="标记已读" @click="ackFailedMr(m.project_id, m.mr_id)">✕</button></td>
+              <td class="r"><button class="ack-btn" type="button" title="标记已读" @click="ackFailedMr(m.project_id, m.mr_id)">✕</button></td>
             </tr>
             <tr v-if="unackedFailedMrs.length === 0"><td colspan="6" class="empty">无</td></tr>
           </tbody>
         </table>
         <div class="banner-foot">
-          <button v-if="!isAnon" class="link-btn" type="button" @click="ackAllFailed">全部已读</button>
+          <button class="link-btn" type="button" @click="ackAllFailed">全部已读</button>
           <button class="link-btn" type="button" @click="scrollToMrTable">查看完整 MR 列表 ↓</button>
         </div>
       </div>
@@ -453,7 +453,6 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { useUserStore } from '@/stores/user';
 import { ElMessage } from 'element-plus';
 import {
   getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity, getDismissalsByRule,
@@ -462,10 +461,6 @@ import {
 } from '@/api/reviewagent';
 import ErrorView from '@/components/ErrorView.vue';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
-
-const userStore = useUserStore();
-// 匿名访问 (router meta.publicRead): 没登录 + 路由是 /code-review-v2, 不显示 ack 按钮
-const isAnon = computed(() => !userStore.token);
 
 const loading = ref(false);
 const loadError = ref('');
