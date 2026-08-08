@@ -1,5 +1,10 @@
 <template>
   <div class="cr">
+    <!-- 顶部统一通知栏: 放在 run-hd 之上, 一行高, 全宽. 当前收纳匿名访问提示,
+         后续可加系统公告 / 实验功能提示等. 多条 notice 自动轮播, 每条独立 ✕.
+         dismiss 走 sessionStorage/localStorage (走 dismissScope, 默认 local). -->
+    <NoticeBar :notices="notices" @dismiss="onNoticeDismiss" />
+
     <!-- 顶栏: 与其他智能体详情布局一致 (返回广场 + icon + 名/版本/简介 + status + 时间窗/刷新) -->
     <div class="run-hd">
       <button class="back" @click="$router.push({ name: 'plaza' })">← 返回广场</button>
@@ -37,10 +42,6 @@
         </button>
       </div>
     </div>
-
-    <!-- 顶部统一通知栏: 当前收纳匿名访问提示, 后续可加系统公告 / 实验功能提示等.
-         每条 notice 独立 ✕, 关掉后写 sessionStorage/localStorage (走 dismissScope, 默认 local). -->
-    <NoticeBar :notices="notices" @dismiss="onNoticeDismiss" />
 
     <!-- 评审失败 banner: 顶部醒目提示, 点击展开 inline failed MR list (不必滚到 MR 表) -->
     <div v-if="unackedFailedCount > 0" class="banner banner-err" :class="{ open: bannerOpen }" role="region" :aria-expanded="bannerOpen">
