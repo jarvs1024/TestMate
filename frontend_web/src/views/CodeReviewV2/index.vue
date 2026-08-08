@@ -1,10 +1,5 @@
 <template>
   <div class="cr">
-    <!-- 顶部统一通知栏: 放在 run-hd 之上, 一行高, 全宽. 当前收纳匿名访问提示,
-         后续可加系统公告 / 实验功能提示等. 多条 notice 自动轮播, 每条独立 ✕.
-         dismiss 走 sessionStorage/localStorage (走 dismissScope, 默认 local). -->
-    <NoticeBar :notices="notices" @dismiss="onNoticeDismiss" />
-
     <!-- 顶栏: 与其他智能体详情布局一致 (返回广场 + icon + 名/版本/简介 + status + 时间窗/刷新) -->
     <div class="run-hd">
       <button class="back" @click="$router.push({ name: 'plaza' })">← 返回广场</button>
@@ -468,37 +463,6 @@ import {
 } from '@/api/reviewagent';
 import ErrorView from '@/components/ErrorView.vue';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
-import { useUserStore } from '@/stores/user';
-import NoticeBar, { type NoticeItem } from '@/components/NoticeBar.vue';
-
-// 顶部通知栏数据源: 登录态返回 [], 匿名态追加 1 条匿名提示.
-// 后续要加系统公告 / 实验功能提示等, push 到 notices 即可, 不动模板.
-// 匿名提示用 dismissScope='session' — ✕ 只在当前 tab 生效, 刷新/新标签页/明天再来都会再次出现,
-// 避免用户一次 ✕ 之后彻底看不到这条持续性提示.
-const userStore = useUserStore();
-const dismissedNoticeIds = ref<Set<string>>(new Set());
-const notices = computed<NoticeItem[]>(() => {
-  const list: NoticeItem[] = [];
-  if (!userStore.token) {
-    list.push({
-      id: 'cr-anon-readonly',
-      type: 'info',
-      // 文本里 {{x}} → strong, [x](href) → link; NoticeBar 解析渲染
-      text: '您正在匿名访问,部分交互功能需 [登录](/login?redirect=/code-review) 后使用',
-      dismissKey: 'cr:anon-notice-dismissed',
-      dismissScope: 'session',
-      dismissTitle: '本次会话内不再提示 (刷新会重新出现)',
-    });
-  }
-  // 过滤掉本会话已 ✕ 掉的 (NoticeBar 自己管 sessionStorage/localStorage; 这里只挡同一组件实例内连点)
-  return list.filter(n => !dismissedNoticeIds.value.has(n.id));
-});
-function onNoticeDismiss(id: string) {
-  dismissedNoticeIds.value.add(id);
-  // 触发 computed 重算
-  dismissedNoticeIds.value = new Set(dismissedNoticeIds.value);
-}
-
 const loading = ref(false);
 const loadError = ref('');
 const health = ref<HealthResp | null>(null);
