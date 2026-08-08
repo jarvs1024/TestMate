@@ -57,11 +57,8 @@ class Settings(BaseSettings):
 
     # pr-agent (代码检视 telemetry) — 默认空, 用户在 Settings 或 .env 填
     # 注意:从 backend 容器内访问 host 用 host.docker.internal:5050
-    PR_AGENT_BASE_URL: str = ""
-    PR_AGENT_API_TOKEN: str = ""
-
-    # ReviewAgent (代码检视 V2 telemetry) — HTTP 服务地址
-    # 对齐 pr-agent.base_url: ReviewAgent 跑在 host:3000,容器内走 host.docker.internal:3000
+    # ReviewAgent (代码检视 telemetry) — HTTP 服务地址 (代码检视唯一后端).
+    # ReviewAgent 跑在 host:3000, 容器内走 host.docker.internal:3000.
     REVIEW_AGENT_BASE_URL: str = "http://host.docker.internal:3000"
     REVIEW_AGENT_API_TOKEN: str = ""
 

@@ -92,7 +92,7 @@
           </div>
 
           <div class="hint">
-            💡 所有外部数据源 (RAGFlow / Dify / pr-agent / 后续接入) 统一在 <strong>通用 → 📡 数据源</strong> 配置.
+            💡 所有外部数据源 (RAGFlow / Dify / ReviewAgent / 后续接入) 统一在 <strong>通用 → 📡 数据源</strong> 配置.
           </div>
         </section><section v-if="activeTop === 'sec-general'" :id="'sec-general'" class="card grp">
           <h2>
@@ -143,7 +143,7 @@
             </div>
           </div>
 
-          <!-- 📡 数据源 (RAGFlow / Dify / pr-agent 统一配置入口, 按 prefix 分组) -->
+          <!-- 📡 数据源 (RAGFlow / Dify / ReviewAgent 统一配置入口, 按 prefix 分组) -->
           <div id="sec-general-data-source" class="sub-grp">
             <h3>📡 数据源 <span class="sub-cnt">{{ dataSourceItems.length }} 项</span></h3>
             <div class="hint">
@@ -206,7 +206,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { getSchema, updateSetting, testRagflow, testDify, testPrAgent, testReviewAgent, type SettingItem, type TestResult } from '@/api/settings';
+import { getSchema, updateSetting, testRagflow, testDify, testReviewAgent, type SettingItem, type TestResult } from '@/api/settings';
 import SettingRow from './components/SettingRow.vue';
 import { useUserStore } from '@/stores/user';
 
@@ -231,7 +231,7 @@ const chatItems = computed(() => itemsByCategory('chat'));
 const generalItems = computed(() => itemsByCategory('general'));
 
 // ===== 智能体 section: 业务配置 (引擎 / 模型 / 工具等) =====
-// 数据源 (RAGFlow / Dify / pr-agent) 统一在 '通用 → 数据源' sub-group 配置
+// 数据源 (RAGFlow / Dify / ReviewAgent) 统一在 '通用 → 数据源' sub-group 配置
 // AGENT_PREFIXES: 智能体业务配置 key 前缀, 后续加新智能体就在这里 append
 const AGENT_PREFIXES: string[] = [];
 
@@ -245,7 +245,7 @@ function itemsByPrefix(prefix: string): SettingItem[] {
   return out;
 }
 
-// ===== 数据源 sub-group: 按 prefix 拆 3 个子组 (RAGFlow / Dify / pr-agent) =====
+// ===== 数据源 sub-group: 按 prefix 拆子组 (RAGFlow / Dify / ReviewAgent) =====
 // 配置项都标 category='data-source', 这里按 key 前缀再细分, 让"测试连接"按钮紧贴对应配置.
 // 后续接新数据源: 在 SOURCE_GROUPS 数组里加一项即可.
 const dataSourceItems = computed(() => itemsByCategory('data-source'));
@@ -264,8 +264,7 @@ type SourceGroupDef = Omit<DataSourceGroup, 'items'>;
 const SOURCE_GROUPS: SourceGroupDef[] = [
   { id: 'ragflow',  prefix: 'ragflow.',  icon: '📚', label: 'RAGFlow (知识库 API)', testKey: 'ragflow',  hint: 'KB 知识库 · 数据集 / 文档 / chunking API' },
   { id: 'dify',     prefix: 'dify.',     icon: '🤖', label: 'Dify (Workflow API)',   testKey: 'dify',     hint: '智能体广场 · workflow / 对话 API' },
-  { id: 'pr-agent', prefix: 'pr_agent.', icon: '🧪', label: 'pr-agent (代码检视)',   testKey: 'pr-agent', hint: '代码检视 · telemetry / 健康检查' },
-  { id: 'review-agent', prefix: 'review_agent.', icon: '🧬', label: 'ReviewAgent (代码检视 V2)', testKey: 'review-agent', hint: '代码检视 V2 · HTTP / 健康检查' },
+  { id: 'review-agent', prefix: 'review_agent.', icon: '🧬', label: 'ReviewAgent (代码检视)', testKey: 'review-agent', hint: '代码检视 · HTTP / 健康检查' },
 ];
 const sourceGroups = computed<DataSourceGroup[]>(() =>
   SOURCE_GROUPS.map(g => ({
@@ -384,11 +383,10 @@ async function onSave(it: SettingItem) {
 }
 
 // ===== 数据源连接测试 =====
-// testKey 跟 SOURCE_GROUPS[i].testKey 对齐: 'ragflow' / 'dify' / 'pr-agent'.
+// testKey 跟 SOURCE_GROUPS[i].testKey 对齐: 'ragflow' / 'dify' / 'review-agent'.
 const _testClients: Record<string, () => Promise<TestResult>> = {
   'ragflow':  testRagflow,
   'dify':     testDify,
-  'pr-agent': testPrAgent,
   'review-agent': testReviewAgent,
 };
 async function onTest(testKey: string) {

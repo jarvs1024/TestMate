@@ -55,8 +55,8 @@ interface ServiceHealth { key: string; label: string; status: 'ok' | 'warn' | 'o
 const services = ref<ServiceHealth[]>([
   { key: 'ragflow', label: 'RAGFlow',   status: 'unknown', statusText: '...' },
   { key: 'dify',    label: 'Dify',      status: 'unknown', statusText: '...' },
-  // pr-agent 默认隐藏, 配过 base_url 才显示 (probe 返回 ok/warn/off 时设 visible=true)
-  { key: 'pr_agent', label: 'PR-Agent', status: 'off',     statusText: '未配置', visible: false },
+  // ReviewAgent (代码检视唯一后端) — 默认隐藏, 配过 base_url 才显示 (probe 返回 ok/warn/off 时设 visible=true)
+  { key: 'review_agent', label: 'ReviewAgent', status: 'off', statusText: '未配置', visible: false },
 ]);
 const lastCheck = ref('—');
 let pollTimer: number | null = null;
@@ -74,15 +74,15 @@ async function poll() {
     const { data } = await axios.get('/api/v1/health/services');
     setSvc('ragflow', data.ragflow);
     setSvc('dify', data.dify);
-    // pr-agent: 服务未返回字段 → 视为未配置
-    const pr = data.pr_agent || 'off';
-    const prMap: Record<string,string> = { ok: '正常', warn: '部分', off: '未配置' };
-    const i = services.value.findIndex(x => x.key === 'pr_agent');
+    // ReviewAgent (代码检视): 服务未返回字段 → 视为未配置
+    const ra = data.review_agent || 'off';
+    const raMap: Record<string,string> = { ok: '正常', warn: '部分', off: '未配置' };
+    const i = services.value.findIndex(x => x.key === 'review_agent');
     if (i >= 0) {
-      services.value[i].status = pr;
-      services.value[i].statusText = prMap[pr] || '未知';
+      services.value[i].status = ra;
+      services.value[i].statusText = raMap[ra] || '未知';
       // 配过 (状态非 'off') 才显示, 未配时隐藏避免误导
-      services.value[i].visible = pr !== 'off';
+      services.value[i].visible = ra !== 'off';
     }
   } catch {
     setSvc('ragflow', 'off');

@@ -50,22 +50,6 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": True,
     },
     {
-        "key": "pr_agent.base_url",
-        "category": "data-source",
-        "value_type": "url",
-        "default": settings.PR_AGENT_BASE_URL,
-        "description": "pr-agent telemetry API 基础地址 (例: http://host.docker.internal:5050)",
-        "is_secret": False,
-    },
-    {
-        "key": "pr_agent.api_token",
-        "category": "data-source",
-        "value_type": "secret",
-        "default": settings.PR_AGENT_API_TOKEN,
-        "description": "pr-agent telemetry Bearer token (对应 REVIEW_TELEMETRY_HTTP_TOKEN, 留空 = 不校验)",
-        "is_secret": True,
-    },
-    {
         "key": "review_agent.base_url",
         "category": "data-source",
         "value_type": "url",
