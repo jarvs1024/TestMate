@@ -109,7 +109,9 @@
       <div class="stat highlight">
         <div class="num">{{ fmtPct(overview.suggestions?.adoption_rate) }}</div>
         <div class="lbl">建议采纳率</div>
-        <div class="sub">已应用 / 总建议</div>
+        <div class="sub">
+          已应用 / 总建议 · <span :title="`采纳率分母用 processed (含 resolved): ${overview.suggestions?.processed ?? 0}`">已关闭 {{ overview.suggestions?.resolved ?? 0 }}</span>
+        </div>
       </div>
       <!-- 严重等级告警: 红色块 (critical.dismissed) + 黄 (critical.open) -->
       <div class="stat alert" :class="{ hot: (sevBucket('critical')?.dismissed ?? 0) > 0 }">
@@ -368,6 +370,7 @@
           <div v-if="timeline.suggestions?.length" class="dt-h-bar" :title="tlHealthTitle">
             <div class="dt-h-seg dt-h-applied" :style="{ flex: tlApplied }" :title="tlSegTitle('已采纳', tlApplied)"></div>
             <div class="dt-h-seg dt-h-dismissed" :style="{ flex: tlDismissed }" :title="tlSegTitle('已忽略', tlDismissed)"></div>
+            <div v-if="tlResolved" class="dt-h-seg dt-h-resolved" :style="{ flex: tlResolved }" :title="tlSegTitle('已关闭', tlResolved)"></div>
             <div class="dt-h-seg dt-h-open" :style="{ flex: tlOpenCount }" :title="tlSegTitle('待处理', tlOpenCount)"></div>
             <div class="dt-h-seg dt-h-superseded" :style="{ flex: tlSuperseded }" :title="tlSegTitle('已替代', tlSuperseded)"></div>
           </div>
@@ -375,6 +378,7 @@
             <span class="dt-h-stat"><b>{{ tlTotal }}</b><span>建议</span></span>
             <span class="dt-h-stat ok"><b>{{ tlApplied }}</b><span>采纳</span></span>
             <span class="dt-h-stat mute"><b>{{ tlDismissed }}</b><span>忽略</span></span>
+            <span v-if="tlResolved" class="dt-h-stat mute"><b>{{ tlResolved }}</b><span>已关闭</span></span>
             <span class="dt-h-stat" :class="{ 'dt-h-warn': tlOpenCount > 0 }"><b>{{ tlOpenCount }}</b><span>待处理</span></span>
             <span v-if="timeline.runs?.length" class="dt-h-stat last-run" :class="{ bad: tlLastRun?.status === 'failed' }">
               <span class="run-dot"></span>{{ tlLastRun?.command }} · {{ tlLastRun?.status }}
@@ -857,11 +861,19 @@ function mrLastRunTitle(m: MrRow): string {
   return `最近一次评审失败: ${err}`;
 }
 function sugLabel(s: SuggestionRow): string {
-  // 手动/自动 都用 "已采纳" (跟 auto 视觉对齐), "手工" 单独小标跟在徽章下面
-  return s.state === 'applied' ? '已采纳' : s.state === 'dismissed' ? '已忽略' : s.state === 'superseded' ? '已替代' : '开放';
+  // 手动/自动 都用 "已采纳" (跟 auto 视觉对齐), "手工" 单独小标跟在徽章下面.
+  // 优先用 ReviewAgent 给的 state_label (中文, 后端 _STATE_LABELS 维护),
+  // 兜底前端 enum 兜底兼容老数据/未来新状态.
+  if (s.state_label) {
+    // 把"已关闭（未分类）"简化为"已关闭"显示 (更紧凑)
+    return s.state_label.replace('已关闭（未分类）', '已关闭');
+  }
+  return s.state === 'applied' ? '已采纳' : s.state === 'dismissed' ? '已忽略' : s.state === 'resolved' ? '已关闭' : s.state === 'superseded' ? '已替代' : '开放';
 }
 function sugCls(s: SuggestionRow): string {
   // 手动/自动 已采纳 都用 b-ok 绿徽章
+  // resolved 状态用 b-mute (灰, 已结束但不算 processed 分类)
+  if (s.state === 'resolved') return 'b-mute';
   return s.state === 'applied' ? 'b-ok' : s.state === 'dismissed' ? 'b-mute' : s.state === 'superseded' ? 'b-warn' : 'b-info';
 }
 /** timeline.actions 按 suggestion_id 索引 (last-write-wins, 同一建议多次采纳取最近一次) */
@@ -874,16 +886,18 @@ const actionsBySugId = computed(() => {
   return m;
 });
 /** 区分自动 vs 手动采纳; 优先用后端 suggestion.adoption_source (ui_apply=自动, manual_change/adopt_command=手动),
+ *  gitlab_resolve (GitLab UI 直接解决主题) 也归"自动".
  *  fallback 到 timeline.actions 查 (兼容老数据/旧 ReviewAgent 没写 adoption_source 的情况). */
 function adoptKind(s: SuggestionRow): 'auto' | 'manual' | null {
   const src = s.adoption_source;
-  if (src === 'ui_apply') return 'auto';
+  if (src === 'ui_apply' || src === 'gitlab_resolve') return 'auto';
   if (src === 'manual_change' || src === 'adopt_command') return 'manual';
   if (src && src !== 'unknown') return null;
   if (!s.suggestion_id) return null;
   const a = actionsBySugId.value.get(s.suggestion_id);
   if (!a) return null;
-  if (a.action === 'applied') return 'auto';
+  // a.action 已经被后端 _build_actions_from_events 归一化:
+  //   'applied' (含 gitlab-resolve / ui-apply) → 自动, 'adopted_implicitly' (/adopt) → 手动.
   if (a.action === 'adopted_implicitly') return 'manual';
   return null;
 }
@@ -902,6 +916,7 @@ const timeline = ref<TimelineResp | null>(null);
 // 抽屉 MR 健康摘要 mini stat
 const tlApplied = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'applied').length);
 const tlDismissed = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'dismissed').length);
+const tlResolved = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'resolved').length);
 const tlOpenCount = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'open').length);
 const tlSuperseded = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'superseded').length);
 const tlTotal = computed(() => (timeline.value?.suggestions || []).length);
@@ -1432,6 +1447,8 @@ onMounted(reload);
 .dt-h-seg { min-width: 0; }
 .dt-h-applied    { background: color-mix(in srgb, var(--ok)      55%, transparent); }
 .dt-h-dismissed  { background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
+/* 已关闭 (resolved, GitLab 直接解决主题但未 apply/dismiss): 偏冷色调, 跟 dismissed (灰) 区分 */
+.dt-h-resolved   { background: color-mix(in srgb, var(--info)   35%, transparent); }
 .dt-h-open       { background: color-mix(in srgb, var(--warn)    60%, transparent); }
 .dt-h-superseded { background: color-mix(in srgb, var(--primary) 30%, transparent); }
 .dt-h-mini { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; }

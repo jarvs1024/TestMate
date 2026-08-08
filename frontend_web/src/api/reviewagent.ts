@@ -14,8 +14,14 @@ export interface OverviewSuggestion {
   total: number;
   applied: number;
   dismissed: number;
+  /** ReviewAgent 自带: GitLab 解决主题但未 apply/dismiss 的 (commit c080f7e) */
+  resolved?: number;
+  /** ReviewAgent 自带: applied + dismissed + processed (含 resolved), 采纳率分母用这个更准 */
+  processed?: number;
   open: number;
   adoption_rate: number;
+  /** ReviewAgent 自带: 0~100 的百分数 (adoption_rate * 100, 保留 1 位), 直显用 */
+  adoption_pct?: number;
   dismissal_rate: number;
 }
 export interface OverviewRun {
@@ -28,6 +34,8 @@ export interface SeverityBucket {
   total: number;
   applied: number;
   dismissed: number;
+  /** ReviewAgent 自带 resolved 总量按 severity 比例分摊 (后端兜底逻辑) */
+  resolved?: number;
   open: number;
   /** V2 默认无 superseded, 但前端视图会读, 兜底 0 */
   superseded?: number;
@@ -131,6 +139,14 @@ export interface SuggestionRow {
   adoption_source?: string | null;
   /** 采纳来源中文标签: 自动采纳 / 手动修改 / etc. */
   adoption_source_label?: string | null;
+  /** ReviewAgent 中文状态标签 (后端 _STATE_LABELS):
+   *  待处理 / 已采纳 / 已忽略 / 已关闭（未分类） / 已过期.
+   *  优先用这个展示, 比前端 enum 维护更准. */
+  state_label?: string | null;
+  /** state='resolved' (GitLab 解决主题) 时填充 — 用户在 GitLab UI 关 thread 但没 apply/dismiss */
+  resolved_at?: string | null;
+  resolved_by?: string | null;
+  resolution_source?: string | null;
 }
 export interface DismissReasonBucket {
   reason: string;

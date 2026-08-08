@@ -202,12 +202,21 @@ async def overview(since: str | None = None) -> dict:
         s_total = int(total)
         s_a = sev_applied.get(sev, 0)
         s_d = sev_dismissed.get(sev, 0)
-        s_open = max(s_total - s_a - s_d, 0)
+        # resolved (GitLab 解决主题但未 apply/dismiss) 也占一部分, 这里按比例分摊兜底.
+        # 后续 ReviewAgent 提供 per-severity resolved 时再换.
+        resolved_total = int(sug_ov.get("resolved", 0) or 0)
+        if sev_counts:
+            ratio = sev_counts[sev] / sum(sev_counts.values())
+            s_r = round(resolved_total * ratio)
+        else:
+            s_r = 0
+        s_open = max(s_total - s_a - s_d - s_r, 0)
         sev_breakdown.append({
             "severity": sev,
             "total": s_total,
             "applied": s_a,
             "dismissed": s_d,
+            "resolved": s_r,
             "open": s_open,
             "superseded": 0,
             "adoption_rate": round(s_a / s_total, 4) if s_total else 0.0,
@@ -227,8 +236,14 @@ async def overview(since: str | None = None) -> dict:
             "total": sug_total,
             "applied": applied,
             "dismissed": dismissed,
+            # ReviewAgent suggestion_metrics 自带 (commit c080f7e): resolved / processed (adopted+dismissed+resolved) / adoption_pct.
+            # 前端展示/采纳率分母可以更准, 也省一次前端计算.
+            "resolved": int(sug_ov.get("resolved", 0) or 0),
+            "processed": int(sug_ov.get("processed", 0) or 0),
             "open": open_n,
             "adoption_rate": adoption_rate,
+            # ReviewAgent 直接给的百分数字段 (adoption_rate * 100, 保留 1 位小数). 前端可直显.
+            "adoption_pct": float(sug_ov.get("adoption_pct", round(adoption_rate * 100, 1)) or 0.0),
             "dismissal_rate": dismissal_rate,
         },
         "runs": {
@@ -464,11 +479,18 @@ def _map_suggestion(s: dict) -> dict:
         "rule_keys": rule_arr,
         "one_sentence_summary": s.get("one_sentence_summary"),
         "state": s.get("state"),
+        # ReviewAgent 给的中文标签 (后端 _STATE_LABELS: 待处理/已采纳/已忽略/已关闭（未分类）/已过期).
+        # 前端 timeline 优先用这个, 比前端 enum 维护更准.
+        "state_label": s.get("state_label"),
         "posted_at": s.get("created_at") or s.get("posted_at"),
         "applied_at": s.get("applied_at"),
         "dismissed_at": s.get("dismissed_at"),
         "dismissed_by": s.get("dismissed_by"),
         "dismissed_reason": s.get("dismissed_reason"),
+        # state='resolved' (GitLab 直接解决主题) 时填充 — 用户在 GitLab UI 关 thread 但没 apply/disimiss.
+        "resolved_at": s.get("resolved_at"),
+        "resolved_by": s.get("resolved_by"),
+        "resolution_source": s.get("resolution_source"),  # gitlab_resolve 等
         # ReviewAgent 直接给: ui_apply (GitLab 按钮) / manual_change (用户改代码) / adopt_command (/adopt) / unknown
         "adoption_source": s.get("adoption_source"),
         "adoption_source_label": s.get("adoption_source_label"),
@@ -493,21 +515,43 @@ def _map_run(r: dict) -> dict:
 
 def _build_actions_from_events(events: list[dict]) -> list[dict]:
     """从 /timeline events 提取 suggestion_action → ActionRow.
-    ReviewAgent event_type='suggestion_action' 的 event:
+
+    ReviewAgent /timeline event_type='suggestion_action' 的 event 形态:
       {at, event_type, event_id, detail, state}
-    不充分,没 actor / note, 所以本字段拼不出来就返回 [].
+      - detail: action 名称 (resolved/adopted/dismissed)
+      - state:  validation_status / 真实事件 (gitlab-resolve / ui-apply / adopt / dismiss)
+    注意: timeline 接口不返回 suggestion_note_id, 所以这条路径里 suggestion_id 拼不出来.
+    真正要的 note (采纳理由) 走 suggestion.adoption_source_label / suggestion 的 adoption_source 路径,
+    跟本 fallback 路径无关 — 这里尽量还原成可用的 action 记录.
     """
-    out = []
+    out: list[dict] = []
     for e in events or []:
-        if e.get("event_type") == "suggestion_action":
-            out.append({
-                "id": int(e.get("event_id") or 0),
-                "suggestion_id": str(e.get("detail") or ""),
-                "action": e.get("state") or "adopted",
-                "actor": None,
-                "note": None,
-                "at": e.get("at"),
-            })
+        if e.get("event_type") != "suggestion_action":
+            continue
+        action_name = e.get("detail") or "applied"   # resolved / adopted / dismissed
+        # state 是 ReviewAgent 的细化标记 (gitlab-resolve / ui-apply / adopt / dismiss),
+        # 跟 pr-agent 的 action 命名 ("applied" / "adopted_implicitly") 不一致,
+        # 所以归一化一下: gitlab-resolve / ui-apply 都归 "applied", adopt 归 "adopted_implicitly",
+        # dismiss / dismissed 归 "dismissed". 前端 adoptKind() 据此判断 自动/手动.
+        raw_state = (e.get("state") or "").lower()
+        if action_name in ("dismissed",) or raw_state == "dismiss":
+            normalized = "dismissed"
+        elif action_name == "resolved" or raw_state == "gitlab-resolve":
+            normalized = "applied"            # GitLab 解决主题等同自动采纳
+        elif raw_state == "ui-apply":
+            normalized = "applied"
+        elif raw_state == "adopt":
+            normalized = "adopted_implicitly"
+        else:
+            normalized = action_name
+        out.append({
+            "id": int(e.get("event_id") or 0),
+            "suggestion_id": "",               # timeline 不带 suggestion_note_id, 前端按 suggestion_id 找补
+            "action": normalized,
+            "actor": None,
+            "note": None,
+            "at": e.get("at"),
+        })
     return out
 
 
