@@ -177,13 +177,21 @@ async def overview(since: str | None = None) -> dict:
         else:
             state_count["closed"] += 1
 
-    ov_data = await _get("/metrics/overview", params_summary or None) or {}
+    # 并发拉 /metrics/overview + /summary, summary 给 by_command.total_tokens (单 run 0 但汇总有真实数据)
+    ov_data, summary_data = await asyncio.gather(
+        _get("/metrics/overview", params_summary or None) or {},
+        _get("/summary", params_summary or None) or {},
+    )
     by_status = ov_data.get("by_status") or {}
     runs_total = int(ov_data.get("total_runs") or 0)
     runs_failed = int(by_status.get("failed") or 0)
     runs_success_n = int(by_status.get("success") or 0)
     runs_skipped = int(by_status.get("skipped") or 0)
     success_rate = round((runs_success_n + runs_skipped) / runs_total, 4) if runs_total else 0.0
+    # Token 汇总: 单 run.total_tokens 几乎都是 0 (LLM 端没传), /summary.by_command[*].total_tokens 才是真实数据.
+    by_command = summary_data.get("by_command") or {}
+    tokens_total = sum(int(c.get("total_tokens") or 0) for c in by_command.values())
+    tokens_by_cmd = {cmd: int(c.get("total_tokens") or 0) for cmd, c in by_command.items() if c.get("total_tokens")}
 
     # ReviewAgent /metrics/overview 自带 suggestions {total, state_counts{open,applied,dismissed},
     # adopted, dismissal, adoption_rate}, 不再 hardcode 0.
@@ -268,7 +276,11 @@ async def overview(since: str | None = None) -> dict:
         "runs": {
             "total": runs_total,
             "failed": runs_failed,
+            "skipped": runs_skipped,
             "success_rate": success_rate,
+            # Token 用量: 命令级汇总 (单 run 字段几乎为 0, summary 才有真实数据).
+            "tokens_total": tokens_total,
+            "tokens_by_command": tokens_by_cmd,
         },
         "severity_breakdown": sev_breakdown,
     }

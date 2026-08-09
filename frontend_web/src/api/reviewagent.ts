@@ -28,6 +28,12 @@ export interface OverviewRun {
   total: number;
   failed: number;
   success_rate: number;
+  /** /summary by_status.skipped 透传 (运行成功率卡副标展示) */
+  skipped?: number;
+  /** /summary by_command[*].total_tokens 汇总 (Token 用量卡主指标) */
+  tokens_total?: number;
+  /** 按命令拆分: {improve: 69588, describe: 14310, ...} */
+  tokens_by_command?: Record<string, number>;
 }
 export interface SeverityBucket {
   severity: string;

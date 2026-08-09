@@ -138,6 +138,20 @@
           {{ overview.runs?.total ?? 0 }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}<span v-if="runsSkipped > 0" class="sub-tip" :title="`跳过的运行 (通常 describe 检测无变更): ${runsSkipped}`"> · 跳过 {{ runsSkipped }}</span>
         </div>
       </div>
+      <!-- Token 用量: 全局按命令汇总, 单 run 字段为 0, /summary.by_command 才是真实数据 -->
+      <div class="stat">
+        <div class="num">{{ tokenTotalText }}</div>
+        <div class="lbl">Token 用量</div>
+        <div class="sub" :title="tokenSubHint">
+          <span v-if="tokenBreakdown.length === 0">暂无 token 数据</span>
+          <span v-else>
+            <span v-for="(t, idx) in tokenBreakdown" :key="t.cmd">
+              {{ t.cmd }} <b>{{ fmtTokens(t.tokens) }}</b><span v-if="idx < tokenBreakdown.length - 1"> · </span>
+            </span>
+            <span class="sub-tip" :title="`平均每次运行 ${fmtTokens(avgTokensPerRun)} token`"> · 平均 {{ fmtTokens(avgTokensPerRun) }}/次</span>
+          </span>
+        </div>
+      </div>
     </div>
 
     <!-- 严重等级分布: 全宽卡 -->
@@ -384,6 +398,12 @@
       <template v-if="timeline">
         <!-- MR 健康摘要: 应用率 + 4 stat mini -->
         <div class="dt-health">
+          <div v-if="timelineRunsTokensTotal > 0" class="dt-h-tokens" :title="`本次 MR 累计 token = 各 run 字段求和`">
+            💎 本次 MR 累计 <b>{{ fmtTokens(timelineRunsTokensTotal) }}</b> token
+            <span v-if="timelineRunsTokensTotalByCmd.length" class="sub-tip">
+              (<span v-for="(t, idx) in timelineRunsTokensTotalByCmd" :key="t.cmd">{{ t.cmd }} {{ fmtTokens(t.tokens) }}<span v-if="idx < timelineRunsTokensTotalByCmd.length - 1"> · </span></span>)
+            </span>
+          </div>
           <div v-if="timeline.suggestions?.length" class="dt-h-bar" :title="tlHealthTitle">
             <div class="dt-h-seg dt-h-applied" :style="{ flex: tlApplied }" :title="tlSegTitle('已采纳', tlApplied)"></div>
             <div class="dt-h-seg dt-h-dismissed" :style="{ flex: tlDismissed }" :title="tlSegTitle('已忽略', tlDismissed)"></div>
@@ -945,6 +965,51 @@ const criticalDismissalRate = computed(() => {
   return criticalDismissedTotal.value / total;
 });
 // 跳过运行数: 后端 overview.runs 当前没给, 临时写 0 (后续 /summary 接入可读 by_status.skipped)
+// Token 用量 — 数字格式化: <1k 显示原值, <1M 显示 K, >=1M 显示 M
+function fmtTokens(n: number | null | undefined): string {
+  if (n == null || n === 0) return '0';
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 1 : 0) + 'k';
+  return (n / 1_000_000).toFixed(2) + 'M';
+}
+const tokensTotal = computed(() => overview.value?.runs?.tokens_total ?? 0);
+const tokenBreakdown = computed(() => {
+  const m = overview.value?.runs?.tokens_by_command || {};
+  return Object.entries(m)
+    .map(([cmd, tokens]) => ({ cmd, tokens: Number(tokens) || 0 }))
+    .filter(x => x.tokens > 0)
+    .sort((a, b) => b.tokens - a.tokens);
+});
+const tokenTotalText = computed(() => {
+  const n = tokensTotal.value;
+  if (!n) return '0';
+  return fmtTokens(n);
+});
+const avgTokensPerRun = computed(() => {
+  const total = tokensTotal.value;
+  const runs = overview.value?.runs?.total ?? 0;
+  return runs > 0 ? Math.round(total / runs) : 0;
+});
+const tokenSubHint = computed(() => {
+  const parts = tokenBreakdown.value.map(t => `${t.cmd} ${fmtTokens(t.tokens)} token`);
+  const sum = parts.length ? parts.join(' + ') : '无';
+  return `Token 用量 = 各命令 token 求和 (${sum})。\n数据源: /summary.by_command[*].total_tokens, 单 run 字段通常为 0。\n仅在 overview 接口汇总, 时间窗影响数值.`;
+});
+// MR 级 token: 时间线当前 MR 的所有 run 求和 (单 run 字段几乎为 0, 兜底就显示 0 不展示)
+const timelineRunsTokensTotal = computed(() => {
+  const runs = (timeline.value?.runs || []) as any[];
+  return runs.reduce((s, r) => s + (Number(r?.total_tokens) || 0), 0);
+});
+const timelineRunsTokensTotalByCmd = computed(() => {
+  const runs = (timeline.value?.runs || []) as any[];
+  const m: Record<string, number> = {};
+  for (const r of runs) {
+    const t = Number(r?.total_tokens) || 0;
+    const c = r?.command || 'unknown';
+    if (t > 0) m[c] = (m[c] || 0) + t;
+  }
+  return Object.entries(m).map(([cmd, tokens]) => ({ cmd, tokens })).sort((a, b) => b.tokens - a.tokens);
+});
 const runsSkipped = computed(() => (overview.value?.runs as any)?.skipped ?? 0);
 
 function adoptKind(s: SuggestionRow): 'auto' | 'manual' | null {
@@ -1579,6 +1644,9 @@ const runsSubHint = computed(() => {
 .dt-h-open       { background: color-mix(in srgb, var(--warn)    60%, transparent); }
 .dt-h-superseded { background: color-mix(in srgb, var(--primary) 30%, transparent); }
 .dt-h-mini { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; }
+.dt-h-tokens { font-size: 12px; color: var(--ink-700); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 0 2px; }
+.dt-h-tokens b { color: var(--primary); font-family: var(--font-mono); font-weight: 700; }
+.dt-h-tokens .sub-tip { color: var(--ink-500); font-weight: 400; }
 .dt-h-stat { display: inline-flex; align-items: baseline; gap: 4px; color: var(--ink-700); }
 .dt-h-stat b { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--ink-900); }
 .dt-h-stat.ok   b { color: var(--ok); }
