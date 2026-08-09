@@ -390,6 +390,8 @@
             <div v-if="tlResolved" class="dt-h-seg dt-h-resolved" :style="{ flex: tlResolved }" :title="tlSegTitle('已关闭', tlResolved)"></div>
             <div class="dt-h-seg dt-h-open" :style="{ flex: tlOpenCount }" :title="tlSegTitle('待处理', tlOpenCount)"></div>
             <div class="dt-h-seg dt-h-superseded" :style="{ flex: tlSuperseded }" :title="tlSegTitle('已替代', tlSuperseded)"></div>
+            <!-- 剩余空间用 placeholder 段填满, 视觉上不让"白色"surface 透出, 改成细斜纹 + 透明色 -->
+            <div v-if="tlBarRemainder > 0" class="dt-h-seg dt-h-placeholder" :style="{ flex: tlBarRemainder }" :title="`其它/未分类 ${tlBarRemainder}`"></div>
           </div>
           <div class="dt-h-mini">
             <span class="dt-h-stat"><b>{{ tlTotal }}</b><span>建议</span></span>
@@ -977,6 +979,12 @@ const tlResolved = computed(() => (timeline.value?.suggestions || []).filter(s =
 const tlOpenCount = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'open').length);
 const tlSuperseded = computed(() => (timeline.value?.suggestions || []).filter(s => s.state === 'superseded').length);
 const tlTotal = computed(() => (timeline.value?.suggestions || []).length);
+// 顶部 bar 剩余空间: 用来填满 bar 100%, 避免 surface 透出成"白色"空段.
+// 当 suggestions 总和 < 实际长度时, 用差额做"未分类"占位; 0 就不渲染.
+const tlBarRemainder = computed(() => {
+  const used = tlApplied.value + tlDismissed.value + tlResolved.value + tlOpenCount.value + tlSuperseded.value;
+  return Math.max(tlTotal.value - used, 0);
+});
 const tlAdoptionRate = computed(() => tlTotal.value > 0 ? Math.round(tlApplied.value / tlTotal.value * 100) + '%' : '—');
 const tlLastRun = computed(() => (timeline.value?.runs || [])[0]);
 const tlHealthTitle = computed(() => '采纳率 ' + tlAdoptionRate.value + ' / ' + tlApplied.value + '/' + tlTotal.value);
@@ -1560,7 +1568,9 @@ const runsSubHint = computed(() => {
 
 /* 抽屉 MR 健康摘要 */
 .dt-health { background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 8px; }
-.dt-h-bar { display: flex; height: 10px; border-radius: 4px; overflow: hidden; background: var(--surface); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-900) 6%, transparent); }
+.dt-h-bar { display: flex; height: 10px; border-radius: 4px; overflow: hidden; background: var(--surface-sunken); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-900) 8%, transparent); }
+/* 未铺满的剩余段: 极淡斜纹, 提示"无数据"但不抢 5 类 segment 的颜色 */
+.dt-h-placeholder { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--ink-500) 14%, transparent) 0 4px, transparent 4px 8px); }
 .dt-h-seg { min-width: 0; }
 .dt-h-applied    { background: color-mix(in srgb, var(--ok)      55%, transparent); }
 .dt-h-dismissed  { background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
