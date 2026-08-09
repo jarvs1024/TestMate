@@ -334,7 +334,6 @@
             </td>
             <td>
               <span class="badge" :class="stateCls(m.state)">{{ stateLabel(m.state) }}</span>
-              <span v-if="m.description_generated" class="desc-tag" title="ReviewAgent 已为该 MR 生成描述">📝</span>
             </td>
             <td class="mono">{{ fmtIso(m.opened_at) }}</td>
             <td class="mono">
@@ -424,8 +423,6 @@
             <span class="mono small">{{ fmtIso(r.started_at) }}</span>
             <span class="mono small">{{ fmtMs(r.duration_ms) }}</span>
             <span v-if="r.model" class="mono small model" :title="`模型: ${r.model}`">{{ r.model }}</span>
-            <span v-if="r.triggered_by" class="mono small trig" :title="`触发方式: ${r.triggered_by}`">{{ trigLabel(r.triggered_by) }}</span>
-            <span v-if="r.actor_username" class="mono small actor" :title="`操作人: ${r.actor_username}`">👤 {{ r.actor_username }}</span>
             <span v-if="r.total_tokens != null && r.total_tokens > 0" class="mono small tokens" :title="`本次消耗 token: ${r.total_tokens}`">{{ r.total_tokens }} tok</span>
             <ErrorView v-if="r.error" :raw="r.error" class="run-err" />
           </div>
@@ -440,12 +437,11 @@
               <span class="badge sm" :class="sugCls(s)">{{ sugLabel(s) }}</span>
               <!-- 采纳来源角标: 独立一行, 在 [已采纳] 和 severity 之间垂直堆叠
                    auto dimmed 不抢戏, manual 蓝色高亮 -->
-              <span v-if="s.state === 'applied' && adoptKind(s)"
+              <span v-if="s.state === 'applied' && sAdoptStatus(s)"
                     class="adopt-sub"
-                    :class="`adopt-sub-${adoptKind(s)}`"
-                    :title="`采纳来源: ${s.adoption_source_label || adoptKind(s)}${sAdoptStatus(s) ? ' · ' + sAdoptStatus(s) : ''}`">
-                {{ adoptKind(s) === 'auto' ? '自动' : '手动' }}
-                <span v-if="sAdoptStatus(s)" class="adopt-vstat" :title="sAdoptStatus(s)">· {{ sAdoptStatus(s) }}</span>
+                    :class="`adopt-sub-${adoptKind(s) || 'auto'}`"
+                    :title="`采纳来源: ${s.adoption_source_label || sAdoptStatus(s)}`">
+                {{ sAdoptStatus(s) }}
               </span>
               <span v-if="s.state === 'applied' && headShaBehind(s)" class="adopt-stale" :title="`head_sha_posted ${truncSha(s.head_sha_posted)} → current ${truncSha(s.head_sha_current)}; 落后 ${s.behind_commits} 个 commit`">· 落后 {{ s.behind_commits }} commits</span>
               <span v-if="s.severity" class="badge sm sev-pill" :class="sevCls(s.severity)"
@@ -916,14 +912,6 @@ const actionsBySugId = computed(() => {
 /** 区分自动 vs 手动采纳; 优先用后端 suggestion.adoption_source (ui_apply=自动, manual_change/adopt_command=手动),
  *  gitlab_resolve (GitLab UI 直接解决主题) 也归"自动".
  *  fallback 到 timeline.actions 查 (兼容老数据/旧 ReviewAgent 没写 adoption_source 的情况). */
-// 触发方式 label (webhook/note/scheduled) — ReviewAgent 透传
-function trigLabel(t: string | null | undefined): string {
-  if (!t) return '';
-  if (t === 'webhook') return 'webhook';
-  if (t === 'note') return 'note';
-  if (t === 'scheduled') return 'scheduled';
-  return t;
-}
 // 采纳 sub label: reviewagent validation_status (ui-apply / ok / target-unchanged / content-unavailable / gitlab-resolve)
 function sAdoptStatus(s: SuggestionRow): string {
   if (s.adoption_source === 'ui_apply') return 'GitLab 按钮';
@@ -1438,8 +1426,6 @@ const runsSubHint = computed(() => {
 .rule-ap.high  { color: var(--ok); font-weight: 600; }
 .rule-ap.mid   { color: var(--ink-900); font-weight: 600; }
 .rule-ap.low   { color: var(--warn); font-weight: 600; }
-.run-row .trig { padding: 1px 6px; background: var(--surface-sunken); border-radius: 3px; }
-.run-row .actor { color: var(--ink-500); }
 .run-row .tokens { color: var(--ink-500); font-size: 10.5px; }
 .sug-row .adopt-vstat { color: var(--ink-500); font-weight: 400; font-size: 10.5px; margin-left: 2px; }
 .sug-row .adopt-stale { color: var(--warn); font-weight: 600; font-size: 10.5px; margin-left: 4px; }
