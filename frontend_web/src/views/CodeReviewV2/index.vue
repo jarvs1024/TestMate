@@ -104,23 +104,29 @@
       <div class="stat">
         <div class="num">{{ overview.suggestions?.total ?? 0 }}</div>
         <div class="lbl">建议</div>
-        <div class="sub">采纳 {{ overview.suggestions?.applied ?? 0 }} · 忽略 {{ overview.suggestions?.dismissed ?? 0 }}</div>
+        <div class="sub">
+          采纳 {{ overview.suggestions?.applied ?? 0 }} · 忽略 {{ overview.suggestions?.dismissed ?? 0 }}<span
+            v-if="(overview.suggestions?.resolved ?? 0) > 0"
+            class="sub-tip"
+            :title="resolvedHint">· 已关闭 {{ overview.suggestions?.resolved ?? 0 }}</span>
+        </div>
       </div>
       <div class="stat highlight">
         <div class="num">{{ fmtPct(overview.suggestions?.adoption_rate) }}</div>
         <div class="lbl">建议采纳率</div>
         <div class="sub">
-          已应用 / 总建议 · <span :title="`采纳率分母用 processed (含 resolved): ${overview.suggestions?.processed ?? 0}`">已关闭 {{ overview.suggestions?.resolved ?? 0 }}</span>
+          <span :title="`分母: 总建议 ${overview.suggestions?.total ?? 0}（processed 含已关闭 ${overview.suggestions?.processed ?? 0}）`">已应用 / 总建议</span>
         </div>
       </div>
-      <!-- 严重等级告警: 红色块 (critical.dismissed) + 黄 (critical.open) -->
-      <div class="stat alert" :class="{ hot: (sevBucket('critical')?.dismissed ?? 0) > 0 }">
-        <div class="num" :class="{ zero: (sevBucket('critical')?.dismissed ?? 0) === 0 }">
-          {{ sevBucket('critical')?.dismissed ?? 0 }}
+      <!-- 严重建议被忽略: 数据源从 /metrics/severity (老接口一直返回 0) 切到 overview.severity_breakdown (跟采纳率同源),
+           critical 缺失时用 high 兜底 (ReviewAgent 目前通常以 high 表示严重). -->
+      <div class="stat alert" :class="{ hot: criticalDismissedTotal > 0 }">
+        <div class="num" :class="{ zero: criticalDismissedTotal === 0 }">
+          {{ criticalDismissedTotal }}
         </div>
         <div class="lbl">严重建议被忽略</div>
         <div class="sub">
-          严重 {{ sevBucket('critical')?.total ?? 0 }} · 待处理 {{ sevBucket('critical')?.open ?? 0 }}
+          严重 {{ criticalTotalEffective }} · 待处理 {{ criticalOpenEffective }}<span v-if="criticalDismissedTotal === 0 && criticalTotalEffective > 0" class="sub-tip" title="当前没有严重建议被忽略">· 暂无忽略</span><span v-else-if="criticalTotalEffective === 0" class="sub-tip" title="当前没有任何严重等级建议">· 暂无数据</span>
         </div>
       </div>
       <div class="stat">
@@ -981,6 +987,36 @@ function scrollToMrTable() {
 }
 
 onMounted(reload);
+
+// 严重建议被忽略: 优先用 overview.severity_breakdown (跟采纳率、严重等级分布卡同源),
+// critical 缺失时用 high 兜底 (ReviewAgent 目前没单独 critical, 通常以 high 表示严重).
+function overviewSev(name: string): SeverityBucket | null {
+  const buckets = (overview.value?.severity_breakdown || []) as SeverityBucket[];
+  return buckets.find(b => (b.severity || '').toLowerCase() === name) || null;
+}
+const criticalDismissed = computed(() => overviewSev('critical')?.dismissed ?? 0);
+const criticalOpen = computed(() => overviewSev('critical')?.open ?? 0);
+const criticalTotal = computed(() => overviewSev('critical')?.total ?? 0);
+const highDismissed = computed(() => overviewSev('high')?.dismissed ?? 0);
+const highOpen = computed(() => overviewSev('high')?.open ?? 0);
+const highTotal = computed(() => overviewSev('high')?.total ?? 0);
+const criticalDismissedTotal = computed(() => (criticalTotal.value || 0) > 0
+  ? (criticalDismissed.value || 0)
+  : (highDismissed.value || 0));
+const criticalOpenEffective = computed(() => (criticalTotal.value || 0) > 0
+  ? criticalOpen.value
+  : highOpen.value);
+const criticalTotalEffective = computed(() => (criticalTotal.value || 0) > 0
+  ? criticalTotal.value
+  : highTotal.value);
+// “已关闭”悬浮文案: 解释 resolved 含义 + 跟 processed 关联.
+const resolvedHint = computed(() => {
+  const s = overview.value?.suggestions;
+  if (!s) return '已关闭 = GitLab 解决主题但未走 apply / dismiss 的建议数';
+  return `已关闭 ${s.resolved ?? 0} = GitLab 解决主题但未走 apply / dismiss 的建议数。\n` +
+    `采纳率分母 (processed) 含此字段: ${s.processed ?? 0} = 已应用 ${s.applied ?? 0} + 已忽略 ${s.dismissed ?? 0} + 已关闭 ${s.resolved ?? 0}`;
+});
+
 </script>
 
 <style scoped>
