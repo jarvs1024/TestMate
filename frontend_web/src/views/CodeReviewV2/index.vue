@@ -1117,8 +1117,12 @@ const adoptionSubHint = computed(() => {
 });
 const runsSubHint = computed(() => {
   const r = overview.value?.runs;
-  if (!r) return '运行成功率 = 成功运行 / 总运行次数';
-  return `运行成功率 = (总运行 ${r.total ?? 0} - 失败 ${r.failed ?? 0}) / 总运行。\n失败次数 > 0 时, 上方"近期失败" banner 会显示对应 MR.`;
+  if (!r) return '运行成功率 = 成功运行 / 实际运行次数 (排除 skipped)';
+  const total = r.total ?? 0;
+  const skipped = r.skipped ?? 0;
+  const failed = r.failed ?? 0;
+  const effective = Math.max(total - skipped, 0);
+  return `运行成功率 = (实际运行 ${effective} - 失败 ${failed}) / 实际运行 ${effective}。\n实际运行 = 总运行 ${total} - 跳过 ${skipped} (skipped 是 describe 检测无变更的内部行为, 不计入).\n失败次数 > 0 时, 上方"近期失败" banner 会显示对应 MR.`;
 });
 
 </script>
