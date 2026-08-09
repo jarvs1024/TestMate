@@ -45,6 +45,7 @@ const notices = computed<NoticeItem[]>(() => {
       id: 'cr-anon-readonly',
       type: 'info',
       text: '您正在匿名访问,部分交互功能需 [登录](/login?redirect=/code-review) 后使用',
+      marquee: true,
       dismissKey: 'cr:anon-notice-dismissed',
       dismissScope: 'session',
       dismissTitle: '本次会话内不再提示 (刷新会重新出现)',

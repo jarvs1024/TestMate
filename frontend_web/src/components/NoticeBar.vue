@@ -1,9 +1,12 @@
 <template>
   <!-- 顶部统一滚动通知栏: 贴在 AppHeader 下、页面主内容上, 一行高, 全宽.
-       1 条 notice: 直接展示.
+       1 条 notice: 直接展示 (或 marquee 横向滚动, 见下).
        多条: 自动轮播 (每 ~5s 切到下一条, 带平滑过渡), 也可手动 ◀ ▶.
        每条独立 ✕ (走 dismissKey, 关掉后从可见列表里移除, 其它继续轮播).
-       文案片段: {{xxx}} → strong, [xxx](href) → link. -->
+       文案片段: {{xxx}} → strong, [xxx](href) → link.
+       marquee 模式: 通知文案本身横向无缝滚动 (类似股票滚动条), 用于滚动通知.
+                     4 份重复内容 + translateX(-25%) 实现无缝循环;
+                     左右渐变 mask 让文字淡入淡出, 视觉柔和; hover 暂停. -->
   <div
     v-if="visibleNotices.length > 0"
     class="notice-bar"
@@ -15,10 +18,29 @@
 
     <transition name="nb-slide" mode="out-in">
       <div :key="current.id" class="nb-body" role="status">
-        <template v-for="(seg, i) in renderSegments(current)" :key="i">
-          <a v-if="seg.kind === 'link'" :href="seg.href" class="nb-link">{{ seg.text }}</a>
-          <strong v-else-if="seg.kind === 'strong'">{{ seg.text }}</strong>
-          <span v-else>{{ seg.text }}</span>
+        <div v-if="current.marquee" class="marquee-wrap">
+          <div class="marquee-track">
+            <span
+              v-for="i in 4"
+              :key="i"
+              class="marquee-run"
+              :aria-hidden="i > 1 ? 'true' : undefined"
+            >
+              <template v-for="(seg, j) in renderSegments(current)" :key="`${i}-${j}`">
+                <a v-if="seg.kind === 'link'" :href="seg.href" class="nb-link">{{ seg.text }}</a>
+                <strong v-else-if="seg.kind === 'strong'">{{ seg.text }}</strong>
+                <span v-else>{{ seg.text }}</span>
+              </template>
+              <span class="marquee-sep" aria-hidden="true"> ◆ </span>
+            </span>
+          </div>
+        </div>
+        <template v-else>
+          <template v-for="(seg, i) in renderSegments(current)" :key="i">
+            <a v-if="seg.kind === 'link'" :href="seg.href" class="nb-link">{{ seg.text }}</a>
+            <strong v-else-if="seg.kind === 'strong'">{{ seg.text }}</strong>
+            <span v-else>{{ seg.text }}</span>
+          </template>
         </template>
       </div>
     </transition>
@@ -47,6 +69,8 @@ export interface NoticeItem {
   id: string;
   type?: 'info' | 'warn' | 'err' | 'ok';
   text: string;
+  /** 是否启用 marquee 横向滚动 (默认 false, 静态展示). */
+  marquee?: boolean;
   dismissKey?: string;
   dismissScope?: 'local' | 'session';
   dismissible?: boolean;
@@ -153,7 +177,8 @@ function renderSegments(n: NoticeItem): Segment[] {
 <style scoped>
 /* 通知栏: 贴在 AppHeader 下, 全宽一行高, 不抢戏 (跟主题色, 背景柔和).
    多个 notice 时支持轮播 (切换有 nb-slide 过渡); hover 暂停由调用方控制 (这里没接,
-   因为现在 notice 数量 ≤ 1 时不轮播, ≥ 2 时快速轮, 用户停留时间短). */
+   因为现在 notice 数量 ≤ 1 时不轮播, ≥ 2 时快速轮, 用户停留时间短).
+   marquee 模式: 4 份内容横向无缝循环 (translateX 0 → -25% = 一份宽度). */
 .notice-bar {
   display: flex;
   align-items: center;
@@ -223,4 +248,35 @@ function renderSegments(n: NoticeItem): Segment[] {
 .nb-slide-enter-active, .nb-slide-leave-active { transition: transform 0.35s ease, opacity 0.35s ease; }
 .nb-slide-enter-from { transform: translateX(20px); opacity: 0; }
 .nb-slide-leave-to   { transform: translateX(-20px); opacity: 0; }
+/* marquee 横向滚动: 4 份内容 + -25% 位移 = 无缝循环.
+   速度: 24s 一个循环 ≈ 16-18px/s (400px 文字), 类似新闻滚动条节奏. */
+.marquee-wrap {
+  overflow: hidden;
+  width: 100%;
+  position: relative;
+  /* 左右渐变 mask: 文字从透明淡入, 边缘柔和 (避免硬切). */
+  mask-image: linear-gradient(90deg, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+}
+.marquee-track {
+  display: inline-flex;
+  white-space: nowrap;
+  width: max-content;
+  animation: nb-marquee 36s linear infinite;
+  will-change: transform;
+}
+.marquee-wrap:hover .marquee-track { animation-play-state: paused; }
+.marquee-run {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.marquee-sep { opacity: 0.45; padding: 0 28px; user-select: none; }
+@keyframes nb-marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-25%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track { animation: none; transform: none; }
+}
 </style>
