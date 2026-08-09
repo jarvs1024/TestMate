@@ -1569,6 +1569,8 @@ const runsSubHint = computed(() => {
   border-radius: var(--radius-pill);
   background: var(--surface-sunken); color: var(--ink-700);
   font-family: var(--font-mono);
+  /* 状态 / 严重等级 / 类型: 中文徽章不要按字换行, 避免被窄列挤成 "开\n放". */
+  white-space: nowrap;
 }
 .badge.sm { padding: 0 6px; font-size: 10px; }
 .b-ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
