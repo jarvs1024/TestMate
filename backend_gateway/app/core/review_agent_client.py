@@ -138,6 +138,20 @@ def _map_mr_row(m: dict) -> dict:
     }
 
 
+def _mr_sort_key(row: dict) -> tuple[int, float, int]:
+    """开放 MR 按最后活动置顶，已合并/已关闭按开启时间稳定后置。"""
+    state = str(row.get("state") or "").lower()
+    active_rank = 0 if state == "opened" else 1
+    date_value = row.get("last_seen_at") if active_rank == 0 else row.get("opened_at")
+    timestamp = 0.0
+    if date_value:
+        try:
+            timestamp = datetime.fromisoformat(str(date_value).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            timestamp = 0.0
+    return active_rank, -timestamp, -int(row.get("mr_id") or 0)
+
+
 # ===== 数据查询 API =====
 
 async def overview(since: str | None = None) -> dict:
@@ -453,6 +467,7 @@ async def list_mrs(
             await enrich(row)
 
     await asyncio.gather(*[bounded(r) for r in rows])
+    rows.sort(key=_mr_sort_key)
     return rows[offset:offset + limit]
 
 
