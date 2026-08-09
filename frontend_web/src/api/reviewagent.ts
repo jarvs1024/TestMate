@@ -61,6 +61,8 @@ export interface RuleStat {
   cited_count?: number;
   superseded?: number;
   adoption_rate: number;
+  /** 后端已给 (dismissed / total, 0~1) */
+  dismissal_rate?: number;
 }
 export interface AuthorStat {
   author: string;
@@ -83,6 +85,10 @@ export interface MrRow {
   state: string;
   opened_at?: string | null;
   last_seen_at?: string | null;
+  /** V2: ReviewAgent 提供的精确最后活动 (MAX of review/adopt/dismiss), 比 updated_at 更准 */
+  last_activity_at?: string | null;
+  last_review_at?: string | null;
+  description_generated?: boolean;
   merged_at?: string | null;
   url?: string;
   /** V2 特有: 基于 last_review_at 时间窗的 'updated' 标识 */
@@ -108,6 +114,12 @@ export interface MrRun {
   duration_ms?: number | null;
   error?: string | null;
   suggestion_count?: number | null;
+  /** webhook / note / scheduled */
+  triggered_by?: string | null;
+  actor_username?: string | null;
+  total_tokens?: number | null;
+  rule_keys_cited?: string[] | null;
+  top_comment_id?: string | null;
 }
 export interface MrListResp {
   items: MrRow[];
@@ -143,6 +155,11 @@ export interface SuggestionRow {
    *  待处理 / 已采纳 / 已忽略 / 已关闭（未分类） / 已过期.
    *  优先用这个展示, 比前端 enum 维护更准. */
   state_label?: string | null;
+  /** /adopt 校验用: suggestion 发布时 vs 当前的 head_sha (前 8 位), 用于展示"已落后" */
+  head_sha_posted?: string | null;
+  head_sha_current?: string | null;
+  /** 落后 commit 数 (前端粗略估算, 后端可补) */
+  behind_commits?: number | null;
   /** state='resolved' (GitLab 解决主题) 时填充 — 用户在 GitLab UI 关 thread 但没 apply/dismiss */
   resolved_at?: string | null;
   resolved_by?: string | null;
@@ -166,8 +183,12 @@ export interface RunRow {
   finished_at?: string | null;
   duration_ms?: number | null;
   error?: string | null;
+  triggered_by?: string | null;
+  actor_username?: string | null;
+  total_tokens?: number | null;
+  rule_keys_cited?: string[] | null;
+  top_comment_id?: string | null;
   suggestion_count?: number;
-  triggered_by?: string;
 }
 export interface ActionRow {
   id: number;
@@ -176,6 +197,10 @@ export interface ActionRow {
   actor?: string;
   note?: string;
   at: string;
+  /** ReviewAgent validation_status: ui-apply / ok / target-unchanged / content-unavailable / gitlab-resolve */
+  validation_status?: string;
+  head_sha_posted?: string;
+  head_sha_current?: string;
 }
 export interface TimelineResp {
   mr?: MrRow;

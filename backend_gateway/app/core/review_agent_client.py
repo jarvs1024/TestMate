@@ -132,6 +132,11 @@ def _map_mr_row(m: dict) -> dict:
         "last_seen_at": m.get("updated_at"),
         "merged_at": m.get("merged_at"),
         "url": m.get("web_url") or m.get("url"),
+        # ReviewAgent 提供更精确的"最后活动" (MAX of last_review_at, suggestion_actions.created_at, ...),
+        # 区别于 updated_at (只在 GitLab 推送/编辑时变化). V2 优先用 last_activity_at.
+        "last_activity_at": m.get("last_activity_at") or m.get("updated_at"),
+        "last_review_at": m.get("last_review_at"),
+        "description_generated": bool(int(m.get("description_generated") or 0)),
         "_v2_state": _v2_state(m.get("state"), m.get("last_review_at")),
         "last_run": None,
         "suggestion_counts": None,
@@ -524,7 +529,11 @@ def _map_run(r: dict) -> dict:
         "duration_ms": r.get("duration_ms"),
         "error": r.get("error"),
         "suggestion_count": r.get("suggestion_count"),
-        "triggered_by": r.get("triggered_by") or r.get("actor_username"),
+        "triggered_by": r.get("triggered_by"),
+        "actor_username": r.get("actor_username"),
+        "total_tokens": r.get("total_tokens"),
+        "rule_keys_cited": r.get("rule_keys_cited"),
+        "top_comment_id": r.get("top_comment_id"),
     }
 
 
@@ -566,6 +575,11 @@ def _build_actions_from_events(events: list[dict]) -> list[dict]:
             "actor": None,
             "note": None,
             "at": e.get("at"),
+            # timeline event 透传: validation_status (ui-apply/ok/target-unchanged/gitlab-resolve)
+            # + head_sha_posted / head_sha_current, 前端展示"哪种方式/是否落后"
+            "validation_status": e.get("state") or e.get("validation_status"),
+            "head_sha_posted": e.get("head_sha_posted"),
+            "head_sha_current": e.get("head_sha_current"),
         })
     return out
 

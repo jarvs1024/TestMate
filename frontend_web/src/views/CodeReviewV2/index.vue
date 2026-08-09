@@ -114,7 +114,10 @@
       <div class="stat highlight">
         <div class="num">{{ fmtPct(overview.suggestions?.adoption_rate) }}</div>
         <div class="lbl">建议采纳率</div>
-        <div class="sub" :title="adoptionSubHint">已应用 / 总建议</div>
+        <div class="sub" :title="adoptionSubHint">
+          采纳 {{ fmtPct(overview.suggestions?.adoption_rate) }} ·
+          忽略 <span :class="dismissSubCls">{{ fmtPct(overview.suggestions?.dismissal_rate) }}</span>
+        </div>
       </div>
       <!-- 严重建议被忽略: 数据源从 /metrics/severity (老接口一直返回 0) 切到 overview.severity_breakdown (跟采纳率同源),
            critical 缺失时用 high 兜底 (ReviewAgent 目前通常以 high 表示严重). -->
@@ -125,12 +128,15 @@
         <div class="lbl">严重建议被忽略</div>
         <div class="sub" :title="criticalSubHint">
           严重 {{ criticalTotalEffective }} · 待处理 {{ criticalOpenEffective }}<span v-if="criticalDismissedTotal === 0 && criticalTotalEffective > 0" class="sub-tip" title="当前没有严重建议被忽略">· 暂无忽略</span><span v-else-if="criticalTotalEffective === 0" class="sub-tip" title="当前没有任何严重等级建议">· 暂无数据</span>
+          <span v-else class="sub-tip" :title="`严重建议忽略率 = ${fmtPct(criticalDismissalRate)}`">· 忽略率 {{ fmtPct(criticalDismissalRate) }}</span>
         </div>
       </div>
       <div class="stat">
         <div class="num">{{ fmtPct(overview.runs?.success_rate) }}</div>
         <div class="lbl">运行成功率</div>
-        <div class="sub" :title="runsSubHint">{{ overview.runs?.total ?? 0 }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}</div>
+        <div class="sub" :title="runsSubHint">
+          {{ overview.runs?.total ?? 0 }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}<span v-if="runsSkipped > 0" class="sub-tip" :title="`跳过的运行 (通常 describe 检测无变更): ${runsSkipped}`"> · 跳过 {{ runsSkipped }}</span>
+        </div>
       </div>
     </div>
 
@@ -241,7 +247,10 @@
               <div class="bar-fill" :style="{ width: rulePct(r) + '%' }"></div>
             </div>
             <div class="rule-n mono" :title="`规则被引用 ${ruleCited(r)} 次`">{{ ruleCited(r) }}<span class="unit"> 次</span></div>
-            <div class="rule-ap mono" :class="ruleAdoptedClass(r)" :title="ruleAdoptedTitle(r)">{{ ruleAdoptedLabel(r) }}</div>
+            <div class="rule-ap mono" :class="ruleAdoptedClass(r)" :title="ruleAdoptedTitle(r)">
+              <span class="ap">{{ ruleAdoptedLabel(r) }}</span>
+              <span v-if="r.dismissal_rate != null" class="dp" :title="`忽略率 ${fmtPct(r.dismissal_rate)}`">· {{ fmtPct(r.dismissal_rate) }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -325,9 +334,14 @@
             </td>
             <td>
               <span class="badge" :class="stateCls(m.state)">{{ stateLabel(m.state) }}</span>
+              <span v-if="m.description_generated" class="desc-tag" title="ReviewAgent 已为该 MR 生成描述">📝</span>
             </td>
             <td class="mono">{{ fmtIso(m.opened_at) }}</td>
-            <td class="mono">{{ fmtIso(m.last_seen_at) }}</td>
+            <td class="mono">
+              <span :title="m.last_review_at ? `最后评审: ${fmtIso(m.last_review_at)}\n(精确最后活动 = MAX review/adopt/dismiss)` : '未检视'">
+                {{ fmtIso(m.last_activity_at || m.last_seen_at) }}
+              </span>
+            </td>
             <td class="r">
               <button class="link-btn"
                       :class="{ 'link-btn-err': m.last_run?.status === 'failed' }"
@@ -409,7 +423,10 @@
             <span class="badge" :class="runCls(r.status)">{{ r.status }}</span>
             <span class="mono small">{{ fmtIso(r.started_at) }}</span>
             <span class="mono small">{{ fmtMs(r.duration_ms) }}</span>
-            <span v-if="r.model" class="mono small model">{{ r.model }}</span>
+            <span v-if="r.model" class="mono small model" :title="`模型: ${r.model}`">{{ r.model }}</span>
+            <span v-if="r.triggered_by" class="mono small trig" :title="`触发方式: ${r.triggered_by}`">{{ trigLabel(r.triggered_by) }}</span>
+            <span v-if="r.actor_username" class="mono small actor" :title="`操作人: ${r.actor_username}`">👤 {{ r.actor_username }}</span>
+            <span v-if="r.total_tokens != null && r.total_tokens > 0" class="mono small tokens" :title="`本次消耗 token: ${r.total_tokens}`">{{ r.total_tokens }} tok</span>
             <ErrorView v-if="r.error" :raw="r.error" class="run-err" />
           </div>
         </div>
@@ -426,9 +443,11 @@
               <span v-if="s.state === 'applied' && adoptKind(s)"
                     class="adopt-sub"
                     :class="`adopt-sub-${adoptKind(s)}`"
-                    :title="`采纳来源: ${s.adoption_source_label || adoptKind(s)}`">
+                    :title="`采纳来源: ${s.adoption_source_label || adoptKind(s)}${sAdoptStatus(s) ? ' · ' + sAdoptStatus(s) : ''}`">
                 {{ adoptKind(s) === 'auto' ? '自动' : '手动' }}
+                <span v-if="sAdoptStatus(s)" class="adopt-vstat" :title="sAdoptStatus(s)">· {{ sAdoptStatus(s) }}</span>
               </span>
+              <span v-if="s.state === 'applied' && headShaBehind(s)" class="adopt-stale" :title="`head_sha_posted ${truncSha(s.head_sha_posted)} → current ${truncSha(s.head_sha_current)}; 落后 ${s.behind_commits} 个 commit`">· 落后 {{ s.behind_commits }} commits</span>
               <span v-if="s.severity" class="badge sm sev-pill" :class="sevCls(s.severity)"
                     :title="sevTitleHint(s)">
                 {{ sevIcon(s.severity) }} {{ sevLabel(s.severity) }}
@@ -897,6 +916,47 @@ const actionsBySugId = computed(() => {
 /** 区分自动 vs 手动采纳; 优先用后端 suggestion.adoption_source (ui_apply=自动, manual_change/adopt_command=手动),
  *  gitlab_resolve (GitLab UI 直接解决主题) 也归"自动".
  *  fallback 到 timeline.actions 查 (兼容老数据/旧 ReviewAgent 没写 adoption_source 的情况). */
+// 触发方式 label (webhook/note/scheduled) — ReviewAgent 透传
+function trigLabel(t: string | null | undefined): string {
+  if (!t) return '';
+  if (t === 'webhook') return 'webhook';
+  if (t === 'note') return 'note';
+  if (t === 'scheduled') return 'scheduled';
+  return t;
+}
+// 采纳 sub label: reviewagent validation_status (ui-apply / ok / target-unchanged / content-unavailable / gitlab-resolve)
+function sAdoptStatus(s: SuggestionRow): string {
+  if (s.adoption_source === 'ui_apply') return 'GitLab 按钮';
+  if (s.adoption_source === 'manual_change') return '手动修改';
+  if (s.adoption_source === 'adopt_command') return '/adopt';
+  if (s.adoption_source === 'gitlab_resolve') return 'GitLab 解决';
+  if (s.adoption_source_label) return s.adoption_source_label;
+  return '';
+}
+// 标记 suggestion 落后 commit 数 (head_sha 校验): 用于 /adopt target-unchanged 时显示
+function headShaBehind(s: SuggestionRow): boolean {
+  return !!(s.head_sha_posted && s.head_sha_current && s.head_sha_posted !== s.head_sha_current);
+}
+function truncSha(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.length > 8 ? s.slice(0, 8) : s;
+}
+// 建议采纳率卡的"忽略率"染色: 高 (>=15%) 警示
+const dismissSubCls = computed(() => {
+  const r = overview.value?.suggestions?.dismissal_rate ?? 0;
+  if (r >= 0.15) return 'warn';
+  if (r >= 0.08) return '';
+  return 'muted';
+});
+// 严重建议忽略率 (从 severity_breakdown[critical] 取, 缺失时 fallback high)
+const criticalDismissalRate = computed(() => {
+  const total = criticalTotalEffective.value;
+  if (total === 0) return 0;
+  return criticalDismissedTotal.value / total;
+});
+// 跳过运行数: 后端 overview.runs 当前没给, 临时写 0 (后续 /summary 接入可读 by_status.skipped)
+const runsSkipped = computed(() => (overview.value?.runs as any)?.skipped ?? 0);
+
 function adoptKind(s: SuggestionRow): 'auto' | 'manual' | null {
   const src = s.adoption_source;
   if (src === 'ui_apply' || src === 'gitlab_resolve') return 'auto';
@@ -1371,11 +1431,21 @@ const runsSubHint = computed(() => {
 .bar-fill { height: 100%; background: var(--primary-grad); border-radius: 4px; transition: width 0.3s ease; }
 .rule-n { color: var(--ink-700); text-align: right; font-size: 11.5px; }
 .rule-n .unit { color: var(--ink-500); font-size: 10px; margin-left: 1px; }
-.rule-ap { color: var(--ink-700); text-align: right; font-size: 11.5px; }
+.rule-ap { color: var(--ink-700); text-align: right; font-size: 11.5px; display: inline-flex; gap: 4px; justify-content: flex-end; align-items: baseline; }
+.rule-ap .ap { font-weight: 600; }
+.rule-ap .dp { color: var(--ink-500); font-weight: 400; font-size: 10.5px; }
 .rule-ap.muted { color: var(--ink-500); font-weight: 400; }
 .rule-ap.high  { color: var(--ok); font-weight: 600; }
 .rule-ap.mid   { color: var(--ink-900); font-weight: 600; }
 .rule-ap.low   { color: var(--warn); font-weight: 600; }
+.run-row .trig { padding: 1px 6px; background: var(--surface-sunken); border-radius: 3px; }
+.run-row .actor { color: var(--ink-500); }
+.run-row .tokens { color: var(--ink-500); font-size: 10.5px; }
+.sug-row .adopt-vstat { color: var(--ink-500); font-weight: 400; font-size: 10.5px; margin-left: 2px; }
+.sug-row .adopt-stale { color: var(--warn); font-weight: 600; font-size: 10.5px; margin-left: 4px; }
+.mr-tbl .desc-tag { margin-left: 4px; font-size: 10.5px; opacity: 0.7; cursor: help; }
+.stat .sub .sub-tip { color: var(--ink-500); margin-left: 4px; font-weight: 400; }
+.stat .sub .warn { color: var(--warn); font-weight: 600; }
 
 /* 表格 */
 .tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
