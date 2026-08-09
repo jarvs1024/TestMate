@@ -119,26 +119,7 @@
           忽略 <span :class="dismissSubCls">{{ fmtPct(overview.suggestions?.dismissal_rate) }}</span>
         </div>
       </div>
-      <!-- 严重建议被忽略: 数据源从 /metrics/severity (老接口一直返回 0) 切到 overview.severity_breakdown (跟采纳率同源),
-           critical 缺失时用 high 兜底 (ReviewAgent 目前通常以 high 表示严重). -->
-      <div class="stat alert" :class="{ hot: criticalDismissedTotal > 0 }">
-        <div class="num" :class="{ zero: criticalDismissedTotal === 0 }">
-          {{ criticalDismissedTotal }}
-        </div>
-        <div class="lbl">严重建议被忽略</div>
-        <div class="sub" :title="criticalSubHint">
-          严重 {{ criticalTotalEffective }} · 待处理 {{ criticalOpenEffective }}<span v-if="criticalDismissedTotal === 0 && criticalTotalEffective > 0" class="sub-tip" title="当前没有严重建议被忽略">· 暂无忽略</span><span v-else-if="criticalTotalEffective === 0" class="sub-tip" title="当前没有任何严重等级建议">· 暂无数据</span>
-          <span v-else class="sub-tip" :title="`严重建议忽略率 = ${fmtPct(criticalDismissalRate)}`">· 忽略率 {{ fmtPct(criticalDismissalRate) }}</span>
-        </div>
-      </div>
-      <div class="stat">
-        <div class="num">{{ fmtPct(overview.runs?.success_rate) }}</div>
-        <div class="lbl">运行成功率</div>
-        <div class="sub" :title="runsSubHint">
-          {{ overview.runs?.total ?? 0 }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}<span v-if="runsSkipped > 0" class="sub-tip" :title="`跳过的运行 (通常 describe 检测无变更): ${runsSkipped}`"> · 跳过 {{ runsSkipped }}</span>
-        </div>
-      </div>
-      <!-- Token 用量: 全局按命令汇总, 单 run 字段为 0, /summary.by_command 才是真实数据 -->
+      <!-- 删除 "严重建议被忽略" 卡片, token 用量挪到第 4 张位置 (原 critical 卡) -->
       <div class="stat">
         <div class="num">{{ tokenTotalText }}</div>
         <div class="lbl">Token 用量</div>
@@ -150,6 +131,13 @@
             </span>
             <span class="sub-tip" :title="`平均每次运行 ${fmtTokens(avgTokensPerRun)} token`"> · 平均 {{ fmtTokens(avgTokensPerRun) }}/次</span>
           </span>
+        </div>
+      </div>
+      <div class="stat">
+        <div class="num">{{ fmtPct(overview.runs?.success_rate) }}</div>
+        <div class="lbl">运行成功率</div>
+        <div class="sub" :title="runsSubHint">
+          {{ effectiveRunCount }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}
         </div>
       </div>
     </div>
@@ -959,11 +947,6 @@ const dismissSubCls = computed(() => {
   return 'muted';
 });
 // 严重建议忽略率 (从 severity_breakdown[critical] 取, 缺失时 fallback high)
-const criticalDismissalRate = computed(() => {
-  const total = criticalTotalEffective.value;
-  if (total === 0) return 0;
-  return criticalDismissedTotal.value / total;
-});
 // 跳过运行数: 后端 overview.runs 当前没给, 临时写 0 (后续 /summary 接入可读 by_status.skipped)
 // Token 用量 — 数字格式化: <1k 显示原值, <1M 显示 K, >=1M 显示 M
 function fmtTokens(n: number | null | undefined): string {
@@ -1011,6 +994,8 @@ const timelineRunsTokensTotalByCmd = computed(() => {
   return Object.entries(m).map(([cmd, tokens]) => ({ cmd, tokens })).sort((a, b) => b.tokens - a.tokens);
 });
 const runsSkipped = computed(() => (overview.value?.runs as any)?.skipped ?? 0);
+// 实际运行次数 = total - skipped (skipped 是 describe 检测无变更的内部行为, 不计入)
+const effectiveRunCount = computed(() => Math.max((overview.value?.runs?.total ?? 0) - runsSkipped.value, 0));
 
 function adoptKind(s: SuggestionRow): 'auto' | 'manual' | null {
   const src = s.adoption_source;
@@ -1112,27 +1097,6 @@ function scrollToMrTable() {
 
 onMounted(reload);
 
-// 严重建议被忽略: 优先用 overview.severity_breakdown (跟采纳率、严重等级分布卡同源),
-// critical 缺失时用 high 兜底 (ReviewAgent 目前没单独 critical, 通常以 high 表示严重).
-function overviewSev(name: string): SeverityBucket | null {
-  const buckets = (overview.value?.severity_breakdown || []) as SeverityBucket[];
-  return buckets.find(b => (b.severity || '').toLowerCase() === name) || null;
-}
-const criticalDismissed = computed(() => overviewSev('critical')?.dismissed ?? 0);
-const criticalOpen = computed(() => overviewSev('critical')?.open ?? 0);
-const criticalTotal = computed(() => overviewSev('critical')?.total ?? 0);
-const highDismissed = computed(() => overviewSev('high')?.dismissed ?? 0);
-const highOpen = computed(() => overviewSev('high')?.open ?? 0);
-const highTotal = computed(() => overviewSev('high')?.total ?? 0);
-const criticalDismissedTotal = computed(() => (criticalTotal.value || 0) > 0
-  ? (criticalDismissed.value || 0)
-  : (highDismissed.value || 0));
-const criticalOpenEffective = computed(() => (criticalTotal.value || 0) > 0
-  ? criticalOpen.value
-  : highOpen.value);
-const criticalTotalEffective = computed(() => (criticalTotal.value || 0) > 0
-  ? criticalTotal.value
-  : highTotal.value);
 // “已关闭”悬浮文案: 解释 resolved 含义 + 跟 processed 关联.
 const resolvedHint = computed(() => '已关闭 = GitLab 解决主题但未走 apply / dismiss 的建议数。不计入已应用，但参与采纳率分母 (processed).');
 // 各概览卡副标的概念性提示: 鼠标悬停展示字段含义/分母/告警阈值, 不夹带具体计数避免误导.
@@ -1150,12 +1114,6 @@ const adoptionSubHint = computed(() => {
   const s = overview.value?.suggestions;
   if (!s) return '建议采纳率 = 已应用 / 处理中 (applied+dismissed+resolved)';
   return `建议采纳率 = 已应用 ${s.applied ?? 0} / 处理中 ${s.processed ?? (s.applied ?? 0) + (s.dismissed ?? 0) + (s.resolved ?? 0)}\n分母为 processed, 含已关闭的 resolved, 跟"建议采纳率"主指标保持一致.`;
-});
-const criticalSubHint = computed(() => {
-  const total = criticalTotalEffective.value;
-  const dismissed = criticalDismissedTotal.value;
-  if (total === 0) return '当前没有严重等级建议 (overview.severity_breakdown 中 critical/high 均为 0)。\n数据源: overview.severity_breakdown (与严重等级分布卡同源), critical 缺失时用 high 兜底.';
-  return `严重建议被忽略 ${dismissed} = severity 为 critical (或 high 兜底) 且被 dismiss 的建议数。\n建议关注: 红色块表示当前有被忽略的严重问题, 优先排查; 0 时为安全状态.`;
 });
 const runsSubHint = computed(() => {
   const r = overview.value?.runs;
@@ -1667,7 +1625,7 @@ const runsSubHint = computed(() => {
 .sug-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 8px 10px; background: var(--surface-sunken); border-radius: 8px; align-items: start; }
 .sug-row.s-applied { opacity: 0.65; }
 .sug-row.s-dismissed { opacity: 0.45; }
-.sug-l { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.sug-l { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; min-width: 68px; flex-shrink: 0; }
 /* 手动采纳小标: 紧跟 [已采纳] 徽章下面, 居中. 文字用 primary 提色, 跟 [已采纳] 区分但低调 */
 .adopt-sub { font-size: 10.5px; opacity: .9; font-weight: 600; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 10px; border: 1px solid transparent; line-height: 1.4; white-space: nowrap; }
 .adopt-sub-auto   { color: color-mix(in srgb, var(--ink-700) 80%, var(--ink-500)); border-color: color-mix(in srgb, var(--ink-700) 25%, transparent); background: color-mix(in srgb, var(--ink-700) 6%, transparent); }
