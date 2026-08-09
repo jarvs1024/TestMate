@@ -787,8 +787,13 @@ function ruleAdoptedTitle(r: RuleStat): string {
 // 严重等级 nested bar 用: 总建议数 (applied+dismissed+open+superseded), 整条 flex 比例
 const totalSuggestions = computed(() => severityBuckets.value.reduce((s, b) =>
   s + (b.applied || 0) + (b.dismissed || 0) + (b.open || 0) + (b.superseded || 0), 0));
-// 严重等级 整体采纳率 (legend 右侧展示)
+// 严重等级 "整体采纳" 走 ReviewAgent 真实口径: 直接用 overview.suggestions.adoption_rate
+// (= applied / total, 含 open), 跟顶部"建议采纳率"卡片完全同源, 避免前端重算导致分母不一致.
+// 此前按 (applied+dismissed+open+superseded) 兜底算导致 15.2% (54/355), 跟卡片 14.7% (54/367) 差 0.5% — 是误算, 已废弃.
 const severityAdoption = computed(() => {
+  const from_backend = (overview.value?.suggestions?.adoption_rate ?? null);
+  if (from_backend !== null && from_backend !== undefined) return from_backend;
+  // 兜底: 仅在 overview 还没到时短暂用 severity 列表估一个 (severity 端老接口 applied 一直为 0, 这里不会触发)
   const t = severityBuckets.value.reduce((s, b) => s + (b.applied || 0) + (b.dismissed || 0) + (b.open || 0) + (b.superseded || 0), 0);
   const a = severityBuckets.value.reduce((s, b) => s + (b.applied || 0), 0);
   return t > 0 ? a / t : 0;
