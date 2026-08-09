@@ -99,12 +99,12 @@
       <div class="stat">
         <div class="num">{{ overview.mrs?.total ?? 0 }}</div>
         <div class="lbl">MR</div>
-        <div class="sub">合并 {{ overview.mrs?.merged ?? 0 }} · 开放 {{ overview.mrs?.open ?? 0 }} · 关闭 {{ overview.mrs?.closed ?? 0 }}</div>
+        <div class="sub" :title="mrSubHint">合并 {{ overview.mrs?.merged ?? 0 }} · 开放 {{ overview.mrs?.open ?? 0 }} · 关闭 {{ overview.mrs?.closed ?? 0 }}</div>
       </div>
       <div class="stat">
         <div class="num">{{ overview.suggestions?.total ?? 0 }}</div>
         <div class="lbl">建议</div>
-        <div class="sub">
+        <div class="sub" :title="sugSubHint">
           采纳 {{ overview.suggestions?.applied ?? 0 }} · 忽略 {{ overview.suggestions?.dismissed ?? 0 }}<span
             v-if="(overview.suggestions?.resolved ?? 0) > 0"
             class="sub-tip"
@@ -114,9 +114,7 @@
       <div class="stat highlight">
         <div class="num">{{ fmtPct(overview.suggestions?.adoption_rate) }}</div>
         <div class="lbl">建议采纳率</div>
-        <div class="sub">
-          <span :title="`分母: 总建议 ${overview.suggestions?.total ?? 0}（processed 含已关闭 ${overview.suggestions?.processed ?? 0}）`">已应用 / 总建议</span>
-        </div>
+        <div class="sub" :title="adoptionSubHint">已应用 / 总建议</div>
       </div>
       <!-- 严重建议被忽略: 数据源从 /metrics/severity (老接口一直返回 0) 切到 overview.severity_breakdown (跟采纳率同源),
            critical 缺失时用 high 兜底 (ReviewAgent 目前通常以 high 表示严重). -->
@@ -125,14 +123,14 @@
           {{ criticalDismissedTotal }}
         </div>
         <div class="lbl">严重建议被忽略</div>
-        <div class="sub">
+        <div class="sub" :title="criticalSubHint">
           严重 {{ criticalTotalEffective }} · 待处理 {{ criticalOpenEffective }}<span v-if="criticalDismissedTotal === 0 && criticalTotalEffective > 0" class="sub-tip" title="当前没有严重建议被忽略">· 暂无忽略</span><span v-else-if="criticalTotalEffective === 0" class="sub-tip" title="当前没有任何严重等级建议">· 暂无数据</span>
         </div>
       </div>
       <div class="stat">
         <div class="num">{{ fmtPct(overview.runs?.success_rate) }}</div>
         <div class="lbl">运行成功率</div>
-        <div class="sub">{{ overview.runs?.total ?? 0 }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}</div>
+        <div class="sub" :title="runsSubHint">{{ overview.runs?.total ?? 0 }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}</div>
       </div>
     </div>
 
@@ -1010,11 +1008,33 @@ const criticalTotalEffective = computed(() => (criticalTotal.value || 0) > 0
   ? criticalTotal.value
   : highTotal.value);
 // “已关闭”悬浮文案: 解释 resolved 含义 + 跟 processed 关联.
-const resolvedHint = computed(() => {
+const resolvedHint = computed(() => '已关闭 = GitLab 解决主题但未走 apply / dismiss 的建议数。不计入已应用，但参与采纳率分母 (processed).');
+// 各概览卡副标的概念性提示: 鼠标悬停展示字段含义/分母/告警阈值, 不夹带具体计数避免误导.
+const mrSubHint = computed(() => {
+  const m = overview.value?.mrs;
+  if (!m) return 'MR 总数: ReviewAgent 抓取到的所有 Merge Request 数';
+  return `MR 总数 ${m.total ?? 0} = 已合并 ${m.merged ?? 0} + 开放 ${m.open ?? 0} + 已关闭 ${m.closed ?? 0}。\n“关闭” 指 MR 被关闭但未合并, 区别于下面的"已关闭"建议.`;
+});
+const sugSubHint = computed(() => {
   const s = overview.value?.suggestions;
-  if (!s) return '已关闭 = GitLab 解决主题但未走 apply / dismiss 的建议数';
-  return `已关闭 ${s.resolved ?? 0} = GitLab 解决主题但未走 apply / dismiss 的建议数。\n` +
-    `采纳率分母 (processed) 含此字段: ${s.processed ?? 0} = 已应用 ${s.applied ?? 0} + 已忽略 ${s.dismissed ?? 0} + 已关闭 ${s.resolved ?? 0}`;
+  if (!s) return '建议总数: 所有 ReviewAgent 评审产出的建议, 含 open / applied / dismissed / resolved';
+  return `建议总数 ${s.total ?? 0} = 已应用 ${s.applied ?? 0} + 已忽略 ${s.dismissed ?? 0} + 已关闭 ${s.resolved ?? 0} + 待处理 ${s.open ?? 0}。\n“已关闭” 不算 apply, 不计为采纳, 但参与采纳率分母.`;
+});
+const adoptionSubHint = computed(() => {
+  const s = overview.value?.suggestions;
+  if (!s) return '建议采纳率 = 已应用 / 处理中 (applied+dismissed+resolved)';
+  return `建议采纳率 = 已应用 ${s.applied ?? 0} / 处理中 ${s.processed ?? (s.applied ?? 0) + (s.dismissed ?? 0) + (s.resolved ?? 0)}\n分母为 processed, 含已关闭的 resolved, 跟"建议采纳率"主指标保持一致.`;
+});
+const criticalSubHint = computed(() => {
+  const total = criticalTotalEffective.value;
+  const dismissed = criticalDismissedTotal.value;
+  if (total === 0) return '当前没有严重等级建议 (overview.severity_breakdown 中 critical/high 均为 0)。\n数据源: overview.severity_breakdown (与严重等级分布卡同源), critical 缺失时用 high 兜底.';
+  return `严重建议被忽略 ${dismissed} = severity 为 critical (或 high 兜底) 且被 dismiss 的建议数。\n建议关注: 红色块表示当前有被忽略的严重问题, 优先排查; 0 时为安全状态.`;
+});
+const runsSubHint = computed(() => {
+  const r = overview.value?.runs;
+  if (!r) return '运行成功率 = 成功运行 / 总运行次数';
+  return `运行成功率 = (总运行 ${r.total ?? 0} - 失败 ${r.failed ?? 0}) / 总运行。\n失败次数 > 0 时, 上方"近期失败" banner 会显示对应 MR.`;
 });
 
 </script>
