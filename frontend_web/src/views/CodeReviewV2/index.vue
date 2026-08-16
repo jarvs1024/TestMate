@@ -119,6 +119,13 @@
           忽略 <span :class="dismissSubCls">{{ fmtPct(overview.suggestions?.dismissal_rate) }}</span>
         </div>
       </div>
+      <div class="stat">
+        <div class="num">{{ fmtPct(overview.runs?.success_rate) }}</div>
+        <div class="lbl">运行成功率</div>
+        <div class="sub" :title="runsSubHint">
+          {{ effectiveRunCount }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}
+        </div>
+      </div>
       <!-- 周报卡: 取代原 Token 用量. 点击展开抽屉看完整 telemetry / merged_mrs / repo_scan + LLM 综述 -->
       <div class="stat stat-link" :class="{ 'stat-loading': wrLoading }" @click="openWeeklyReport" :title="wrHint">
         <div class="num wr-num">
@@ -136,13 +143,6 @@
               class="sub-tip"> · 合并 {{ wrLatest.sections.merged_mrs.data.merge_count }} MR</span>
           </span>
           <span v-else>暂无周报</span>
-        </div>
-      </div>
-      <div class="stat">
-        <div class="num">{{ fmtPct(overview.runs?.success_rate) }}</div>
-        <div class="lbl">运行成功率</div>
-        <div class="sub" :title="runsSubHint">
-          {{ effectiveRunCount }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}
         </div>
       </div>
     </div>
