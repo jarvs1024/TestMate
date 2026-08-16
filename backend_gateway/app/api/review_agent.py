@@ -159,3 +159,36 @@ async def dismissals_by_rule(
         return await review_agent_client.dismissals_by_rule(since=since)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/weekly-reports")
+async def list_weekly_reports(
+    project_id: Optional[int] = None,
+    limit: int = Query(20, ge=1, le=200),
+    user: User = Depends(get_optional_user),
+) -> dict:
+    """周报列表. 透传 ReviewAgent /weekly-reports (按周倒序)."""
+    if not await review_agent_client.is_configured():
+        return {"reports": []}
+    try:
+        reports = await review_agent_client.list_weekly_reports(project_id=project_id, limit=limit)
+        return {"reports": reports}
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/weekly-reports/{name}")
+async def get_weekly_report(
+    name: str,
+    user: User = Depends(get_optional_user),
+) -> dict:
+    """单份周报全文 (含 sections.telemetry / merged_mrs / repo_scan + LLM 综述)."""
+    if not await review_agent_client.is_configured():
+        raise HTTPException(status_code=503, detail="review-agent 未配置")
+    try:
+        data = await review_agent_client.get_weekly_report(name)
+        if not data:
+            raise HTTPException(status_code=404, detail=f"周报 {name} 不存在")
+        return data
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))

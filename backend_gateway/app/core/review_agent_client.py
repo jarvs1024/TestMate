@@ -670,3 +670,26 @@ async def dismissals_by_rule(since: str | None = None) -> list[dict]:
         }
         for r in rules
     ]
+
+
+# ===== 周报 =====
+
+async def list_weekly_reports(project_id: int | None = None, limit: int = 20) -> list[dict]:
+    """/weekly-reports 列表 (从 ReviewAgent JSON 文件 glob 出来的元数据)."""
+    params: dict[str, Any] = {"limit": limit}
+    if project_id is not None:
+        params["project_id"] = project_id
+    raw = await _get("/weekly-reports", params) or {}
+    reports = raw.get("reports") or []
+    return [dict(r) for r in reports]
+
+
+async def get_weekly_report(name: str) -> dict | None:
+    """/weekly-reports/{name} 单份周报全文 (sections.telemetry / merged_mrs / repo_scan + LLM 综述).
+
+    后端 ReviewAgent 返 {"name": "...", "json": {...}}, 这里拆 .json 透出, 让前端拿到的是
+    跟 telemetry / merged_mrs 等数据平级的纯 dict (含 week_label / sections).
+    """
+    raw = await _get(f"/weekly-reports/{name}") or {}
+    inner = raw.get("json") if isinstance(raw, dict) else None
+    return dict(inner) if inner else None

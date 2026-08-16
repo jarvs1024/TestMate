@@ -244,3 +244,38 @@ export async function getSeverity(since?: string): Promise<SeverityBucket[]> {
 export async function getDismissalsByRule(since?: string): Promise<DismissalsByRuleItem[]> {
   return ((await request.get('/review-agent/dismissals/by-rule', { params: since ? { since } : {} })) as DismissalsByRuleItem[]) || [];
 }
+
+/** 周报 list item: name / path / size / modified */
+export interface WeeklyReportListItem {
+  name: string;
+  path: string;
+  size: number;
+  modified: number;
+}
+/** 周报完整内容: sections.telemetry / merged_mrs / repo_scan + LLM 综述 */
+export interface WeeklyReport {
+  schema_version?: number;
+  project_id?: number;
+  week_label: string;
+  week_start: string;
+  week_end: string;
+  generated_at: string;
+  timezone?: string;
+  report_title?: string;
+  report_emoji?: string;
+  dashboard_url?: string;
+  sections: {
+    telemetry?: { status?: string; data?: any };
+    merged_mrs?: { status?: string; data?: any };
+    repo_scan?: { status?: string; data?: any };
+    [k: string]: any;
+  };
+}
+
+export async function getWeeklyReports(limit = 5): Promise<WeeklyReportListItem[]> {
+  const r = await request.get('/review-agent/weekly-reports', { params: { limit } });
+  return (r as any)?.reports || [];
+}
+export async function getWeeklyReport(name: string): Promise<WeeklyReport> {
+  return (await request.get(`/review-agent/weekly-reports/${encodeURIComponent(name)}`)) as WeeklyReport;
+}

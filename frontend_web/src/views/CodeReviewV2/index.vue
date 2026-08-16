@@ -119,18 +119,23 @@
           忽略 <span :class="dismissSubCls">{{ fmtPct(overview.suggestions?.dismissal_rate) }}</span>
         </div>
       </div>
-      <!-- 删除 "严重建议被忽略" 卡片, token 用量挪到第 4 张位置 (原 critical 卡) -->
-      <div class="stat">
-        <div class="num">{{ tokenTotalText }}</div>
-        <div class="lbl">Token 用量</div>
-        <div class="sub" :title="tokenSubHint">
-          <span v-if="tokenBreakdown.length === 0">暂无 token 数据</span>
-          <span v-else>
-            <span v-for="(t, idx) in tokenBreakdown" :key="t.cmd">
-              {{ t.cmd }} <b>{{ fmtTokens(t.tokens) }}</b><span v-if="idx < tokenBreakdown.length - 1"> · </span>
-            </span>
-            <span class="sub-tip" :title="`平均每次运行 ${fmtTokens(avgTokensPerRun)} token`"> · 平均 {{ fmtTokens(avgTokensPerRun) }}/次</span>
+      <!-- 周报卡: 取代原 Token 用量. 点击展开抽屉看完整 telemetry / merged_mrs / repo_scan + LLM 综述 -->
+      <div class="stat stat-link" :class="{ 'stat-loading': wrLoading }" @click="openWeeklyReport" :title="wrHint">
+        <div class="num wr-num">
+          <span v-if="wrLatest" class="wr-emoji">{{ wrLatest.report_emoji || '📊' }}</span>
+          <span v-if="wrLatest" class="wr-label">{{ wrLatest.week_label }}</span>
+          <span v-else class="wr-label">—</span>
+          <span class="wr-arrow">›</span>
+        </div>
+        <div class="lbl">本周报</div>
+        <div class="sub" :title="wrSubHint">
+          <span v-if="wrLoading">加载中...</span>
+          <span v-else-if="wrLatest?.sections?.telemetry?.data">
+            {{ wrLatest.sections.telemetry.data.total }} 次 · 成功率 {{ wrLatest.sections.telemetry.data.success_rate }}%<span
+              v-if="wrLatest.sections.merged_mrs?.data?.merge_count != null"
+              class="sub-tip"> · 合并 {{ wrLatest.sections.merged_mrs.data.merge_count }} MR</span>
           </span>
+          <span v-else>暂无周报</span>
         </div>
       </div>
       <div class="stat">
@@ -483,6 +488,85 @@
         <div class="loading">加载中...</div>
       </template>
     </el-drawer>
+
+    <!-- 周报抽屉: 取代原 Token 卡. 展示 telemetry / merged_mrs / repo_scan 3 section + LLM 综述 -->
+    <el-drawer v-model="wrOpen" size="720px" direction="rtl">
+      <template #header>
+        <div class="wr-drawer-hd">
+          <span class="wr-drawer-emoji">{{ weeklyReport?.report_emoji || '📊' }}</span>
+          <span class="wr-drawer-title">{{ weeklyReport?.report_title || '周报' }} · {{ weeklyReport?.week_label || '' }}</span>
+        </div>
+      </template>
+      <template v-if="weeklyReport">
+        <div class="wr-meta mono">
+          <span>时间窗: {{ weeklyReport.week_start }} ~ {{ weeklyReport.week_end }}</span>
+          <span>生成: {{ weeklyReport.generated_at }}</span>
+        </div>
+
+        <!-- Section 1: telemetry -->
+        <div v-if="weeklyReport.sections?.telemetry?.data" class="wr-section">
+          <h3>运行统计</h3>
+          <div class="wr-stats">
+            <div class="wr-stat"><div class="wr-stat-num">{{ weeklyReport.sections.telemetry.data.total }}</div><div class="wr-stat-k">总运行</div></div>
+            <div class="wr-stat ok"><div class="wr-stat-num">{{ weeklyReport.sections.telemetry.data.success }}</div><div class="wr-stat-k">成功</div></div>
+            <div class="wr-stat err"><div class="wr-stat-num">{{ weeklyReport.sections.telemetry.data.failed }}</div><div class="wr-stat-k">失败</div></div>
+            <div class="wr-stat mute"><div class="wr-stat-num">{{ weeklyReport.sections.telemetry.data.skipped }}</div><div class="wr-stat-k">跳过</div></div>
+            <div class="wr-stat hl"><div class="wr-stat-num">{{ weeklyReport.sections.telemetry.data.success_rate }}%</div><div class="wr-stat-k">成功率</div></div>
+          </div>
+          <div v-if="weeklyReport.sections.telemetry.data.by_command" class="wr-cmds">
+            <div v-for="(c, cmd) in weeklyReport.sections.telemetry.data.by_command" :key="cmd" class="wr-cmd-row">
+              <span class="wr-cmd-name">{{ cmd }}</span>
+              <span class="wr-cmd-bar"><span class="wr-cmd-fill" :style="{ width: c.count / weeklyReport.sections.telemetry.data.total * 100 + '%' }"></span></span>
+              <span class="wr-cmd-num mono">{{ c.count }}<span v-if="c.failed" class="err"> · 失败 {{ c.failed }}</span></span>
+            </div>
+          </div>
+          <div v-if="weeklyReport.sections.telemetry.data.top_mrs?.length" class="wr-top-mrs">
+            <div class="wr-sub-h">Top MRs (按运行数)</div>
+            <div v-for="m in weeklyReport.sections.telemetry.data.top_mrs.slice(0, 5)" :key="`${m.project_id}-${m.mr_iid}`" class="wr-top-mr">
+              <span class="mono">!{{ m.mr_iid }}</span>
+              <span class="wr-top-mr-title">{{ m.title }}</span>
+              <span class="mono">×{{ m.runs }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2: merged_mrs -->
+        <div v-if="weeklyReport.sections?.merged_mrs?.data" class="wr-section">
+          <h3>合并 MRs</h3>
+          <div class="wr-row-stats">
+            <span><b>{{ weeklyReport.sections.merged_mrs.data.merge_count || 0 }}</b> 个 MR 合并</span>
+            <span v-if="weeklyReport.sections.merged_mrs.data.additions != null">+{{ weeklyReport.sections.merged_mrs.data.additions }} 行</span>
+            <span v-if="weeklyReport.sections.merged_mrs.data.deletions != null">-{{ weeklyReport.sections.merged_mrs.data.deletions }} 行</span>
+            <span v-if="weeklyReport.sections.merged_mrs.data.author_count">{{ weeklyReport.sections.merged_mrs.data.author_count }} 位作者</span>
+          </div>
+          <div v-if="weeklyReport.sections.merged_mrs.data.mr_list?.length || weeklyReport.sections.merged_mrs.data.items?.length" class="wr-mr-list">
+            <div v-for="m in (weeklyReport.sections.merged_mrs.data.mr_list || weeklyReport.sections.merged_mrs.data.items || []).slice(0, 10)" :key="`${m.project_id || m.project_id}-${m.mr_iid || m.mr_id}`" class="wr-mr-row">
+              <span class="mono">!{{ m.mr_iid || m.mr_id }}</span>
+              <span class="wr-mr-title">{{ m.title }}</span>
+              <span v-if="m.author" class="wr-mr-author">@{{ m.author }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 3: repo_scan + LLM 综述 -->
+        <div v-if="weeklyReport.sections?.repo_scan?.data" class="wr-section">
+          <h3>仓库扫描</h3>
+          <div class="wr-row-stats">
+            <span v-if="weeklyReport.sections.repo_scan.data.total_mrs != null"><b>{{ weeklyReport.sections.repo_scan.data.total_mrs }}</b> 个 MR</span>
+            <span v-if="weeklyReport.sections.repo_scan.data.total_files != null"><b>{{ weeklyReport.sections.repo_scan.data.total_files }}</b> 个文件</span>
+            <span v-if="weeklyReport.sections.repo_scan.data.total_additions != null">+{{ weeklyReport.sections.repo_scan.data.total_additions }} 行</span>
+            <span v-if="weeklyReport.sections.repo_scan.data.total_deletions != null">-{{ weeklyReport.sections.repo_scan.data.total_deletions }} 行</span>
+          </div>
+          <div v-if="weeklyReport.sections.repo_scan.data.llm_review_markdown" class="wr-llm">
+            <div class="wr-sub-h">AI 综述</div>
+            <pre class="wr-llm-text">{{ weeklyReport.sections.repo_scan.data.llm_review_markdown }}</pre>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <div class="loading">加载中...</div>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -491,8 +575,10 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity, getDismissalsByRule,
+  getWeeklyReports, getWeeklyReport,
   type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type MrListResp, type TimelineResp, type HealthResp,
   type SeverityBucket, type DismissalsByRuleItem, type SuggestionRow, type ActionRow,
+  type WeeklyReport,
 } from '@/api/reviewagent';
 import ErrorView from '@/components/ErrorView.vue';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
@@ -560,6 +646,53 @@ const bannerOpen = ref(false);
 // 不再用 computed 从当前页 filter, 那种做法会让 banner 数字 ≠ 列表 (count 跨页但 list 只看当前页),
 // 用户看到"2 个失败, 但 banner 列表是空".
 const failedMrs = ref<MrRow[]>([]);
+// 周报卡: 主页 overview 旁边那张周报卡 + 抽屉
+// 主页拉"最新一份"全文 (~180KB), 卡片用 summary, 抽屉直接渲染同一份; 不维护 list 缓存.
+const wrLatest = ref<WeeklyReport | null>(null);
+const weeklyReport = ref<WeeklyReport | null>(null);
+const wrOpen = ref(false);
+const wrLoading = ref(false);
+async function refreshWrLatest() {
+  try {
+    const list = await getWeeklyReports(1);
+    const first = list[0];
+    if (!first) { wrLatest.value = null; return; }
+    // 拉全文 (主页用摘要, 抽屉复用同一份, 不二次请求)
+    wrLatest.value = await getWeeklyReport(first.name);
+  } catch { /* 静默: 周报只是辅助卡, 失败不影响主视图 */ }
+}
+async function openWeeklyReport() {
+  if (!wrLatest.value) {
+    ElMessage.warning('暂无周报');
+    return;
+  }
+  // 主页已缓存最新一份, 抽屉复用. weeklyReport 是别名, drawer 模板已读它.
+  weeklyReport.value = wrLatest.value;
+  wrOpen.value = true;
+  // 兜底: 若缓存丢了, 抽屉打开时再拉一次
+  if (!weeklyReport.value) {
+    wrLoading.value = true;
+    try {
+      const list = await getWeeklyReports(1);
+      if (list[0]) weeklyReport.value = await getWeeklyReport(list[0].name);
+    } catch (e: any) {
+      ElMessage.error('周报加载失败: ' + (e?.response?.data?.detail || e?.message));
+      wrOpen.value = false;
+    } finally {
+      wrLoading.value = false;
+    }
+  }
+}
+const wrHint = computed(() => wrLatest.value
+  ? `点击查看 ${wrLatest.value.week_label} 完整周报 (telemetry / merged_mrs / repo_scan + AI 综述)`
+  : '暂无周报');
+const wrSubHint = computed(() => {
+  const t = wrLatest.value?.sections?.telemetry?.data;
+  if (!t) return '数据源: /api/v1/review-agent/weekly-reports';
+  const byCmd = t.by_command || {};
+  const parts = Object.entries(byCmd).map(([cmd, c]: any) => `${cmd} ${c.count} 次`);
+  return `本周总运行 ${t.total} (${parts.join(', ')}).\n成功率 = success / total × 100%.`;
+});
 
 // 已读 (ack) 失败 MR — localStorage 持久化, 只隐藏已读的; 新失败不在 set 里会重新出现.
 const ACK_KEY = 'crv2:acked-failed-mrs';
@@ -764,6 +897,7 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
     mrTotal.value = mrResp.total || 0;
     severities.value = sev;
     dismissalsByRule.value = dbr || [];
+    refreshWrLatest();
   } catch (e: any) {
     loadError.value = (e?.response?.data?.detail || e?.message || '未知错误');
     if (!opts.silent) {
@@ -955,29 +1089,7 @@ function fmtTokens(n: number | null | undefined): string {
   if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 1 : 0) + 'k';
   return (n / 1_000_000).toFixed(2) + 'M';
 }
-const tokensTotal = computed(() => overview.value?.runs?.tokens_total ?? 0);
-const tokenBreakdown = computed(() => {
-  const m = overview.value?.runs?.tokens_by_command || {};
-  return Object.entries(m)
-    .map(([cmd, tokens]) => ({ cmd, tokens: Number(tokens) || 0 }))
-    .filter(x => x.tokens > 0)
-    .sort((a, b) => b.tokens - a.tokens);
-});
-const tokenTotalText = computed(() => {
-  const n = tokensTotal.value;
-  if (!n) return '0';
-  return fmtTokens(n);
-});
-const avgTokensPerRun = computed(() => {
-  const total = tokensTotal.value;
-  const runs = overview.value?.runs?.total ?? 0;
-  return runs > 0 ? Math.round(total / runs) : 0;
-});
-const tokenSubHint = computed(() => {
-  const parts = tokenBreakdown.value.map(t => `${t.cmd} ${fmtTokens(t.tokens)} token`);
-  const sum = parts.length ? parts.join(' + ') : '无';
-  return `Token 用量 = 各命令 token 求和 (${sum})。\n数据源: /summary.by_command[*].total_tokens, 单 run 字段通常为 0。\n仅在 overview 接口汇总, 时间窗影响数值.`;
-});
+
 // MR 级 token: 时间线当前 MR 的所有 run 求和 (单 run 字段几乎为 0, 兜底就显示 0 不展示)
 const timelineRunsTokensTotal = computed(() => {
   const runs = (timeline.value?.runs || []) as any[];
@@ -1295,6 +1407,52 @@ const runsSubHint = computed(() => {
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
 }
+
+/* 周报卡: 整张可点击, 右上角 › 暗示, hover/focus 状态明显 */
+.stat-link { cursor: pointer; transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s; }
+.stat-link:hover { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary), var(--shadow-sm); transform: translateY(-1px); }
+.stat-link:active { transform: translateY(0); }
+.stat-link.stat-loading { opacity: 0.7; }
+.wr-num { display: flex; align-items: center; gap: 6px; font-size: 18px !important; }
+.wr-emoji { font-size: 18px; }
+.wr-label { font-weight: 700; }
+.wr-arrow { margin-left: auto; opacity: 0.45; font-size: 18px; font-weight: 400; transition: transform 0.15s, opacity 0.15s; }
+.stat-link:hover .wr-arrow { opacity: 1; transform: translateX(2px); }
+
+/* 周报抽屉 */
+.wr-drawer-hd { display: flex; align-items: center; gap: 8px; }
+.wr-drawer-emoji { font-size: 20px; }
+.wr-drawer-title { font-weight: 600; font-size: 14px; }
+.wr-meta { display: flex; gap: 16px; font-size: 11px; color: var(--ink-500); padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 14px; flex-wrap: wrap; }
+.wr-section { margin-bottom: 18px; }
+.wr-section h3 { font-size: 13px; font-weight: 700; color: var(--ink-700); margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px dashed var(--border); }
+.wr-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; }
+.wr-stat { padding: 8px 10px; background: var(--surface-soft); border: 1px solid var(--border); border-radius: 8px; text-align: center; }
+.wr-stat.ok { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.wr-stat.err { background: color-mix(in srgb, var(--err) 10%, transparent); }
+.wr-stat.mute { background: color-mix(in srgb, var(--ink-500) 10%, transparent); }
+.wr-stat.hl { background: var(--primary-grad-soft); }
+.wr-stat-num { font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: var(--ink-900); }
+.wr-stat-k { font-size: 10.5px; color: var(--ink-500); margin-top: 2px; }
+.wr-cmds { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.wr-cmd-row { display: grid; grid-template-columns: 80px 1fr 80px; gap: 10px; align-items: center; font-size: 11.5px; }
+.wr-cmd-name { font-weight: 600; color: var(--ink-700); }
+.wr-cmd-bar { height: 6px; background: var(--surface-sunken); border-radius: 3px; overflow: hidden; }
+.wr-cmd-fill { display: block; height: 100%; background: var(--primary-grad); border-radius: 3px; }
+.wr-cmd-num { text-align: right; color: var(--ink-700); }
+.wr-cmd-num .err { color: var(--err); }
+.wr-top-mrs, .wr-mr-list { margin-top: 8px; }
+.wr-sub-h { font-size: 11.5px; font-weight: 600; color: var(--ink-500); margin-bottom: 6px; }
+.wr-top-mr, .wr-mr-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; border-bottom: 1px dashed var(--border); }
+.wr-top-mr:last-child, .wr-mr-row:last-child { border-bottom: none; }
+.wr-top-mr-title, .wr-mr-title { color: var(--ink-900); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wr-mr-author { font-size: 11px; color: var(--ink-500); }
+.wr-row-stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--ink-700); margin-bottom: 10px; }
+.wr-row-stats b { color: var(--ink-900); font-weight: 700; }
+.wr-llm { margin-top: 10px; }
+.wr-llm-text { font-size: 12px; line-height: 1.65; color: var(--ink-700); white-space: pre-wrap; word-wrap: break-word; background: var(--surface-soft); padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border); max-height: 50vh; overflow-y: auto; font-family: inherit; margin: 0; }
+.wr-llm-text::-webkit-scrollbar { width: 6px; }
+.wr-llm-text::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 /* 三卡组合: 左列 2 行(规则) + 右列跨 2 行(作者); 1.6:1 列比让规则类有足够横向空间堆 pill */
 .cluster-grid {
