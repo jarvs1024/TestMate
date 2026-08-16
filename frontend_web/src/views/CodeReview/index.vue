@@ -77,7 +77,7 @@
     </div>
 
     <!-- 未配置 / 连不上 提示 -->
-    <div v-if="health && !health.configured" class="card warn">
+    <div v-if="health && !health.configured" class="card warn-card">
       <div class="warn-ic">🧪</div>
       <div class="warn-body">
         <div class="warn-t">pr-agent 未配置</div>
@@ -85,7 +85,7 @@
           例: <code>http://host.docker.internal:5050</code> · 默认无需 token.</div>
       </div>
     </div>
-    <div v-else-if="loadError" class="card warn">
+    <div v-else-if="loadError" class="card warn-card">
       <div class="warn-ic">⚠️</div>
       <div class="warn-body">
         <div class="warn-t">pr-agent 不可达</div>
@@ -1038,8 +1038,8 @@ onMounted(reload);
 
 
 
-/* 状态警告卡 */
-.warn {
+/* 状态警告卡 (跟 Settings 命名对齐: warn-card, 跟 .stat .sub .warn 内联色标区分) */
+.warn-card {
   display: flex; gap: 14px; align-items: flex-start;
   border: 1px dashed var(--warn);
   background: color-mix(in srgb, var(--warn) 6%, var(--surface-soft));
@@ -1049,7 +1049,7 @@ onMounted(reload);
 .warn-d { font-size: 12.5px; color: var(--ink-700); line-height: 1.6; }
 .warn-d code { font-family: var(--font-mono); background: var(--surface-sunken); padding: 1px 6px; border-radius: 4px; }
 
-/* 评审失败顶部 banner: 醒目但不刺眼, 跟 .warn 同级, 实心 (可点跳转) */
+/* 评审失败顶部 banner: 醒目但不刺眼, 跟 .warn-card 同级, 实心 (可点跳转) */
 .banner {
   padding: 0;
   border-radius: var(--radius-card);
