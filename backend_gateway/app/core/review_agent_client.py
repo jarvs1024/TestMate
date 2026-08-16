@@ -546,6 +546,8 @@ def _map_run(r: dict) -> dict:
         "total_tokens": r.get("total_tokens"),
         "rule_keys_cited": r.get("rule_keys_cited"),
         "top_comment_id": r.get("top_comment_id"),
+        # LLM provider (opencode / qodercli), 给 run-row chip + 排查"为啥这次跑出来不一样"
+        "llm_provider": r.get("llm_provider"),
     }
 
 
@@ -647,6 +649,10 @@ async def mr_timeline(project_id: int, mr_id: int) -> dict:
         "actions": action_rows,
         "events": events or [],
         "summary": (tl_res.get("summary") if isinstance(tl_res, dict) else {}) or {},
+        # LLM provider 摘要: 进程当前配置 + 最近一次 run 的实际值
+        # (后端 ReviewAgent /mr/{pid}/{iid} 顶层, 跟 recent_runs[].llm_provider 配合: 元信息行 + run chip)
+        "current_llm_provider": detail_res.get("current_llm_provider"),
+        "last_llm_provider": detail_res.get("last_llm_provider"),
     }
 
 

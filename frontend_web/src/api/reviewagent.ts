@@ -195,6 +195,8 @@ export interface RunRow {
   rule_keys_cited?: string[] | null;
   top_comment_id?: string | null;
   suggestion_count?: number;
+  /** LLM provider (opencode / qodercli), 跟 model 一起展示本次跑用哪家. */
+  llm_provider?: string | null;
 }
 export interface ActionRow {
   id: number;
@@ -213,6 +215,10 @@ export interface TimelineResp {
   suggestions: SuggestionRow[];
   runs: RunRow[];
   actions: ActionRow[];
+  /** 进程当前配置的 LLM provider (opencode / qodercli), 抽屉元信息展示 */
+  current_llm_provider?: string | null;
+  /** 最近一次 run 用的 provider, 跟 current 不一致时说明配置已变更 */
+  last_llm_provider?: string | null;
 }
 export interface HealthResp {
   configured: boolean;

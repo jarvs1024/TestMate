@@ -424,6 +424,13 @@
           <div class="dt-row"><span class="dt-k">作者</span><span class="dt-v">{{ timeline.mr?.author || '—' }}</span></div>
           <div class="dt-row"><span class="dt-k">分支</span><span class="dt-v mono">{{ timeline.mr?.source_branch }} → {{ timeline.mr?.target_branch }}</span></div>
           <div class="dt-row"><span class="dt-k">状态</span><span class="dt-v"><span class="badge" :class="stateCls(timeline.mr?.state)">{{ stateLabel(timeline.mr?.state) }}</span></span></div>
+          <div class="dt-row" v-if="timeline.current_llm_provider || timeline.last_llm_provider">
+            <span class="dt-k">LLM</span>
+            <span class="dt-v">
+              <span class="llm-pill" :title="llmProviderTitle">{{ llmProviderIcon(timeline.current_llm_provider) }} {{ timeline.current_llm_provider || '—' }}</span>
+              <span v-if="llmProviderSwitched" class="llm-last" :title="`最近一次 run 用的 provider: ${timeline.last_llm_provider}`">↳ was: {{ timeline.last_llm_provider }}</span>
+            </span>
+          </div>
           <div class="dt-row"><span class="dt-k">开启</span><span class="dt-v mono">{{ fmtIso(timeline.mr?.opened_at) }}</span></div>
           <div v-if="timeline.mr?.merged_at" class="dt-row"><span class="dt-k">合并</span><span class="dt-v mono">{{ fmtIso(timeline.mr?.merged_at) }}</span></div>
         </div>
@@ -438,6 +445,7 @@
             <span class="mono small">{{ fmtIso(r.started_at) }}</span>
             <span class="mono small">{{ fmtMs(r.duration_ms) }}</span>
             <span v-if="r.model" class="mono small model" :title="`模型: ${r.model}`">{{ r.model }}</span>
+            <span v-if="r.llm_provider" class="llm-chip mono small" :title="`LLM provider: ${r.llm_provider}`">{{ llmProviderIcon(r.llm_provider) }} {{ r.llm_provider }}</span>
             <span v-if="r.total_tokens != null && r.total_tokens > 0" class="mono small tokens" :title="`本次消耗 token: ${r.total_tokens}`">{{ r.total_tokens }} tok</span>
             <ErrorView v-if="r.error" :raw="r.error" class="run-err" />
           </div>
@@ -1106,6 +1114,24 @@ const timelineRunsTokensTotalByCmd = computed(() => {
   return Object.entries(m).map(([cmd, tokens]) => ({ cmd, tokens })).sort((a, b) => b.tokens - a.tokens);
 });
 const runsSkipped = computed(() => (overview.value?.runs as any)?.skipped ?? 0);
+// LLM provider 展示: opencode / qodercli 各自给一个 emoji, 未知走 default
+function llmProviderIcon(p?: string | null): string {
+  if (!p) return '🧠';
+  const k = p.toLowerCase();
+  if (k === 'qodercli') return '🔮';
+  if (k === 'opencode') return '💠';
+  return '🧠';
+}
+const llmProviderSwitched = computed(() =>
+  !!(timeline.value?.current_llm_provider && timeline.value?.last_llm_provider
+     && timeline.value.current_llm_provider !== timeline.value.last_llm_provider));
+const llmProviderTitle = computed(() => {
+  const c = timeline.value?.current_llm_provider;
+  const l = timeline.value?.last_llm_provider;
+  if (!c) return 'LLM provider 未配置';
+  if (l && l !== c) return `当前: ${c} (下次评审会用) · 最近一次 run: ${l}`;
+  return `当前: ${c} (下次评审会用)`;
+});
 // 实际运行次数 = total - skipped (skipped 是 describe 检测无变更的内部行为, 不计入)
 const effectiveRunCount = computed(() => Math.max((overview.value?.runs?.total ?? 0) - runsSkipped.value, 0));
 
@@ -1620,6 +1646,21 @@ const runsSubHint = computed(() => {
 .rule-ap.mid   { color: var(--ink-900); font-weight: 600; }
 .rule-ap.low   { color: var(--warn); font-weight: 600; }
 .run-row .tokens { color: var(--ink-500); font-size: 10.5px; }
+
+/* LLM provider 展示: 抽屉元信息 + run-row chip 共用 */
+.llm-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 8px; border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary); font-size: 11px; font-weight: 600;
+  font-family: var(--font-mono);
+}
+.llm-last { margin-left: 8px; font-size: 10.5px; color: var(--ink-500); font-family: var(--font-mono); }
+.llm-chip {
+  padding: 1px 6px; border-radius: 6px;
+  background: color-mix(in srgb, var(--ink-500) 8%, transparent);
+  color: var(--ink-700); font-size: 10.5px;
+}
 .sug-row .adopt-vstat { color: var(--ink-500); font-weight: 400; font-size: 10.5px; margin-left: 2px; }
 .sug-row .adopt-stale { color: var(--warn); font-weight: 600; font-size: 10.5px; margin-left: 4px; }
 .mr-tbl .desc-tag { margin-left: 4px; font-size: 10.5px; opacity: 0.7; cursor: help; }
