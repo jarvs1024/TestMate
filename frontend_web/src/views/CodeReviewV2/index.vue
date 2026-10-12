@@ -660,36 +660,41 @@ const wrLatest = ref<WeeklyReport | null>(null);
 const weeklyReport = ref<WeeklyReport | null>(null);
 const wrOpen = ref(false);
 const wrLoading = ref(false);
-async function refreshWrLatest() {
+// 请求序号: 30s 自动刷新 + 抽屉按需刷新可能并发, 慢的旧响应会覆盖新数据.
+// 只有最后一次请求的结果允许写回 wrLatest.
+let wrSeq = 0;
+async function refreshWrLatest(): Promise<WeeklyReport | null> {
+  const seq = ++wrSeq;
+  // 仅首次加载显示"加载中"; 后续后台刷新不闪, 避免每 30s 闪一下
+  wrLoading.value = wrLatest.value === null;
   try {
     const list = await getWeeklyReports(1);
+    if (seq !== wrSeq) return wrLatest.value;   // 已有更新的请求在飞, 丢弃本次
     const first = list[0];
-    if (!first) { wrLatest.value = null; return; }
+    if (!first) { wrLatest.value = null; return null; }
     // 拉全文 (主页用摘要, 抽屉复用同一份, 不二次请求)
-    wrLatest.value = await getWeeklyReport(first.name);
-  } catch { /* 静默: 周报只是辅助卡, 失败不影响主视图 */ }
+    const rep = await getWeeklyReport(first.name);
+    if (seq !== wrSeq) return wrLatest.value;
+    wrLatest.value = rep;
+    return rep;
+  } catch {
+    /* 静默: 周报只是辅助卡, 失败不影响主视图; 保留上一份好数据, 等下次刷新 */
+    return wrLatest.value;
+  } finally {
+    if (seq === wrSeq) wrLoading.value = false;
+  }
 }
 async function openWeeklyReport() {
   if (!wrLatest.value) {
     ElMessage.warning('暂无周报');
     return;
   }
-  // 主页已缓存最新一份, 抽屉复用. weeklyReport 是别名, drawer 模板已读它.
+  // 主页已缓存最新一份, 抽屉先秒开复用. weeklyReport 是别名, drawer 模板已读它.
   weeklyReport.value = wrLatest.value;
   wrOpen.value = true;
-  // 兜底: 若缓存丢了, 抽屉打开时再拉一次
-  if (!weeklyReport.value) {
-    wrLoading.value = true;
-    try {
-      const list = await getWeeklyReports(1);
-      if (list[0]) weeklyReport.value = await getWeeklyReport(list[0].name);
-    } catch (e: any) {
-      ElMessage.error('周报加载失败: ' + (e?.response?.data?.detail || e?.message));
-      wrOpen.value = false;
-    } finally {
-      wrLoading.value = false;
-    }
-  }
+  // 后台补拉一次: 上游失败期间卡片可能停在旧周报, 打开抽屉时强制对齐最新
+  await refreshWrLatest();
+  if (wrOpen.value && wrLatest.value) weeklyReport.value = wrLatest.value;
 }
 const wrHint = computed(() => wrLatest.value
   ? `点击查看 ${wrLatest.value.week_label} 完整周报 (telemetry / merged_mrs / repo_scan + AI 综述)`
@@ -905,13 +910,16 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
     mrTotal.value = mrResp.total || 0;
     severities.value = sev;
     dismissalsByRule.value = dbr || [];
-    refreshWrLatest();
   } catch (e: any) {
     loadError.value = (e?.response?.data?.detail || e?.message || '未知错误');
     if (!opts.silent) {
       ElMessage.error('代码检视 V2 加载失败: ' + loadError.value);
     }
   } finally {
+    // 周报独立刷新: 必须放 finally. 原来挂在 try 末尾, 上面任一接口抛错就整块跳过,
+    // 而它自己又静默 catch —— 结果是别的接口一报错, 周报卡就永远停在旧周报且毫无提示.
+    // 非阻塞 (上游超时 10s), 不拖住主视图 loading 收尾.
+    void refreshWrLatest();
     loading.value = false;
     lastUpdated.value = new Date();
   }
