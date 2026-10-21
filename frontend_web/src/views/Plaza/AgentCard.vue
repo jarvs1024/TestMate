@@ -46,6 +46,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   'ssd-report': '测试报告',
   'ssd-ops': '机台运维',
   'auto-code': '自动化代码',
+  'ai-market': 'AI 资产',
 };
 const STATUS_LABELS: Record<string, string> = {
   draft: '建设中',

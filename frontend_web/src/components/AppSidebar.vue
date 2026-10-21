@@ -93,7 +93,7 @@ async function poll() {
 }
 
 function isActive(path: string) {
-  if (path === '/plaza') return route.path === '/plaza' || route.path.startsWith('/agents');
+  if (path === '/plaza') return route.path === '/plaza' || route.path.startsWith('/agents') || route.path.startsWith('/market');
   return route.path === path || route.path.startsWith(path + '/');
 }
 

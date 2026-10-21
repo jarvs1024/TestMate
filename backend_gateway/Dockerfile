@@ -34,11 +34,19 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# runtime 只需要 curl(给 HEALTHCHECK 用)
+# runtime 需要 curl(给 HEALTHCHECK 用) + git/openssh-client(资产市场要把工作区 commit/push 到 GitLab)
+# git 是市场同步链路的硬依赖, 缺了 git_sync.py 的 push 全部会失败
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
+        git \
+        openssh-client \
     && rm -rf /var/lib/apt/lists/*
+
+# git 交互式提示一律拒掉(没 tty 时会挂住)
+ENV GIT_TERMINAL_PROMPT=0 \
+    GIT_ASKPASS=/bin/true \
+    GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/root/.ssh/known_hosts -o BatchMode=yes"
 
 # 从 builder 复制装好的包
 COPY --from=builder /root/.local /root/.local

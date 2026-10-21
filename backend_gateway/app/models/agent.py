@@ -33,6 +33,7 @@ class AgentCategory(str, enum.Enum):
     ssd_report = "ssd-report"         # 测试报告 / 周报
     ssd_ops = "ssd-ops"               # 机台/环境运维
     auto_code = "auto-code"           # 自动化代码 (代码检视 / PR-Agent / 静态分析等)
+    ai_market = "ai-market"           # AI 资产市场入口 (插件 / 技能 / 连接器集市, 跳 /market 页)
 
 
 class AgentEngine(str, enum.Enum):

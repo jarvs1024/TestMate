@@ -118,7 +118,27 @@ services:
       REVIEW_AGENT_BASE_URL: ${REVIEW_AGENT_BASE_URL:-http://host.docker.internal:3000}
       REVIEW_AGENT_API_TOKEN: ${REVIEW_AGENT_API_TOKEN:-}
 
+      # GitLab — AI 资产市场的真实存储层.
+      # 同步走 SSH + 本地 git 工作区 (不再依赖 REST API / PAT):
+      #   MARKET_WORKSPACE  容器内的工作区路径, 对应宿主 DATA_ROOT/market, 本身就是 git 仓库根
+      #   MARKET_GIT_REMOTE  SSH 远端地址 (GitLab SSH 在 8922, 必须带端口)
+      #   MARKET_GIT_BRANCH 目标分支
+      MARKET_WORKSPACE: /workspace
+      MARKET_GIT_REMOTE: ${MARKET_GIT_REMOTE:-ssh://git@host.docker.internal:8922/root/testmate-market.git}
+      MARKET_GIT_BRANCH: ${MARKET_GIT_BRANCH:-main}
+      MARKET_SYNC_INTERVAL_SECONDS: ${MARKET_SYNC_INTERVAL_SECONDS:-30}
+
       ADMIN_DEFAULT_PASSWORD: ${ADMIN_DEFAULT_PASSWORD:-ChangeMe@2026}
+    volumes:
+      # 资产市场工作区 — 宿主 DATA_ROOT/market, 容器内 /workspace.
+      # 里面就是一个 root/testmate-market 的 git working copy, 上传先落这里, 后台再 push
+      - ${DATA_ROOT:-/opt/testmate/data}/market:/workspace
+      # SSH 身份: 私钥 + known_hosts 只读挂载. 私钥不进镜像, 容器内 StrictHostKeyChecking=yes
+      - ${GITLAB_SSH_KEY:-/Users/jarvs/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
+      - ${GITLAB_KNOWN_HOSTS:-/Users/jarvs/.ssh/known_hosts}:/root/.ssh/known_hosts:ro
+      # 宿主 Qoder 安装目录 — 服务端通道安装时写这里 (容器内 /host-home 前缀对应宿主 ~).
+      # 只写目标子目录, 不动用户已有的其它 skill / plugin.
+      - ${HOST_QODER_HOME:-/Users/jarvs/.qoder-cn}:/host-home/.qoder-cn
     ports:
       - "${BACKEND_HOST_PORT:-18000}:8000"
     healthcheck:

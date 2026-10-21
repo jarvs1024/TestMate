@@ -127,6 +127,29 @@ SEED_AGENTS: list[dict] = [
         "is_featured": True,                        # 提到精选, 占原 pr-agent 版位置
         "route": "page:code-review",
     },
+    {
+        # AI 资产市场: 广场入口卡片, 点击跳 /market 页 (仿 Qoder 插件市场的浏览页).
+        # 原型期数据为前端静态 (frontend_web/src/views/Market/marketCatalog.ts), 后端只提供这张入口卡.
+        # route 走 "page:" 前缀 → Plaza/index.vue onOpen 会 router.push({ name: 'market' }).
+        # ⚠️ status 不能是 draft: AgentCard 对 draft 直接 return 不跳转 + 盖"建设中"遮罩.
+        "code": "agent-market",
+        "name": "AI 资产市场",
+        "icon": "🏪",
+        "category": AgentCategory.ai_market.value,
+        "version": "v0.1.0",
+        "status": AgentStatus.beta.value,
+        "summary": "团队 AI 资产集市: 插件 / 技能 / 连接器统一检索、查看详情与安装说明",
+        "use_when": "想找团队里现成的 AI 能力 (技能包 / 连接器 / 插件), 或要把自己沉淀的资产上架共享",
+        "not_for": "运行具体的 SSD 测试任务请直接点对应的智能体卡片",
+        "tags": ["市场", "插件", "技能", "连接器"],
+        "engine": AgentEngine.builtin.value,
+        "engine_config": {},
+        "input_schema": [],
+        "data_sources": [],
+        "tools": [],
+        "is_featured": False,
+        "route": "page:market",
+    },
 ]
 
 

@@ -49,19 +49,37 @@ async def init_db() -> None:
         so, se = await proc.communicate()
         return proc.returncode, so.decode(errors="replace"), se.decode(errors="replace")
 
-    # 智能判定:
-    # 1) alembic_version 表缺失(老环境 create_all 没建)/ 版本落后 -> stamp head 兜底 + upgrade
-    # 2) 已经在 head -> 跳过 upgrade, 避免无意义的报错
-    rc2, _so2, se2 = await _alembic("check")
-    if rc2 != 0:
-        print(f"[init_db] alembic check exit {rc2}, stamping head: {se2.strip()[:200]}")
+    # 判定当前迁移版本 — 直查 alembic_version 表, 不用 `alembic check`.
+    #
+    # 历史 bug (2026-10-15 踩过): 原实现是 `alembic check` 失败 ⇒ `stamp head`.
+    # 但 `alembic check` 检测的是「模型 vs 数据库」的差异, 不是「alembic_version 表是否存在」.
+    # 一旦模型改了 (比如新增枚举值), check 就会失败并把版本直接盖到 head ——
+    # 新迁移被整段跳过, schema 与模型静默不一致, 表现为写入时报 Data truncated。
+    # 只有「版本表不存在 / 无记录」(老环境用 create_all 建的) 才允许 stamp 兜底。
+    from sqlalchemy import text  # noqa: PLC0415
+
+    current_rev: str | None = None
+    try:
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+            ).first()
+            current_rev = str(row[0]) if row and row[0] else None
+    except Exception:  # noqa: BLE001 — 表不存在即视为老环境
+        current_rev = None
+
+    if not current_rev:
+        # 老环境: 表由 create_all 建出, 没有版本历史, 直接 stamp 后跳过 upgrade
+        print("[init_db] alembic_version 无记录 (老环境), stamp head 兜底")
         rc3, so3, se3 = await _alembic("stamp", "head")
         if rc3 != 0:
             raise RuntimeError(
                 f"alembic stamp head failed (exit {rc3}):\n"
                 f"stdout: {so3}\nstderr: {se3}"
             )
+        return
 
+    print(f"[init_db] 当前迁移版本 {current_rev}, 执行 upgrade head")
     rc4, so4, se4 = await _alembic("upgrade", "head")
     if rc4 != 0:
         raise RuntimeError(

@@ -18,6 +18,9 @@ const router = createRouter({
         // axios 拦截器对 publicRead 路由: 登录用 user token, 未登录用 VITE_ANONYMOUS_READ_TOKEN.
         { path: 'code-review', name: 'code-review', meta: { publicRead: true, title: '代码检视', lede: 'ReviewAgent 评审数据看板 · MR / 建议采纳率 / 规则命中 / 作者分布' }, component: () => import('@/views/CodeReviewV2/index.vue') },
         { path: 'agents/:code', name: 'agent-runner', meta: { title: '运行' },       component: () => import('@/views/AgentRunner/index.vue') },
+        // AI 资产市场: 由广场里 agent-market 卡片的 route="page:market" 跳进来.
+        // name 必须叫 market — Plaza/index.vue onOpen 是 router.push({ name }) 按名字跳.
+        { path: 'market',      name: 'market',       meta: { title: 'AI 资产市场', lede: '团队沉淀的插件 / 技能 / 连接器 · 浏览详情与安装说明' }, component: () => import('@/views/Market/index.vue') },
         { path: 'kb-manage',   name: 'kb-manage',   meta: { title: '知识库', lede: '所有智能体共享的私有知识源 · 已对接 RAGFlow' },      component: () => import('@/views/KnowledgeManage/index.vue') },
         { path: 'settings',   name: 'settings',   meta: { title: '设置', lede: '平台配置 · RAGFlow / Dify / 用户管理' },         component: () => import('@/views/Settings/index.vue') },
       ],
