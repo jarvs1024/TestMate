@@ -43,3 +43,6 @@ env/
 *.log
 coverage/
 .cache/
+
+# e2e 截图输出
+.e2e-out/
