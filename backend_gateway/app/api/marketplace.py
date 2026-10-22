@@ -1269,9 +1269,15 @@ async def delete_asset(
         git_sync.remove_path(git_path)
 
         # 2) commit + push
+        #    ⚠️ 只有**被 git 跟踪过**的资产目录才能进 pathspec —— 从没提交过的
+        #    资产 (推送失败留下的), 路径不在 git 里, `git commit -- <path>` 会报
+        #    "pathspec did not match any files", 删除就永远 502.
+        paths = [INDEX_PATH]
+        if git_sync.tracked_files(git_path):
+            paths.insert(0, git_path)
         try:
             result = await git_sync.sync_paths(
-                paths=[git_path, INDEX_PATH],
+                paths=paths,
                 message=f"chore(market): 删除资产 {asset_name} {version}",
                 author=_author_of(_user),
             )

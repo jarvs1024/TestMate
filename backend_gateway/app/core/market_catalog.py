@@ -92,7 +92,7 @@ def validate_files(
     max_files / max_total_bytes 允许运行时覆盖 (设置页可配), 传 None 用模块默认值.
     """
     limit_files = MAX_FILES if max_files is None else max(1, int(max_files))
-    limit_bytes = MAX_TOTAL_BYTES if max_total_bytes is None else max(1024, int(max_total_bytes))
+    limit_bytes = MAX_TOTAL_BYTES if max_total_bytes is None else max(1, int(max_total_bytes))
     if len(files) > limit_files:
         raise ManifestError(f"文件数超限 (最多 {limit_files} 个)")
     total = 0
@@ -202,10 +202,16 @@ def asset_to_index_entry(a: Asset) -> dict[str, Any]:
 
 
 def render_index_entries(entries: list[dict[str, Any]]) -> str:
+    """渲染索引.
+
+    ⚠️ 始终按 code 排序 —— 索引是**派生物**, 但它的 sha256/内容会被下游比较,
+    顺序不稳就会让"两次渲染结果不同"变成假冲突.
+    """
+    ordered = sorted(entries, key=lambda e: e.get("code", ""))
     payload = {
         "schema_version": INDEX_SCHEMA_VERSION,
         "generated_by": "testmate-marketplace",
-        "assets": entries,
+        "assets": ordered,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 

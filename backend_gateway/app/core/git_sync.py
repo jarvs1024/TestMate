@@ -163,6 +163,19 @@ _FileLock = file_lock
 
 # ===== 工作区准备 =====
 
+def _sync_remote_url() -> None:
+    """把本地仓库的 origin 指向当前配置的远端."""
+    rc, so, _ = _run_git(["remote", "get-url", "origin"], cwd=WORKSPACE)
+    if rc != 0:
+        _run_git(["remote", "add", "origin", git_remote()], cwd=WORKSPACE)
+        return
+    if so.strip() != git_remote().strip():
+        logger.info(
+            "git_sync 更新 origin: %s → %s", so.strip(), git_remote(),
+        )
+        _run_git(["remote", "set-url", "origin", git_remote()], cwd=WORKSPACE)
+
+
 def ensure_workspace() -> Path:
     """确保工作区是一个可用的 git working copy.
 
@@ -171,6 +184,9 @@ def ensure_workspace() -> Path:
     """
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     if (WORKSPACE / ".git").exists():
+        # 仓库已在 —— 但**远端地址可能被设置页改过**, 必须同步, 否则
+        # "改了仓库地址却说生效了, 实际还推去老仓库" (实测踩过).
+        _sync_remote_url()
         return WORKSPACE
 
     logger.info("git_sync.init_workspace path=%s remote=%s", WORKSPACE, git_remote())
@@ -243,11 +259,42 @@ def _commit(message: str, paths: list[str], author: tuple[str, str]) -> str:
         cwd=WORKSPACE,
     )
     if rc != 0:
-        if "nothing to commit" in se.lower():
+        # ⚠️ git 的 "nothing to commit" 打在 **stdout**, 不是 stderr ——
+        #    只查 stderr 会把"没东西可提交"当成硬错误抛出去.
+        #    (实测踩过: 提交成功但推送失败后的重试, 每次都卡在这, 资产永远推不上去)
+        combined = f"{se}\n{so}".lower()
+        if "nothing to commit" in combined or "no changes added to commit" in combined:
             return ""   # 内容没变, 视为无事可做 (幂等)
         raise _classify(se, rc)
     rc, so, se = _run_git(["rev-parse", "HEAD"], cwd=WORKSPACE)
     return so.strip()
+
+
+def tracked_files(rel_path: str) -> list[str]:
+    """该路径下已被 git 跟踪的文件列表 (没跟踪过就是空).
+
+    用途: 删除资产时, 如果这个资产**从来没被提交过** (比如推送失败),
+    它的路径就不在 git 里 —— 此时再拿它去 `git commit -- <path>` 会报
+    "pathspec did not match any files", 整个删除操作失败 (502).
+    """
+    rc, so, _ = _run_git(["ls-files", "--", rel_path], cwd=WORKSPACE)
+    return [ln for ln in so.splitlines() if ln.strip()] if rc == 0 else []
+
+
+def _head_sha() -> str:
+    rc, so, _ = _run_git(["rev-parse", "HEAD"], cwd=WORKSPACE)
+    return so.strip() if rc == 0 else ""
+
+
+def _ahead_of_remote() -> int:
+    """本地 HEAD 比远端多几个 commit (没 fetch 过就算 0)."""
+    rc, so, _ = _run_git(
+        ["rev-list", "--count", f"origin/{git_branch()}..HEAD"], cwd=WORKSPACE
+    )
+    try:
+        return int(so.strip()) if rc == 0 else 0
+    except ValueError:
+        return 0
 
 
 def _push() -> str:
@@ -310,7 +357,12 @@ def sync_paths_blocking(
         _stage(paths)
         sha = _commit(message, paths, author)
         if not sha:
-            return SyncResult(commit_sha="", pushed=False, no_change=True)
+            # 没有新提交 —— 但可能是「上次提交成功、推送失败」后的重试,
+            # 这时**必须继续推**, 否则本地永远领先远端, 资产卡在机器上.
+            head = _head_sha()
+            if not head or _ahead_of_remote() <= 0:
+                return SyncResult(commit_sha="", pushed=False, no_change=True)
+            sha = head
         pushed_sha = _push()
         return SyncResult(commit_sha=pushed_sha or sha, pushed=True)
 
