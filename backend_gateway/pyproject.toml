@@ -29,3 +29,16 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# 全部用例共用**一个**事件循环: SQLAlchemy 的连接池是绑在创建它的 loop 上的,
+# 每个用例开新 loop 会让池里的连接失效 (跨 loop 使用报错)
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-q --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
