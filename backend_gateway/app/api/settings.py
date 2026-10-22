@@ -103,7 +103,19 @@ async def update_setting(
             row.updated_by = user.id
         await session.commit()
         await session.refresh(row)
-        return SettingOut.model_validate(row)
+    # 市场的仓库地址/分支是**运行时配置** —— 改完立即生效, 不用重启后端
+    if key in ("marketplace.git.remote", "marketplace.git.branch"):
+        from app.core import git_sync
+
+        git_sync.set_git_config(
+            remote=payload.value if key.endswith("remote") else None,
+            branch=payload.value if key.endswith("branch") else None,
+        )
+        logger.info(
+            "设置已生效: %s → remote=%s branch=%s",
+            key, git_sync.git_remote(), git_sync.git_branch(),
+        )
+    return SettingOut.model_validate(row)
 
 
 def _empty_out(key: str, schema: dict) -> SettingOut:
@@ -203,6 +215,20 @@ async def test_pr_agent(_user: User = Depends(get_current_user)) -> SettingTestO
             return SettingTestOut(ok=False, status="warn", message=f"HTTP {r.status_code}", detail={"text": r.text[:200]})
     except Exception as e:
         return SettingTestOut(ok=False, status="off", message=f"不可达: {type(e).__name__}: {e}", detail=None)
+
+@router.post("/test/gitlab", response_model=SettingTestOut)
+async def test_gitlab(_user: User = Depends(get_current_user)) -> SettingTestOut:
+    """探当前配置的 GitLab 仓库能不能连上 (SSH 鉴权 + 分支是否存在)."""
+    if _user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+    from app.core import git_sync
+
+    ok, message = git_sync.probe_remote()
+    return SettingTestOut(
+        ok=ok, status="ok" if ok else "warn", message=message,
+        detail={"remote": git_sync.git_remote(), "branch": git_sync.git_branch()},
+    )
+
 
 @router.post("/test/dingtalk", response_model=SettingTestOut)
 async def test_dingtalk(_user: User = Depends(get_current_user)) -> SettingTestOut:

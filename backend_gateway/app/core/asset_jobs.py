@@ -33,9 +33,22 @@ from app.models.asset import Asset, AssetJob
 logger = logging.getLogger(__name__)
 
 # git 阶段的最大自动重试次数 (超过就不再自动重试, 留给人工)
+# 运行时可改 (设置页 marketplace.git.max_push_attempts) —— 这里只是默认值
 MAX_GIT_ATTEMPTS = 3
 # 退避基数 (秒): 2s, 4s, 8s ...
 BACKOFF_BASE_SEC = 2
+
+
+async def _max_attempts() -> int:
+    """自动重试次数上限 —— 设置页可配 (marketplace.git.max_push_attempts)."""
+    try:
+        from app.core.settings_store import get
+
+        raw = await get("marketplace.git.max_push_attempts", "")
+        n = int(str(raw).strip() or MAX_GIT_ATTEMPTS)
+    except Exception:  # noqa: BLE001 — 读设置失败就用默认值
+        n = MAX_GIT_ATTEMPTS
+    return max(1, min(n, 10))
 
 # 单消费者队列 —— 保证 git 操作串行
 _queue: asyncio.Queue[int] = asyncio.Queue()
@@ -176,13 +189,14 @@ async def _handle_failure(session, job: AssetJob, err: git_sync.SyncError) -> No
             a.last_error = job.error
             await s2.commit()
 
-    if err.retryable and (job.attempts or 0) < MAX_GIT_ATTEMPTS:
+    max_attempts = await _max_attempts()
+    if err.retryable and (job.attempts or 0) < max_attempts:
         delay = BACKOFF_BASE_SEC ** (job.attempts or 1)
         job.next_retry_at = datetime.utcnow() + timedelta(seconds=delay)
         await session.commit()
         logger.warning(
             "asset_job retryable failure code=%s attempt=%s/%s in %ss: %s",
-            job.code, job.attempts, MAX_GIT_ATTEMPTS, delay, err,
+            job.code, job.attempts, max_attempts, delay, err,
         )
         asyncio.create_task(_delayed_requeue(job.id, delay))
     else:

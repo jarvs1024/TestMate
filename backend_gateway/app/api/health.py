@@ -108,7 +108,7 @@ async def _probe_gitlab() -> Tuple[bool, str]:
         from app.core import git_sync
 
         rc, so, se = git_sync._run_git(
-            ["ls-remote", "--heads", git_sync.GIT_REMOTE],
+            ["ls-remote", "--heads", git_sync.git_remote()],
             cwd=git_sync.WORKSPACE, timeout=8,
         )
         if rc != 0:

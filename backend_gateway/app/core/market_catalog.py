@@ -81,10 +81,20 @@ def validate_version(version: str) -> str:
     return version
 
 
-def validate_files(files: dict[str, str]) -> dict[str, str]:
-    """校验上传的附加文件: 路径安全 + 后缀白名单 + 体积限制."""
-    if len(files) > MAX_FILES:
-        raise ManifestError(f"文件数超限 (最多 {MAX_FILES} 个)")
+def validate_files(
+    files: dict[str, str],
+    *,
+    max_files: int | None = None,
+    max_total_bytes: int | None = None,
+) -> dict[str, str]:
+    """校验上传的附加文件: 路径安全 + 后缀白名单 + 体积限制.
+
+    max_files / max_total_bytes 允许运行时覆盖 (设置页可配), 传 None 用模块默认值.
+    """
+    limit_files = MAX_FILES if max_files is None else max(1, int(max_files))
+    limit_bytes = MAX_TOTAL_BYTES if max_total_bytes is None else max(1024, int(max_total_bytes))
+    if len(files) > limit_files:
+        raise ManifestError(f"文件数超限 (最多 {limit_files} 个)")
     total = 0
     out: dict[str, str] = {}
     for raw_path, content in files.items():
@@ -102,8 +112,8 @@ def validate_files(files: dict[str, str]) -> dict[str, str]:
             raise ManifestError(f"{p} 含非 UTF-8 内容: {e}") from e
         total += len(content.encode("utf-8"))
         out[p] = content
-    if total > MAX_TOTAL_BYTES:
-        raise ManifestError(f"总体积超限 ({total} > {MAX_TOTAL_BYTES} 字节)")
+    if total > limit_bytes:
+        raise ManifestError(f"总体积超限 ({total} > {limit_bytes} 字节)")
     return out
 
 

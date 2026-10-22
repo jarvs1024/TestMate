@@ -151,14 +151,14 @@ async def sync_once() -> dict[str, Any]:
 
         with git_sync._FileLock(git_sync.LOCK_FILE):
             rc, so, se = git_sync._run_git(
-                ["fetch", "origin", git_sync.GIT_BRANCH],
+                ["fetch", "origin", git_sync.git_branch()],
                 cwd=git_sync.WORKSPACE, timeout=120,
             )
             if rc != 0:
                 _puller.last_error = f"fetch 失败: {se.strip()[:200]}"
                 return {"error": _puller.last_error}
 
-            ref = f"origin/{git_sync.GIT_BRANCH}"
+            ref = f"origin/{git_sync.git_branch()}"
             remote = _remote_manifests(ref)
             local = _local_manifests()
 
@@ -288,8 +288,24 @@ def _local_manifests() -> dict[str, dict]:
     return out
 
 
+async def _current_interval(default: int) -> int:
+    """当前生效的拉取周期.
+
+    每轮都从设置里读 —— 这样设置页改周期**立即生效**, 不用重启后端.
+    (之前这个值只在启动时从 env 取一次, 设置项 marketplace.sync.interval_seconds 是死的)
+    """
+    try:
+        from app.core.settings_store import get
+
+        raw = await get("marketplace.sync.interval_seconds", "")
+        n = int(str(raw).strip() or default)
+    except Exception:  # noqa: BLE001 — 读设置失败不该让同步停下来
+        return default
+    return max(5, min(n, 3600))
+
+
 async def _loop(interval: int) -> None:
-    logger.info("sync_puller 启动, 间隔 %ss", interval)
+    logger.info("sync_puller 启动, 初始间隔 %ss (可运行时改)", interval)
     while True:
         try:
             await sync_once()
@@ -297,7 +313,7 @@ async def _loop(interval: int) -> None:
             raise
         except Exception as e:  # noqa: BLE001
             logger.warning("sync_puller 循环异常: %s", e)
-        await asyncio.sleep(max(5, interval))
+        await asyncio.sleep(await _current_interval(interval))
 
 
 _puller_task: asyncio.Task | None = None

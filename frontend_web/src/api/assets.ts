@@ -40,6 +40,8 @@ export interface AssetItem {
   bindings: Record<string, any>;
   git_path: string;
   git_commit_sha: string;
+  /** 资产在 GitLab 上的网页地址 (由 marketplace.git.web_url 拼出; 没配就为空) */
+  git_web_url: string;
   install_count: number;
   updated_at: string | null;
   /** 同步状态: staged(待同步) / pushed(已同步) / failed(失败) */
@@ -149,6 +151,19 @@ export interface AssetNotification {
   error: string;
   last_attempt_at: string | null;
   created_at: string | null;
+}
+
+/** 市场当前生效的配置 (只读) —— 设置页展示用 */
+export interface MarketConfig {
+  workspace: string;
+  remote: string;
+  branch: string;
+  web_url: string;
+  skill_dir: string;
+  plugin_dir: string;
+  install_enabled: boolean;
+  is_repo: boolean;
+  head: string;
 }
 
 export interface SyncStatus {
@@ -262,6 +277,11 @@ export async function listAudits(code?: string): Promise<{ items: AssetAudit[]; 
 /** 钉钉通知送达回执 */
 export async function listNotifications(limit = 50): Promise<{ items: AssetNotification[]; total: number }> {
   return apiGet('/assets/notifications', { limit });
+}
+
+/** 市场当前生效的配置 (只读) */
+export async function getMarketConfig(): Promise<MarketConfig> {
+  return apiGet<MarketConfig>('/assets/config');
 }
 
 /** 上传前体检: 这个包装不装得上 */

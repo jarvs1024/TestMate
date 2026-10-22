@@ -27,12 +27,20 @@ async def lifespan(app: FastAPI):
     await seed_agents()
     await seed_defaults()  # 把 .env 里的值首次落库, 后续 UI 改 DB
     # 资产市场: 启动后台同步 worker, 并把上次没推完的任务重新入队
+    from app.core import git_sync
     from app.core.asset_jobs import recover_pending_jobs, start_worker
     from app.core.dingtalk import start_retry_worker
+    from app.core.settings_store import get as _get_setting
     from app.core.sync_puller import start_puller
     start_worker()
     # 钉钉通知失败重试 (回执在 asset_notifications 表里)
     start_retry_worker()
+    # 市场的仓库地址/分支: **设置页改的值为准**, env 只是初值
+    git_sync.set_git_config(
+        remote=await _get_setting("marketplace.git.remote", ""),
+        branch=await _get_setting("marketplace.git.branch", ""),
+    )
+    log.info("startup.git_config", remote=git_sync.git_remote(), branch=git_sync.git_branch())
     requeued = await recover_pending_jobs()
     # 反向同步: 定期从 GitLab 拉取远端变更, 对齐本地工作区与 DB 镜像
     interval = int(os.environ.get("MARKET_SYNC_INTERVAL_SECONDS", "30") or 30)

@@ -76,7 +76,7 @@
         <section v-if="activeTop === 'sec-agents'" :id="'sec-agents'" class="card grp">
           <h2>
             <span>🤖 智能体</span>
-            <span class="grp-cnt">{{ agentItems.length }} 项</span>
+            <span class="grp-cnt">{{ agentItems.length + marketItems.length }} 项</span>
           </h2>
 
           <div class="sub-grp">
@@ -88,6 +88,38 @@
               @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
             <div v-if="agentItems.length === 0" class="hint">
               暂无智能体业务配置. 智能体引擎 / 模型 / 工具等参数会出现在这里.
+            </div>
+          </div>
+
+          <!-- 🧩 资产市场: 团队共享的插件 / 技能 / 连接器 -->
+          <div class="sub-grp">
+            <h3>🧩 资产市场 <span class="sub-cnt">{{ marketItems.length }} 项</span></h3>
+            <div class="hint">
+              💡 资产市场的后端配置 —— GitLab 仓库在哪、装到本机哪个目录、谁能发布、
+              怎么对外暴露 marketplace.json. 改完<strong>立即生效</strong>, 不用重启后端.
+            </div>
+            <SettingRow v-for="(it, idx) in marketItems" :key="it.key"
+              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+              :saving="saving === it.key" :secret-display="getInputValue(it)"
+              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+
+            <div class="test-row">
+              <button class="test-btn" :disabled="!!testing" @click="onTest('gitlab')">
+                {{ testing === 'gitlab' ? '测试中…' : '🔌 测试仓库连接' }}
+              </button>
+              <div v-if="testResults['gitlab']" class="test-result" :class="`s-${testResults['gitlab']?.status}`">
+                <span class="dot"></span>
+                <span class="msg">{{ testResults['gitlab']?.message }}</span>
+              </div>
+            </div>
+            <div class="workdir mono">
+              <div>工作区 <code>{{ marketWorkspace }}</code>
+                <span class="muted">（容器内路径, 运行时不可改 —— 换了会丢掉现有工作副本）</span>
+              </div>
+              <div>远端 <code>{{ marketRemote }}</code>
+                <span class="muted">（当前生效值, 改上面的「GitLab 仓库地址」后立即生效）</span>
+              </div>
             </div>
           </div>
 
@@ -240,8 +272,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { getSchema, updateSetting, testRagflow, testDify, testReviewAgent, testDingTalk, type SettingItem, type TestResult } from '@/api/settings';
-import { listNotifications, type AssetNotification } from '@/api/assets';
+import { getSchema, updateSetting, testRagflow, testDify, testReviewAgent, testDingTalk, testGitLab, type SettingItem, type TestResult } from '@/api/settings';
+import { getMarketConfig, listNotifications, type AssetNotification } from '@/api/assets';
 import SettingRow from './components/SettingRow.vue';
 import { useUserStore } from '@/stores/user';
 
@@ -266,6 +298,22 @@ const chatItems = computed(() => itemsByCategory('chat'));
 const generalItems = computed(() => itemsByCategory('general'));
 // 通知 (钉钉机器人: webhook / 关键词 / 加签 / 触发开关)
 const notificationItems = computed(() => itemsByCategory('notification'));
+// 资产市场 (GitLab 仓库 / 安装目录 / 发布白名单 / 对外暴露方式)
+const marketItems = computed(() => itemsByCategory('marketplace'));
+
+// 市场当前生效的配置 (只读, 用来展示"工作区在哪 / 远端是哪个")
+const marketWorkspace = ref('');
+const marketRemote = ref('');
+async function loadMarketConfig() {
+  try {
+    const c = await getMarketConfig();
+    marketWorkspace.value = c.workspace || '(未知)';
+    marketRemote.value = c.remote || '(未配置)';
+  } catch {
+    marketWorkspace.value = '(读取失败)';
+    marketRemote.value = '';
+  }
+}
 
 // ===== 通知回执 (送达记录) =====
 const notifyLog = ref<AssetNotification[]>([]);
@@ -357,7 +405,7 @@ const sections = computed(() => [
       { id: 'sec-chat',              label: '知识对话',         count: chatItems.value.length },
     ],
   },
-  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: agentItems.value.length, children: [] },
+  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: agentItems.value.length + marketItems.value.length, children: [] },
   { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length + dataSourceItems.value.length, children: [
     { id: 'sec-general-data-source', label: '📡 数据源', count: dataSourceItems.value.length },
   ] },
@@ -374,6 +422,8 @@ function onPickTop(topId: string) {
   });
   // 通知区带送达回执, 进区就拉一次
   if (topId === 'sec-notification') loadNotifyLog();
+  // 资产市场区展示当前生效的工作区/远端
+  if (topId === 'sec-agents') loadMarketConfig();
 }
 
 function onPickSub(topId: string, subId: string) {
@@ -451,6 +501,7 @@ const _testClients: Record<string, () => Promise<TestResult>> = {
   'dify':     testDify,
   'review-agent': testReviewAgent,
   'dingtalk': testDingTalk,
+  'gitlab': testGitLab,
 };
 async function onTest(testKey: string) {
   const fn = _testClients[testKey];
@@ -891,6 +942,18 @@ onMounted(load);
   width: 100%; font-size: 11px; color: var(--err); opacity: 0.85;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* ===== 资产市场: 工作区/远端只读展示 ===== */
+.workdir {
+  margin-top: 10px; padding: 9px 12px; border-radius: var(--radius-sm);
+  background: var(--surface-sunken); font-size: 11.5px; color: var(--ink-700);
+  display: flex; flex-direction: column; gap: 5px;
+}
+.workdir code {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-900);
+  background: var(--surface); padding: 1px 6px; border-radius: 4px;
+}
+.workdir .muted { color: var(--ink-500); font-size: 11px; }
 
 @media (max-width: 900px) {
   .set-layout { grid-template-columns: 1fr; }

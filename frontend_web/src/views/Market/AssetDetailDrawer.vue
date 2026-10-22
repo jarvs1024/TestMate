@@ -81,6 +81,8 @@
         <span class="ad-git-label">GitLab 存储</span>
         <code>{{ item.git_path }}</code>
         <code v-if="item.git_commit_sha">{{ item.git_commit_sha.slice(0, 12) }}</code>
+        <a v-if="item.git_web_url" class="ad-git-link" :href="item.git_web_url"
+           target="_blank" rel="noopener">↗ 在 GitLab 查看</a>
         <span class="ad-sync-chip" :class="item.sync_status">{{ syncLabel }}</span>
       </div>
 
@@ -405,6 +407,11 @@ async function doDelete() {
 .ad-sync-chip.staged { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
 .ad-sync-chip.pushed { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
 .ad-sync-chip.failed { background: rgba(239, 68, 68, 0.12); color: var(--err); }
+.ad-git-link {
+  font-size: 11px; color: var(--primary); text-decoration: none;
+  border-bottom: 1px dashed currentColor;
+}
+.ad-git-link:hover { color: var(--ink-900); }
 
 .ad-err {
   margin-top: 10px; padding: 10px 12px;

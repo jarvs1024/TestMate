@@ -35,10 +35,36 @@ logger = logging.getLogger(__name__)
 
 # ===== 配置 =====
 WORKSPACE = Path(os.environ.get("MARKET_WORKSPACE", "/workspace"))
-GIT_REMOTE = os.environ.get(
-    "MARKET_GIT_REMOTE", "ssh://git@host.docker.internal:8922/root/testmate-market.git"
-)
-GIT_BRANCH = os.environ.get("MARKET_GIT_BRANCH", "main")
+# 远端与分支是**运行时配置** —— 设置页可以改, 改完立即生效.
+# 为什么不是直接读 settings_store: 这里是**同步**代码, 而 settings_store.get 是 async.
+# 折中: 设置变更时 (settings API) 调 set_git_config() 更新内存值,
+#       进程启动时再从 DB 装载一次 (见 app/main.py 的 lifespan).
+# env 只作初值 —— 改了设置页的值, env 就该让位.
+DEFAULT_GIT_REMOTE = "ssh://git@host.docker.internal:8922/root/testmate-market.git"
+_git_cfg: dict[str, str] = {
+    "remote": os.environ.get("MARKET_GIT_REMOTE", DEFAULT_GIT_REMOTE),
+    "branch": os.environ.get("MARKET_GIT_BRANCH", "main"),
+}
+
+
+def git_remote() -> str:
+    """当前生效的 GitLab 远端地址."""
+    return _git_cfg["remote"]
+
+
+def git_branch() -> str:
+    """当前生效的 GitLab 分支."""
+    return _git_cfg["branch"]
+
+
+def set_git_config(*, remote: str | None = None, branch: str | None = None) -> None:
+    """设置页改了仓库地址/分支后调用 —— 立即生效, 无需重启."""
+    if remote is not None and remote.strip():
+        _git_cfg["remote"] = remote.strip()
+    if branch is not None and branch.strip():
+        _git_cfg["branch"] = branch.strip()
+
+
 # 锁文件放在工作区**外面** —— 放里面会变成 git untracked 文件, 污染 status
 # (工作区本身是远端仓库的 working copy, 不能随便往里塞文件)
 LOCK_FILE = WORKSPACE.parent / f"{WORKSPACE.name}.sync.lock"
@@ -147,24 +173,24 @@ def ensure_workspace() -> Path:
     if (WORKSPACE / ".git").exists():
         return WORKSPACE
 
-    logger.info("git_sync.init_workspace path=%s remote=%s", WORKSPACE, GIT_REMOTE)
+    logger.info("git_sync.init_workspace path=%s remote=%s", WORKSPACE, git_remote())
     rc, so, se = _run_git(["init"], cwd=WORKSPACE)
     if rc != 0:
         raise SyncError(f"git init 失败: {se.strip()[:200]}", "repo")
 
-    rc, so, se = _run_git(["remote", "add", "origin", GIT_REMOTE], cwd=WORKSPACE)
+    rc, so, se = _run_git(["remote", "add", "origin", git_remote()], cwd=WORKSPACE)
     if rc != 0:
         # 已经存在 origin → 改 URL (远端地址可能被改过)
-        _run_git(["remote", "set-url", "origin", GIT_REMOTE], cwd=WORKSPACE)
-    rc, so, se = _run_git(["fetch", "origin", GIT_BRANCH], cwd=WORKSPACE, timeout=120)
+        _run_git(["remote", "set-url", "origin", git_remote()], cwd=WORKSPACE)
+    rc, so, se = _run_git(["fetch", "origin", git_branch()], cwd=WORKSPACE, timeout=120)
     if rc != 0:
         # 远端还没有任何 commit (空仓库) — 没关系, 本地建个孤儿分支即可
         if "couldn't find remote ref" in se.lower() or "not found" in se.lower():
-            _run_git(["checkout", "-b", GIT_BRANCH], cwd=WORKSPACE)
+            _run_git(["checkout", "-b", git_branch()], cwd=WORKSPACE)
             return WORKSPACE
         raise _classify(se, rc)
 
-    _run_git(["checkout", "-B", GIT_BRANCH, f"origin/{GIT_BRANCH}"], cwd=WORKSPACE)
+    _run_git(["checkout", "-B", git_branch(), f"origin/{git_branch()}"], cwd=WORKSPACE)
     return WORKSPACE
 
 
@@ -226,18 +252,18 @@ def _commit(message: str, paths: list[str], author: tuple[str, str]) -> str:
 
 def _push() -> str:
     """push 到远端. 远端有新提交时先 rebase, 冲突则放弃并报需人工处理."""
-    rc, so, se = _run_git(["fetch", "origin", GIT_BRANCH], cwd=WORKSPACE, timeout=120)
+    rc, so, se = _run_git(["fetch", "origin", git_branch()], cwd=WORKSPACE, timeout=120)
     if rc != 0:
         raise _classify(se, rc)
 
     rc, so, se = _run_git(
-        ["rev-list", "--count", f"HEAD..origin/{GIT_BRANCH}"], cwd=WORKSPACE
+        ["rev-list", "--count", f"HEAD..origin/{git_branch()}"], cwd=WORKSPACE
     )
     behind = so.strip() if rc == 0 else "0"
     if behind and behind != "0":
         # 本地落后 → rebase 到远端之上
         rc, so, se = _run_git(
-            ["pull", "--rebase", "origin", GIT_BRANCH], cwd=WORKSPACE, timeout=120
+            ["pull", "--rebase", "origin", git_branch()], cwd=WORKSPACE, timeout=120
         )
         if rc != 0:
             _run_git(["rebase", "--abort"], cwd=WORKSPACE)
@@ -255,7 +281,7 @@ def _push() -> str:
                 raise _classify(se, rc)
 
     rc, so, se = _run_git(
-        ["push", "origin", f"HEAD:{GIT_BRANCH}"], cwd=WORKSPACE, timeout=180
+        ["push", "origin", f"HEAD:{git_branch()}"], cwd=WORKSPACE, timeout=180
     )
     if rc != 0:
         raise _classify(se, rc)
@@ -302,12 +328,41 @@ async def sync_paths(
         )
 
 
+def probe_remote() -> tuple[bool, str]:
+    """探当前配置的远端能不能连上 (SSH 鉴权 + 仓库可达).
+
+    设置页的「测试仓库连接」用这个 —— 测的是**真正会用来推送的那个地址**,
+    而不是某个写死的默认值. 返回 (ok, 给人看的说明).
+    """
+    remote, branch = git_remote(), git_branch()
+    if not remote:
+        return False, "未配置 GitLab 仓库地址 (marketplace.git.remote)"
+    rc, so, se = _run_git(
+        ["ls-remote", "--heads", remote], cwd=WORKSPACE, timeout=15,
+    )
+    if rc != 0:
+        return False, f"连不上 {remote} —— {(se or so).strip()[:180]}"
+    heads: list[str] = []
+    for ln in so.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        ref = ln.split()[-1]          # refs/heads/main
+        if ref.startswith("refs/heads/"):
+            heads.append(ref[len("refs/heads/"):])
+    if branch not in heads:
+        return False, (
+            f"仓库可达, 但没有分支 {branch} (现有分支: {', '.join(heads) or '无'})"
+        )
+    return True, f"仓库可达 · 分支 {branch} · 共 {len(heads)} 个分支"
+
+
 def workspace_status() -> dict:
     """给设置页/探针用: 工作区与远端的状态概览."""
     info: dict = {
         "workspace": str(WORKSPACE),
-        "remote": GIT_REMOTE,
-        "branch": GIT_BRANCH,
+        "remote": git_remote(),
+        "branch": git_branch(),
         "is_repo": (WORKSPACE / ".git").exists(),
     }
     if not info["is_repo"]:

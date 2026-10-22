@@ -60,6 +60,7 @@ from app.schemas.asset import (
     AssetJobOut,
     AssetListOut,
     AssetNotificationListOut,
+    MarketConfigOut,
     AssetOut,
     PackagePreviewOut,
     ProbeOut,
@@ -110,14 +111,30 @@ async def _publisher_ids() -> set[int]:
     return {int(x) for x in data if str(x).isdigit()}
 
 
+async def _publisher_names() -> set[str]:
+    """允许发布的**用户名**集合 (比填用户 ID 友好)."""
+    raw = await _setting("marketplace.publisher_usernames", "")
+    return {
+        x.strip().lower()
+        for x in raw.replace("，", ",").replace(";", ",").split(",")
+        if x.strip()
+    }
+
+
 async def require_publisher(user: User = Depends(get_current_user)) -> User:
-    """发布者白名单 + admin 恒可发布."""
+    """发布者白名单 + admin 恒可发布.
+
+    白名单两个口径任一命中即可: 用户 ID (JSON 数组) 或 用户名 (逗号分隔).
+    """
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
     if role == "admin":
         return user
     if role == "anonymous":
         raise HTTPException(status_code=401, detail="未登录")
     if user.id in await _publisher_ids():
+        return user
+    names = await _publisher_names()
+    if names and (user.username or "").strip().lower() in names:
         return user
     raise HTTPException(status_code=403, detail="不在发布者白名单内, 联系管理员开通")
 
@@ -159,6 +176,20 @@ def _to_out(a: Asset, installs: dict[str, tuple[str, str, str]]) -> AssetOut:
     out.install_path = path
     out.updatable = bool(out.installed and ver and ver != a.version)
     return out
+
+
+async def _apply_git_web_url(items: list[AssetOut]) -> None:
+    """按当前配置的 GitLab 网页地址补上每个资产的网页链接.
+
+    这是**派生值** —— 改了 marketplace.git.web_url 立刻反映, 不必回填数据库.
+    """
+    base = ((await _setting("marketplace.git.web_url", "")) or "").strip().rstrip("/")
+    if not base:
+        return
+    branch = git_sync.git_branch()
+    for it in items:
+        if it.git_path:
+            it.git_web_url = f"{base}/-/tree/{branch}/{it.git_path}"
 
 
 async def _install_map(codes: list[str], client_id: str) -> dict[str, tuple[str, str, str]]:
@@ -222,7 +253,9 @@ async def list_assets(
         page = rows[offset : offset + limit]
 
     installs = await _install_map([a.code for a in page], client_id)
-    return AssetListOut(items=[_to_out(a, installs) for a in page], total=total)
+    items = [_to_out(a, installs) for a in page]
+    await _apply_git_web_url(items)
+    return AssetListOut(items=items, total=total)
 
 
 @router.get("/categories")
@@ -353,6 +386,29 @@ async def list_notification_receipts(
     return AssetNotificationListOut(items=items, total=total)
 
 
+# ---------- 当前生效配置 (只读) ----------
+
+@router.get("/config", response_model=MarketConfigOut)
+async def get_market_config(_user: User = Depends(get_current_user)) -> MarketConfigOut:
+    """市场当前生效的配置 —— 设置页用来展示"工作区在哪 / 远端是哪个 / 装到哪".
+
+    注意是**生效值** (DB 设置 > env 初值), 不是 schema 里的默认值.
+    """
+    st = git_sync.workspace_status()
+    enabled = (await _setting("marketplace.install.enabled", "true")).lower()
+    return MarketConfigOut(
+        workspace=str(git_sync.WORKSPACE),
+        remote=git_sync.git_remote(),
+        branch=git_sync.git_branch(),
+        web_url=((await _setting("marketplace.git.web_url", "")) or "").strip(),
+        skill_dir=await _setting("marketplace.install.skill_dir", ""),
+        plugin_dir=await _setting("marketplace.install.plugin_dir", ""),
+        install_enabled=enabled in ("true", "1", "yes", "on"),
+        is_repo=bool(st.get("is_repo")),
+        head=st.get("head", ""),
+    )
+
+
 @router.get("/me/installed", response_model=AssetListOut)
 async def my_installed(
     client_id: str = Query("local"),
@@ -421,7 +477,9 @@ async def get_asset(
         if a is None:
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
         installs = await _install_map([code], client_id)
-        return _to_out(a, installs)
+        out = [_to_out(a, installs)]
+        await _apply_git_web_url(out)
+        return out[0]
 
 
 @router.get("/{code}/doc", response_model=AssetDocOut)
@@ -1088,7 +1146,21 @@ async def _parse_uploads(files: list[UploadFile] | None) -> dict[str, str]:
             collected[name] = (await f.read()).decode("utf-8")
         except UnicodeDecodeError as e:
             raise HTTPException(status_code=400, detail=f"{name} 不是 UTF-8 文本: {e}") from e
-    return validate_files(collected)
+    # 限额来自设置页 (可在前端改), 传 None 则用模块默认值
+    try:
+        max_files = int(await _setting("marketplace.upload.max_files", "") or 0) or None
+    except (TypeError, ValueError):
+        max_files = None
+    try:
+        max_mb = int(await _setting("marketplace.upload.max_total_mb", "") or 0) or None
+    except (TypeError, ValueError):
+        max_mb = None
+    max_bytes = max_mb * 1024 * 1024 if max_mb else None
+    try:
+        return validate_files(collected, max_files=max_files, max_total_bytes=max_bytes)
+    except ManifestError as e:
+        # 校验失败是**用户上传内容**的问题 (文件数/体积/路径/后缀), 不是服务端故障
+        raise HTTPException(status_code=422, detail=f"上传文件不合规: {e}") from e
 
 
 async def _stage_asset(
@@ -1255,6 +1327,11 @@ async def _stage_asset_locked(
         a.install_steps = list(manifest.get("install_steps") or [])
         a.bindings = dict(manifest.get("bindings") or {})
         a.git_path = base
+        # 资产在 GitLab 上的网页地址 —— 市场页可以给个「在 GitLab 查看」链接
+        web_base = ((await _setting("marketplace.git.web_url", "")) or "").strip().rstrip("/")
+        a.git_web_url = (
+            f"{web_base}/-/tree/{git_sync.git_branch()}/{base}" if web_base else ""
+        )
         a.sync_status = "staged"
         a.last_error = ""
         await session.commit()

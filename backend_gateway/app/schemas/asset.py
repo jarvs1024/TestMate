@@ -26,6 +26,8 @@ class AssetOut(BaseModel):
     bindings: dict[str, Any] = {}
     git_path: str = ""
     git_commit_sha: str = ""
+    # 资产在 GitLab 上的网页地址 (由 marketplace.git.web_url 拼出; 没配就为空)
+    git_web_url: str = ""
     install_count: int = 0
     updated_at: datetime | None = None
     # 同步状态: staged / pushed / failed
@@ -127,6 +129,20 @@ class PackagePreviewOut(BaseModel):
     issues: list[str] = []
     # 敏感文件 / 路径越界等安全提示
     warnings: list[str] = []
+
+
+class MarketConfigOut(BaseModel):
+    """市场当前**生效**的配置 (只读) —— 设置页用来展示"仓库在哪 / 装到哪 / 谁能发"."""
+
+    workspace: str = ""
+    remote: str = ""
+    branch: str = ""
+    web_url: str = ""
+    skill_dir: str = ""
+    plugin_dir: str = ""
+    install_enabled: bool = True
+    is_repo: bool = False
+    head: str = ""
 
 
 class AssetDeleteOut(BaseModel):

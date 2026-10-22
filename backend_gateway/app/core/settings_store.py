@@ -208,6 +208,71 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
+        "key": "marketplace.publisher_usernames",
+        "category": "marketplace",
+        "value_type": "string",
+        "default": "",
+        "description": (
+            "允许发布的用户名 (逗号分隔, 如 zhangsan, lisi) —— 比填用户 ID 友好; "
+            "与「publisher_ids」任一命中即可"
+        ),
+        "is_secret": False,
+    },
+    {
+        "key": "marketplace.git.max_push_attempts",
+        "category": "marketplace",
+        "value_type": "int",
+        "default": "3",
+        "description": "推送到 GitLab 失败时的自动重试次数 (超过就停下来等人工处理)",
+        "is_secret": False,
+    },
+    {
+        "key": "marketplace.upload.max_files",
+        "category": "marketplace",
+        "value_type": "int",
+        "default": "200",
+        "description": "单次上传允许的附加文本文件数上限",
+        "is_secret": False,
+    },
+    {
+        "key": "marketplace.upload.max_total_mb",
+        "category": "marketplace",
+        "value_type": "int",
+        "default": "2",
+        "description": "单次上传的文本文件总体积上限 (MB)",
+        "is_secret": False,
+    },
+    {
+        "key": "marketplace.git.remote",
+        "category": "marketplace",
+        "value_type": "string",
+        "default": "ssh://git@host.docker.internal:8922/root/testmate-market.git",
+        "description": (
+            "GitLab 仓库地址 (SSH). 资产就是提交到这个仓库的 —— "
+            "改完立即生效, 下次同步会用新地址"
+        ),
+        "is_secret": False,
+    },
+    {
+        "key": "marketplace.git.branch",
+        "category": "marketplace",
+        "value_type": "string",
+        "default": "main",
+        "description": "GitLab 分支 (资产提交到哪个分支)",
+        "is_secret": False,
+    },
+    {
+        "key": "marketplace.git.web_url",
+        "category": "marketplace",
+        "value_type": "url",
+        "default": "",
+        "description": (
+            "GitLab 网页地址 (如 http://gitlab.local:8929/root/testmate-market), "
+            "用于市场页上的「在 GitLab 查看」链接; 留空则不显示"
+        ),
+        "is_secret": False,
+    },
+    {
         "key": "marketplace.install.skill_dir",
         "category": "marketplace",
         "value_type": "string",
