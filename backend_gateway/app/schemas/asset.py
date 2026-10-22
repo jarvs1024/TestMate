@@ -261,6 +261,8 @@ class SyncStatusOut(BaseModel):
     rejected_count: int = 0
     # 我自己提交但还没通过审核的资产数 (待审核 + 已驳回)
     my_review_count: int = 0
+    # 我自己提交的、还在等审核的资产数
+    my_pending_count: int = 0
     last_sync_at: datetime | None = None
 
 

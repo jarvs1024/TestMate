@@ -173,7 +173,7 @@ async function openPage(browser, token, user) {
   await sleep(1800);
   const bar = await pub.page.evaluate(() =>
     document.querySelector('.my-review-bar')?.textContent.replace(/\s+/g, ' ').trim() || '');
-  check('③ 发布者看到「还没通过审核」提示条', /还没通过审核/.test(bar), bar);
+  check('③ 发布者看到「需要处理」提示条', /需要处理/.test(bar), bar);
   await pub.page.evaluate(() => {
     const b = document.querySelector('.my-review-bar .mrb-btn');
     b && b.click();
@@ -187,7 +187,7 @@ async function openPage(browser, token, user) {
       badge: c.querySelector('.ac-review')?.textContent.trim(),
     };
   }, CODE);
-  check('④ 发布者在「我提交的」里看到待审核资产', !!pubCard, JSON.stringify(pubCard));
+  check('④ 发布者在「我提交的」视图里看到自己的资产', !!pubCard, JSON.stringify(pubCard));
   check('⑤ 卡片带「待审核」徽标', /待审核/.test(pubCard ? pubCard.badge || '' : ''), pubCard ? pubCard.badge : '(无)');
 
   // ---------- ③ 管理员审核台 ----------

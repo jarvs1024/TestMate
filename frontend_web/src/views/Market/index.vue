@@ -31,7 +31,7 @@
 
     <!-- ===== 我提交但还没过审的资产: 给个显眼入口, 免得被埋在列表里 ===== -->
     <div v-if="sync.my_review_count > 0" class="my-review-bar">
-      <span>📋 你有 <b>{{ sync.my_review_count }}</b> 个资产还没通过审核</span>
+      <span>📋 你有 <b>{{ sync.my_review_count }}</b> 个资产需要处理 (在等审核或被驳回)</span>
       <button class="mrb-btn" @click="setView('mine')">去看看</button>
     </div>
 
@@ -53,7 +53,7 @@
       </div>
     </div>
 
-    <!-- ===== 视图 + 分类 + 排序 (三个维度收进两行) ===== -->
+    <!-- ===== 视图 + 分类 + 排序 (一行装下, 两组之间用竖线分开) ===== -->
     <div class="mk-filters">
       <div class="view-pills">
         <span class="mf-label">视图</span>
@@ -63,19 +63,30 @@
           {{ v.label }}
           <span v-if="v.count" class="count">{{ v.count }}</span>
         </button>
+        <button v-if="viewMode === 'mine'" class="chip active mine-chip"
+                title="临时视图: 只看我提交的 (从提示条跳进来的)"
+                @click="setView('all')">
+          我提交的 <b>×</b>
+        </button>
       </div>
-      <div class="filter-right">
-        <select v-model="category" class="sort cat-sel" @change="load">
-          <option value="">全部分类</option>
-          <option value="__featured">⭐ 精选</option>
-          <option v-for="c in MARKET_CATEGORIES" :key="c" :value="c">{{ c }}</option>
-        </select>
-        <select v-model="sortBy" class="sort" @change="load">
-          <option value="hot">热门</option>
-          <option value="new">最新</option>
-          <option value="name">名称</option>
-        </select>
+      <span class="mf-divider" />
+      <div class="cat-chips">
+        <button class="chip" :class="{ active: category === '' }" @click="category = ''; load()">
+          全部 <span class="count">{{ rawItems.length }}</span>
+        </button>
+        <button class="chip" :class="{ active: category === '__featured' }" @click="category = '__featured'; load()">
+          ⭐ 精选
+        </button>
+        <button v-for="c in MARKET_CATEGORIES" :key="c" class="chip"
+                :class="{ active: category === c }" @click="category = c; load()">
+          {{ c }}
+        </button>
       </div>
+      <select v-model="sortBy" class="sort" @change="load">
+        <option value="hot">热门</option>
+        <option value="new">最新</option>
+        <option value="name">名称</option>
+      </select>
     </div>
 
     <!-- ===== 加载 / 空态 / 错误 ===== -->
@@ -147,7 +158,7 @@ const sortBy = ref<'hot' | 'new' | 'name'>('hot');
  * 我提交的」又单独排了一行 —— 本来是同一个维度, 被拆散了才显得乱.
  * 现在合成一组, 归到一个「视图」筛选行里.
  */
-type ViewMode = 'all' | 'installed' | 'updatable' | 'pending' | 'rejected' | 'mine';
+type ViewMode = 'all' | 'installed' | 'updatable' | 'pending' | 'mine';
 const viewMode = ref<ViewMode>('all');
 /** 未按视图过滤的结果 (用来算各视图的计数) */
 const rawItems = ref<AssetItem[]>([]);
@@ -155,24 +166,29 @@ const rawItems = ref<AssetItem[]>([]);
 const userStore = useUserStore();
 const isAdmin = computed(() => userStore.user?.role === 'admin');
 
-/** 视图选项 —— 待审核/已驳回 是管理员的活, 其余人人可用 */
+/**
+ * 视图项 —— 状态本身由**卡片上的徽标**表达, 这里不再为每个状态单开一项:
+ * 已驳回 / 我提交的 都能在「全部」里看到 (自己提交的默认可见), 徽标会写明状态.
+ * 只留「待审核」是因为它是**要动手处理**的那一类, 得有个直达入口.
+ */
 const views = computed(() => {
   const raw = rawItems.value;
-  const out: { value: ViewMode; label: string; count: number }[] = [
-    { value: 'all', label: '全部', count: raw.length },
-    { value: 'installed', label: '已安装', count: raw.filter((i) => i.installed).length },
-    { value: 'updatable', label: '可更新', count: raw.filter((i) => i.updatable).length },
+  return [
+    { value: 'all' as ViewMode, label: '全部', count: raw.length },
+    { value: 'installed' as ViewMode, label: '已安装', count: raw.filter((i) => i.installed).length },
+    { value: 'updatable' as ViewMode, label: '可更新', count: raw.filter((i) => i.updatable).length },
+    {
+      value: 'pending' as ViewMode,
+      label: '待审核',
+      count: isAdmin.value
+        ? (sync.value.awaiting_review_count || 0)
+        : (sync.value.my_pending_count || 0),
+    },
   ];
-  if (isAdmin.value) {
-    out.push({ value: 'pending', label: '待审核', count: sync.value.awaiting_review_count || 0 });
-    out.push({ value: 'rejected', label: '已驳回', count: sync.value.rejected_count || 0 });
-  }
-  out.push({ value: 'mine', label: '我提交的', count: sync.value.my_review_count || 0 });
-  return out;
 });
 
 /** 按状态过滤的视图要交给后端做 (类型维度同时放开, 审核台要一次看全所有类型) */
-const STATUS_VIEWS: ViewMode[] = ['pending', 'rejected', 'mine'];
+const STATUS_VIEWS: ViewMode[] = ['pending', 'mine'];
 
 function setView(v: ViewMode) {
   viewMode.value = v;
@@ -195,7 +211,8 @@ const uploadMode = ref<'create' | 'update'>('create');
 const sync = ref<SyncStatus>({
   has_remote_updates: false, conflict_count: 0, pending_count: 0,
   failed_count: 0, updatable_count: 0, unpublished_count: 0,
-  awaiting_review_count: 0, rejected_count: 0, my_review_count: 0, last_sync_at: null,
+  awaiting_review_count: 0, rejected_count: 0, my_review_count: 0, my_pending_count: 0,
+  last_sync_at: null,
 });
 
 /** 防御: items 可能是 undefined (响应形状异常 / 请求被中断), 绝不能让 list.length 抛错
@@ -457,6 +474,7 @@ onUnmounted(() => {
   font-size: 12px; cursor: pointer; font-family: inherit;
 }
 .mrb-btn:hover { background: var(--primary); color: #fff; }
+.mine-chip b { font-weight: 700; margin-left: 2px; }
 
 /* ===== 动作条: 返回 + 主操作 (一行, 两端对齐) ===== */
 .mk-actions {
@@ -484,7 +502,10 @@ onUnmounted(() => {
   display: flex; justify-content: space-between; align-items: center;
   gap: 14px; flex-wrap: wrap;
 }
-.filter-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.cat-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.mf-divider {
+  width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; flex-shrink: 0;
+}
 .chip {
   background: transparent; border: 1px solid var(--border);
   padding: 5px 12px; border-radius: var(--radius-pill);
@@ -496,7 +517,6 @@ onUnmounted(() => {
 .chip.active { background: var(--primary-grad); border-color: transparent; color: #fff; font-weight: 600; }
 .chip.active .count { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
-.cat-sel { max-width: 150px; }
 .sort {
   background: var(--surface); border: 1px solid var(--border);
   padding: 6px 10px; border-radius: 8px;

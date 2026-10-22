@@ -263,10 +263,15 @@ async def list_assets(
         · 我已安装的       —— 哪怕已下架也要看得见 (否则用户根本打不开详情,
                               「已下架」提示就形同虚设)
         · 我提交的         —— 待审核 / 已驳回的, 提交者自己要看得到
-    管理员可以用 status 显式过滤: pending(待审核) / rejected(已驳回) /
+    status 可以显式过滤: pending(待审核) / rejected(已驳回) /
     unpublished(已下架) / mine(我提交的) / all(全部).
+
+    ⚠️ 非管理员按状态过滤时**只能看自己的** —— 待审核/已驳回的资产还没对外发布,
+    别人的不该被列出来.
     """
     username = (_user.username or "").strip()
+    role = _user.role.value if hasattr(_user.role, "value") else str(_user.role)
+    is_admin = role == "admin"
 
     async with AsyncSessionLocal() as session:
         stmt = select(Asset)
@@ -279,8 +284,18 @@ async def list_assets(
             stmt = stmt.where(Asset.author == username)
         elif status in ("pending", "rejected", "unpublished", "published"):
             stmt = stmt.where(Asset.publish_status == status)
+            if not is_admin and status != "published":
+                # 非管理员只能看自己的未发布资产 —— 别人的待审/被驳回内容不该被列出来
+                stmt = stmt.where(Asset.author == username)
         elif status == "all" or include_unpublished:
-            pass  # 不限上架状态
+            # 不限上架状态 —— 但同样只对管理员开放 (include_unpublished 是旧参数, 语义等同 all)
+            if not is_admin:
+                stmt = stmt.where(
+                    or_(
+                        Asset.publish_status == "published",
+                        Asset.author == username,
+                    )
+                )
         else:
             # 默认可见性: 在架 ∪ 我提交的 ∪ 我已安装的
             installed = select(AssetInstall.code).where(AssetInstall.client_id == client_id)
@@ -405,7 +420,7 @@ async def sync_status(
     mine = (_user.username or "").strip()
     async with AsyncSessionLocal() as session:
         pending = failed = unpublished = 0
-        awaiting_review = rejected = my_review = 0
+        awaiting_review = rejected = my_review = my_pending = 0
         rows = (await session.execute(select(Asset))).scalars().all()
         for a in rows:
             if a.sync_status == "staged":
@@ -418,8 +433,12 @@ async def sync_status(
                 awaiting_review += 1
             elif a.publish_status == "rejected":
                 rejected += 1
-            if mine and a.publish_status in ("pending", "rejected") and (a.author or "") == mine:
-                my_review += 1
+            if mine and (a.author or "") == mine:
+                if a.publish_status == "pending":
+                    my_pending += 1
+                    my_review += 1      # 需要处理 = 在等审核 + 被驳回
+                elif a.publish_status == "rejected":
+                    my_review += 1
 
     installs = await _install_map([a.code for a in rows], client_id)
     updatable = sum(
@@ -438,6 +457,7 @@ async def sync_status(
         awaiting_review_count=awaiting_review,
         rejected_count=rejected,
         my_review_count=my_review,
+        my_pending_count=my_pending,
         last_sync_at=puller.last_sync_at,
     )
 
