@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import tempfile
 import uuid
@@ -102,23 +103,51 @@ async def _setting(key: str, default: str = "") -> str:
         return default
 
 
+def _split_list(raw: str) -> list[str]:
+    """把设置项里的列表值拆成元素列表.
+
+    ⚠️ 容错是刚需: 设置页里「允许发布的用户 ID (JSON 数组)」和
+    「允许发布的用户名 (逗号分隔)」两个框紧挨着, 用户照抄彼此格式
+    太常见了. 而格式写错**没有任何报错** —— 只是白名单解析成空集,
+    结果是"配了白名单, 但除 admin 外所有人都发不了布", 极难排查.
+    所以两种格式都要认:
+        "zhangsan,lisi"      → ["zhangsan", "lisi"]
+        '["zhangsan","lisi"]' → ["zhangsan", "lisi"]
+        "zhangsan、lisi"      → ["zhangsan", "lisi"]   (中文/顿号分隔)
+    """
+    s = (raw or "").strip()
+    if not s:
+        return []
+    if s.startswith("["):
+        try:
+            data = json.loads(s)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, list):
+            out: list[str] = []
+            for x in data:
+                # 布尔在白名单里没有意义, 跳过 (str(True) 会变成 "True" 这种鬼名字)
+                if isinstance(x, bool):
+                    continue
+                t = str(x).strip().strip("\"'")
+                if t:
+                    out.append(t)
+            return out
+    # 不是合法 JSON 数组 → 退化成分隔符切分 (顺手剥掉方括号/引号)
+    s = s.strip().strip("[]").strip()
+    parts = re.split(r"[,;、，\s]+", s)
+    return [p.strip().strip("\"'") for p in parts if p.strip().strip("\"'")]
+
+
 async def _publisher_ids() -> set[int]:
     raw = await _setting("marketplace.publisher_ids", "[]")
-    try:
-        data = json.loads(raw) if raw.strip() else []
-    except json.JSONDecodeError:
-        data = []
-    return {int(x) for x in data if str(x).isdigit()}
+    return {int(x) for x in _split_list(raw) if str(x).isdigit()}
 
 
 async def _publisher_names() -> set[str]:
     """允许发布的**用户名**集合 (比填用户 ID 友好)."""
     raw = await _setting("marketplace.publisher_usernames", "")
-    return {
-        x.strip().lower()
-        for x in raw.replace("，", ",").replace(";", ",").split(",")
-        if x.strip()
-    }
+    return {x.lower() for x in _split_list(raw)}
 
 
 async def require_publisher(user: User = Depends(get_current_user)) -> User:
