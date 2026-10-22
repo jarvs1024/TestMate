@@ -168,6 +168,45 @@ async function codeByName(page, name) {
     localStorage.setItem('testmate:user', JSON.stringify(u));
   }, login.token, login.user);
 
+  // 自动化测试**不该往真实钉钉群刷屏** —— 测试期间把通知开关关掉, 结束再恢复.
+  // (通知链路本身由 scripts/e2e_dingtalk_settings.js 专门验证)
+  const NOTIFY_SWITCHES = [
+    'dingtalk.notify_on_publish', 'dingtalk.notify_on_update',
+    'dingtalk.notify_on_unpublish', 'dingtalk.notify_on_delete',
+  ];
+  const savedSwitches = await page.evaluate(async (keys) => {
+    const tk = localStorage.getItem('testmate:token');
+    const r = await fetch('/api/v1/settings/schema', { headers: { Authorization: 'Bearer ' + tk } });
+    const d = await r.json();
+    const saved = {};
+    for (const g of d.groups || []) {
+      for (const it of g.items || []) {
+        if (keys.includes(it.key)) saved[it.key] = it.value;
+      }
+    }
+    for (const k of keys) {
+      await fetch('/api/v1/settings/' + k, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
+        body: JSON.stringify({ value: 'false' }),
+      });
+    }
+    return saved;
+  }, NOTIFY_SWITCHES);
+  const restoreSwitches = async () => {
+    await page.evaluate(async (saved) => {
+      const tk = localStorage.getItem('testmate:token');
+      for (const [k, v] of Object.entries(saved || {})) {
+        await fetch('/api/v1/settings/' + k, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
+          body: JSON.stringify({ value: v }),
+        });
+      }
+    }, savedSwitches);
+  };
+
+
   // ---------- A. 列表渲染 ----------
   await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.asset-card', { timeout: 15000 });
@@ -403,6 +442,24 @@ async function codeByName(page, name) {
 
   // ---------- 汇总 ----------
   check('Z1 全程无 JS 错误 / 请求失败', errors.length === 0, errors.slice(0, 5).join(' ; '));
+
+  // 恢复通知开关 (测试期间静音了, 别把真实配置留在关的状态)
+  await restoreSwitches();
+  const restored = await page.evaluate(async (keys) => {
+    const tk = localStorage.getItem('testmate:token');
+    const r = await fetch('/api/v1/settings/schema', { headers: { Authorization: 'Bearer ' + tk } });
+    const d = await r.json();
+    const out = {};
+    for (const g of d.groups || []) {
+      for (const it of g.items || []) {
+        if (keys.includes(it.key)) out[it.key] = it.value;
+      }
+    }
+    return out;
+  }, NOTIFY_SWITCHES);
+  check('Z2 通知开关已恢复原值',
+    Object.values(restored).every((v) => String(v) === 'true'),
+    Object.entries(restored).map(([k, v]) => `${k}=${v}`).join(' '));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n===== 结果: ${results.length - failed.length}/${results.length} 通过 =====`);

@@ -175,16 +175,50 @@
           </div>
         </section>
 
-        <!-- 🔔 通知 (P1) -->
+        <!-- 🔔 通知 (钉钉机器人 · 市场上下架通知) -->
         <section v-if="activeTop === 'sec-notification'" :id="'sec-notification'" class="card grp">
           <h2>
             <span>🔔 通知</span>
-            <span class="grp-cnt">P1 规划中</span>
+            <span class="grp-cnt">{{ notificationItems.length }} 项</span>
           </h2>
-          <div class="empty-hint">
-            <div class="eh-ic">🚧</div>
-            <div class="eh-t">通知模块规划中</div>
-            <div class="eh-d">钉钉群机器人 / 告警规则 / 通知日志 等配置项将在 P1 阶段开放.</div>
+          <div class="hint">
+            💡 资产市场在<strong>上架 / 下架 / 更新</strong>时会往钉钉群发通知。
+            配好 webhook 后点「测试发送」——群里立刻收到一条自检消息, 配不对会直接告诉你原因。
+          </div>
+
+          <SettingRow v-for="(it, idx) in notificationItems" :key="it.key"
+            :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+            :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+            :saving="saving === it.key" :secret-display="getInputValue(it)"
+            @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+
+          <div class="test-row">
+            <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk')">
+              {{ testing === 'dingtalk' ? '发送中…' : '📨 测试发送' }}
+            </button>
+            <div v-if="testResults['dingtalk']" class="test-result" :class="`s-${testResults['dingtalk']?.status}`">
+              <span class="dot"></span>
+              <span class="msg">{{ testResults['dingtalk']?.message }}</span>
+            </div>
+          </div>
+
+          <!-- 最近通知 (送达回执) -->
+          <div class="sub-grp notif-log">
+            <h3>📜 最近通知 <span class="sub-cnt">{{ notifyLog.length }} 条</span>
+              <button class="mini-link" @click="loadNotifyLog">刷新</button>
+            </h3>
+            <div v-if="!notifyLog.length" class="notif-empty">还没有通知记录</div>
+            <ul v-else class="notif-list">
+              <li v-for="n in notifyLog" :key="n.id" :class="n.status">
+                <span class="nl-act">{{ NOTIFY_EVENTS[n.event] || n.event }}</span>
+                <code v-if="n.code" class="nl-code">{{ n.code }}</code>
+                <span class="nl-chip" :class="n.status">
+                  {{ n.status === 'sent' ? '已送达' : n.status === 'failed' ? '失败' : '待发' }}
+                </span>
+                <span class="nl-time mono">{{ fmtTime(n.last_attempt_at || n.created_at) }}</span>
+                <span v-if="n.error" class="nl-err" :title="n.error">{{ n.error }}</span>
+              </li>
+            </ul>
           </div>
         </section>
 
@@ -206,7 +240,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { getSchema, updateSetting, testRagflow, testDify, testReviewAgent, type SettingItem, type TestResult } from '@/api/settings';
+import { getSchema, updateSetting, testRagflow, testDify, testReviewAgent, testDingTalk, type SettingItem, type TestResult } from '@/api/settings';
+import { listNotifications, type AssetNotification } from '@/api/assets';
 import SettingRow from './components/SettingRow.vue';
 import { useUserStore } from '@/stores/user';
 
@@ -229,6 +264,31 @@ const activeSub = ref<string>('sec-search');
 const searchItems = computed(() => itemsByCategory('search'));
 const chatItems = computed(() => itemsByCategory('chat'));
 const generalItems = computed(() => itemsByCategory('general'));
+// 通知 (钉钉机器人: webhook / 关键词 / 加签 / 触发开关)
+const notificationItems = computed(() => itemsByCategory('notification'));
+
+// ===== 通知回执 (送达记录) =====
+const notifyLog = ref<AssetNotification[]>([]);
+const NOTIFY_EVENTS: Record<string, string> = {
+  publish: '新资产上架',
+  update: '版本更新',
+  unpublish: '资产下架',
+  delete: '资产删除',
+};
+async function loadNotifyLog() {
+  try {
+    const r = await listNotifications(20);
+    notifyLog.value = r.items || [];
+  } catch {
+    notifyLog.value = [];
+  }
+}
+function fmtTime(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
 
 // ===== 智能体 section: 业务配置 (引擎 / 模型 / 工具等) =====
 // 数据源 (RAGFlow / Dify / ReviewAgent) 统一在 '通用 → 数据源' sub-group 配置
@@ -301,7 +361,7 @@ const sections = computed(() => [
   { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length + dataSourceItems.value.length, children: [
     { id: 'sec-general-data-source', label: '📡 数据源', count: dataSourceItems.value.length },
   ] },
-  { id: 'sec-notification', icon: '🔔', label: '通知',   count: 0,                          children: [] },
+  { id: 'sec-notification', icon: '🔔', label: '通知',   count: notificationItems.value.length, children: [] },
 ]);
 
 // ===== 点击目录 =====
@@ -312,6 +372,8 @@ function onPickTop(topId: string) {
     const el = document.getElementById(topId);
     el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+  // 通知区带送达回执, 进区就拉一次
+  if (topId === 'sec-notification') loadNotifyLog();
 }
 
 function onPickSub(topId: string, subId: string) {
@@ -388,6 +450,7 @@ const _testClients: Record<string, () => Promise<TestResult>> = {
   'ragflow':  testRagflow,
   'dify':     testDify,
   'review-agent': testReviewAgent,
+  'dingtalk': testDingTalk,
 };
 async function onTest(testKey: string) {
   const fn = _testClients[testKey];
@@ -794,6 +857,40 @@ onMounted(load);
 .info-card h2 { font-size: 15px; font-weight: 700; margin: 0 0 12px; color: var(--ink-900); }
 .tips { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--ink-700); line-height: 1.6; }
 .tips strong { color: var(--ink-900); }
+
+/* ===== 通知: 最近通知 (送达回执) ===== */
+.notif-log { margin-top: 18px; }
+.notif-log h3 { display: flex; align-items: center; gap: 8px; }
+.mini-link {
+  margin-left: auto; background: transparent; border: 1px solid var(--border);
+  padding: 2px 10px; border-radius: var(--radius-pill);
+  font-size: 11px; color: var(--ink-700); cursor: pointer; font-family: inherit;
+}
+.mini-link:hover { border-color: var(--primary); color: var(--primary); }
+.notif-empty { font-size: 12px; color: var(--ink-500); padding: 12px 0; }
+.notif-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.notif-list li {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm); padding: 7px 10px; background: var(--surface-soft);
+  font-size: 12px;
+}
+.notif-list li.sent { border-left-color: var(--ok); }
+.notif-list li.failed { border-left-color: var(--err); background: rgba(239, 68, 68, 0.06); }
+.notif-list li.pending { border-left-color: var(--warn); }
+.nl-act { font-weight: 600; color: var(--ink-900); }
+.nl-code { font-family: var(--font-mono); font-size: 11px; color: var(--ink-700); }
+.nl-chip {
+  font-size: 10.5px; font-weight: 600; padding: 1px 8px; border-radius: var(--radius-pill);
+}
+.nl-chip.sent { background: rgba(16, 185, 129, 0.14); color: var(--ok); }
+.nl-chip.failed { background: rgba(239, 68, 68, 0.14); color: var(--err); }
+.nl-chip.pending { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
+.nl-time { font-size: 11px; color: var(--ink-500); margin-left: auto; }
+.nl-err {
+  width: 100%; font-size: 11px; color: var(--err); opacity: 0.85;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 @media (max-width: 900px) {
   .set-layout { grid-template-columns: 1fr; }

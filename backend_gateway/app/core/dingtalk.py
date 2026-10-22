@@ -136,6 +136,7 @@ async def notify_market(
     try:
         webhook = (await get("dingtalk.market_webhook", "")) or ""
         secret = (await get("dingtalk.market_secret", "")) or ""
+        keyword = ((await get("dingtalk.market_keyword", "")) or "").strip()
         enabled = (await get(_SWITCH_KEY[event], "true")) or "true"
         if str(enabled).lower() not in ("true", "1", "yes", "on"):
             return False
@@ -157,6 +158,12 @@ async def notify_market(
         lines.append(f"- [查看详情]({link})")
     text = "\n".join(lines)
     title = f"{_EVENT_TEXT[event]} · {name}"
+
+    # ⚠️ 自定义机器人默认开启**关键词校验**: 消息里必须含指定关键词, 否则报
+    #    310000 "关键词不匹配", 消息根本发不出去. 关键词配在设置里 (留空则不加).
+    if keyword:
+        text = f"{keyword}\n{text}"
+        title = f"{keyword} · {title}"
 
     # 先落回执 —— 哪怕进程在发送途中挂掉, 也知道"该发一条通知"
     row = await _create_receipt(event, code, name, title, text)
@@ -237,6 +244,50 @@ async def list_notifications(limit: int = 50) -> tuple[list[AssetNotification], 
             await session.execute(select(func.count()).select_from(AssetNotification))
         ).scalar() or 0
     return list(rows), int(total)
+
+
+async def send_test_market_message() -> tuple[bool, str, dict[str, Any] | None]:
+    """发一条测试消息 (不落回执 —— 测试不是市场事件).
+
+    返回 (ok, 给人看的说明, 钉钉原始响应).
+    用当前配置 (webhook / 关键词 / 加签密钥) 走**完整**的发送路径 ——
+    配置对不对, 一按就知道, 不用靠猜.
+    """
+    webhook = (await get("dingtalk.market_webhook", "")) or ""
+    secret = (await get("dingtalk.market_secret", "")) or ""
+    keyword = ((await get("dingtalk.market_keyword", "")) or "").strip()
+    if not webhook:
+        return False, "未配置钉钉 webhook (dingtalk.market_webhook)", None
+
+    title = "TestMate 通知配置自检"
+    text = (
+        "### ✅ TestMate 通知配置自检\n"
+        "这是一条来自 TestMate 的**测试消息**, 看到即说明配置正确。\n"
+        "- 上架 / 下架 / 更新通知都会发到同一个群"
+    )
+    if keyword:
+        text = f"{keyword}\n{text}"
+        title = f"{keyword} · {title}"
+
+    try:
+        resp = await send_markdown(webhook, title, text, secret=secret)
+    except Exception as e:  # noqa: BLE001
+        return False, f"发送失败: {type(e).__name__}: {e}", None
+
+    # 钉钉的业务错误是 HTTP 200 + errcode != 0, 所以必须看 errcode
+    errcode = resp.get("errcode")
+    if errcode not in (0, None):
+        errmsg = resp.get("errmsg") or str(resp)
+        hint = ""
+        if errcode == 310000:
+            hint = (
+                " —— 机器人开启了关键词校验: 请把群里配置的那个关键词"
+                "填到「钉钉机器人关键词」里 (消息必须含该词)"
+            )
+        elif errcode == 310000 or errcode == 300001:
+            hint = " —— 机器人 token 无效, 请检查 webhook 地址"
+        return False, f"钉钉拒绝 (errcode={errcode}): {errmsg}{hint}", resp
+    return True, "已送达钉钉群", resp
 
 
 # ---------- 失败重试 ----------

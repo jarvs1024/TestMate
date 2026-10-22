@@ -204,6 +204,24 @@ async def test_pr_agent(_user: User = Depends(get_current_user)) -> SettingTestO
     except Exception as e:
         return SettingTestOut(ok=False, status="off", message=f"不可达: {type(e).__name__}: {e}", detail=None)
 
+@router.post("/test/dingtalk", response_model=SettingTestOut)
+async def test_dingtalk(_user: User = Depends(get_current_user)) -> SettingTestOut:
+    """用当前 DB 的钉钉配置真发一条消息.
+
+    走完整发送路径 (webhook / 关键词 / 加签密钥), 所以:
+      - 配对了 → 群里立刻收到一条自检消息
+      - 配错了 → 返回钉钉的原始 errcode 与原因 (比如「关键词不匹配」)
+    """
+    if _user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+    from app.core.dingtalk import send_test_market_message
+
+    ok, message, detail = await send_test_market_message()
+    return SettingTestOut(
+        ok=ok, status="ok" if ok else "warn", message=message, detail=detail,
+    )
+
+
 @router.post("/test/review_agent", response_model=SettingTestOut)
 async def test_review_agent(_user: User = Depends(get_current_user)) -> SettingTestOut:
     """用当前 DB 的 review_agent.base_url 测 ReviewAgent HTTP /api/v1/telemetry/health (调 review_agent_client.probe)."""

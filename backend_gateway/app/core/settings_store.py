@@ -312,6 +312,17 @@ SETTING_SCHEMA: list[dict] = [
         "description": "删除资产时通知钉钉群",
         "is_secret": False,
     },
+    {
+        "key": "dingtalk.market_keyword",
+        "category": "notification",
+        "value_type": "string",
+        "default": "",
+        "description": (
+            "钉钉机器人关键词 (自定义机器人默认开启关键词校验, "
+            "消息里必须包含该词, 否则发不出去; 留空表示不启用)"
+        ),
+        "is_secret": False,
+    },
 ]
 
 
