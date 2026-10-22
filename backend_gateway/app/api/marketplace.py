@@ -296,6 +296,10 @@ async def list_assets(
                         Asset.author == username,
                     )
                 )
+        elif is_admin:
+            # 管理员是市场运营者 —— 列表里能看到**全部**资产 (含待审核/已驳回/已下架),
+            # 每张卡片自己标着状态, 扫一眼就知道哪些要处理
+            pass
         else:
             # 默认可见性: 在架 ∪ 我提交的 ∪ 我已安装的
             installed = select(AssetInstall.code).where(AssetInstall.client_id == client_id)

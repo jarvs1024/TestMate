@@ -32,7 +32,9 @@
     <!-- ===== 我提交但还没过审的资产: 给个显眼入口, 免得被埋在列表里 ===== -->
     <div v-if="sync.my_review_count > 0" class="my-review-bar">
       <span>📋 你有 <b>{{ sync.my_review_count }}</b> 个资产需要处理 (在等审核或被驳回)</span>
-      <button class="mrb-btn" @click="setView('mine')">去看看</button>
+      <button class="mrb-btn" @click="toggleOnlyMine">
+        {{ onlyMine ? '显示全部' : '只看这些' }}
+      </button>
     </div>
 
     <!-- ===== 类型导航 + 搜索 ===== -->
@@ -53,23 +55,8 @@
       </div>
     </div>
 
-    <!-- ===== 视图 + 分类 + 排序 (一行装下, 两组之间用竖线分开) ===== -->
+    <!-- ===== 分类 + 排序 (状态不在这层过滤 —— 每张卡片自己标着) ===== -->
     <div class="mk-filters">
-      <div class="view-pills">
-        <span class="mf-label">视图</span>
-        <button v-for="v in views" :key="v.value"
-                class="chip" :class="{ active: viewMode === v.value }"
-                @click="setView(v.value)">
-          {{ v.label }}
-          <span v-if="v.count" class="count">{{ v.count }}</span>
-        </button>
-        <button v-if="viewMode === 'mine'" class="chip active mine-chip"
-                title="临时视图: 只看我提交的 (从提示条跳进来的)"
-                @click="setView('all')">
-          我提交的 <b>×</b>
-        </button>
-      </div>
-      <span class="mf-divider" />
       <div class="cat-chips">
         <button class="chip" :class="{ active: category === '' }" @click="category = ''; load()">
           全部 <span class="count">{{ rawItems.length }}</span>
@@ -151,49 +138,19 @@ const kind = ref<MarketKind>('plugin');
 const category = ref('');
 const keyword = ref('');
 const sortBy = ref<'hot' | 'new' | 'name'>('hot');
-/**
- * 「视图」—— 看哪一批资产 (互斥的一组).
- *
- * 之前散在两处: 「已安装 / 可更新」在类型 Tab 那一排的右侧, 「待审核 / 已驳回 /
- * 我提交的」又单独排了一行 —— 本来是同一个维度, 被拆散了才显得乱.
- * 现在合成一组, 归到一个「视图」筛选行里.
- */
-type ViewMode = 'all' | 'installed' | 'updatable' | 'pending' | 'mine';
-const viewMode = ref<ViewMode>('all');
-/** 未按视图过滤的结果 (用来算各视图的计数) */
+/** 只看我自己的"待处理"资产 (提示条里的即时过滤, 不做成常驻筛选) */
+const onlyMine = ref(false);
+
+function toggleOnlyMine() {
+  onlyMine.value = !onlyMine.value;
+  load();
+}
+/** 未过滤的结果 (分类 chip 上的「全部 N」用) */
 const rawItems = ref<AssetItem[]>([]);
 
 const userStore = useUserStore();
-const isAdmin = computed(() => userStore.user?.role === 'admin');
 
-/**
- * 视图项 —— 状态本身由**卡片上的徽标**表达, 这里不再为每个状态单开一项:
- * 已驳回 / 我提交的 都能在「全部」里看到 (自己提交的默认可见), 徽标会写明状态.
- * 只留「待审核」是因为它是**要动手处理**的那一类, 得有个直达入口.
- */
-const views = computed(() => {
-  const raw = rawItems.value;
-  return [
-    { value: 'all' as ViewMode, label: '全部', count: raw.length },
-    { value: 'installed' as ViewMode, label: '已安装', count: raw.filter((i) => i.installed).length },
-    { value: 'updatable' as ViewMode, label: '可更新', count: raw.filter((i) => i.updatable).length },
-    {
-      value: 'pending' as ViewMode,
-      label: '待审核',
-      count: isAdmin.value
-        ? (sync.value.awaiting_review_count || 0)
-        : (sync.value.my_pending_count || 0),
-    },
-  ];
-});
 
-/** 按状态过滤的视图要交给后端做 (类型维度同时放开, 审核台要一次看全所有类型) */
-const STATUS_VIEWS: ViewMode[] = ['pending', 'mine'];
-
-function setView(v: ViewMode) {
-  viewMode.value = v;
-  load();
-}
 
 const items = ref<AssetItem[]>([]);
 const total = ref(0);
@@ -253,12 +210,11 @@ async function load() {
   }, LOAD_TIMEOUT_MS);
   try {
     const r = await listAssets({
-      // 选了状态筛选就别再按类型卡 —— 审核台要一次看全所有类型的待审资产
-      kind: STATUS_VIEWS.includes(viewMode.value) ? undefined : kind.value,
+      // 「只看这些」时不按类型卡 —— 我提交的待审资产可能是任意类型
+      kind: onlyMine.value ? undefined : kind.value,
       category: category.value === '__featured' ? undefined : (category.value || undefined),
       q: keyword.value.trim() || undefined,
       sort: sortBy.value,
-      status: STATUS_VIEWS.includes(viewMode.value) ? viewMode.value : undefined,
       limit: 500,
     });
     const rows = r?.items ?? [];
@@ -266,8 +222,14 @@ async function load() {
     items.value = category.value === '__featured'
       ? rows.filter((i) => i.featured)
       : rows;
-    if (viewMode.value === 'installed') items.value = items.value.filter((i) => i.installed);
-    else if (viewMode.value === 'updatable') items.value = items.value.filter((i) => i.updatable);
+    if (onlyMine.value) {
+      // 提示条的"只看这些": 我自己提交的、还没过审的
+      const me = (userStore.user?.username || '').trim();
+      items.value = items.value.filter(
+        (i) => (i.author || '').trim() === me
+          && (i.publish_status === 'pending' || i.publish_status === 'rejected'),
+      );
+    }
     total.value = r?.total ?? rows.length;
   } catch (e: any) {
     loadError.value = e?.response?.data?.detail || e?.message || '未知错误';
@@ -364,7 +326,7 @@ function openUpdate(item: AssetItem) {
 function resetFilters() {
   category.value = '';
   keyword.value = '';
-  viewMode.value = 'all';
+  onlyMine.value = false;
   sortBy.value = 'hot';
   load();
 }
@@ -474,7 +436,6 @@ onUnmounted(() => {
   font-size: 12px; cursor: pointer; font-family: inherit;
 }
 .mrb-btn:hover { background: var(--primary); color: #fff; }
-.mine-chip b { font-weight: 700; margin-left: 2px; }
 
 /* ===== 动作条: 返回 + 主操作 (一行, 两端对齐) ===== */
 .mk-actions {
@@ -491,11 +452,6 @@ onUnmounted(() => {
 }
 .back:hover { background: var(--surface-sunken); color: var(--ink-900); }
 
-/* ===== 视图筛选 (一行, 与分类/排序同带) ===== */
-.view-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.mf-label {
-  font-size: 11.5px; color: var(--ink-500); margin-right: 2px; flex-shrink: 0;
-}
 
 /* ===== 分类 + 排序 ===== */
 .mk-filters {
@@ -503,9 +459,6 @@ onUnmounted(() => {
   gap: 14px; flex-wrap: wrap;
 }
 .cat-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.mf-divider {
-  width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; flex-shrink: 0;
-}
 .chip {
   background: transparent; border: 1px solid var(--border);
   padding: 5px 12px; border-radius: var(--radius-pill);

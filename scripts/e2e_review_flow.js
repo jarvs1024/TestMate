@@ -184,7 +184,7 @@ async function openPage(browser, token, user) {
     if (!c) return null;
     return {
       name: c.querySelector('.ac-name')?.textContent.trim(),
-      badge: c.querySelector('.ac-review')?.textContent.trim(),
+      badge: [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()).join(' '),
     };
   }, CODE);
   check('④ 发布者在「我提交的」视图里看到自己的资产', !!pubCard, JSON.stringify(pubCard));
@@ -195,20 +195,17 @@ async function openPage(browser, token, user) {
   await adm.page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
   await adm.page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1500);
-  const chips = await adm.page.evaluate(() =>
-    [...document.querySelectorAll('.view-pills .chip')].map((c) => c.textContent.replace(/\s+/g, ' ').trim()));
-  check('⑥ 管理员看到「待审核」筛选入口', chips.some((c) => c.includes('待审核')), chips.join(' | '));
-
+  // 视图行已去掉 —— 管理员在**列表里**直接看到待审资产 (卡片带徽标)
   await adm.page.evaluate(() => {
-    const c = [...document.querySelectorAll('.view-pills .chip')].find((x) => x.textContent.includes('待审核'));
-    c && c.click();
+    const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
+    t && t.click();
   });
   await sleep(1800);
   const admCard = await adm.page.evaluate((code) => {
     const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(code) || x.textContent.includes('审核流程端到端资产'));
-    return c ? { name: c.querySelector('.ac-name')?.textContent.trim(), badge: c.querySelector('.ac-review')?.textContent.trim() } : null;
+    return c ? { name: c.querySelector('.ac-name')?.textContent.trim(), badge: [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()).join(' ') } : null;
   }, CODE);
-  check('⑦ 管理员在「待审核」筛选里看到它', !!admCard, JSON.stringify(admCard));
+  check('⑥ 管理员在列表里看到待审资产 (卡片带徽标)', !!admCard, JSON.stringify(admCard));
   await adm.page.screenshot({ path: path.join(OUT_DIR, '12-review-queue.png') });
 
   // 打开详情 → 驳回
@@ -254,7 +251,7 @@ async function openPage(browser, token, user) {
     const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(code) || x.textContent.includes('审核流程端到端资产'));
     if (!c) return null;
     c.click();
-    return { badge: c.querySelector('.ac-review')?.textContent.trim() };
+    return { badge: [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()).join(' ') };
   }, CODE);
   check('⑩ 发布者看到「已驳回」徽标', /已驳回/.test(pubReject ? pubReject.badge || '' : ''), pubReject ? pubReject.badge : '(无)');
   await pub.page.waitForSelector('.el-drawer', { timeout: 10000 });
@@ -276,10 +273,10 @@ async function openPage(browser, token, user) {
   await adm.page.reload({ waitUntil: 'domcontentloaded' });
   await adm.page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1500);
-  // 待审核的资产只在「待审核」筛选里可见 (默认视图按可见性规则只给在架/自己的)
+  // 视图行已去掉 —— 管理员在列表里直接看到待审资产, 切到它所属的类型即可
   await adm.page.evaluate(() => {
-    const c = [...document.querySelectorAll('.view-pills .chip')].find((x) => x.textContent.includes('待审核'));
-    c && c.click();
+    const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
+    t && t.click();
   });
   await sleep(1800);
   await adm.page.evaluate((code) => {
@@ -301,12 +298,7 @@ async function openPage(browser, token, user) {
   await adm.page.reload({ waitUntil: 'domcontentloaded' });
   await adm.page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1500);
-  // 通过后它回到市场里 —— 切到「全部」+ 它所属的类型(skill)才看得到
-  await adm.page.evaluate(() => {
-    const c = [...document.querySelectorAll('.view-pills .chip')].find((x) => x.textContent.includes('全部'));
-    c && c.click();
-  });
-  await sleep(1000);
+  // 通过后它回到市场里 —— 切到它所属的类型(skill)才看得到
   await adm.page.evaluate(() => {
     const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
     t && t.click();
@@ -314,7 +306,7 @@ async function openPage(browser, token, user) {
   await sleep(1800);
   const finalCard = await adm.page.evaluate((code) => {
     const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(code) || x.textContent.includes('审核流程端到端资产'));
-    return c ? { badge: c.querySelector('.ac-review, .ac-installed, .ac-sync')?.textContent.trim() } : null;
+    return c ? { badge: [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()).join(' ') } : null;
   }, CODE);
   check('⑬ 通过后资产出现在市场里 (不再是待审核/已驳回)', !!finalCard && !/待审核|已驳回/.test(finalCard.badge || ''), JSON.stringify(finalCard));
   await adm.page.screenshot({ path: path.join(OUT_DIR, '14-review-approved.png') });

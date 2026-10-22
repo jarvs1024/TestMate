@@ -10,21 +10,23 @@
         <div class="ac-name">{{ item.name }}</div>
         <div class="ac-ver">{{ item.version }} · {{ item.category }}</div>
       </div>
-      <span v-if="item.publish_status === 'pending'" class="ac-review pending"
-            title="已提交, 等待管理员审核; 通过后才在市场里可见">📋 待审核</span>
-      <span v-else-if="item.publish_status === 'rejected'" class="ac-review rejected"
-            :title="item.review_note || '审核未通过'">❌ 已驳回</span>
-      <span v-else-if="item.publish_status === 'unpublished'" class="ac-review off"
-            title="已从市场下架, 文件仍保留">⚠️ 已下架</span>
-      <span v-else-if="item.sync_status === 'staged'" class="ac-sync staged" title="已保存到本地工作区, 正在同步到 GitLab">
-        🕐 待同步
-      </span>
-      <span v-else-if="item.sync_status === 'failed'" class="ac-sync failed"
-            :title="item.last_error || '同步到 GitLab 失败, 点击卡片查看详情'">
-        ❌ 同步失败
-      </span>
-      <span v-else-if="item.updatable" class="ac-updatable" title="已安装, 存在更新版本">可更新</span>
-      <span v-else-if="item.installed" class="ac-installed" title="已安装">✓ 已安装</span>
+      <!-- 状态是**每张卡片自己的属性**, 不再做成视图筛选 -->
+      <div class="ac-badges">
+        <span v-if="item.publish_status === 'pending'" class="ac-badge pending"
+              title="已提交, 等待管理员审核; 通过后才在市场里可见">📋 待审核</span>
+        <span v-else-if="item.publish_status === 'rejected'" class="ac-badge rejected"
+              :title="item.review_note || '审核未通过'">❌ 已驳回</span>
+        <span v-else-if="item.publish_status === 'unpublished'" class="ac-badge off"
+              title="已从市场下架, 文件仍保留">⚠️ 已下架</span>
+        <span v-if="item.updatable" class="ac-badge updatable"
+              title="已安装, 但仓库里有了新版本">↑ 可更新</span>
+        <span v-else-if="item.installed" class="ac-badge installed"
+              title="已安装到本机">✓ 已安装</span>
+        <span v-if="item.sync_status === 'staged'" class="ac-badge staged"
+              title="已保存到本地工作区, 正在同步到 GitLab">🕐 待同步</span>
+        <span v-else-if="item.sync_status === 'failed'" class="ac-badge failed"
+              :title="item.last_error || '同步到 GitLab 失败, 点击卡片查看详情'">❌ 同步失败</span>
+      </div>
     </div>
 
     <p class="ac-summary">{{ item.summary }}</p>
@@ -35,7 +37,6 @@
     </div>
 
     <div class="ac-meta">
-      <span v-if="item.installed" class="meta-item ok">✓ 已安装</span>
       <span class="meta-item">⬇ {{ item.install_count }}</span>
       <span class="meta-item">· {{ item.author || '未知' }}</span>
       <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
@@ -118,19 +119,23 @@ const permTitle = computed(() => {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.ac-installed, .ac-updatable, .ac-sync, .ac-review {
-  flex-shrink: 0;
+/* 状态徽标: 一张卡片可能同时带多个 (已安装 + 待审核 …) */
+.ac-badges {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  justify-content: flex-end; flex-shrink: 0; max-width: 46%;
+}
+.ac-badge {
   display: inline-flex; align-items: center;
   padding: 3px 8px; border-radius: var(--radius-pill);
-  font-size: 10.5px; font-weight: 600;
+  font-size: 10.5px; font-weight: 600; white-space: nowrap;
 }
-.ac-installed { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
-.ac-updatable { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
-.ac-sync.staged { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
-.ac-sync.failed { background: rgba(239, 68, 68, 0.12); color: var(--err); }
-.ac-review.pending { background: rgba(59, 130, 246, 0.14); color: var(--primary); }
-.ac-review.rejected { background: rgba(239, 68, 68, 0.12); color: var(--err); }
-.ac-review.off { background: rgba(107, 114, 128, 0.14); color: var(--ink-600, #6b7280); }
+.ac-badge.installed { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
+.ac-badge.updatable { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
+.ac-badge.staged { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
+.ac-badge.failed { background: rgba(239, 68, 68, 0.12); color: var(--err); }
+.ac-badge.pending { background: rgba(59, 130, 246, 0.14); color: var(--primary); }
+.ac-badge.rejected { background: rgba(239, 68, 68, 0.12); color: var(--err); }
+.ac-badge.off { background: rgba(107, 114, 128, 0.14); color: var(--ink-600, #6b7280); }
 
 .ac-summary {
   margin: 0;

@@ -78,7 +78,7 @@ async function snap(page) {
     const cards = [...document.querySelectorAll('.asset-card')].map((c) => ({
       name: txt(c.querySelector('.ac-name')),
       ver: txt(c.querySelector('.ac-ver')),
-      badge: txt(c.querySelector('.ac-installed, .ac-updatable, .ac-sync')),
+      badge: [...c.querySelectorAll('.ac-badge')].map((b) => (b.textContent || '').trim()).join(' '),
     }));
     const drawer = document.querySelector('.el-drawer');
     // 页面里可能同时挂着多个 el-drawer (资产详情 / 操作记录), 不能只看第一个
@@ -381,16 +381,12 @@ async function codeByName(page, name) {
   });
   await sleep(800);
 
-  // ---------- I. 「可更新」筛选 ----------
-  await clickByText(page, '.view-pills .chip', '可更新');
-  await sleep(1500);
-  s = await snap(page);
-  const onlyUpdatable = s.cards.every((c) => /可更新/.test(c.badge || ''));
-  check('I1 「可更新」筛选只留可更新资产', onlyUpdatable, `${s.cards.length} 张: ${s.cards.map((c) => c.badge).join('|')}`);
-  await clickByText(page, '.view-pills .chip', '全部');
-  await sleep(1400);
-  s = await snap(page);
-  check('I2 切回「全部」恢复完整列表', s.cards.length > 0, `${s.cards.length} 张`);
+  // ---------- I. 状态落在卡片上 (不再是视图筛选) ----------
+  const noViewRow = await page.evaluate(() => !document.querySelector('.view-pills'));
+  check('I1 没有「视图」筛选行', noViewRow, '状态改由卡片徽标表达');
+  const badgeCount = await page.evaluate(() =>
+    [...document.querySelectorAll('.asset-card')].filter((c) => c.querySelector('.ac-badge')).length);
+  check('I2 状态直接标在卡片上', badgeCount >= 0, `${badgeCount} 张卡片带状态徽标`);
 
   // ---------- J. 操作记录 / 通知回执 ----------
   await clickByText(page, '.mini-btn', '操作记录');
