@@ -1,9 +1,16 @@
 <template>
   <div class="market">
-    <!-- ===== 返回广场: 与代码检视 / 智能体详情页保持一致的入口 ===== -->
-    <div class="mk-topbar">
+    <!-- ===== 动作条: 返回 + 主操作 (原来返回条独占一行, 右半屏是空的) ===== -->
+    <div class="mk-actions">
       <button class="back" type="button" @click="$router.push({ name: 'plaza' })">← 返回广场</button>
-      <span class="mt-count">当前 {{ total }} 项</span>
+      <div class="ma-right">
+        <el-tooltip content="谁在什么时候上架/下架/安装过, 以及钉钉通知送没送到" placement="bottom">
+          <button class="mini-btn" @click="auditOpen = true">🕘 操作记录</button>
+        </el-tooltip>
+        <el-tooltip content="把团队沉淀的技能 / 连接器 / 插件上架到 GitLab" placement="bottom">
+          <button class="mini-btn primary" @click="openCreate">＋ 上传资产</button>
+        </el-tooltip>
+      </div>
     </div>
 
     <!-- ===== 同步状态条: 本地已存 ≠ 已共享, 这个差异必须显式暴露 ===== -->
@@ -22,7 +29,13 @@
       <button class="sb-btn ghost" @click="load">刷新</button>
     </div>
 
-    <!-- ===== 类型 Tab: 插件 / 技能 / 连接器 ===== -->
+    <!-- ===== 我提交但还没过审的资产: 给个显眼入口, 免得被埋在列表里 ===== -->
+    <div v-if="sync.my_review_count > 0" class="my-review-bar">
+      <span>📋 你有 <b>{{ sync.my_review_count }}</b> 个资产还没通过审核</span>
+      <button class="mrb-btn" @click="setView('mine')">去看看</button>
+    </div>
+
+    <!-- ===== 类型导航 + 搜索 ===== -->
     <div class="mk-toolbar">
       <div class="kind-tabs">
         <button v-for="k in MARKET_KINDS" :key="k.value"
@@ -32,69 +45,37 @@
           <span class="count">{{ kindCounts[k.value] || 0 }}</span>
         </button>
       </div>
-
-      <div class="toolbar-right">
-        <button class="mini-btn" :class="{ on: filterMode === 'installed' }"
-                :title="filterMode === 'installed' ? '显示全部资产' : '只看我已安装的'"
-                @click="toggleFilter('installed')">
-          <span :class="{ 'tick-off': filterMode !== 'installed' }">✓</span> 已安装
-        </button>
-        <button class="mini-btn" :class="{ on: filterMode === 'updatable' }"
-                :title="filterMode === 'updatable' ? '显示全部资产' : '只看有更新版本的'"
-                @click="toggleFilter('updatable')">
-          <span :class="{ 'tick-off': filterMode !== 'updatable' }">↑</span> 可更新
-        </button>
-        <el-tooltip content="把团队沉淀的技能 / 连接器 / 插件上架到 GitLab" placement="bottom">
-          <button class="mini-btn primary" @click="openCreate">＋ 上传资产</button>
-        </el-tooltip>
-        <el-tooltip content="谁在什么时候上架/下架/安装过, 以及钉钉通知送没送到" placement="bottom">
-          <button class="mini-btn" @click="auditOpen = true">🕘 操作记录</button>
-        </el-tooltip>
-        <div class="search">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
-          </svg>
-          <input v-model="keyword" placeholder="搜索名称、说明或标签" @input="onSearch" />
-        </div>
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+        </svg>
+        <input v-model="keyword" placeholder="搜索名称、说明或标签" @input="onSearch" />
       </div>
     </div>
 
-    <!-- ===== 我提交但还没过审的资产: 给个显眼入口, 免得被埋在列表里 ===== -->
-    <div v-if="sync.my_review_count > 0" class="my-review-bar">
-      <span>📋 你有 <b>{{ sync.my_review_count }}</b> 个资产还没通过审核</span>
-      <button class="mrb-btn" @click="setStatus('mine')">去看看</button>
-    </div>
-
-    <!-- ===== 上架状态筛选 (审核台) ===== -->
-    <div class="mk-status">
-      <span class="ms-label">状态</span>
-      <button v-for="s in statusChips" :key="s.value"
-              class="chip" :class="{ active: statusFilter === s.value }"
-              @click="setStatus(s.value)">
-        {{ s.label }}
-        <span v-if="s.count" class="count">{{ s.count }}</span>
-      </button>
-    </div>
-
-    <!-- ===== 分类 + 排序 ===== -->
+    <!-- ===== 视图 + 分类 + 排序 (三个维度收进两行) ===== -->
     <div class="mk-filters">
-      <div class="chips">
-        <button class="chip" :class="{ active: category === '' }" @click="category = ''; load()">
-          全部 <span class="count">{{ total }}</span>
-        </button>
-        <button class="chip" :class="{ active: category === '__featured' }" @click="category = '__featured'; load()">
-          精选
-        </button>
-        <button v-for="c in MARKET_CATEGORIES" :key="c" class="chip"
-          :class="{ active: category === c }" @click="category = c; load()">
-          {{ c }}
+      <div class="view-pills">
+        <span class="mf-label">视图</span>
+        <button v-for="v in views" :key="v.value"
+                class="chip" :class="{ active: viewMode === v.value }"
+                @click="setView(v.value)">
+          {{ v.label }}
+          <span v-if="v.count" class="count">{{ v.count }}</span>
         </button>
       </div>
-      <select v-model="sortBy" class="sort" @change="load">
-        <option value="hot">热门</option>
-        <option value="new">最新</option>
-        <option value="name">名称</option>
-      </select>
+      <div class="filter-right">
+        <select v-model="category" class="sort cat-sel" @change="load">
+          <option value="">全部分类</option>
+          <option value="__featured">⭐ 精选</option>
+          <option v-for="c in MARKET_CATEGORIES" :key="c" :value="c">{{ c }}</option>
+        </select>
+        <select v-model="sortBy" class="sort" @change="load">
+          <option value="hot">热门</option>
+          <option value="new">最新</option>
+          <option value="name">名称</option>
+        </select>
+      </div>
     </div>
 
     <!-- ===== 加载 / 空态 / 错误 ===== -->
@@ -159,18 +140,28 @@ const kind = ref<MarketKind>('plugin');
 const category = ref('');
 const keyword = ref('');
 const sortBy = ref<'hot' | 'new' | 'name'>('hot');
-/** 列表筛选: 全部 / 已安装 / 可更新 (互斥) */
-const filterMode = ref<'all' | 'installed' | 'updatable'>('all');
-/** 上架状态筛选: ''=全部(默认可见性) / pending / rejected / mine */
-const statusFilter = ref('');
+/**
+ * 「视图」—— 看哪一批资产 (互斥的一组).
+ *
+ * 之前散在两处: 「已安装 / 可更新」在类型 Tab 那一排的右侧, 「待审核 / 已驳回 /
+ * 我提交的」又单独排了一行 —— 本来是同一个维度, 被拆散了才显得乱.
+ * 现在合成一组, 归到一个「视图」筛选行里.
+ */
+type ViewMode = 'all' | 'installed' | 'updatable' | 'pending' | 'rejected' | 'mine';
+const viewMode = ref<ViewMode>('all');
+/** 未按视图过滤的结果 (用来算各视图的计数) */
+const rawItems = ref<AssetItem[]>([]);
 
 const userStore = useUserStore();
 const isAdmin = computed(() => userStore.user?.role === 'admin');
 
-/** 状态筛选的选项 —— 待审核/已驳回 只有管理员用得上 */
-const statusChips = computed(() => {
-  const out: { value: string; label: string; count: number }[] = [
-    { value: '', label: '全部', count: 0 },
+/** 视图选项 —— 待审核/已驳回 是管理员的活, 其余人人可用 */
+const views = computed(() => {
+  const raw = rawItems.value;
+  const out: { value: ViewMode; label: string; count: number }[] = [
+    { value: 'all', label: '全部', count: raw.length },
+    { value: 'installed', label: '已安装', count: raw.filter((i) => i.installed).length },
+    { value: 'updatable', label: '可更新', count: raw.filter((i) => i.updatable).length },
   ];
   if (isAdmin.value) {
     out.push({ value: 'pending', label: '待审核', count: sync.value.awaiting_review_count || 0 });
@@ -180,8 +171,11 @@ const statusChips = computed(() => {
   return out;
 });
 
-function setStatus(v: string) {
-  statusFilter.value = v;
+/** 按状态过滤的视图要交给后端做 (类型维度同时放开, 审核台要一次看全所有类型) */
+const STATUS_VIEWS: ViewMode[] = ['pending', 'rejected', 'mine'];
+
+function setView(v: ViewMode) {
+  viewMode.value = v;
   load();
 }
 
@@ -243,19 +237,20 @@ async function load() {
   try {
     const r = await listAssets({
       // 选了状态筛选就别再按类型卡 —— 审核台要一次看全所有类型的待审资产
-      kind: statusFilter.value ? undefined : kind.value,
+      kind: STATUS_VIEWS.includes(viewMode.value) ? undefined : kind.value,
       category: category.value === '__featured' ? undefined : (category.value || undefined),
       q: keyword.value.trim() || undefined,
       sort: sortBy.value,
-      status: statusFilter.value || undefined,
+      status: STATUS_VIEWS.includes(viewMode.value) ? viewMode.value : undefined,
       limit: 500,
     });
     const rows = r?.items ?? [];
+    rawItems.value = rows;
     items.value = category.value === '__featured'
       ? rows.filter((i) => i.featured)
       : rows;
-    if (filterMode.value === 'installed') items.value = items.value.filter((i) => i.installed);
-    else if (filterMode.value === 'updatable') items.value = items.value.filter((i) => i.updatable);
+    if (viewMode.value === 'installed') items.value = items.value.filter((i) => i.installed);
+    else if (viewMode.value === 'updatable') items.value = items.value.filter((i) => i.updatable);
     total.value = r?.total ?? rows.length;
   } catch (e: any) {
     loadError.value = e?.response?.data?.detail || e?.message || '未知错误';
@@ -352,16 +347,12 @@ function openUpdate(item: AssetItem) {
 function resetFilters() {
   category.value = '';
   keyword.value = '';
-  filterMode.value = 'all';
+  viewMode.value = 'all';
   sortBy.value = 'hot';
   load();
 }
 
-/** 已安装 / 可更新 是互斥的, 再点一次回到"全部" */
-function toggleFilter(m: 'installed' | 'updatable') {
-  filterMode.value = filterMode.value === m ? 'all' : m;
-  load();
-}
+
 
 watch(kind, () => load());
 
@@ -467,10 +458,12 @@ onUnmounted(() => {
 }
 .mrb-btn:hover { background: var(--primary); color: #fff; }
 
-/* ===== 顶部返回条 (与代码检视页 .back 同款) ===== */
-.mk-topbar {
-  display: flex; align-items: center; gap: 12px;
+/* ===== 动作条: 返回 + 主操作 (一行, 两端对齐) ===== */
+.mk-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
 }
+.ma-right { display: flex; align-items: center; gap: 8px; }
 .back {
   background: transparent; border: 1px solid var(--border);
   padding: 6px 12px; border-radius: 8px;
@@ -479,19 +472,19 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .back:hover { background: var(--surface-sunken); color: var(--ink-900); }
-.mt-count { font-size: 11.5px; color: var(--ink-500); }
 
-/* ===== 上架状态筛选 ===== */
-.mk-status {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-}
-.ms-label {
-  font-size: 11.5px; color: var(--ink-500); margin-right: 2px;
+/* ===== 视图筛选 (一行, 与分类/排序同带) ===== */
+.view-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mf-label {
+  font-size: 11.5px; color: var(--ink-500); margin-right: 2px; flex-shrink: 0;
 }
 
 /* ===== 分类 + 排序 ===== */
-.mk-filters { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
-.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.mk-filters {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 14px; flex-wrap: wrap;
+}
+.filter-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .chip {
   background: transparent; border: 1px solid var(--border);
   padding: 5px 12px; border-radius: var(--radius-pill);
@@ -503,6 +496,7 @@ onUnmounted(() => {
 .chip.active { background: var(--primary-grad); border-color: transparent; color: #fff; font-weight: 600; }
 .chip.active .count { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
+.cat-sel { max-width: 150px; }
 .sort {
   background: var(--surface); border: 1px solid var(--border);
   padding: 6px 10px; border-radius: 8px;

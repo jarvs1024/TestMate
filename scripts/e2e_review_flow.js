@@ -196,11 +196,11 @@ async function openPage(browser, token, user) {
   await adm.page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1500);
   const chips = await adm.page.evaluate(() =>
-    [...document.querySelectorAll('.mk-status .chip')].map((c) => c.textContent.replace(/\s+/g, ' ').trim()));
+    [...document.querySelectorAll('.view-pills .chip')].map((c) => c.textContent.replace(/\s+/g, ' ').trim()));
   check('⑥ 管理员看到「待审核」筛选入口', chips.some((c) => c.includes('待审核')), chips.join(' | '));
 
   await adm.page.evaluate(() => {
-    const c = [...document.querySelectorAll('.mk-status .chip')].find((x) => x.textContent.includes('待审核'));
+    const c = [...document.querySelectorAll('.view-pills .chip')].find((x) => x.textContent.includes('待审核'));
     c && c.click();
   });
   await sleep(1800);
@@ -278,7 +278,7 @@ async function openPage(browser, token, user) {
   await sleep(1500);
   // 待审核的资产只在「待审核」筛选里可见 (默认视图按可见性规则只给在架/自己的)
   await adm.page.evaluate(() => {
-    const c = [...document.querySelectorAll('.mk-status .chip')].find((x) => x.textContent.includes('待审核'));
+    const c = [...document.querySelectorAll('.view-pills .chip')].find((x) => x.textContent.includes('待审核'));
     c && c.click();
   });
   await sleep(1800);
@@ -303,7 +303,7 @@ async function openPage(browser, token, user) {
   await sleep(1500);
   // 通过后它回到市场里 —— 切到「全部」+ 它所属的类型(skill)才看得到
   await adm.page.evaluate(() => {
-    const c = [...document.querySelectorAll('.mk-status .chip')].find((x) => x.textContent.includes('全部'));
+    const c = [...document.querySelectorAll('.view-pills .chip')].find((x) => x.textContent.includes('全部'));
     c && c.click();
   });
   await sleep(1000);

@@ -220,7 +220,7 @@ async function codeByName(page, name) {
 
   // ---------- A6. 返回广场 ----------
   const backFound = await page.evaluate(() => {
-    const b = [...document.querySelectorAll('.mk-topbar .back')]
+    const b = [...document.querySelectorAll('.mk-actions .back')]
       .find((x) => x.textContent.includes('返回广场'));
     if (!b) return false;
     b.click();
@@ -382,15 +382,15 @@ async function codeByName(page, name) {
   await sleep(800);
 
   // ---------- I. 「可更新」筛选 ----------
-  await clickByText(page, '.mini-btn', '可更新');
+  await clickByText(page, '.view-pills .chip', '可更新');
   await sleep(1500);
   s = await snap(page);
   const onlyUpdatable = s.cards.every((c) => /可更新/.test(c.badge || ''));
   check('I1 「可更新」筛选只留可更新资产', onlyUpdatable, `${s.cards.length} 张: ${s.cards.map((c) => c.badge).join('|')}`);
-  await clickByText(page, '.mini-btn', '可更新');
-  await sleep(1200);
+  await clickByText(page, '.view-pills .chip', '全部');
+  await sleep(1400);
   s = await snap(page);
-  check('I2 再点一次恢复全部', s.cards.length > 0, `${s.cards.length} 张`);
+  check('I2 切回「全部」恢复完整列表', s.cards.length > 0, `${s.cards.length} 张`);
 
   // ---------- J. 操作记录 / 通知回执 ----------
   await clickByText(page, '.mini-btn', '操作记录');
