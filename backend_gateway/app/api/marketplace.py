@@ -260,11 +260,17 @@ async def _install_map(codes: list[str], client_id: str) -> dict[str, tuple[str,
             )
         ).scalars().all()
     out: dict[str, tuple[str, str, str]] = {}
+    # 同一 code 可能有**多个版本**的安装记录 (每个版本一行), 要取最近装的那个.
+    # ⚠️ 比较必须用 installed_at, 不能拿 tuple 的第 0 项 —— 那是**版本号字符串**,
+    #    datetime 和 str 比较会直接 TypeError.
+    #    (以前一个 code 只有一行, `cur is None` 把右边的比较短路了, 这个坑一直藏着;
+    #     安装记录改成按版本分行后才暴露出来)
+    latest: dict[str, datetime] = {}
     for r in rows:
-        # 同一 code 可能有历史重复行, 取最新的一条
-        cur = out.get(r.code)
-        if cur is None or (r.installed_at or datetime.min) > (cur[0] or datetime.min):
+        ts = r.installed_at or datetime.min
+        if r.code not in out or ts > latest.get(r.code, datetime.min):
             out[r.code] = (r.version, r.status, r.install_path)
+            latest[r.code] = ts
     return out
 
 
@@ -331,7 +337,12 @@ async def list_assets(
             pass
         else:
             # 默认可见性: 在架 ∪ 我提交的 ∪ 我已安装的
-            installed = select(AssetInstall.code).where(AssetInstall.client_id == client_id)
+            # ⚠️ 必须过滤 status == "installed" —— 卸载过的不能再算"已安装",
+            #    否则卸载后下架的资产还赖在列表里 (用户明明已经卸了).
+            installed = select(AssetInstall.code).where(
+                AssetInstall.client_id == client_id,
+                AssetInstall.status == "installed",
+            )
             stmt = stmt.where(
                 or_(
                     Asset.publish_status == "published",
@@ -925,6 +936,43 @@ def _install_files(base: Path, target: Path, kind: str) -> None:
         raise
 
 
+def _remove_install_dirs(paths: list[str], code: str = "") -> list[str]:
+    """删掉服务端安装目录, 并顺手清掉空的版本父目录.
+
+    ⚠️ 两个坑:
+    1. 一个资产可能装过**多个版本** (plugin 是 <plugin_dir>/<code>/<version>/),
+       卸载必须把**每一个**版本的目录都删掉 —— 只删最后一个会留垃圾.
+    2. 删掉版本目录后, 空的 <code>/ 父目录也得清掉, 否则留下一个空壳目录.
+    """
+    removed: list[str] = []
+    for raw in paths:
+        if not raw:
+            continue
+        try:
+            p = Path(raw)
+            if p.is_dir():
+                shutil.rmtree(p)
+                if p.exists():
+                    logger.error("清理安装目录后仍存在 path=%s", raw)
+                    continue
+                removed.append(raw)
+                parent = p.parent
+                if code and parent.name == code and parent.is_dir():
+                    # 先清掉残留的安装锁文件 (老版本把锁放在 code 目录里),
+                    # 否则目录非空 → rmdir 失败 → 留个空壳
+                    for f in list(parent.iterdir()):
+                        if f.is_file() and f.name.startswith(".install-"):
+                            try:
+                                f.unlink()
+                            except OSError:
+                                pass
+                    if not any(parent.iterdir()):
+                        parent.rmdir()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("清理安装目录失败 path=%s err=%s", raw, e)
+    return removed
+
+
 @router.post("/{code}/install")
 async def install_asset(
     code: str,
@@ -944,6 +992,21 @@ async def install_asset(
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
         if a.kind == "mcp":
             raise HTTPException(status_code=409, detail="连接器暂不支持一键安装")
+        # ⚠️ 请求的版本必须与资产当前版本一致.
+        #    落盘用的是**资产当前版本**的内容与目录 (工作区里只有当前版本),
+        #    而安装记录写的是**请求的**版本 —— 两者不一致时会出现:
+        #      请求装 1.3.0 → 实际把 1.2.0 的文件装进 1.2.0 目录,
+        #      记录却写"已安装 1.3.0" → 之后「可更新」不再提示, 用户永远装不到新版,
+        #      而且全程没有任何报错.
+        #    所以不一致就直接拒掉, 提示刷新 (前端点的永远是当前版本, 不会误伤).
+        if version and version != a.version:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"资产 {code} 当前版本是 {a.version}, 与请求的 {version} 不一致, "
+                    "请刷新后重试"
+                ),
+            )
 
         written = ""
         if channel == "server":
@@ -960,11 +1023,16 @@ async def install_asset(
                 "~/.qoder-cn/plugins/cache/qoder-marketplace",
             )
             if a.kind == "skill":
-                target = resolve_host_path(skill_raw) / a.code
+                install_root = resolve_host_path(skill_raw)
+                target = install_root / a.code
             else:
-                target = resolve_host_path(plugin_raw) / a.code / a.version
+                install_root = resolve_host_path(plugin_raw)
+                target = install_root / a.code / a.version
             try:
-                with git_sync._FileLock(target.parent / f".install-{a.code}.lock"):
+                # ⚠️ 锁文件放**安装根目录**下, 不能放 target.parent ——
+                #    plugin 的 target.parent 是 <code>/ 目录, 锁文件会落在里面,
+                #    卸载时该目录就永远删不掉 (只剩一个带锁文件的空壳).
+                with git_sync._FileLock(install_root / f".install-{a.code}.lock"):
                     _install_files(base, target, a.kind)
             except pkg.PackageError as e:
                 # 包本身不合规 (缺 SKILL.md / plugin.json) —— 是资产的问题, 不是服务端的
@@ -976,18 +1044,28 @@ async def install_asset(
         else:
             written = install_path
 
+        # 安装记录按 **(code, version, client_id)** 定位, 不能只按 (code, client_id).
+        # ⚠️ 以前只按 (code, client_id) 找 —— 装第二个版本会把第一条**覆盖**,
+        #    旧版本的 install_path 就此丢失. plugin 装过多个版本时, 旧版本目录
+        #    (…/<code>/<version>/) 谁都不知道它在哪儿, 卸载/删资产都清不掉,
+        #    永远留在用户磁盘上.
+        target_version = version or a.version
         row = (
             await session.execute(
                 select(AssetInstall).where(
-                    AssetInstall.code == code, AssetInstall.client_id == client_id
+                    AssetInstall.code == code,
+                    AssetInstall.version == target_version,
+                    AssetInstall.client_id == client_id,
                 )
             )
         ).scalars().first()
         if row is None:
-            row = AssetInstall(code=code, client_id=client_id, user_id=_user.id)
+            row = AssetInstall(
+                code=code, client_id=client_id, user_id=_user.id, version=target_version,
+            )
             session.add(row)
             a.install_count = (a.install_count or 0) + 1
-        row.version = version or a.version
+        row.version = target_version
         row.client_kind = client_kind
         row.status = "installed"
         row.install_path = written
@@ -1021,20 +1099,16 @@ async def uninstall_asset(
         ).scalars().all()
         if not rows:
             return {"ok": True, "code": code, "removed": False}
-        removed_path = ""
+        removed_paths: list[str] = []
         for row in rows:
             row.status = "uninstalled"
             if row.install_path and row.channel == "server":
-                removed_path = row.install_path
+                # ⚠️ 要**收集全部**, 不能只留最后一个 ——
+                #    plugin 装过多个版本时每个版本一个目录, 只删一个会留垃圾.
+                removed_paths.append(row.install_path)
         await session.commit()
 
-        if removed_path:
-            try:
-                p = Path(removed_path)
-                if p.is_dir() and p.exists():
-                    shutil.rmtree(p, ignore_errors=True)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("卸载时删除目录失败 path=%s err=%s", removed_path, e)
+        _remove_install_dirs(removed_paths, code=code)
 
         await _audit(
             session, code=code, action="uninstall", actor=_user,
@@ -1320,6 +1394,7 @@ async def delete_asset(
             ) from e
 
         # 3) 推送成功 → 动 DB
+        install_dirs: list[str] = []
         async with AsyncSessionLocal() as session:
             a = await session.get(Asset, asset_id)
             installs = (
@@ -1328,6 +1403,10 @@ async def delete_asset(
                 )
             ).scalars().all()
             removed_installs = len(installs)
+            install_dirs = [
+                r.install_path for r in installs
+                if r.install_path and r.channel == "server"
+            ]
             for r in installs:
                 await session.delete(r)
             if a is not None:
@@ -1338,6 +1417,10 @@ async def delete_asset(
                 detail={"git_path": git_path, "removed_installs": removed_installs},
             )
             await session.commit()
+
+        # 4) 清掉用户机器上的服务端安装目录 —— "彻底删除"就不该在磁盘留垃圾.
+        #    资产没了之后就没法再走卸载接口了, 残留目录将永远没人能清.
+    _remove_install_dirs(install_dirs, code=code)
 
     await notify_market(
         "delete", name=asset_name, version=version, actor=_user.username,
