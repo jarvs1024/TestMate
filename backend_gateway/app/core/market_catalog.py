@@ -185,6 +185,8 @@ def asset_to_index_entry(a: Asset) -> dict[str, Any]:
         "bindings": dict(a.bindings or {}),
         "git_path": a.git_path,
         "install_count": a.install_count,
+        # 生命周期状态也在索引里 —— 上下架必须能被别的实例看到
+        "publish_status": a.publish_status or "published",
         "updated_at": a.updated_at.isoformat() if a.updated_at else "",
     }
 
@@ -202,10 +204,13 @@ def render_index(assets: list[Asset]) -> str:
     return render_index_entries([asset_to_index_entry(a) for a in assets])
 
 
-async def stage_index(session, override: dict[str, Any] | None = None) -> str:
+async def stage_index(session, override: dict[str, Any] | None = None,
+                      exclude: set[str] | None = None) -> str:
     """渲染 index.json 并写入本地工作区, 返回写完的内容.
 
     override 是本次要新增/更新的资产条目 (以 code 为键合并进去).
+    exclude 是本次要从索引里**剔除**的 code —— 硬删时用: DB 行还没删,
+    但 index.json 必须先不含它, 否则会把资产又提交回去.
     DB 是索引的真相源, 工作区里的 index.json 是它的物化 —— 下一次 git commit 会带上.
     """
     result = await session.execute(select(Asset))
@@ -213,6 +218,8 @@ async def stage_index(session, override: dict[str, Any] | None = None) -> str:
     entries = {a.code: asset_to_index_entry(a) for a in assets}
     if override and override.get("code"):
         entries[override["code"]] = override
+    for c in (exclude or ()):
+        entries.pop(c, None)
     ordered = sorted(entries.values(), key=lambda e: e.get("code", ""))
     text = render_index_entries(ordered)
     git_sync.write_text(INDEX_PATH, text)
@@ -284,6 +291,8 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         a.install_steps = list(e.get("install_steps") or [])
         a.bindings = dict(e.get("bindings") or {})
         a.git_path = e.get("git_path") or ""
+        # 上下架状态: 索引里没有这一项的旧数据按 published 处理
+        a.publish_status = e.get("publish_status") or "published"
         if e.get("install_count") is not None:
             a.install_count = int(e["install_count"])
         if e.get("updated_at"):

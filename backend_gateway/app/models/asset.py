@@ -130,6 +130,33 @@ class AssetAudit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class AssetNotification(Base):
+    """钉钉通知的**送达回执**.
+
+    通知原本是 fire-and-forget 的: 发出去了没人知道成没成. 这里把每次尝试落库 ——
+    成功记 sent, 失败记 failed + 错误原因, 后台再按指数退避重试.
+
+    为什么必须有: 上架/下架/更新是**要通知全队**的动作, 静默失败等于没通知.
+    """
+
+    __tablename__ = "asset_notifications"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    event: Mapped[str] = mapped_column(String(32), nullable=False, default="", index=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
+    asset_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # pending(待发) / sent(已送达) / failed(最终失败)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 消息正文 —— 重试时直接复用, 不用重新拼
+    title: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class AssetInstall(Base):
     """本机安装记录 — 这是**本地态**, 永远不进 GitLab (每台机器不同)."""
 

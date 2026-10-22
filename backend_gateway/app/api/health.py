@@ -69,19 +69,107 @@ async def health_ready(response: Response) -> dict:
 
     docker compose healthcheck / k8s readinessProbe 用这个:
     "要不要把流量路由到这台",不通就先剔出去等修。
+
+    市场链路 (GitLab / 同步积压) 只**观测**不参与 503 判定 ——
+    GitLab 挂了不该让整个 TestMate (知识库 / 代码检视) 一起下线.
     """
     mysql_ok, mysql_err = await _check_mysql()
     redis_ok, redis_err = await _check_redis()
     overall_ok = mysql_ok and redis_ok
     if not overall_ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    market = await _check_marketplace()
     return {
         "status": "ok" if overall_ok else "degraded",
         "checks": {
             "mysql": {"ok": mysql_ok, "error": mysql_err or None},
             "redis": {"ok": redis_ok, "error": redis_err or None},
+            "marketplace": market,
         },
     }
+
+
+# ---------------- 市场链路 ----------------
+
+# GitLab 探针走 SSH 握手, 不能每次健康检查都打 —— 缓存 30s
+_market_probe_cache: dict = {}
+_market_probe_ttl = 30.0
+
+
+async def _probe_gitlab() -> Tuple[bool, str]:
+    """探 GitLab 远端可达性 (ls-remote). 带 30s 缓存."""
+    now = time.monotonic()
+    cached = _market_probe_cache.get("gitlab")
+    if cached and now - cached["ts"] < _market_probe_ttl:
+        return cached["ok"], cached["err"]
+
+    ok, err = True, ""
+    try:
+        from app.core import git_sync
+
+        rc, so, se = git_sync._run_git(
+            ["ls-remote", "--heads", git_sync.GIT_REMOTE],
+            cwd=git_sync.WORKSPACE, timeout=8,
+        )
+        if rc != 0:
+            ok, err = False, (se or so).strip()[:200]
+    except Exception as e:  # noqa: BLE001
+        ok, err = False, f"{type(e).__name__}: {e}"
+
+    _market_probe_cache["gitlab"] = {"ok": ok, "err": err, "ts": now}
+    return ok, err
+
+
+async def _check_marketplace() -> dict:
+    """市场链路状态: GitLab 可达性 + 同步任务积压."""
+    out: dict = {
+        "ok": True,
+        "gitlab": {"ok": True, "error": None},
+        "failed_jobs": 0,
+        "pending_jobs": 0,
+        "unpublished": 0,
+        "error": None,
+    }
+    try:
+        git_ok, git_err = await _probe_gitlab()
+        out["gitlab"] = {"ok": git_ok, "error": git_err or None}
+    except Exception as e:  # noqa: BLE001
+        out["gitlab"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    try:
+        from sqlalchemy import func, select
+
+        from app.db.session import AsyncSessionLocal
+        from app.models.asset import Asset, AssetJob
+
+        async with AsyncSessionLocal() as session:
+            failed = (
+                await session.execute(
+                    select(func.count()).select_from(AssetJob)
+                    .where(AssetJob.status == "failed")
+                )
+            ).scalar() or 0
+            pending = (
+                await session.execute(
+                    select(func.count()).select_from(AssetJob)
+                    .where(AssetJob.status.in_(("pending", "staged", "syncing")))
+                )
+            ).scalar() or 0
+            unpublished = (
+                await session.execute(
+                    select(func.count()).select_from(Asset)
+                    .where(Asset.publish_status == "unpublished")
+                )
+            ).scalar() or 0
+        out["failed_jobs"] = int(failed)
+        out["pending_jobs"] = int(pending)
+        out["unpublished"] = int(unpublished)
+    except Exception as e:  # noqa: BLE001
+        out["error"] = f"{type(e).__name__}: {e}"
+
+    out["ok"] = bool(out["gitlab"]["ok"]) and out["failed_jobs"] == 0
+    return out
+
 
 
 # ---------------- external services ----------------

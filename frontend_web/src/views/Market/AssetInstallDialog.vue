@@ -62,11 +62,17 @@
                 :title="error" show-icon />
       <el-alert v-if="done" type="success" :closable="false" class="inst-err"
                 :title="doneMsg" show-icon />
+
+      <!-- 装不上: 当场说清原因, 别让用户点了才知道 -->
+      <el-alert v-if="target && !target.installable" type="warning" :closable="false"
+                class="inst-err" :title="target.install_block_reason" show-icon />
     </template>
 
     <template #footer>
       <el-button @click="visible = false">取消</el-button>
-      <el-button type="primary" :loading="installing" :disabled="!target" @click="doInstall">
+      <el-button :disabled="!installCmd" @click="copyCmd">复制安装命令</el-button>
+      <el-button type="primary" :loading="installing"
+                 :disabled="!target || !target.installable" @click="doInstall">
         开始安装
       </el-button>
     </template>
@@ -101,6 +107,35 @@ const doneMsg = ref('');
 const done = ref(false);
 
 const canFrontend = computed(() => supportsFileSystemAccess());
+
+/** 手抄命令: 给不能用 File System Access API 的浏览器 (非 Chromium) 一条退路 */
+const installCmd = computed(() => {
+  const t = target.value;
+  if (!t) return '';
+  const base = window.location.origin;
+  const url = `${base}/api/v1/assets/${encodeURIComponent(t.code)}/versions/${encodeURIComponent(t.version)}/download`;
+  const dir = t.kind === 'skill'
+    ? `${t.skill_dir_host || '~/.qoder-cn/skills'}/${t.code}`
+    : `${t.plugin_dir_host || '~/.qoder-cn/plugins/cache/qoder-marketplace'}/${t.code}/${t.version}`;
+  return [
+    `# 取包 (需要 TestMate token: POST /api/v1/auth/login 拿 access_token)`,
+    `curl -fL -H "Authorization: Bearer $TOKEN" "${url}" -o ${t.code}-${t.version}.zip`,
+    `mkdir -p "${dir}"`,
+    `unzip -oq ${t.code}-${t.version}.zip -d "${dir}"`,
+  ].join('\n');
+});
+
+async function copyCmd() {
+  const cmd = installCmd.value;
+  if (!cmd) return;
+  try {
+    await navigator.clipboard.writeText(cmd);
+    ElMessage.success('安装命令已复制');
+  } catch {
+    // 剪贴板不可用 (非安全上下文) —— 退回到选中文本
+    ElMessage.warning('浏览器不允许写剪贴板, 请手动选中复制');
+  }
+}
 
 const permRows = computed(() => {
   const p = props.asset?.permissions || {};

@@ -175,6 +175,8 @@ async def sync_once() -> dict[str, Any]:
             to_checkout: list[str] = []
             conflicts: list[dict] = []
             changed = 0
+            # 远端胜出的资产 —— 它们的 publish_status 以远端 manifest 为准
+            remote_won: dict[str, str] = {}
 
             for code, rman in remote.items():
                 lman = local.get(code)
@@ -187,6 +189,7 @@ async def sync_once() -> dict[str, Any]:
                     ]
                     to_checkout.extend(paths)
                     changed += 1
+                    remote_won[code] = rman.get("publish_status") or "published"
                     if lman is not None:
                         conflicts.append(
                             {
@@ -223,6 +226,17 @@ async def sync_once() -> dict[str, Any]:
         # ---- 回灌 DB 镜像 + 写冲突审计 ----
         async with AsyncSessionLocal() as session:
             added, updated = await apply_index_to_db(session)
+            # 远端 manifest 的 publish_status 是权威 ——
+            # 别的实例把这个资产下架了, 本地也要跟上 (index.json 是派生物, 可能还没同步)
+            for code, ps in remote_won.items():
+                a = (
+                    await session.execute(select(Asset).where(Asset.code == code))
+                ).scalar_one_or_none()
+                if a is not None and a.publish_status != ps:
+                    logger.info(
+                        "sync_puller 同步上下架状态 code=%s %s → %s", code, a.publish_status, ps,
+                    )
+                    a.publish_status = ps
             for c in conflicts:
                 session.add(
                     AssetAudit(
@@ -233,7 +247,7 @@ async def sync_once() -> dict[str, Any]:
                         detail=c,
                     )
                 )
-            if conflicts:
+            if conflicts or remote_won:
                 await session.commit()
 
         _puller.has_remote_updates = changed > 0

@@ -112,6 +112,43 @@ export interface InstallTarget {
   plugin_dir: string;
   target: string;
   server_channel_available: boolean;
+  /** 宿主路径 (原始配置值, 如 ~/.qoder-cn/skills) —— 复制安装命令时用 */
+  skill_dir_host: string;
+  plugin_dir_host: string;
+  /** 这个包现在能不能装 —— false 时前端应把按钮置灰并说明原因 */
+  installable: boolean;
+  install_block_reason: string;
+}
+
+/** 上传前的包体检结果 */
+export interface PackagePreview {
+  ok: boolean;
+  filename: string;
+  size_bytes: number;
+  kind: string;
+  total_files: number;
+  files: string[];
+  doc_file: string;
+  has_skill_md: boolean;
+  has_plugin_manifest: boolean;
+  has_mcp_config: boolean;
+  installable: boolean;
+  block_reason: string;
+  issues: string[];
+  warnings: string[];
+}
+
+/** 钉钉通知回执 */
+export interface AssetNotification {
+  id: number;
+  event: string;
+  code: string;
+  asset_name: string;
+  status: 'pending' | 'sent' | 'failed' | string;
+  attempts: number;
+  error: string;
+  last_attempt_at: string | null;
+  created_at: string | null;
 }
 
 export interface SyncStatus {
@@ -167,6 +204,9 @@ async function apiPost<T>(url: string, body?: unknown): Promise<T> {
 async function apiPut<T>(url: string, body?: unknown): Promise<T> {
   return (await request.put(url, body)) as unknown as T;
 }
+async function apiDelete<T>(url: string, params?: Record<string, unknown>): Promise<T> {
+  return (await request.delete(url, { params })) as unknown as T;
+}
 
 // ---------- 读 ----------
 
@@ -217,6 +257,26 @@ export async function listMyUpdates(): Promise<AssetListResp> {
 
 export async function listAudits(code?: string): Promise<{ items: AssetAudit[]; total: number }> {
   return apiGet('/assets/audits', code ? { code, limit: 50 } : { limit: 50 });
+}
+
+/** 钉钉通知送达回执 */
+export async function listNotifications(limit = 50): Promise<{ items: AssetNotification[]; total: number }> {
+  return apiGet('/assets/notifications', { limit });
+}
+
+/** 上传前体检: 这个包装不装得上 */
+export async function previewPackage(file: File, kind: string): Promise<PackagePreview> {
+  const fd = new FormData();
+  fd.append('package', file, file.name);
+  fd.append('kind', kind);
+  return (await request.post('/assets/preview-package', fd)) as unknown as PackagePreview;
+}
+
+/** 彻底删除资产 (不只是下架) */
+export async function deleteAsset(code: string, comment = ''): Promise<{
+  ok: boolean; code: string; removed_installs: number; commit_sha: string;
+}> {
+  return apiDelete('/assets/' + encodeURIComponent(code), { comment });
 }
 
 export async function getJob(id: number): Promise<AssetJob> {

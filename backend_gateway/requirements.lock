@@ -1,0 +1,69 @@
+# TestMate Backend — 依赖锁文件 (完全固定版本)
+#
+# 为什么要有它:
+#   requirements.txt 用的是 `>=`, 每次重建镜像装到的都是**当时最新**的版本.
+#   历史上两次重建分别踩到过不同的坑 (如 sqlalchemy 2.1 把 greenlet 拆成可选
+#   依赖, 不显式装就在 import 时报 ImportError). 依赖漂移导致的故障极难复现.
+#
+# 怎么维护:
+#   1. 改 requirements.txt 里的**直接依赖** (不写版本也行, 只管顶层)
+#   2. 重建镜像, 进容器执行 `pip freeze` 得到实际装上的版本集
+#   3. 把结果同步回本文件
+#   本文件的版本来自**已验证可运行**的环境, 不是凭空猜的.
+#
+# 与 requirements.txt 的关系:
+#   requirements.txt      —— 顶层直接依赖 (人读, 声明"我们依赖什么")
+#   requirements.lock     —— 完整闭包 + 精确版本 (机器读, 保证可复现构建)
+#
+# ⚠️ 改这里之后必须重建镜像并跑一遍冒烟, 别只改文件不验证.
+
+# ---- 直接依赖 ----
+fastapi==0.143.2
+uvicorn[standard]==0.54.0
+pydantic==2.14.1
+pydantic-settings==2.16.0
+sqlalchemy[asyncio]==2.1.4
+aiomysql==0.3.2
+redis==8.1.0
+httpx==0.28.1
+python-jose[cryptography]==3.5.0
+bcrypt==4.3.0
+python-multipart==0.0.32
+paramiko==5.0.0
+structlog==26.1.0
+alembic==1.20.0
+
+# ---- 传递依赖 (由上面拉进来, 固定版本防止上游漂移) ----
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.7.22
+cffi==2.1.1
+click==8.5.0
+cryptography==50.0.2
+ecdsa==0.19.2
+greenlet==3.5.6
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.9.0
+idna==3.20
+invoke==3.0.3
+Mako==1.4.3
+MarkupSafe==3.0.4
+opentelemetry-api==1.45.1
+packaging==26.3
+pyasn1==0.6.4
+pycparser==3.11
+pydantic_core==2.50.1
+PyMySQL==1.2.3
+PyNaCl==1.6.2
+python-dotenv==1.2.4
+PyYAML==6.0.3
+rsa==4.9.1
+six==1.17.0
+starlette==1.8.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvloop==0.23.0
+watchfiles==1.3.0
+websockets==17.2

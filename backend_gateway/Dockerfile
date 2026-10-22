@@ -22,12 +22,15 @@ RUN apt-get update \
         libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 先 COPY requirements 利用层缓存:依赖不变就不重装
-COPY requirements.txt .
+# 先 COPY 依赖文件 (requirements.lock 才是真正决定装什么的那份) 利用层缓存
+COPY requirements.txt requirements.lock ./
 
 # pip install --user 把包装到 /root/.local,runtime 阶段从这里 COPY 过去
 # --no-cache-dir 不缓存 pip 下载的 wheel
-RUN pip install --no-cache-dir --user -r requirements.txt
+# ⚠️ 用 requirements.lock 而不是 requirements.txt:
+#    txt 只声明顶层依赖且不写版本, 每次构建装到的都是"当时最新" —— 历史上两次
+#    重建分别踩到过依赖漂移导致的坑. lock 里是**已验证可运行**的精确版本集.
+RUN pip install --no-cache-dir --user -r requirements.lock
 
 # ===== Stage 2: runtime =====
 FROM python:3.11-slim

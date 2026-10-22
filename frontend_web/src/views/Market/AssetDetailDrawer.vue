@@ -104,6 +104,9 @@
                    plain @click="togglePublish">
           {{ unpub ? '重新上架' : '下架' }}
         </el-button>
+        <el-button v-if="canEdit" class="ad-btn danger" @click="doDelete">
+          彻底删除
+        </el-button>
         <span v-if="item.updatable" class="ad-upd">已安装旧版本, 可更新</span>
       </div>
 
@@ -124,7 +127,7 @@
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  getAssetDoc, publishAsset, uninstallAsset, unpublishAsset,
+  deleteAsset, getAssetDoc, publishAsset, uninstallAsset, unpublishAsset,
   type AssetDoc, type AssetItem,
 } from '@/api/assets';
 import { renderMarkdown } from '@/utils/markdown';
@@ -244,6 +247,42 @@ async function togglePublish() {
     emit('changed');
   } catch (e: any) {
     ElMessage.error('操作失败: ' + (e?.response?.data?.detail || e?.message));
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** 彻底删除 —— 不可恢复, 要求手打 code 确认 */
+async function doDelete() {
+  if (!props.item) return;
+  const code = props.item.code;
+  const name = props.item.name;
+  try {
+    await ElMessageBox.prompt(
+      `删除「${name}」不可恢复: GitLab 上的文件、索引与安装记录都会一并消失。\n`
+      + `已安装的用户本机文件不会被清理。\n请输入资产 code「${code}」以确认。`,
+      '彻底删除资产',
+      {
+        type: 'error',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+        inputPlaceholder: code,
+        inputValidator: (v: string) => (v || '').trim() === code || '输入与 code 不一致',
+      },
+    );
+  } catch {
+    return;  // 用户取消
+  }
+  busy.value = true;
+  try {
+    const r = await deleteAsset(code, '用户从市场页删除');
+    ElMessage.success(
+      `已删除${r.removed_installs ? `, 清理 ${r.removed_installs} 条安装记录` : ''}`,
+    );
+    emit('update:modelValue', false);
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + (e?.response?.data?.detail || e?.message));
   } finally {
     busy.value = false;
   }
@@ -379,6 +418,8 @@ async function togglePublish() {
 
 .ad-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .ad-btn { flex: 1; min-width: 120px; }
+.ad-btn.danger { color: var(--err); border-color: rgba(239, 68, 68, 0.4); }
+.ad-btn.danger:hover { border-color: var(--err); background: rgba(239, 68, 68, 0.08); color: var(--err); }
 .ad-upd { font-size: 11px; color: var(--warn); font-weight: 600; }
 
 .ad-proto-note {

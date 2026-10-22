@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -29,7 +30,8 @@ from sqlalchemy import select, or_
 from app.api.auth import get_current_user
 from app.core import git_sync, pkg
 from app.core.asset_jobs import enqueue, retry_job, start_worker
-from app.core.dingtalk import notify_market
+from app.core.asset_locks import code_lock
+from app.core.dingtalk import list_notifications, notify_market
 from app.core.market_catalog import (
     CATEGORY_SLUGS,
     INDEX_PATH,
@@ -47,6 +49,7 @@ from app.models.user import User
 from app.schemas.asset import (
     AssetAuditListOut,
     AssetAuditOut,
+    AssetDeleteOut,
     AssetDocOut,
     AssetFileBundleOut,
     AssetFileContent,
@@ -56,7 +59,9 @@ from app.schemas.asset import (
     AssetJobListOut,
     AssetJobOut,
     AssetListOut,
+    AssetNotificationListOut,
     AssetOut,
+    PackagePreviewOut,
     ProbeOut,
     SyncOut,
     SyncStatusOut,
@@ -334,6 +339,20 @@ async def sync_status(
     )
 
 
+# ---------- 通知回执 ----------
+# ⚠️ 必须注册在 `GET /{code}` **之前** —— FastAPI 按注册顺序匹配路由,
+#    放在后面会被 `/{code}` 抢先命中 (表现为 404 "资产 notifications 不存在").
+
+@router.get("/notifications", response_model=AssetNotificationListOut)
+async def list_notification_receipts(
+    limit: int = Query(50, ge=1, le=200),
+    _user: User = Depends(get_current_user),
+) -> AssetNotificationListOut:
+    """钉钉通知的送达回执 (最近 N 条)."""
+    items, total = await list_notifications(limit)
+    return AssetNotificationListOut(items=items, total=total)
+
+
 @router.get("/me/installed", response_model=AssetListOut)
 async def my_installed(
     client_id: str = Query("local"),
@@ -578,6 +597,10 @@ async def get_install_target(
 
     enabled = (await _setting("marketplace.install.enabled", "true")).lower()
     server_ok = enabled in ("true", "1", "yes", "on")
+
+    # 这个包现在装不装得上 —— 前端据此把按钮置灰, 不用等点了才知道
+    files = _content_files(git_sync.WORKSPACE / a.git_path)
+    block_reason = _install_block_reason(a.kind, files)
     return AssetInstallTargetOut(
         code=a.code,
         kind=a.kind,
@@ -586,7 +609,103 @@ async def get_install_target(
         plugin_dir=str(plugin_dir),
         target=str(target),
         server_channel_available=server_ok,
+        skill_dir_host=skill_raw,
+        plugin_dir_host=plugin_raw,
+        installable=not block_reason,
+        install_block_reason=block_reason,
     )
+
+
+# ---------- 包预检 (上传前体检) ----------
+
+@router.post("/preview-package", response_model=PackagePreviewOut)
+async def preview_package(
+    package: UploadFile = File(...),
+    kind: str = Form(""),
+    _user: User = Depends(get_current_user),
+) -> PackagePreviewOut:
+    """上传前体检: 这个包装不装得上?
+
+    走的是**和真正上传完全相同的解包路径** (pkg.extract_package), 所以体检结论
+    就是提交后的结论 —— 不会出现"体检说没问题, 提交才被拒".
+    """
+    data = await package.read()
+    filename = package.filename or "package.zip"
+    out = PackagePreviewOut(filename=filename, size_bytes=len(data), kind=kind)
+
+    tmp = Path(tempfile.mkdtemp(prefix="tm-preview-"))
+    try:
+        try:
+            extracted = pkg.extract_package(data, filename, tmp)
+        except pkg.PackageError as e:
+            out.ok = False
+            out.issues.append(f"包不合规: {e}")
+            return out
+
+        files = extracted.files
+        out.ok = True
+        out.total_files = len(files)
+        out.files = files[:200]
+        names = [f.rsplit("/", 1)[-1] for f in files]
+        out.has_skill_md = "SKILL.md" in names
+        out.has_plugin_manifest = any(
+            n == "plugin.json" or ".qoder-plugin" in f.split("/")[:-1]
+            for f, n in zip(files, names)
+        )
+        out.has_mcp_config = any(n == ".mcp.json" for n in names)
+
+        # 展示文档: skill→SKILL.md, plugin/mcp→README.md
+        want = "SKILL.md" if kind == "skill" else "README.md"
+        out.doc_file = pkg.find_doc_file(files, kind) or ""
+        if not out.doc_file:
+            out.issues.append(
+                f"缺少展示文档 {want} (技能包需要 SKILL.md, 插件包需要 README.md)"
+            )
+
+        reason = _install_block_reason(kind or "plugin", files)
+        out.installable = not reason
+        out.block_reason = reason
+
+        # 安全提示: 包里带了不该进仓库的东西 (解包阶段已硬拦, 这里只做软提示)
+        for f in files:
+            low = f.lower()
+            if low.endswith((".env", ".pem", ".key", ".p12")) or ".ssh/" in low:
+                out.warnings.append(f"包含敏感文件, 提交前请确认: {f}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
+
+def _content_files(base: Path) -> list[str]:
+    """资产工作区里的内容文件 (相对 files_root 的路径), 用于判断"这个包装不装得上"."""
+    root = pkg.files_root(base)
+    if not root.is_dir():
+        return []
+    return [p.relative_to(root).as_posix() for p in pkg.content_files(base)]
+
+
+def _install_block_reason(kind: str, files: list[str]) -> str:
+    """这个包按 kind 能不能装? 不能就返回原因 (空串 = 能装).
+
+    判定口径必须与 `_install_files` 里落盘前的那道校验**完全一致** ——
+    否则会出现"前端说能装, 点了却 422"的割裂.
+    """
+    if kind == "mcp":
+        return "连接器不支持一键安装, 请在宿主 MCP 配置里手动添加"
+    names = [f.rsplit("/", 1)[-1] for f in files]
+    if kind == "skill":
+        if "SKILL.md" not in names:
+            return "技能包内没有 SKILL.md"
+        return ""
+    # plugin: 需要 .qoder-plugin/ 目录或 plugin.json
+    for f, n in zip(files, names):
+        if n == "plugin.json":
+            return ""
+        parts = f.split("/")
+        if ".qoder-plugin" in parts[:-1]:
+            return ""
+    return "插件包内没有 .qoder-plugin/plugin.json"
 
 
 def _install_files(base: Path, target: Path, kind: str) -> None:
@@ -746,40 +865,103 @@ async def uninstall_asset(
 
 # ---------- 上架 / 下架 ----------
 
-@router.post("/{code}/unpublish")
-async def unpublish_asset(
+async def _set_publish_state(
+    *,
     code: str,
-    comment: str = Form(""),
-    _user: User = Depends(require_publisher),
+    publish_status: str,
+    action: str,
+    comment: str,
+    user: User,
 ) -> dict[str, Any]:
-    """下架: 标记 + 从 index.json 移除, 但**保留文件** (在用用户要能看到"已下架")."""
+    """上下架 —— 改 DB + 写单资产 manifest + 更新 index.json + **提交到 GitLab**.
+
+    为什么必须提交到 GitLab:
+      上下架只改资产文件, 改的是 index.json (派生物) 与 manifest.json (权威).
+      不提交的话, 别的 TestMate 实例永远不知道这个资产被下架了 —— 共享市场就废了.
+      所以这里也建 job, 走同一条 commit + push 队列.
+
+    文件**保留** —— 在用的人还能继续用, 只是列表里标「已下架」.
+    """
     async with AsyncSessionLocal() as session:
         a = (
             await session.execute(select(Asset).where(Asset.code == code))
         ).scalar_one_or_none()
         if a is None:
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-        if a.publish_status == "unpublished":
-            return {"ok": True, "code": code, "publish_status": "unpublished"}
+        if a.publish_status == publish_status:
+            return {
+                "ok": True, "code": code, "publish_status": publish_status,
+                "changed": False,
+            }
 
-        a.publish_status = "unpublished"
-        await session.commit()
-        # index.json 里移除该条目 (派生物, 权威是 manifest)
-        async with AsyncSessionLocal() as s2:
-            idx = await read_index()
-            entries = (idx or {}).get("assets") or []
-            entries = [e for e in entries if e.get("code") != code]
-            from app.core.market_catalog import render_index_entries
-
-            git_sync.write_text(INDEX_PATH, render_index_entries(entries))
-
-        await _audit(session, code=code, action="unpublish", actor=_user,
-                     asset_id=a.id, comment=comment)
+        a.publish_status = publish_status
         await session.commit()
 
+        # 权威是单资产 manifest.json —— 生命周期状态也写进去
+        manifest_path = f"{a.git_path}/manifest.json"
+        raw = git_sync.read_text(manifest_path)
+        try:
+            manifest = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            manifest = {}
+        if not isinstance(manifest, dict):
+            manifest = {}
+        manifest["publish_status"] = publish_status
+        git_sync.write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2))
+
+        # index.json 是派生物, 从 DB 重新渲染 (现在它带 publish_status)
+        await stage_index(session, asset_to_index_entry(a))
+
+        await _audit(session, code=code, action=action, actor=user,
+                     asset_id=a.id, comment=comment,
+                     detail={"publish_status": publish_status, "version": a.version})
+        await session.commit()
+
+        job = AssetJob(
+            action=action,
+            status="staged",
+            code=a.code,
+            asset_name=a.name,
+            kind=a.kind,
+            payload={
+                "author": list(_author_of(user)),
+                "commit_message": (
+                    f"chore(market): {'下架' if action == 'unpublish' else '上架'}资产 "
+                    f"{a.name} {a.version}"
+                ),
+            },
+            git_path=a.git_path,
+            created_by=user.id,
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        job_id = job.id
+        name, version = a.name, a.version
+
+    enqueue(job_id)
+    return {
+        "ok": True, "code": code, "publish_status": publish_status,
+        "changed": True, "job_id": job_id, "name": name, "version": version,
+    }
+
+
+@router.post("/{code}/unpublish")
+async def unpublish_asset(
+    code: str,
+    comment: str = Form(""),
+    _user: User = Depends(require_publisher),
+) -> dict[str, Any]:
+    """下架: 标记 + 从索引里移除, 但**保留文件** (在用用户要能看到"已下架")."""
+    out = await _set_publish_state(
+        code=code, publish_status="unpublished", action="unpublish",
+        comment=comment, user=_user,
+    )
+    if not out.get("changed"):
+        return out
     await notify_market(
-        "unpublish", name=a.name, version=a.version, actor=_user.username,
-        detail=comment or "已从市场下架", link="",
+        "unpublish", name=out["name"], version=out["version"], actor=_user.username,
+        detail=comment or "已从市场下架", link="", code=code,
     )
     return {"ok": True, "code": code, "publish_status": "unpublished"}
 
@@ -791,24 +973,105 @@ async def publish_asset(
     _user: User = Depends(require_publisher),
 ) -> dict[str, Any]:
     """重新上架."""
+    out = await _set_publish_state(
+        code=code, publish_status="published", action="publish",
+        comment=comment, user=_user,
+    )
+    if not out.get("changed"):
+        return out
+    await notify_market(
+        "publish", name=out["name"], version=out["version"], actor=_user.username,
+        detail=comment or "重新上架", link="", code=code,
+    )
+    return {"ok": True, "code": code, "publish_status": "published"}
+
+
+# ---------- 硬删 ----------
+
+@router.delete("/{code}", response_model=AssetDeleteOut)
+async def delete_asset(
+    code: str,
+    comment: str = Query("", description="删除原因 (记入审计)"),
+    _user: User = Depends(require_publisher),
+) -> AssetDeleteOut:
+    """彻底删除一个资产 (不只是下架).
+
+    与「下架」的区别:
+      下架 —— 标记 + 从索引移除, **文件保留**; 已装的用户还能继续用, 看到「已下架」提示
+      删除 —— 连文件带索引带 DB 记录一起没, 不可恢复
+
+    顺序很关键 (**先推 GitLab, 后动 DB**):
+      1. index.json 剔除该资产 (DB 行还在, 用 exclude 参数)
+      2. 删掉工作区里的资产目录
+      3. commit + push 到 GitLab —— 失败就把工作区从 HEAD 恢复, DB 一个字节都不动
+      4. 推送成功 → 删 DB 行 + 安装记录, 记审计, 发通知
+    反过来做的话, push 失败会导致"DB 没了但 GitLab 还在" → 拉取同步器会把资产复活.
+    """
     async with AsyncSessionLocal() as session:
         a = (
             await session.execute(select(Asset).where(Asset.code == code))
         ).scalar_one_or_none()
         if a is None:
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-        a.publish_status = "published"
-        await session.commit()
-        await stage_index(session, asset_to_index_entry(a))
-        await _audit(session, code=code, action="publish", actor=_user,
-                     asset_id=a.id, comment=comment)
-        await session.commit()
+        git_path = a.git_path
+        asset_name = a.name
+        version = a.version
+        asset_id = a.id
+
+    if not git_path:
+        raise HTTPException(status_code=409, detail="资产没有 git 路径, 无法安全删除")
+
+    async with code_lock(code):
+        # 1) 索引剔除 + 删工作区目录
+        async with AsyncSessionLocal() as session:
+            await stage_index(session, exclude={code})
+        git_sync.remove_path(git_path)
+
+        # 2) commit + push
+        try:
+            result = await git_sync.sync_paths(
+                paths=[git_path, INDEX_PATH],
+                message=f"chore(market): 删除资产 {asset_name} {version}",
+                author=_author_of(_user),
+            )
+        except git_sync.SyncError as e:
+            # 回滚工作区: 目录与 index.json 都从最后一次提交恢复
+            git_sync.checkout_from_ref("HEAD", [git_path, INDEX_PATH])
+            logger.error("delete 推送失败, 工作区已回滚 code=%s err=%s", code, e)
+            raise HTTPException(
+                status_code=502,
+                detail=f"删除未生效: 推送到 GitLab 失败 ({e}). 资产未被删除, 可稍后重试",
+            ) from e
+
+        # 3) 推送成功 → 动 DB
+        async with AsyncSessionLocal() as session:
+            a = await session.get(Asset, asset_id)
+            installs = (
+                await session.execute(
+                    select(AssetInstall).where(AssetInstall.code == code)
+                )
+            ).scalars().all()
+            removed_installs = len(installs)
+            for r in installs:
+                await session.delete(r)
+            if a is not None:
+                await session.delete(a)
+            await _audit(
+                session, code=code, action="delete", actor=_user, asset_id=asset_id,
+                comment=comment or "管理员删除",
+                detail={"git_path": git_path, "removed_installs": removed_installs},
+            )
+            await session.commit()
 
     await notify_market(
-        "publish", name=a.name, version=a.version, actor=_user.username,
-        detail=comment or "重新上架", link="",
+        "delete", name=asset_name, version=version, actor=_user.username,
+        detail=comment or "资产已从市场删除", link="", code=code,
     )
-    return {"ok": True, "code": code, "publish_status": "published"}
+    logger.info("delete 资产 code=%s 安装记录清理 %s 条", code, removed_installs)
+    return AssetDeleteOut(
+        ok=True, code=code, removed_installs=removed_installs,
+        commit_sha=result.commit_sha,
+    )
 
 
 # ---------- 上传 ----------
@@ -829,6 +1092,28 @@ async def _parse_uploads(files: list[UploadFile] | None) -> dict[str, str]:
 
 
 async def _stage_asset(
+    *,
+    action: str,
+    payload_in: UploadAssetIn,
+    files: dict[str, str],
+    package: bytes | None,
+    package_name: str,
+    user: User,
+) -> AssetJobOut:
+    """落盘阶段 —— 整个过程在同一把 code 锁内.
+
+    落盘 (解包 → 写 files/ → 写 manifest.json) 发生在请求线程里, **不在** git 提交
+    队列里. 不加锁的话, 两个并发上传同一个 code 会各自往 files/ 里写, 写出来的
+    是两份文件的交错体, 然后被先完成的那个 job 一起 commit 上去.
+    """
+    async with code_lock(payload_in.code):
+        return await _stage_asset_locked(
+            action=action, payload_in=payload_in, files=files,
+            package=package, package_name=package_name, user=user,
+        )
+
+
+async def _stage_asset_locked(
     *,
     action: str,
     payload_in: UploadAssetIn,
@@ -865,6 +1150,23 @@ async def _stage_asset(
     base = manifest["git_path"]
     author = _author_of(user)
     files_dir = git_sync.WORKSPACE / base / "files"
+
+    # ---- 0. 存在性检查 (必须在落盘**之前**) ----
+    # 顺序反了会出事: 冲突的创建请求会先把文件写进工作区, 再报 409.
+    # 工作区因此变脏 → 拉取同步器的安全闸认为"有未提交的资产改动" → 整轮跳过,
+    # 而那份半截文件永远没人提交. 整个反向同步就此卡住.
+    async with AsyncSessionLocal() as session:
+        existing = (
+            await session.execute(select(Asset).where(Asset.code == manifest["code"]))
+        ).scalar_one_or_none()
+    if action == "create" and existing is not None:
+        raise HTTPException(
+            status_code=409, detail=f"资产 {manifest['code']} 已存在, 请用更新接口"
+        )
+    if action == "update" and existing is None:
+        raise HTTPException(
+            status_code=404, detail=f"资产 {manifest['code']} 不存在, 无法更新"
+        )
 
     # ---- 1. 落盘 ----
     try:
@@ -999,6 +1301,7 @@ async def _stage_asset(
         name=manifest.get("name", ""), version=manifest.get("version", ""),
         actor=user.username,
         detail=manifest.get("summary", ""), link="",
+        code=manifest.get("code", ""),
     )
     return out
 

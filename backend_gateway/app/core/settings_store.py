@@ -304,6 +304,14 @@ SETTING_SCHEMA: list[dict] = [
         "description": "下架时通知钉钉群",
         "is_secret": False,
     },
+    {
+        "key": "dingtalk.notify_on_delete",
+        "category": "notification",
+        "value_type": "bool",
+        "default": "true",
+        "description": "删除资产时通知钉钉群",
+        "is_secret": False,
+    },
 ]
 
 

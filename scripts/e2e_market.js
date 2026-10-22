@@ -32,8 +32,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const results = [];
 function check(name, ok, detail) {
-  results.push({ name, ok: !!ok, detail });
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  :: ' + detail : ''}`);
+  const ts = new Date().toISOString().slice(11, 19);
+  results.push({ name, ok: !!ok, detail, ts });
+  console.log(`${ok ? 'PASS' : 'FAIL'} [${ts}] ${name}${detail ? '  :: ' + detail : ''}`);
 }
 
 /** 点第一个文本匹配的元素 */
@@ -51,6 +52,25 @@ async function clickByText(page, selector, text) {
   return hit;
 }
 
+/** 用 python3 造一个 zip (macOS 自带, 免得引依赖).
+ *  用 execFileSync + 参数数组, 避开 shell 引号嵌套的坑. */
+function makeZip(target, files) {
+  const scriptPath = path.join(OUT_DIR, '_mkzip.py');
+  fs.writeFileSync(scriptPath, [
+    'import zipfile, json, sys',
+    'target = json.loads(sys.argv[1])',
+    'files = json.loads(sys.argv[2])',
+    'with zipfile.ZipFile(target, "w") as z:',
+    '    for name, content in files.items():',
+    '        z.writestr(name, content)',
+    '',
+  ].join('\n'));
+  require('child_process').execFileSync(
+    'python3', [scriptPath, JSON.stringify(target), JSON.stringify(files)],
+  );
+  return target;
+}
+
 /** 读取市场页当前状态 */
 async function snap(page) {
   return page.evaluate(() => {
@@ -60,6 +80,9 @@ async function snap(page) {
       ver: txt(c.querySelector('.ac-ver')),
       badge: txt(c.querySelector('.ac-installed, .ac-updatable, .ac-sync')),
     }));
+    const drawer = document.querySelector('.el-drawer');
+    // 页面里可能同时挂着多个 el-drawer (资产详情 / 操作记录), 不能只看第一个
+    const drawerTexts = [...document.querySelectorAll('.el-drawer')].map((d) => txt(d) || '');
     return {
       debugBar: !!document.querySelector('.tm-debug'),
       cards,
@@ -67,7 +90,7 @@ async function snap(page) {
       marketState: txt(document.querySelector('.market .state')),
       syncBar: txt(document.querySelector('.sync-bar')),
       footHint: txt(document.querySelector('.foot-hint')),
-      drawerOpen: !!document.querySelector('.el-drawer'),
+      drawerOpen: !!drawer,
       drawerName: txt(document.querySelector('.ad-name')),
       docHtmlLen: (document.querySelector('.ad-doc')?.innerHTML || '').length,
       docText: (txt(document.querySelector('.ad-doc')) || '').slice(0, 120),
@@ -77,24 +100,34 @@ async function snap(page) {
       steps: [...document.querySelectorAll('.steps li')].map((s) => txt(s)),
       gitPath: txt(document.querySelector('.ad-git code')),
       syncChip: txt(document.querySelector('.ad-sync-chip')),
-      dlgTitle: txt(document.querySelector('.el-dialog__title')),
+      dlgChanCount: document.querySelectorAll('.inst-chan').length,
       dlgTarget: txt(document.querySelector('.inst-chan-d')),
       dlgPerm: txt(document.querySelector('.inst-perm')),
       dlgAlert: txt(document.querySelector('.el-dialog .el-alert__title')),
-      dlgChanCount: document.querySelectorAll('.inst-chan').length,
       msgBox: txt(document.querySelector('.el-message-box__message')),
+      // 包体检
+      pvState: txt(document.querySelector('.pv-box')),
+      submitDisabled: !!document.querySelector(
+        '.el-dialog__footer .el-button--primary.is-disabled, .el-dialog__footer .el-button--primary[disabled]',
+      ),
+      // 操作记录抽屉 (用页签文案判别 —— 抽屉标题的类名随 element-plus 版本变)
+      auditDrawerOpen: drawerTexts.some((t) => /操作审计/.test(t)),
+      auditItems: document.querySelectorAll('.log-list .log-item').length,
+      notifyTab: (txt(document.querySelector('.el-tabs__item.is-active')) || '').includes('通知回执'),
+      notifyItems: document.querySelectorAll('.log-list .log-item').length,
     };
   });
 }
 
-/** 首个插件资产的 code —— 用它跑安装/下架, 不写死具体资产名 */
-async function firstPluginCode(page) {
-  return page.evaluate(async () => {
+/** 按名称反查资产 code —— 必须与"实际打开的那张卡片"一致,
+ *  否则下架的是 A、重新上架的是 B, 会把一个资产永久留在下架状态. */
+async function codeByName(page, name) {
+  return page.evaluate(async (n) => {
     const tk = localStorage.getItem('testmate:token');
-    const r = await fetch('/api/v1/assets?kind=plugin&limit=1', { headers: { Authorization: 'Bearer ' + tk } });
+    const r = await fetch('/api/v1/assets?kind=plugin&limit=50', { headers: { Authorization: 'Bearer ' + tk } });
     const d = await r.json();
-    return (d.items || [])[0]?.code || '';
-  });
+    return (d.items || []).find((i) => i.name === n)?.code || '';
+  }, name);
 }
 
 (async () => {
@@ -107,9 +140,15 @@ async function firstPluginCode(page) {
   });
   const page = await browser.newPage();
   const errors = [];
+  // 有些步骤会**故意**触发 4xx (比如验证资产已删除), 那不是缺陷
+  let expectHttpError = false;
   page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push('[console.error] ' + m.text()); });
-  page.on('requestfailed', (r) => errors.push('[reqfail] ' + r.url() + ' :: ' + (r.failure() || {}).errorText));
+  page.on('console', (m) => {
+    if (m.type() === 'error' && !expectHttpError) errors.push('[console.error] ' + m.text());
+  });
+  page.on('requestfailed', (r) => {
+    if (!expectHttpError) errors.push('[reqfail] ' + r.url() + ' :: ' + (r.failure() || {}).errorText);
+  });
 
   // 登录态
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' });
@@ -167,8 +206,11 @@ async function firstPluginCode(page) {
   check('C1 搜索可过滤', filtered >= 0 && s.cards.length >= filtered, `搜索命中 ${filtered} 张 / 清空后 ${s.cards.length} 张`);
 
   // ---------- D. 详情抽屉 ----------
-  const code = await firstPluginCode(page);
-  await clickByText(page, '.asset-card', s.cards[0] ? s.cards[0].name : '');
+  const cardName = s.cards[0] ? s.cards[0].name : '';
+  // code 必须从"实际打开的这张卡片"反查 —— 否则下架 A、重新上架 B,
+  // 会把一个资产永久留在下架状态 (之前踩过)
+  const code = await codeByName(page, cardName);
+  await clickByText(page, '.asset-card', cardName);
   await page.waitForSelector('.el-drawer', { timeout: 10000 });
   await sleep(1500);
   s = await snap(page);
@@ -235,7 +277,13 @@ async function firstPluginCode(page) {
   await page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1200);
   s = await snap(page);
-  check('F3 重新上架后卡片回到列表', s.cards.length > 0, `${s.cards.length} 张`);
+  const back = await page.evaluate(async (c) => {
+    const tk = localStorage.getItem('testmate:token');
+    const r = await fetch('/api/v1/assets?limit=100&include_unpublished=true', { headers: { Authorization: 'Bearer ' + tk } });
+    const d = await r.json();
+    return (d.items || []).find((i) => i.code === c)?.publish_status || 'missing';
+  }, code);
+  check('F3 重新上架后资产状态回到 published', back === 'published', `publish_status=${back}, 列表 ${s.cards.length} 张`);
 
   // ---------- G. 同步 ----------
   await page.evaluate(() => {
@@ -246,6 +294,112 @@ async function firstPluginCode(page) {
   s = await snap(page);
   check('G1 重新同步后页面仍正常', s.cards.length > 0, `${s.cards.length} 张`);
   await page.screenshot({ path: path.join(OUT_DIR, '05-final.png'), fullPage: true });
+
+  // ---------- H. 上传前包体检 ----------
+  const goodZip = path.join(OUT_DIR, 'e2e-good.zip');
+  const badZip = path.join(OUT_DIR, 'e2e-bad.zip');
+  makeZip(goodZip, { 'SKILL.md': '---\nname: e2e-probe\ndescription: 体检探针\n---\n\n# 体检探针\n' });
+  makeZip(badZip, { 'README.md': '# 缺 SKILL.md 的包\n' });
+
+  await clickByText(page, '.mini-btn.primary', '上传资产');
+  await page.waitForSelector('.file-input', { timeout: 10000 });
+  await sleep(600);
+  const fileInput = await page.$('.file-input');
+  await fileInput.uploadFile(goodZip);
+  await page.waitForSelector('.pv-box', { timeout: 15000 });
+  await sleep(800);
+  s = await snap(page);
+  check('H1 合规包体检通过', /体检通过/.test(s.pvState || ''), s.pvState);
+  check('H2 体检显示文件数与展示文档', /SKILL\.md/.test(s.pvState || ''), s.pvState);
+  check('H3 合规包不禁用提交按钮', s.submitDisabled === false, `disabled=${s.submitDisabled}`);
+
+  // 换成不合规的包 (缺 SKILL.md) → 体检应拦下并禁用提交
+  const fileInput2 = await page.$('.file-input');
+  await fileInput2.uploadFile(badZip);
+  await sleep(2500);
+  s = await snap(page);
+  check('H4 不合规包被体检拦下', /装不上/.test(s.pvState || ''), s.pvState);
+  check('H5 不合规包禁用提交按钮', s.submitDisabled === true, `disabled=${s.submitDisabled}`);
+  await page.screenshot({ path: path.join(OUT_DIR, '06-precheck.png') });
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.el-dialog__footer .el-button')].find((x) => x.textContent.includes('取消'));
+    b && b.click();
+  });
+  await sleep(800);
+
+  // ---------- I. 「可更新」筛选 ----------
+  await clickByText(page, '.mini-btn', '可更新');
+  await sleep(1500);
+  s = await snap(page);
+  const onlyUpdatable = s.cards.every((c) => /可更新/.test(c.badge || ''));
+  check('I1 「可更新」筛选只留可更新资产', onlyUpdatable, `${s.cards.length} 张: ${s.cards.map((c) => c.badge).join('|')}`);
+  await clickByText(page, '.mini-btn', '可更新');
+  await sleep(1200);
+  s = await snap(page);
+  check('I2 再点一次恢复全部', s.cards.length > 0, `${s.cards.length} 张`);
+
+  // ---------- J. 操作记录 / 通知回执 ----------
+  await clickByText(page, '.mini-btn', '操作记录');
+  await page.waitForSelector('.log-list, .state', { timeout: 10000 });
+  await sleep(1200);
+  s = await snap(page);
+  check('J1 操作记录抽屉打开', s.auditDrawerOpen === true, `auditItems=${s.auditItems}`);
+  check('J2 有审计条目', s.auditItems > 0, `${s.auditItems} 条`);
+  await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.el-tabs__item')].find((x) => x.textContent.includes('通知回执'));
+    t && t.click();
+  });
+  await sleep(1500);
+  s = await snap(page);
+  check('J3 通知回执页签可切换', s.notifyTab === true, `notifyItems=${s.notifyItems}`);
+  await page.screenshot({ path: path.join(OUT_DIR, '07-audit.png') });
+  await page.evaluate(() => {
+    const b = document.querySelector('.el-drawer__close-btn');
+    b && b.click();
+  });
+  await sleep(800);
+
+  // ---------- K. 彻底删除 (走 UI, 输入 code 确认) ----------
+  const tmpCode = 'e2e-tmp-delete';
+  await page.evaluate(async (c) => {
+    const tk = localStorage.getItem('testmate:token');
+    const fd = new FormData();
+    fd.append('code', c); fd.append('kind', 'skill'); fd.append('name', 'E2E 临时资产');
+    fd.append('version', '1.0.0'); fd.append('summary', 'e2e 临时资产, 验证硬删');
+    fd.append('description', '用完即删'); fd.append('use_when', '仅测试'); fd.append('not_for', '生产');
+    fd.append('category', 'misc'); fd.append('icon', '🧪'); fd.append('tags', '[]');
+    fd.append('keywords', '[]'); fd.append('featured', 'false'); fd.append('permissions', '{}');
+    fd.append('install_steps', '[]'); fd.append('bindings', '{}');
+    fd.append('files', new Blob(['---\nname: e2e-tmp-delete\ndescription: 临时\n---\n\n# 临时\n'], { type: 'text/plain' }), 'SKILL.md');
+    await fetch('/api/v1/assets/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd });
+  }, tmpCode);
+  await sleep(6000);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('.asset-card', { timeout: 15000 });
+  await sleep(1200);
+  await clickByText(page, '.kind-tab', '技能');
+  await sleep(1200);
+  await clickByText(page, '.asset-card', 'E2E 临时资产');
+  await page.waitForSelector('.el-drawer', { timeout: 10000 });
+  await sleep(1200);
+  await clickByText(page, '.ad-actions .el-button', '彻底删除');
+  await sleep(900);
+  s = await snap(page);
+  check('K1 删除要求输入 code 确认', /code/.test(s.msgBox || ''), (s.msgBox || '').slice(0, 60));
+  const promptInput = await page.$('.el-message-box__input input, .el-message-box input');
+  if (promptInput) {
+    await promptInput.type(tmpCode);
+    await clickByText(page, '.el-message-box__btns .el-button', '确认删除');
+  }
+  await sleep(4000);
+  expectHttpError = true;   // 下面这个 404 是"资产确实被删掉了"的证据, 不是缺陷
+  const gone = await page.evaluate(async (c) => {
+    const tk = localStorage.getItem('testmate:token');
+    const r = await fetch('/api/v1/assets/' + c, { headers: { Authorization: 'Bearer ' + tk } });
+    return r.status;
+  }, tmpCode);
+  expectHttpError = false;
+  check('K2 删除后资产不存在', gone === 404, `HTTP ${gone}`);
 
   // ---------- 汇总 ----------
   check('Z1 全程无 JS 错误 / 请求失败', errors.length === 0, errors.slice(0, 5).join(' ; '));

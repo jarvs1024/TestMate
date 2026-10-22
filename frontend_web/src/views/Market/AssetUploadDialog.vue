@@ -86,6 +86,31 @@
           压缩包会在服务端解压后推送到 GitLab, 仓库里存的是解压后的文件.
           skill 包需含 <code>SKILL.md</code>, plugin 包需含 <code>README.md</code>.
         </p>
+
+        <!-- 包体检: 选好包就当场验, 不用填完一整张表单才被 422 拦下 -->
+        <div v-if="previewing" class="pv-box checking">正在体检安装包…</div>
+        <div v-else-if="preview" class="pv-box" :class="previewBad ? 'bad' : 'ok'">
+          <div class="pv-h">
+            <span class="pv-icon">{{ previewBad ? '❌' : '✅' }}</span>
+            <span>{{ previewBad ? '这个包装不上, 请调整后重试' : '体检通过' }}</span>
+          </div>
+          <div class="pv-meta mono">
+            {{ preview.total_files }} 个文件
+            · 展示文档 {{ preview.doc_file || '缺失' }}
+            <template v-if="preview.installable">· 可一键安装</template>
+            <template v-else>· {{ preview.block_reason }}</template>
+          </div>
+          <ul v-if="preview.issues.length" class="pv-list">
+            <li v-for="(i, idx) in preview.issues" :key="'i' + idx">✗ {{ i }}</li>
+          </ul>
+          <ul v-if="preview.warnings.length" class="pv-list warn">
+            <li v-for="(w, idx) in preview.warnings" :key="'w' + idx">⚠ {{ w }}</li>
+          </ul>
+          <details v-if="preview.files.length" class="pv-files">
+            <summary>文件清单 ({{ preview.files.length }})</summary>
+            <code v-for="f in preview.files" :key="f">{{ f }}</code>
+          </details>
+        </div>
       </el-form-item>
     </el-form>
 
@@ -120,7 +145,7 @@
     <template #footer>
       <template v-if="!job">
         <el-button @click="visible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submit">
+        <el-button type="primary" :loading="submitting" :disabled="previewBad" @click="submit">
           {{ mode === 'update' ? '提交新版本' : '上架' }}
         </el-button>
       </template>
@@ -137,7 +162,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
-import { getJob, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind } from '@/api/assets';
+import { getJob, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
 import { MARKET_CATEGORIES } from './marketCatalog';
 
 const props = defineProps<{
@@ -159,6 +184,15 @@ const submitting = ref(false);
 const job = ref<AssetJob | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const pkgFile = ref<File | null>(null);
+const preview = ref<PackagePreview | null>(null);
+const previewing = ref(false);
+
+/** 体检没通过就不让提交 —— 免得白填一整张表单 */
+const previewBad = computed(() => {
+  const p = preview.value;
+  if (!p) return false;
+  return !p.ok || p.issues.length > 0;
+});
 
 const form = reactive({
   code: '', kind: 'skill' as MarketKind, name: '', version: '1.0.0',
@@ -182,6 +216,8 @@ watch(() => props.modelValue, (open) => {
   job.value = null;
   submitting.value = false;
   pkgFile.value = null;
+  preview.value = null;
+  previewing.value = false;
   if (fileInput.value) fileInput.value.value = '';
   const a = props.asset;
   if (props.mode === 'update' && a) {
@@ -208,15 +244,43 @@ watch(() => props.modelValue, (open) => {
   }
 });
 
-function onPickPackage(e: Event) {
+async function onPickPackage(e: Event) {
   const input = e.target as HTMLInputElement;
   pkgFile.value = input.files?.[0] ?? null;
+  await runPreview();
 }
 
 function clearPackage() {
   pkgFile.value = null;
+  preview.value = null;
   if (fileInput.value) fileInput.value.value = '';
 }
+
+/** 体检: 走服务端与真实上传完全相同的解包路径, 结论就是提交后的结论 */
+async function runPreview() {
+  if (!pkgFile.value) return;
+  previewing.value = true;
+  preview.value = null;
+  try {
+    preview.value = await previewPackage(pkgFile.value, form.kind);
+  } catch (e: any) {
+    preview.value = {
+      ok: false, filename: pkgFile.value.name, size_bytes: pkgFile.value.size,
+      kind: form.kind, total_files: 0, files: [], doc_file: '',
+      has_skill_md: false, has_plugin_manifest: false, has_mcp_config: false,
+      installable: false, block_reason: '',
+      issues: ['体检失败: ' + (e?.response?.data?.detail || e?.message)],
+      warnings: [],
+    };
+  } finally {
+    previewing.value = false;
+  }
+}
+
+// 类型变了, 体检结论也得重算 (skill 要 SKILL.md, plugin 要 plugin.json)
+watch(() => form.kind, () => {
+  if (pkgFile.value) runPreview();
+});
 
 function splitList(s: string): string[] {
   return s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
@@ -340,4 +404,26 @@ function close() {
   font-size: 11.5px; color: var(--err); white-space: pre-wrap; word-break: break-all;
 }
 .job-hint { margin-top: 10px; font-size: 11.5px; color: var(--ink-500); }
+
+/* ===== 包体检结果 ===== */
+.pv-box {
+  margin-top: 10px; padding: 9px 12px; border-radius: var(--radius-sm);
+  font-size: 12px; border: 1px solid var(--border); background: var(--surface-sunken);
+}
+.pv-box.checking { color: var(--ink-500); }
+.pv-box.ok { background: rgba(16, 185, 129, 0.07); border-color: rgba(16, 185, 129, 0.28); }
+.pv-box.bad { background: rgba(239, 68, 68, 0.07); border-color: rgba(239, 68, 68, 0.3); }
+.pv-h { display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--ink-900); }
+.pv-box.ok .pv-h { color: var(--ok); }
+.pv-box.bad .pv-h { color: var(--err); }
+.pv-icon { font-size: 13px; }
+.pv-meta { margin-top: 4px; font-size: 11px; color: var(--ink-500); }
+.pv-list { margin: 6px 0 0; padding-left: 16px; font-size: 11.5px; color: var(--err); }
+.pv-list.warn { color: var(--warn); }
+.pv-files { margin-top: 6px; font-size: 11px; color: var(--ink-500); }
+.pv-files summary { cursor: pointer; }
+.pv-files code {
+  display: block; font-family: var(--font-mono); font-size: 10.5px;
+  color: var(--ink-700); padding: 1px 0;
+}
 </style>

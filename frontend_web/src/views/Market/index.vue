@@ -28,13 +28,21 @@
       </div>
 
       <div class="toolbar-right">
-        <button class="mini-btn" :class="{ on: onlyInstalled }"
-                :title="onlyInstalled ? '显示全部资产' : '只看我已安装的'"
-                @click="onlyInstalled = !onlyInstalled; load()">
-          <span :class="{ 'tick-off': !onlyInstalled }">✓</span> 已安装
+        <button class="mini-btn" :class="{ on: filterMode === 'installed' }"
+                :title="filterMode === 'installed' ? '显示全部资产' : '只看我已安装的'"
+                @click="toggleFilter('installed')">
+          <span :class="{ 'tick-off': filterMode !== 'installed' }">✓</span> 已安装
+        </button>
+        <button class="mini-btn" :class="{ on: filterMode === 'updatable' }"
+                :title="filterMode === 'updatable' ? '显示全部资产' : '只看有更新版本的'"
+                @click="toggleFilter('updatable')">
+          <span :class="{ 'tick-off': filterMode !== 'updatable' }">↑</span> 可更新
         </button>
         <el-tooltip content="把团队沉淀的技能 / 连接器 / 插件上架到 GitLab" placement="bottom">
           <button class="mini-btn primary" @click="openCreate">＋ 上传资产</button>
+        </el-tooltip>
+        <el-tooltip content="谁在什么时候上架/下架/安装过, 以及钉钉通知送没送到" placement="bottom">
+          <button class="mini-btn" @click="auditOpen = true">🕘 操作记录</button>
         </el-tooltip>
         <div class="search">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -93,6 +101,8 @@
       v-model="uploadOpen" :mode="uploadMode" :asset="current"
       @done="load" />
 
+    <AssetAuditDrawer v-model="auditOpen" />
+
     <p v-if="total > 0" class="foot-hint mono">
       共 {{ total }} 项 · 数据源: GitLab {{ GITLAB_PROJECT }}
       <button v-if="!syncing" class="link-btn" @click="doSync">重新同步</button>
@@ -110,6 +120,7 @@ import { ElMessage } from 'element-plus';
 import AssetCard from './AssetCard.vue';
 import AssetDetailDrawer from './AssetDetailDrawer.vue';
 import AssetUploadDialog from './AssetUploadDialog.vue';
+import AssetAuditDrawer from './AssetAuditDrawer.vue';
 import { MARKET_CATEGORIES, MARKET_KINDS } from './marketCatalog';
 import {
   listAssets, listJobs, getSyncStatus, retryJob, syncFromGit,
@@ -124,7 +135,8 @@ const kind = ref<MarketKind>('plugin');
 const category = ref('');
 const keyword = ref('');
 const sortBy = ref<'hot' | 'new' | 'name'>('hot');
-const onlyInstalled = ref(false);
+/** 列表筛选: 全部 / 已安装 / 可更新 (互斥) */
+const filterMode = ref<'all' | 'installed' | 'updatable'>('all');
 
 const items = ref<AssetItem[]>([]);
 const total = ref(0);
@@ -135,6 +147,7 @@ const retrying = ref(false);
 const kindCounts = ref<Record<string, number>>({});
 const failedJobs = ref<AssetJob[]>([]);
 const drawerOpen = ref(false);
+const auditOpen = ref(false);
 const current = ref<AssetItem | null>(null);
 const uploadOpen = ref(false);
 const uploadMode = ref<'create' | 'update'>('create');
@@ -191,7 +204,8 @@ async function load() {
     items.value = category.value === '__featured'
       ? rows.filter((i) => i.featured)
       : rows;
-    if (onlyInstalled.value) items.value = items.value.filter((i) => i.installed);
+    if (filterMode.value === 'installed') items.value = items.value.filter((i) => i.installed);
+    else if (filterMode.value === 'updatable') items.value = items.value.filter((i) => i.updatable);
     total.value = r?.total ?? rows.length;
   } catch (e: any) {
     loadError.value = e?.response?.data?.detail || e?.message || '未知错误';
@@ -277,8 +291,14 @@ function openUpdate(item: AssetItem) {
 function resetFilters() {
   category.value = '';
   keyword.value = '';
-  onlyInstalled.value = false;
+  filterMode.value = 'all';
   sortBy.value = 'hot';
+  load();
+}
+
+/** 已安装 / 可更新 是互斥的, 再点一次回到"全部" */
+function toggleFilter(m: 'installed' | 'updatable') {
+  filterMode.value = filterMode.value === m ? 'all' : m;
   load();
 }
 
