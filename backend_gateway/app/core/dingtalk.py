@@ -101,6 +101,8 @@ _EVENT_TEXT = {
     "update": "📦 资产版本更新",
     "unpublish": "⚠️ 资产已下架",
     "delete": "🗑 资产已删除",
+    "review": "📋 新资产待审核",
+    "reject": "❌ 资产审核未通过",
 }
 
 _SWITCH_KEY = {
@@ -108,6 +110,8 @@ _SWITCH_KEY = {
     "update": "dingtalk.notify_on_update",
     "unpublish": "dingtalk.notify_on_unpublish",
     "delete": "dingtalk.notify_on_delete",
+    "review": "dingtalk.notify_on_review",
+    "reject": "dingtalk.notify_on_reject",
 }
 
 

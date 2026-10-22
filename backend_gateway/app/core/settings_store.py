@@ -219,6 +219,25 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
+        "key": "marketplace.review.enabled",
+        "category": "marketplace",
+        "value_type": "bool",
+        "default": "true",
+        "description": (
+            "上架是否需要管理员审核: 开 = 发布者上传后进入「待审核」, 管理员通过后才在市场可见; "
+            "关 = 白名单发布者直接上架 (恢复旧行为)"
+        ),
+        "is_secret": False,
+    },
+    {
+        "key": "marketplace.review.admin_self_approve",
+        "category": "marketplace",
+        "value_type": "bool",
+        "default": "true",
+        "description": "管理员自己上传的资产是否免审 (免审 = 直接上架, 不用等别人审)",
+        "is_secret": False,
+    },
+    {
         "key": "marketplace.git.max_push_attempts",
         "category": "marketplace",
         "value_type": "int",
@@ -375,6 +394,22 @@ SETTING_SCHEMA: list[dict] = [
         "value_type": "bool",
         "default": "true",
         "description": "删除资产时通知钉钉群",
+        "is_secret": False,
+    },
+    {
+        "key": "dingtalk.notify_on_review",
+        "category": "notification",
+        "value_type": "bool",
+        "default": "true",
+        "description": "有资产待审核时通知钉钉群 (提醒管理员去审)",
+        "is_secret": False,
+    },
+    {
+        "key": "dingtalk.notify_on_reject",
+        "category": "notification",
+        "value_type": "bool",
+        "default": "true",
+        "description": "资产审核被驳回时通知钉钉群",
         "is_secret": False,
     },
     {

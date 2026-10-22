@@ -122,13 +122,16 @@
         <el-icon v-else class="is-loading"><Loading /></el-icon>
         <div>
           <div class="job-title">
-            {{ job.status === 'pushed' ? '已同步到 GitLab'
+            {{ job.status === 'pushed' ? (pendingReview ? '已提交, 等待管理员审核' : '已同步到 GitLab')
                : job.status === 'failed' ? '同步失败'
                : job.status === 'staged' ? '已保存到本地, 准备同步…'
                : '正在推送到 GitLab…' }}
           </div>
           <div v-if="job.status === 'pushed'" class="job-sub mono">
             commit {{ job.commit_sha.slice(0, 12) }} · {{ job.git_path }}
+          </div>
+          <div v-if="job.status === 'pushed' && pendingReview" class="job-sub">
+            文件已推送, 管理员审核通过后才会出现在市场里
           </div>
           <div v-else-if="job.status === 'staged'" class="job-sub">
             文件已落到本地工作区, 后台正在 commit + push
@@ -162,7 +165,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
-import { getJob, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
+import { getAsset, getJob, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
 import { MARKET_CATEGORIES } from './marketCatalog';
 
 const props = defineProps<{
@@ -186,6 +189,8 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const pkgFile = ref<File | null>(null);
 const preview = ref<PackagePreview | null>(null);
 const previewing = ref(false);
+/** 上架要走审核 —— 提交完不是"已上架", 而是"已提交待审核" */
+const pendingReview = ref(false);
 
 /** 体检没通过就不让提交 —— 免得白填一整张表单 */
 const previewBad = computed(() => {
@@ -218,6 +223,7 @@ watch(() => props.modelValue, (open) => {
   pkgFile.value = null;
   preview.value = null;
   previewing.value = false;
+  pendingReview.value = false;
   if (fileInput.value) fileInput.value.value = '';
   const a = props.asset;
   if (props.mode === 'update' && a) {
@@ -340,7 +346,18 @@ async function poll(id: number) {
       if (j.status === 'pushed' || j.status === 'failed') {
         submitting.value = false;
         if (j.status === 'pushed') {
-          ElMessage.success(`${j.code} 已同步到 GitLab`);
+          // 上架可能要过审核 —— 查一下资产现在的状态再给提示
+          try {
+            const a = await getAsset(j.code);
+            pendingReview.value = a.publish_status === 'pending';
+          } catch {
+            pendingReview.value = false;
+          }
+          ElMessage.success(
+            pendingReview.value
+              ? `${j.code} 已提交, 等待管理员审核`
+              : `${j.code} 已同步到 GitLab`,
+          );
           emit('done');
         } else {
           ElMessage.error('同步到 GitLab 失败');

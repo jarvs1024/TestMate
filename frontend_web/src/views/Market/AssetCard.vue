@@ -10,7 +10,13 @@
         <div class="ac-name">{{ item.name }}</div>
         <div class="ac-ver">{{ item.version }} · {{ item.category }}</div>
       </div>
-      <span v-if="item.sync_status === 'staged'" class="ac-sync staged" title="已保存到本地工作区, 正在同步到 GitLab">
+      <span v-if="item.publish_status === 'pending'" class="ac-review pending"
+            title="已提交, 等待管理员审核; 通过后才在市场里可见">📋 待审核</span>
+      <span v-else-if="item.publish_status === 'rejected'" class="ac-review rejected"
+            :title="item.review_note || '审核未通过'">❌ 已驳回</span>
+      <span v-else-if="item.publish_status === 'unpublished'" class="ac-review off"
+            title="已从市场下架, 文件仍保留">⚠️ 已下架</span>
+      <span v-else-if="item.sync_status === 'staged'" class="ac-sync staged" title="已保存到本地工作区, 正在同步到 GitLab">
         🕐 待同步
       </span>
       <span v-else-if="item.sync_status === 'failed'" class="ac-sync failed"
@@ -112,7 +118,7 @@ const permTitle = computed(() => {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.ac-installed, .ac-updatable, .ac-sync {
+.ac-installed, .ac-updatable, .ac-sync, .ac-review {
   flex-shrink: 0;
   display: inline-flex; align-items: center;
   padding: 3px 8px; border-radius: var(--radius-pill);
@@ -122,6 +128,9 @@ const permTitle = computed(() => {
 .ac-updatable { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
 .ac-sync.staged { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
 .ac-sync.failed { background: rgba(239, 68, 68, 0.12); color: var(--err); }
+.ac-review.pending { background: rgba(59, 130, 246, 0.14); color: var(--primary); }
+.ac-review.rejected { background: rgba(239, 68, 68, 0.12); color: var(--err); }
+.ac-review.off { background: rgba(107, 114, 128, 0.14); color: var(--ink-600, #6b7280); }
 
 .ac-summary {
   margin: 0;

@@ -15,6 +15,14 @@
     </template>
 
     <template v-if="item">
+      <!-- 上架审核状态 -->
+      <el-alert v-if="item.publish_status === 'pending'" type="warning"
+                :closable="false" show-icon class="ad-alert"
+                title="该资产正在等待管理员审核, 审核通过后才会出现在市场里" />
+      <el-alert v-else-if="item.publish_status === 'rejected'" type="error"
+                :closable="false" show-icon class="ad-alert"
+                :title="'审核未通过: ' + (item.review_note || '未说明原因, 请修改后重新提交')" />
+
       <!-- 下架提示: 本地还装着, 但远端已下架 -->
       <el-alert v-if="item.publish_status === 'unpublished'" type="warning"
                 :closable="false" show-icon class="ad-alert"
@@ -93,6 +101,21 @@
       </div>
 
       <div class="ad-actions">
+        <!-- ===== 审核操作 (管理员) ===== -->
+        <el-button v-if="isAdmin && item.publish_status === 'pending'"
+                   type="primary" class="ad-btn" :loading="busy" @click="doReview('approve')">
+          通过审核
+        </el-button>
+        <el-button v-if="isAdmin && item.publish_status === 'pending'"
+                   type="warning" plain class="ad-btn" :loading="busy" @click="doReview('reject')">
+          驳回
+        </el-button>
+        <!-- ===== 重新提交 (作者本人) ===== -->
+        <el-button v-if="canSubmit && item.publish_status === 'rejected'"
+                   type="primary" class="ad-btn" :loading="busy" @click="doSubmit">
+          重新提交审核
+        </el-button>
+
         <el-button
           v-if="item.kind !== 'mcp'"
           :type="item.installed ? 'default' : 'primary'"
@@ -129,9 +152,11 @@
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  deleteAsset, getAssetDoc, publishAsset, uninstallAsset, unpublishAsset,
+  deleteAsset, getAssetDoc, publishAsset, reviewAsset, submitForReview,
+  uninstallAsset, unpublishAsset,
   type AssetDoc, type AssetItem,
 } from '@/api/assets';
+import { useUserStore } from '@/stores/user';
 import { renderMarkdown } from '@/utils/markdown';
 import AssetInstallDialog from './AssetInstallDialog.vue';
 
@@ -144,6 +169,8 @@ const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void;
   (e: 'edit', item: AssetItem): void;
   (e: 'changed'): void;
+  /** 资产被删除了 —— 父组件不要再拿它去刷新 (会 404) */
+  (e: 'deleted'): void;
 }>();
 
 const doc = ref<AssetDoc | null>(null);
@@ -153,6 +180,18 @@ const busy = ref(false);
 const installOpen = ref(false);
 
 const unpub = computed(() => props.item?.publish_status === 'unpublished');
+
+const userStore = useUserStore();
+/** 审核人是管理员 */
+const isAdmin = computed(() => userStore.user?.role === 'admin');
+/** 能不能重新提交审核 —— 资产作者本人 (或管理员) */
+const canSubmit = computed(() => {
+  const a = props.item;
+  if (!a) return false;
+  if (isAdmin.value) return true;
+  return (a.author || '').trim().toLowerCase()
+    === (userStore.user?.username || '').trim().toLowerCase();
+});
 
 const docHtml = computed(() => renderMarkdown(doc.value?.content || ''));
 
@@ -254,6 +293,65 @@ async function togglePublish() {
   }
 }
 
+/** 管理员审核: 通过 / 驳回 */
+async function doReview(decision: 'approve' | 'reject') {
+  if (!props.item) return;
+  const code = props.item.code;
+  const name = props.item.name;
+  let comment = '';
+  if (decision === 'reject') {
+    try {
+      const r = await ElMessageBox.prompt(
+        `驳回「${name}」需要给发布者一个理由 (会显示在资产详情里, 并通知钉钉群)`,
+        '驳回上架',
+        {
+          type: 'warning', confirmButtonText: '驳回', cancelButtonText: '取消',
+          inputPlaceholder: '例如: 权限声明与实际行为不符, 请补充后重提',
+          inputValidator: (v: string) => (v || '').trim() ? true : '请填写驳回理由',
+        },
+      );
+      comment = r.value || '';
+    } catch {
+      return;  // 用户取消
+    }
+  } else {
+    try {
+      await ElMessageBox.confirm(
+        `确认通过「${name}」的审核? 通过后它会出现在市场里。`,
+        '通过审核',
+        { type: 'success', confirmButtonText: '通过', cancelButtonText: '取消' },
+      );
+    } catch {
+      return;
+    }
+  }
+  busy.value = true;
+  try {
+    await reviewAsset(code, decision, comment);
+    ElMessage.success(decision === 'approve' ? '已通过审核, 资产已上架' : '已驳回, 理由已通知发布者');
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error('审核失败: ' + (e?.response?.data?.detail || e?.message));
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** 作者把被驳回的资产重新提交审核 */
+async function doSubmit() {
+  if (!props.item) return;
+  busy.value = true;
+  try {
+    await submitForReview(props.item.code, '修改后重新提交');
+    ElMessage.success('已重新提交, 等待管理员审核');
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error('提交失败: ' + (e?.response?.data?.detail || e?.message));
+  } finally {
+    busy.value = false;
+  }
+}
+
 /** 彻底删除 —— 不可恢复, 要求手打 code 确认 */
 async function doDelete() {
   if (!props.item) return;
@@ -282,6 +380,7 @@ async function doDelete() {
       `已删除${r.removed_installs ? `, 清理 ${r.removed_installs} 条安装记录` : ''}`,
     );
     emit('update:modelValue', false);
+    emit('deleted');
     emit('changed');
   } catch (e: any) {
     ElMessage.error('删除失败: ' + (e?.response?.data?.detail || e?.message));

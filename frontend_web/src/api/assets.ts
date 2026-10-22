@@ -47,8 +47,10 @@ export interface AssetItem {
   /** 同步状态: staged(待同步) / pushed(已同步) / failed(失败) */
   sync_status: 'staged' | 'pushed' | 'failed' | string;
   last_error: string;
-  /** 生命周期: published(在架) / unpublished(已下架) */
-  publish_status: 'published' | 'unpublished' | string;
+  /** 生命周期: published(在架) / pending(待审核) / rejected(已驳回) / unpublished(已下架) */
+  publish_status: 'published' | 'pending' | 'rejected' | 'unpublished' | string;
+  /** 最近一次审核意见 (驳回理由) */
+  review_note: string;
   installed: boolean;
   updatable: boolean;
   install_path: string;
@@ -173,6 +175,11 @@ export interface SyncStatus {
   failed_count: number;
   updatable_count: number;
   unpublished_count: number;
+  /** 待审核 / 已驳回 的资产数 (审核台徽标) */
+  awaiting_review_count: number;
+  rejected_count: number;
+  /** 我自己提交但还没通过审核的资产数 (待审核 + 已驳回) */
+  my_review_count: number;
   last_sync_at: string | null;
 }
 
@@ -228,6 +235,8 @@ async function apiDelete<T>(url: string, params?: Record<string, unknown>): Prom
 export async function listAssets(params: {
   kind?: MarketKind; category?: string; q?: string; sort?: 'hot' | 'new' | 'name';
   include_unpublished?: boolean; limit?: number; offset?: number;
+  /** 按上架状态过滤: published | pending | rejected | unpublished | mine | all; 留空=默认可见性 */
+  status?: string;
 } = {}): Promise<AssetListResp> {
   return apiGet<AssetListResp>('/assets', { client_id: getClientId(), ...params });
 }
@@ -290,6 +299,29 @@ export async function previewPackage(file: File, kind: string): Promise<PackageP
   fd.append('package', file, file.name);
   fd.append('kind', kind);
   return (await request.post('/assets/preview-package', fd)) as unknown as PackagePreview;
+}
+
+/** 管理员审核上架: decision = approve | reject */
+export async function reviewAsset(
+  code: string, decision: 'approve' | 'reject', comment = '',
+): Promise<{ ok: boolean; code: string; publish_status: string; changed: boolean }> {
+  const fd = new FormData();
+  fd.append('decision', decision);
+  fd.append('comment', comment);
+  return (await request.post(`/assets/${encodeURIComponent(code)}/review`, fd)) as unknown as {
+    ok: boolean; code: string; publish_status: string; changed: boolean;
+  };
+}
+
+/** 发布者把资产重新提交审核 (驳回后改了再交) */
+export async function submitForReview(
+  code: string, comment = '',
+): Promise<{ ok: boolean; code: string; publish_status: string; changed: boolean }> {
+  const fd = new FormData();
+  fd.append('comment', comment);
+  return (await request.post(`/assets/${encodeURIComponent(code)}/submit`, fd)) as unknown as {
+    ok: boolean; code: string; publish_status: string; changed: boolean;
+  };
 }
 
 /** 彻底删除资产 (不只是下架) */

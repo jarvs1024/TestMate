@@ -33,8 +33,10 @@ class AssetOut(BaseModel):
     # 同步状态: staged / pushed / failed
     sync_status: str = "staged"
     last_error: str = ""
-    # 生命周期: published / unpublished
+    # 生命周期: published / pending / rejected / unpublished
     publish_status: str = "published"
+    # 最近一次审核意见 (驳回理由 / 审核备注)
+    review_note: str = ""
     # 本地态
     installed: bool = False
     updatable: bool = False
@@ -254,6 +256,11 @@ class SyncStatusOut(BaseModel):
     failed_count: int = 0
     updatable_count: int = 0
     unpublished_count: int = 0
+    # 上架审核: 待审核 / 已驳回 的资产数 (管理员审核台的徽标)
+    awaiting_review_count: int = 0
+    rejected_count: int = 0
+    # 我自己提交但还没通过审核的资产数 (待审核 + 已驳回)
+    my_review_count: int = 0
     last_sync_at: datetime | None = None
 
 

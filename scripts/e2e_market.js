@@ -437,6 +437,8 @@ async function codeByName(page, name) {
     const r = await fetch('/api/v1/assets/' + c, { headers: { Authorization: 'Bearer ' + tk } });
     return r.status;
   }, tmpCode);
+  // 浏览器的 console 消息比 fetch resolve 晚一点到 —— 多留 1.5s 再解除抑制
+  await sleep(1500);
   expectHttpError = false;
   check('K2 删除后资产不存在', gone === 404, `HTTP ${gone}`);
 

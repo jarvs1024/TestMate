@@ -53,6 +53,23 @@
       </div>
     </div>
 
+    <!-- ===== 我提交但还没过审的资产: 给个显眼入口, 免得被埋在列表里 ===== -->
+    <div v-if="sync.my_review_count > 0" class="my-review-bar">
+      <span>📋 你有 <b>{{ sync.my_review_count }}</b> 个资产还没通过审核</span>
+      <button class="mrb-btn" @click="setStatus('mine')">去看看</button>
+    </div>
+
+    <!-- ===== 上架状态筛选 (审核台) ===== -->
+    <div class="mk-status">
+      <span class="ms-label">状态</span>
+      <button v-for="s in statusChips" :key="s.value"
+              class="chip" :class="{ active: statusFilter === s.value }"
+              @click="setStatus(s.value)">
+        {{ s.label }}
+        <span v-if="s.count" class="count">{{ s.count }}</span>
+      </button>
+    </div>
+
     <!-- ===== 分类 + 排序 ===== -->
     <div class="mk-filters">
       <div class="chips">
@@ -95,7 +112,7 @@
 
     <AssetDetailDrawer
       v-model="drawerOpen" :item="current" :can-edit="true"
-      @edit="openUpdate" @changed="load" />
+      @edit="openUpdate" @deleted="current = null" @changed="onAssetChanged" />
 
     <AssetUploadDialog
       v-model="uploadOpen" :mode="uploadMode" :asset="current"
@@ -121,9 +138,10 @@ import AssetCard from './AssetCard.vue';
 import AssetDetailDrawer from './AssetDetailDrawer.vue';
 import AssetUploadDialog from './AssetUploadDialog.vue';
 import AssetAuditDrawer from './AssetAuditDrawer.vue';
+import { useUserStore } from '@/stores/user';
 import { MARKET_CATEGORIES, MARKET_KINDS } from './marketCatalog';
 import {
-  listAssets, listJobs, getSyncStatus, retryJob, syncFromGit,
+  getAsset, listAssets, listJobs, getSyncStatus, retryJob, syncFromGit,
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
 } from '@/api/assets';
 
@@ -137,6 +155,29 @@ const keyword = ref('');
 const sortBy = ref<'hot' | 'new' | 'name'>('hot');
 /** 列表筛选: 全部 / 已安装 / 可更新 (互斥) */
 const filterMode = ref<'all' | 'installed' | 'updatable'>('all');
+/** 上架状态筛选: ''=全部(默认可见性) / pending / rejected / mine */
+const statusFilter = ref('');
+
+const userStore = useUserStore();
+const isAdmin = computed(() => userStore.user?.role === 'admin');
+
+/** 状态筛选的选项 —— 待审核/已驳回 只有管理员用得上 */
+const statusChips = computed(() => {
+  const out: { value: string; label: string; count: number }[] = [
+    { value: '', label: '全部', count: 0 },
+  ];
+  if (isAdmin.value) {
+    out.push({ value: 'pending', label: '待审核', count: sync.value.awaiting_review_count || 0 });
+    out.push({ value: 'rejected', label: '已驳回', count: sync.value.rejected_count || 0 });
+  }
+  out.push({ value: 'mine', label: '我提交的', count: sync.value.my_review_count || 0 });
+  return out;
+});
+
+function setStatus(v: string) {
+  statusFilter.value = v;
+  load();
+}
 
 const items = ref<AssetItem[]>([]);
 const total = ref(0);
@@ -153,7 +194,8 @@ const uploadOpen = ref(false);
 const uploadMode = ref<'create' | 'update'>('create');
 const sync = ref<SyncStatus>({
   has_remote_updates: false, conflict_count: 0, pending_count: 0,
-  failed_count: 0, updatable_count: 0, unpublished_count: 0, last_sync_at: null,
+  failed_count: 0, updatable_count: 0, unpublished_count: 0,
+  awaiting_review_count: 0, rejected_count: 0, my_review_count: 0, last_sync_at: null,
 });
 
 /** 防御: items 可能是 undefined (响应形状异常 / 请求被中断), 绝不能让 list.length 抛错
@@ -194,10 +236,12 @@ async function load() {
   }, LOAD_TIMEOUT_MS);
   try {
     const r = await listAssets({
-      kind: kind.value,
+      // 选了状态筛选就别再按类型卡 —— 审核台要一次看全所有类型的待审资产
+      kind: statusFilter.value ? undefined : kind.value,
       category: category.value === '__featured' ? undefined : (category.value || undefined),
       q: keyword.value.trim() || undefined,
       sort: sortBy.value,
+      status: statusFilter.value || undefined,
       limit: 500,
     });
     const rows = r?.items ?? [];
@@ -275,6 +319,17 @@ async function doSync() {
 function openDetail(item: AssetItem) {
   current.value = item;
   drawerOpen.value = true;
+}
+
+/** 资产状态变了 (审核/上下架/删除) —— 列表和抽屉里那份都要跟着更新 */
+async function onAssetChanged() {
+  await load();
+  if (!current.value) return;
+  try {
+    current.value = await getAsset(current.value.code);
+  } catch {
+    /* 资产可能已被删除, 列表刷新后自然消失 */
+  }
 }
 
 function openCreate() {
@@ -388,6 +443,30 @@ onUnmounted(() => {
 .search input {
   border: 0; outline: none; background: transparent;
   font-size: 13px; color: var(--ink-900); font-family: inherit; width: 190px;
+}
+
+/* ===== 我提交但未过审的提示条 ===== */
+.my-review-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: rgba(59, 130, 246, 0.07);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: var(--radius-card); padding: 8px 13px;
+  font-size: 12.5px; color: var(--ink-700);
+}
+.my-review-bar b { color: var(--primary); }
+.mrb-btn {
+  background: transparent; border: 1px solid var(--primary); color: var(--primary);
+  padding: 3px 12px; border-radius: var(--radius-pill);
+  font-size: 12px; cursor: pointer; font-family: inherit;
+}
+.mrb-btn:hover { background: var(--primary); color: #fff; }
+
+/* ===== 上架状态筛选 ===== */
+.mk-status {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.ms-label {
+  font-size: 11.5px; color: var(--ink-500); margin-right: 2px;
 }
 
 /* ===== 分类 + 排序 ===== */

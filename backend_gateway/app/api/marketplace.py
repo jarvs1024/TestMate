@@ -139,6 +139,33 @@ async def require_publisher(user: User = Depends(get_current_user)) -> User:
     raise HTTPException(status_code=403, detail="不在发布者白名单内, 联系管理员开通")
 
 
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """管理员 —— 上架审核人."""
+    role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if role == "admin":
+        return user
+    if role == "anonymous":
+        raise HTTPException(status_code=401, detail="未登录")
+    raise HTTPException(status_code=403, detail="只有管理员可以审核上架")
+
+
+async def _review_required(user: User) -> bool:
+    """这次上传要不要走审核.
+
+    - 审核总开关关 → 谁都直接上架 (旧行为)
+    - 管理员自己上传 → 默认免审 (不然没人能审自己)
+    - 其余发布者 → 一律待审核
+    """
+    enabled = (await _setting("marketplace.review.enabled", "true")).lower()
+    if enabled not in ("true", "1", "yes", "on"):
+        return False
+    role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if role == "admin":
+        self_approve = (await _setting("marketplace.review.admin_self_approve", "true")).lower()
+        return self_approve not in ("true", "1", "yes", "on")
+    return True
+
+
 def _author_of(user: User) -> tuple[str, str]:
     name = user.username or "unknown"
     return (name, f"{name}@testmate.internal")
@@ -219,19 +246,51 @@ async def list_assets(
     q: str | None = Query(None),
     sort: str = Query("hot", pattern="^(hot|new|name)$"),
     include_unpublished: bool = Query(False),
+    status: str = Query(
+        # 默认空串 = 走默认可见性规则 (⚠️ pattern 必须允许空串: FastAPI 会拿默认值去过校验)
+        "", pattern="^(|published|pending|rejected|unpublished|mine|all)$",
+        description="按上架状态过滤; 留空 = 默认可见性规则",
+    ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     client_id: str = Query("local"),
     _user: User = Depends(get_current_user),
 ) -> AssetListOut:
+    """资产列表.
+
+    默认可见性 (**不是**简单的 publish_status=='published'):
+        · 在架的          —— 所有人可见
+        · 我已安装的       —— 哪怕已下架也要看得见 (否则用户根本打不开详情,
+                              「已下架」提示就形同虚设)
+        · 我提交的         —— 待审核 / 已驳回的, 提交者自己要看得到
+    管理员可以用 status 显式过滤: pending(待审核) / rejected(已驳回) /
+    unpublished(已下架) / mine(我提交的) / all(全部).
+    """
+    username = (_user.username or "").strip()
+
     async with AsyncSessionLocal() as session:
         stmt = select(Asset)
         if kind:
             stmt = stmt.where(Asset.kind == kind)
         if category:
             stmt = stmt.where(Asset.category == category)
-        if not include_unpublished:
-            stmt = stmt.where(Asset.publish_status == "published")
+
+        if status == "mine":
+            stmt = stmt.where(Asset.author == username)
+        elif status in ("pending", "rejected", "unpublished", "published"):
+            stmt = stmt.where(Asset.publish_status == status)
+        elif status == "all" or include_unpublished:
+            pass  # 不限上架状态
+        else:
+            # 默认可见性: 在架 ∪ 我提交的 ∪ 我已安装的
+            installed = select(AssetInstall.code).where(AssetInstall.client_id == client_id)
+            stmt = stmt.where(
+                or_(
+                    Asset.publish_status == "published",
+                    Asset.author == username,
+                    Asset.code.in_(installed),
+                )
+            )
         if q:
             like = f"%{q.strip()}%"
             stmt = stmt.where(
@@ -343,8 +402,10 @@ async def sync_status(
     """前端顶部状态条: 待同步 / 失败 / 有更新 / 有冲突."""
     from app.core.sync_puller import get_puller
 
+    mine = (_user.username or "").strip()
     async with AsyncSessionLocal() as session:
         pending = failed = unpublished = 0
+        awaiting_review = rejected = my_review = 0
         rows = (await session.execute(select(Asset))).scalars().all()
         for a in rows:
             if a.sync_status == "staged":
@@ -353,6 +414,12 @@ async def sync_status(
                 failed += 1
             if a.publish_status == "unpublished":
                 unpublished += 1
+            elif a.publish_status == "pending":
+                awaiting_review += 1
+            elif a.publish_status == "rejected":
+                rejected += 1
+            if mine and a.publish_status in ("pending", "rejected") and (a.author or "") == mine:
+                my_review += 1
 
     installs = await _install_map([a.code for a in rows], client_id)
     updatable = sum(
@@ -368,6 +435,9 @@ async def sync_status(
         failed_count=failed,
         updatable_count=updatable,
         unpublished_count=unpublished,
+        awaiting_review_count=awaiting_review,
+        rejected_count=rejected,
+        my_review_count=my_review,
         last_sync_at=puller.last_sync_at,
     )
 
@@ -930,6 +1000,7 @@ async def _set_publish_state(
     action: str,
     comment: str,
     user: User,
+    review_note: str | None = None,
 ) -> dict[str, Any]:
     """上下架 —— 改 DB + 写单资产 manifest + 更新 index.json + **提交到 GitLab**.
 
@@ -939,6 +1010,8 @@ async def _set_publish_state(
       所以这里也建 job, 走同一条 commit + push 队列.
 
     文件**保留** —— 在用的人还能继续用, 只是列表里标「已下架」.
+
+    publish_status 四态: pending(待审核) / published(在架) / rejected(已驳回) / unpublished(已下架)
     """
     async with AsyncSessionLocal() as session:
         a = (
@@ -946,13 +1019,17 @@ async def _set_publish_state(
         ).scalar_one_or_none()
         if a is None:
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-        if a.publish_status == publish_status:
+        if a.publish_status == publish_status and (
+            review_note is None or a.review_note == review_note
+        ):
             return {
                 "ok": True, "code": code, "publish_status": publish_status,
                 "changed": False,
             }
 
         a.publish_status = publish_status
+        if review_note is not None:
+            a.review_note = review_note
         await session.commit()
 
         # 权威是单资产 manifest.json —— 生命周期状态也写进去
@@ -965,6 +1042,8 @@ async def _set_publish_state(
         if not isinstance(manifest, dict):
             manifest = {}
         manifest["publish_status"] = publish_status
+        if review_note is not None:
+            manifest["review_note"] = review_note
         git_sync.write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2))
 
         # index.json 是派生物, 从 DB 重新渲染 (现在它带 publish_status)
@@ -972,7 +1051,8 @@ async def _set_publish_state(
 
         await _audit(session, code=code, action=action, actor=user,
                      asset_id=a.id, comment=comment,
-                     detail={"publish_status": publish_status, "version": a.version})
+                     detail={"publish_status": publish_status, "version": a.version,
+                             "review_note": a.review_note})
         await session.commit()
 
         job = AssetJob(
@@ -1022,6 +1102,85 @@ async def unpublish_asset(
         detail=comment or "已从市场下架", link="", code=code,
     )
     return {"ok": True, "code": code, "publish_status": "unpublished"}
+
+
+# ---------- 上架审核 ----------
+
+@router.post("/{code}/review")
+async def review_asset(
+    code: str,
+    decision: str = Form(..., description="approve | reject"),
+    comment: str = Form(""),
+    _user: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """管理员审核上架.
+
+    approve → publish_status=published (资产在市场可见)
+    reject  → publish_status=rejected  (发布者能看到驳回理由, 改了重新提交)
+
+    审核结果同样会 commit + push 到 GitLab —— 别的实例要立刻看到"这件通过了".
+    """
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="decision 只能是 approve 或 reject")
+
+    if decision == "approve":
+        out = await _set_publish_state(
+            code=code, publish_status="published", action="approve",
+            comment=comment or "审核通过", user=_user, review_note=comment or "",
+        )
+        if out.get("changed"):
+            await notify_market(
+                "publish", name=out["name"], version=out["version"], actor=_user.username,
+                detail=comment or "审核通过, 已上架", link="", code=code,
+            )
+        return out
+
+    note = comment or "审核未通过, 请修改后重新提交"
+    out = await _set_publish_state(
+        code=code, publish_status="rejected", action="reject",
+        comment=note, user=_user, review_note=note,
+    )
+    if out.get("changed"):
+        await notify_market(
+            "reject", name=out["name"], version=out["version"], actor=_user.username,
+            detail=note, link="", code=code,
+        )
+    return out
+
+
+@router.post("/{code}/submit")
+async def submit_for_review(
+    code: str,
+    comment: str = Form(""),
+    _user: User = Depends(require_publisher),
+) -> dict[str, Any]:
+    """把被驳回(或自己新建)的资产重新提交审核.
+
+    只有资产作者本人或管理员能提交 —— 别人不能替别人把资产推上去.
+    """
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        role = _user.role.value if hasattr(_user.role, "value") else str(_user.role)
+        is_author = (a.author or "").strip().lower() == (_user.username or "").strip().lower()
+        if role != "admin" and not is_author:
+            raise HTTPException(status_code=403, detail="只有资产作者本人可以提交审核")
+        if a.publish_status == "published":
+            raise HTTPException(status_code=409, detail="资产已在架, 无需重复提交审核")
+
+    out = await _set_publish_state(
+        code=code, publish_status="pending", action="submit",
+        comment=comment or "重新提交审核", user=_user, review_note="",
+    )
+    if out.get("changed"):
+        await notify_market(
+            "review", name=out["name"], version=out["version"], actor=_user.username,
+            detail=comment or "提交审核", link="", code=code,
+        )
+    return out
 
 
 @router.post("/{code}/publish")
@@ -1327,6 +1486,14 @@ async def _stage_asset_locked(
         a.install_steps = list(manifest.get("install_steps") or [])
         a.bindings = dict(manifest.get("bindings") or {})
         a.git_path = base
+        # 上架审核: 需要审核 → 进「待审核」(不对普通用户可见), 免审 → 直接上架
+        # 更新已上架的资产同样走审核 —— 内容变了, 审核的意义就在这
+        need_review = await _review_required(user)
+        if need_review:
+            a.publish_status = "pending"
+            a.review_note = ""
+        elif existing is None:
+            a.publish_status = "published"
         # 资产在 GitLab 上的网页地址 —— 市场页可以给个「在 GitLab 查看」链接
         web_base = ((await _setting("marketplace.git.web_url", "")) or "").strip().rstrip("/")
         a.git_web_url = (
@@ -1351,6 +1518,7 @@ async def _stage_asset_locked(
             payload={
                 "manifest": manifest,
                 "files": files,
+                "publish_status": a.publish_status,
                 "author": [author[0], author[1]],
                 "commit_message": (
                     f"{'chore(market): 更新资产' if action == 'update' else 'feat(market): 上架资产'}"
@@ -1373,13 +1541,23 @@ async def _stage_asset_locked(
 
     # ---- 3. 入队, 后台 commit + push ----
     enqueue(out.id)
-    await notify_market(
-        "publish" if action == "create" else "update",
-        name=manifest.get("name", ""), version=manifest.get("version", ""),
-        actor=user.username,
-        detail=manifest.get("summary", ""), link="",
-        code=manifest.get("code", ""),
-    )
+    # 通知: 待审核的资产通知"有人提交了, 请审核"; 直接上架的才通知"已上架"
+    if a.publish_status == "pending":
+        await notify_market(
+            "review",
+            name=manifest.get("name", ""), version=manifest.get("version", ""),
+            actor=user.username,
+            detail=manifest.get("summary", "") or "新资产待审核",
+            link="", code=manifest.get("code", ""),
+        )
+    else:
+        await notify_market(
+            "publish" if action == "create" else "update",
+            name=manifest.get("name", ""), version=manifest.get("version", ""),
+            actor=user.username,
+            detail=manifest.get("summary", ""), link="",
+            code=manifest.get("code", ""),
+        )
     return out
 
 
