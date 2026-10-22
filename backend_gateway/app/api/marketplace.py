@@ -265,10 +265,13 @@ async def _install_map(codes: list[str], client_id: str) -> dict[str, tuple[str,
     #    datetime 和 str 比较会直接 TypeError.
     #    (以前一个 code 只有一行, `cur is None` 把右边的比较短路了, 这个坑一直藏着;
     #     安装记录改成按版本分行后才暴露出来)
-    latest: dict[str, datetime] = {}
+    # ⚠️ 而且 MySQL DATETIME 是**秒级**精度 —— 同一秒里装两个版本时 installed_at
+    #    完全相同, 只比时间戳会取到先装的那版 → 明明装了新版却被误报"可更新".
+    #    加上自增 id 做次级键: 后建的 id 更大 → 取后装的那版.
+    latest: dict[str, tuple[datetime, int]] = {}
     for r in rows:
-        ts = r.installed_at or datetime.min
-        if r.code not in out or ts > latest.get(r.code, datetime.min):
+        ts = (r.installed_at or datetime.min, r.id or 0)
+        if r.code not in out or ts > latest.get(r.code, (datetime.min, 0)):
             out[r.code] = (r.version, r.status, r.install_path)
             latest[r.code] = ts
     return out
@@ -1060,11 +1063,24 @@ async def install_asset(
             )
         ).scalars().first()
         if row is None:
+            # 这个 client 以前装过这个资产吗 (任何版本)?
+            # ⚠️ 安装次数按**客户端**算, 不按版本 —— 同一台机器装几个版本都只算一次.
+            #    (以前一个 code 一条记录, 装任何版本都命中同一条, 天然只算一次;
+            #     改成按版本分行后必须显式区分, 否则热门资产的数字会随版本升级虚高)
+            seen = (
+                await session.execute(
+                    select(AssetInstall.id).where(
+                        AssetInstall.code == code,
+                        AssetInstall.client_id == client_id,
+                    ).limit(1)
+                )
+            ).first()
             row = AssetInstall(
                 code=code, client_id=client_id, user_id=_user.id, version=target_version,
             )
             session.add(row)
-            a.install_count = (a.install_count or 0) + 1
+            if not seen:
+                a.install_count = (a.install_count or 0) + 1
         row.version = target_version
         row.client_kind = client_kind
         row.status = "installed"

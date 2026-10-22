@@ -568,6 +568,20 @@ async def test_install_two_versions_keeps_both_paths(client, auth, ws,  # noqa: 
         assert paths.get("1.0.0", "").endswith("1.0.0"), paths
         assert paths.get("1.1.0", "").endswith("1.1.0"), paths
 
+    # 安装次数按**客户端**算, 不按版本 —— 同一台机器装两个版本只算一次
+    # (卡片上显示的 ⬇ install_count, 不能随版本升级虚高)
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(
+            _sel(Asset).where(Asset.code == "two-ver")
+        )).scalar_one()
+        assert a.install_count == 1, f"安装次数应为 1, 实际 {a.install_count}"
+
+    # 同秒装两版时也要取**后装**的那版
+    # (MySQL DATETIME 秒级精度 → 两条 installed_at 相同, 只比时间戳会取错)
+    from app.api.marketplace import _install_map
+    m = await _install_map(["two-ver"], "c-tv")
+    assert m["two-ver"][0] == "1.1.0", f"应取后装的 1.1.0, 实际 {m['two-ver'][0]}"
+
     # 卸载 → 两个版本的目录都要清掉
     u = await client.request("DELETE", f"{API}/two-ver/install",
                               params={"client_id": "c-tv"}, headers=pauth)
