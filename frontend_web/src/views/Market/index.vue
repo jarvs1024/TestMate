@@ -1,9 +1,23 @@
 <template>
   <div class="market">
-    <!-- ===== 动作条: 返回 + 主操作 (原来返回条独占一行, 右半屏是空的) ===== -->
+    <!-- ===== 动作条: 返回 + 类型 Tab + 搜索 + 主操作 (一栏装下) ===== -->
     <div class="mk-actions">
       <button class="back" type="button" @click="$router.push({ name: 'plaza' })">← 返回广场</button>
+      <div class="kind-tabs">
+        <button v-for="k in MARKET_KINDS" :key="k.value"
+          class="kind-tab" :class="{ active: kind === k.value }"
+          @click="kind = k.value">
+          {{ k.label }}
+          <span class="count">{{ kindCounts[k.value] || 0 }}</span>
+        </button>
+      </div>
       <div class="ma-right">
+        <div class="search">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+          </svg>
+          <input v-model="keyword" placeholder="搜索名称、说明或标签" @input="onSearch" />
+        </div>
         <el-tooltip content="谁在什么时候上架/下架/安装过, 以及钉钉通知送没送到" placement="bottom">
           <button class="mini-btn" @click="auditOpen = true">🕘 操作记录</button>
         </el-tooltip>
@@ -35,24 +49,6 @@
       <button class="mrb-btn" @click="toggleOnlyMine">
         {{ onlyMine ? '显示全部' : '只看这些' }}
       </button>
-    </div>
-
-    <!-- ===== 类型导航 + 搜索 ===== -->
-    <div class="mk-toolbar">
-      <div class="kind-tabs">
-        <button v-for="k in MARKET_KINDS" :key="k.value"
-          class="kind-tab" :class="{ active: kind === k.value }"
-          @click="kind = k.value">
-          {{ k.label }}
-          <span class="count">{{ kindCounts[k.value] || 0 }}</span>
-        </button>
-      </div>
-      <div class="search">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
-        </svg>
-        <input v-model="keyword" placeholder="搜索名称、说明或标签" @input="onSearch" />
-      </div>
     </div>
 
     <!-- ===== 分类 + 排序 (状态不在这层过滤 —— 每张卡片自己标着) ===== -->
@@ -372,14 +368,7 @@ onUnmounted(() => {
 .sb-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .sb-btn.ghost { background: transparent; }
 
-/* ===== 类型 Tab ===== */
-.mk-toolbar {
-  display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
-  background: var(--surface-soft); backdrop-filter: blur(8px);
-  border: 1px solid var(--border); border-radius: var(--radius-card);
-  padding: 10px 14px; box-shadow: var(--shadow-sm);
-  position: sticky; top: 0; z-index: 4;
-}
+/* ===== 类型 Tab (在动作条里) ===== */
 .kind-tabs { display: flex; gap: 6px; }
 .kind-tab {
   background: transparent; border: 1px solid transparent;
@@ -437,12 +426,18 @@ onUnmounted(() => {
 }
 .mrb-btn:hover { background: var(--primary); color: #fff; }
 
-/* ===== 动作条: 返回 + 主操作 (一行, 两端对齐) ===== */
+/* ===== 动作条: 返回 + 类型 Tab + 搜索 + 主操作 (一栏, 粘顶) ===== */
 .mk-actions {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  background: var(--surface-soft); backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: 10px 14px; box-shadow: var(--shadow-sm);
+  position: sticky; top: 0; z-index: 4;
 }
-.ma-right { display: flex; align-items: center; gap: 8px; }
+.ma-right {
+  display: flex; align-items: center; gap: 8px;
+  margin-left: auto; flex-shrink: 0;
+}
 .back {
   background: transparent; border: 1px solid var(--border);
   padding: 6px 12px; border-radius: 8px;
