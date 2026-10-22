@@ -218,6 +218,21 @@ async function codeByName(page, name) {
   check('A4 无加载中/空态残留', !s.marketState, s.marketState || '(none)');
   check('A5 底部标注数据源', /GitLab/.test(s.footHint || ''), s.footHint);
 
+  // ---------- A6. 返回广场 ----------
+  const backFound = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.mk-topbar .back')]
+      .find((x) => x.textContent.includes('返回广场'));
+    if (!b) return false;
+    b.click();
+    return true;
+  });
+  await sleep(2000);
+  const onPlaza = await page.evaluate(() => location.pathname);
+  check('A6 「返回广场」按钮存在且能跳回广场', backFound && onPlaza === '/plaza', `path=${onPlaza}`);
+  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('.asset-card', { timeout: 15000 });
+  await sleep(1200);
+
   // ---------- B. 类型 Tab ----------
   await clickByText(page, '.kind-tab', '技能');
   await sleep(900);

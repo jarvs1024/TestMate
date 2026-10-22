@@ -1,5 +1,11 @@
 <template>
   <div class="market">
+    <!-- ===== 返回广场: 与代码检视 / 智能体详情页保持一致的入口 ===== -->
+    <div class="mk-topbar">
+      <button class="back" type="button" @click="$router.push({ name: 'plaza' })">← 返回广场</button>
+      <span class="mt-count">当前 {{ total }} 项</span>
+    </div>
+
     <!-- ===== 同步状态条: 本地已存 ≠ 已共享, 这个差异必须显式暴露 ===== -->
     <div v-if="hasSyncNotice" class="sync-bar" :class="{ hasErr: sync.failed_count > 0 || sync.conflict_count > 0 }">
       <span class="sb-icon">{{ sync.failed_count || sync.conflict_count ? '❌' : '🕐' }}</span>
@@ -460,6 +466,20 @@ onUnmounted(() => {
   font-size: 12px; cursor: pointer; font-family: inherit;
 }
 .mrb-btn:hover { background: var(--primary); color: #fff; }
+
+/* ===== 顶部返回条 (与代码检视页 .back 同款) ===== */
+.mk-topbar {
+  display: flex; align-items: center; gap: 12px;
+}
+.back {
+  background: transparent; border: 1px solid var(--border);
+  padding: 6px 12px; border-radius: 8px;
+  color: var(--ink-700); font-size: 12.5px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.back:hover { background: var(--surface-sunken); color: var(--ink-900); }
+.mt-count { font-size: 11.5px; color: var(--ink-500); }
 
 /* ===== 上架状态筛选 ===== */
 .mk-status {
