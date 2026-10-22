@@ -94,6 +94,23 @@ async function setSetting(token, key, value) {
   if (r.status !== 200) throw new Error(`设置 ${key} 失败: ${r.status} ${r.text}`);
 }
 
+/**
+ * 读设置项当前值 (只取指定 key).
+ * ⚠️ 改之前必须先存住 —— 场景脚本改的是**生产设置**, 结束必须还原.
+ * 否则测一次就把「发布白名单」永久改成测试账号, 账号删掉后白名单还指着它.
+ */
+async function getSettings(token, keys) {
+  const r = await api('/api/v1/settings/schema', { token });
+  const out = {};
+  if (r.status !== 200) return out;
+  for (const g of (r.json.groups || [])) {
+    for (const it of (g.items || [])) {
+      if (keys.includes(it.key)) out[it.key] = it.value;
+    }
+  }
+  return out;
+}
+
 function makePkg() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   execFileSync('python3', ['-c', `
@@ -115,18 +132,23 @@ z.close()
   const insToken = await login(INSTALLER.username, INSTALLER.password);
 
   // 场景前置: 开审核 + 把小王加进发布白名单
-  await setSetting(adminToken, 'marketplace.review.enabled', 'true');
-  await setSetting(adminToken, 'marketplace.publisher_usernames', PUBLISHER.username);
+  // ⚠️ 改的是**生产设置** —— 先存原值, 结束必须还原.
+  //    (只删测试账号是不够的: 白名单里留着已删除的测试账号 = 脏配置)
+  const TOUCHED = ['marketplace.review.enabled', 'marketplace.publisher_usernames'];
+  const savedSettings = await getSettings(adminToken, TOUCHED);
 
   const pkg = makePkg();
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: true,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
-    defaultViewport: { width: 1600, height: 1000 },
-  });
-
+  let browser = null;
   try {
+    await setSetting(adminToken, 'marketplace.review.enabled', 'true');
+    await setSetting(adminToken, 'marketplace.publisher_usernames', PUBLISHER.username);
+
+    browser = await puppeteer.launch({
+      executablePath: CHROME,
+      headless: true,
+      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      defaultViewport: { width: 1600, height: 1000 },
+    });
     // ===== ① 小王上传技能包 → 进入待审核 =====
     const pub = await openAs(browser, pubToken, { id: 0, username: PUBLISHER.username, role: 'tester' });
     await pub.page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
@@ -415,7 +437,17 @@ z.close()
       pub.errors.length === 0 && adm.errors.length === 0 && ins.errors.length === 0,
       [...pub.errors, ...adm.errors, ...ins.errors].slice(0, 2).join(' ; '));
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
+    // 还原设置 —— 场景脚本改的是生产设置, 必须还原
+    // (曾经只删账号不还原设置, 结果白名单里长期挂着一个已删除的测试账号)
+    for (const k of TOUCHED) {
+      if (savedSettings[k] === undefined) continue;
+      try {
+        await setSetting(adminToken, k, String(savedSettings[k]));
+      } catch (e) {
+        console.log(`  [清理] 设置 ${k} 还原失败: ` + String(e.message).split('\n')[0]);
+      }
+    }
     // 清理测试账号 —— 别在库里留两个已知口令的账号
     try {
       const env = fs.readFileSync(path.join(__dirname, '..', 'deploy', '.env'), 'utf8');

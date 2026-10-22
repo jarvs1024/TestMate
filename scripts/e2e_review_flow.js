@@ -47,6 +47,33 @@ async function login(username, password) {
   return r.json.access_token || '';
 }
 
+/** 读设置项当前值 —— 改白名单前先存住, 结束必须还原 */
+async function getSetting(token, key) {
+  const r = await api('/api/v1/settings/schema', {
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  if (r.status !== 200) return undefined;
+  for (const g of (r.json?.groups || [])) {
+    for (const it of (g.items || [])) {
+      if (it.key === key) return it.value;
+    }
+  }
+  return undefined;
+}
+
+async function restoreSetting(token, key, value) {
+  if (value === undefined) return;
+  await api(`/api/v1/settings/${key}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ value: String(value) }),
+  });
+}
+
+// 错误路径也要还原白名单 —— 主体中途抛错时清理段根本不会执行到
+let cleanupToken = null;
+let savedPublisherSetting;
+
 /** 等上传任务跑到终态 (推送要几秒, 固定 sleep 不可靠) */
 async function waitJobDone(page, timeoutMs = 45000) {
   const t0 = Date.now();
@@ -82,6 +109,7 @@ async function openPage(browser, token, user) {
 (async () => {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const adminToken = await login(ADMIN, ADMIN_PW);
+  cleanupToken = adminToken;
 
   // ---------- 准备: 发布者账号 + 白名单 ----------
   await api(`/api/v1/assets/${CODE}`, {
@@ -93,6 +121,9 @@ async function openPage(browser, token, user) {
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminToken },
     body: JSON.stringify({ username: PUB, password: PUB_PW, role: 'tester' }),
   });
+  // ⚠️ 先存原值 —— 白名单是**生产设置**, 结束时必须还原
+  //    (以前直接恢复成空字符串, 会把管理员配好的真实白名单一起抹掉)
+  savedPublisherSetting = await getSetting(adminToken, 'marketplace.publisher_usernames');
   await api('/api/v1/settings/marketplace.publisher_usernames', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminToken },
@@ -318,10 +349,8 @@ async function openPage(browser, token, user) {
   await api(`/api/v1/assets/${CODE}`, {
     method: 'DELETE', headers: { Authorization: 'Bearer ' + adminToken },
   });
-  await api('/api/v1/settings/marketplace.publisher_usernames', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminToken },
-    body: JSON.stringify({ value: '' }),
-  });
+  // 还原白名单原值 (不是清空 —— 清空会把真实配置也抹掉)
+  await restoreSetting(adminToken, 'marketplace.publisher_usernames', savedPublisherSetting);
   // 删掉测试账号 —— 别留一个已知口令的账号在库里
   try {
     const env = fs.readFileSync(path.join(__dirname, '..', 'deploy', '.env'), 'utf8');
@@ -339,7 +368,13 @@ async function openPage(browser, token, user) {
   console.log(`\n===== 结果: ${results.length - failed.length}/${results.length} 通过 =====`);
   if (failed.length) console.log('失败项:\n' + failed.map((f) => ' - ' + f.name + ' :: ' + f.detail).join('\n'));
   process.exit(failed.length ? 1 : 0);
-})().catch((e) => {
+})().catch(async (e) => {
   console.error('FATAL', e);
+  // 错误路径也要还原白名单 —— 主体中途抛错时清理段根本执行不到
+  try {
+    if (cleanupToken) {
+      await restoreSetting(cleanupToken, 'marketplace.publisher_usernames', savedPublisherSetting);
+    }
+  } catch { /* 尽力而为 */ }
   process.exit(2);
 });
