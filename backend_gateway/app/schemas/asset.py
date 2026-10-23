@@ -91,31 +91,22 @@ class AssetFileBundleOut(BaseModel):
 
 
 class AssetInstallTargetOut(BaseModel):
-    """前端点安装时先查这个: 本地安装目录 + 解析后的目标路径."""
+    """前端点安装时先查这个: 能不能装 + 建议装到哪.
+
+    ⚠️ 后端不再写盘 —— 安装在用户本机完成 (选目录 / 下载安装包),
+    所以这里没有"服务端目录"这回事, 只有一份**建议**的目标路径.
+    """
 
     code: str
     kind: str
     version: str
-    skill_dir: str
-    plugin_dir: str
+    # 建议的安装目录 (Qoder 标准布局, ~ 表示家目录)
     target: str
-    server_channel_available: bool = True
-    # 宿主路径 (原始配置值, 如 ~/.qoder-cn/skills) —— 「复制安装命令」要用它,
-    # 服务端容器里的 /host-home/... 用户在自己的机器上根本不存在
     skill_dir_host: str = ""
     plugin_dir_host: str = ""
-    # 这个包**现在能不能装** —— 前端据此把按钮置灰并说明原因, 不用等点了才知道
+    # 这个包**现在能不能装** —— 前端据此把按钮置灰并说明原因
     installable: bool = True
     install_block_reason: str = ""
-
-    # ---- 跨平台自动定位 (前端通道) ----
-    # 安装目录是不是在**用户家目录**下 —— 是的话前端可以"记住家目录句柄"后
-    # 自动派生, 不用每次都弹目录选择器让用户自己翻.
-    install_under_home: bool = False
-    # **安装根目录**相对家目录的路径段, 如 ["qoder-cn", "skills"] (不含 code/version).
-    # 前端用目录句柄逐级 getDirectoryHandle 派生 —— 不需要知道是哪个系统,
-    # 也不用碰路径分隔符, Linux / macOS / Windows 一套逻辑.
-    install_root_rel_path: list[str] = []
 
 
 class PackagePreviewOut(BaseModel):

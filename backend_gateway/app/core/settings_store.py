@@ -292,37 +292,6 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
-        "key": "marketplace.install.skill_dir",
-        "category": "marketplace",
-        "value_type": "string",
-        "default": "~/.qoder-cn/skills",
-        "description": (
-            "skill 安装目录 —— **用 ~/ 表示家目录** (三平台通用: Linux/macOS/Windows 都认), "
-            "前端会自动定位到每个用户自己的家目录, 不用每次手选; "
-            "容器内 ~ 会翻译成 /host-home"
-        ),
-        "is_secret": False,
-    },
-    {
-        "key": "marketplace.install.plugin_dir",
-        "category": "marketplace",
-        "value_type": "string",
-        "default": "~/.qoder-cn/plugins/cache/qoder-marketplace",
-        "description": (
-            "plugin 安装目录 (对齐 Qoder 的 cache/<market>/<plugin>/<version> 布局) —— "
-            "同样**用 ~/ 表示家目录**, 前端可自动定位"
-        ),
-        "is_secret": False,
-    },
-    {
-        "key": "marketplace.install.enabled",
-        "category": "marketplace",
-        "value_type": "bool",
-        "default": "true",
-        "description": "是否允许在服务端写盘安装 (关掉后只能走前端通道)",
-        "is_secret": False,
-    },
-    {
         "key": "marketplace.sync.interval_seconds",
         "category": "marketplace",
         "value_type": "int",
@@ -432,6 +401,16 @@ SETTING_SCHEMA: list[dict] = [
     },
 ]
 
+# 已废弃的设置项 —— 从 SCHEMA 移除后, DB 里的残留行在启动时一并清掉.
+# 只列**明确废弃**的 key, 不会误伤用户自定义的设置.
+# 服务端写盘安装通道下线: 安装统一在用户本机完成 (选目录 / 下载安装包),
+# 服务端不再有"可配置的安装目录"这回事.
+DEPRECATED_KEYS = (
+    "marketplace.install.skill_dir",
+    "marketplace.install.plugin_dir",
+    "marketplace.install.enabled",
+)
+
 
 def get_schema() -> list[dict]:
     return SETTING_SCHEMA
@@ -443,6 +422,7 @@ async def seed_defaults() -> None:
     """启动时:
     1) 把 SCHEMA 里有但 DB 里没有的, 用 .env default 落库
     2) 修正 DB 里 category 跟 SCHEMA 不一致的 (旧版本 category='knowledge' 现在拆成 'knowledge-source')
+    3) 清掉已废弃的 key (从 SCHEMA 移除后, DB 里的残留行一并删掉)
     """
     from app.db.session import AsyncSessionLocal
     from app.models.system_setting import SystemSetting
@@ -473,6 +453,14 @@ async def seed_defaults() -> None:
                 is_secret=s["is_secret"],
             )
             session.add(row)
+
+        # 废弃 key 清理 —— 只删**明确列出来的**, 不会误伤用户自定义的设置
+        for key in DEPRECATED_KEYS:
+            row = await session.get(SystemSetting, key)
+            if row is not None:
+                logger.info("settings: 清理已废弃的设置项 %s", key)
+                await session.delete(row)
+
         await session.commit()
 
 

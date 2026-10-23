@@ -112,20 +112,13 @@ export interface InstallTarget {
   code: string;
   kind: string;
   version: string;
-  skill_dir: string;
-  plugin_dir: string;
+  /** 建议的安装目录 (~ 表示家目录) —— 选目录方式用它提示, 下载方式告诉用户解压到哪 */
   target: string;
-  server_channel_available: boolean;
-  /** 宿主路径 (原始配置值, 如 ~/.qoder-cn/skills) —— 复制安装命令时用 */
   skill_dir_host: string;
   plugin_dir_host: string;
   /** 这个包现在能不能装 —— false 时前端应把按钮置灰并说明原因 */
   installable: boolean;
   install_block_reason: string;
-  /** 安装目录是否在用户家目录下 —— true 才能用"记住家目录句柄"自动定位 */
-  install_under_home: boolean;
-  /** 安装根目录相对家目录的路径段, 如 ["qoder-cn","skills"] —— 不含 code/version */
-  install_root_rel_path: string[];
 }
 
 /** 上传前的包体检结果 */
@@ -386,19 +379,37 @@ export async function updateAsset(code: string, form: UploadForm): Promise<Asset
   return apiPut<AssetJob>(`/assets/${encodeURIComponent(code)}`, toFormData(form, false));
 }
 
+/**
+ * 记录"本机已安装" —— 文件由浏览器写在用户自己电脑上, 后端只留个记录.
+ * ⚠️ 服务端写盘通道已下线, 不再有 channel=server.
+ */
 export async function installAsset(
   code: string, version: string,
-  opts: { channel: 'server' | 'frontend'; installPath?: string } = { channel: 'server' },
+  opts: { installPath?: string } = {},
 ): Promise<{ ok: boolean; code: string; version: string; install_path: string; channel: string }> {
   const fd = new FormData();
   fd.append('version', version);
-  fd.append('channel', opts.channel);
+  fd.append('channel', 'frontend');
   fd.append('client_id', getClientId());
   fd.append('client_kind', 'web');
   if (opts.installPath) fd.append('install_path', opts.installPath);
   return (await request.post(`/assets/${encodeURIComponent(code)}/install`, fd)) as unknown as {
     ok: boolean; code: string; version: string; install_path: string; channel: string;
   };
+}
+
+/**
+ * 下载安装包 (原始 zip) —— 给"下载安装包后自行解压"这条路用.
+ *
+ * 下载端点要带 token, 所以不能用 <a href> 直接开 (没 Authorization 头),
+ * 得先 fetch 成 blob 再由前端触发保存.
+ */
+export async function downloadAssetPackage(code: string, version: string): Promise<Blob> {
+  const resp = await request.get(
+    `/assets/${encodeURIComponent(code)}/versions/${encodeURIComponent(version)}/download`,
+    { responseType: 'blob' },
+  );
+  return resp as unknown as Blob;
 }
 
 export async function uninstallAsset(code: string): Promise<void> {

@@ -19,7 +19,6 @@ import logging
 import re
 import shutil
 import tempfile
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -73,71 +72,12 @@ from app.schemas.asset import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# 容器内宿主家目录的挂载点 (compose: ${HOME}/.qoder-cn → /host-home/.qoder-cn)
-HOST_HOME = "/host-home"
-
-
-# ---------- 路径与权限 ----------
-
-def resolve_host_path(raw: str) -> Path:
-    """把配置里的**宿主路径**翻译成容器内路径.
-
-    设置项存宿主路径 (如 ~/.qoder-cn/skills), 容器内要换成 /host-home/...
-    """
-    raw = (raw or "").strip()
-    if not raw:
-        return Path("/host-home/.qoder-cn")
-    if raw.startswith("~/"):
-        return Path(HOST_HOME) / raw[2:]
-    if raw == "~":
-        return Path(HOST_HOME)
-    return Path(raw)
-
-
-# 家目录的各种写法 —— 设置项里统一用 `~/`, 但 Windows 用户可能填 %USERPROFILE%\
-_HOME_PREFIXES = ("~", "%USERPROFILE%", "%HOMEPATH%", "$HOME", "${HOME}")
-
-# 各系统"家目录"的绝对路径形态 —— 用户也可能直接填绝对路径.
-#   Windows: C:\Users\张三\.qoder-cn\skills
-#   macOS:   /Users/zhangsan/.qoder-cn/skills
-_WIN_HOME_RE = re.compile(r"^[A-Za-z]:/Users/[^/]+(?:/(.*))?$")
-_MAC_HOME_RE = re.compile(r"^/Users/[^/]+(?:/(.*))?$")
-
-
-def split_home_path(raw: str) -> tuple[bool, list[str]]:
-    """把配置里的安装目录拆成 **(是否在家目录下, 家目录下的相对路径段)**.
-
-    设置项统一用 `~/xxx` 表示家目录 (跨平台), 同时兼容这些写法:
-        ~/xxx                    (推荐, 三平台通用)
-        %USERPROFILE%\\xxx        (Windows 原生)
-        $HOME/xxx                (shell 习惯)
-        C:\\Users\\张三\\xxx       (Windows 绝对家目录)
-        /Users/zhangsan/xxx      (macOS 绝对家目录)
-
-    前端拿到相对路径段后用目录句柄逐级派生, 既不用知道用户是哪个系统,
-    也不用碰路径分隔符 —— Linux / macOS / Windows 同一套逻辑.
-
-    ⚠️ 先把反斜杠换成正斜杠再拆 —— 否则 "C:\\Users\\x\\.qoder-cn"
-    会被按反斜杠拆错.
-
-    返回 (False, []) = 这个路径**不在家目录下** (如 /opt/skills):
-    前端没法靠"记住家目录句柄"自动定位, 只能让用户手动选.
-    """
-    s = (raw or "").strip().replace("\\", "/")
-    if not s:
-        return False, []
-    for p in _HOME_PREFIXES:
-        if s == p:
-            return True, []
-        if s.startswith(p + "/"):
-            rest = s[len(p) + 1:]
-            return True, [seg for seg in rest.split("/") if seg and seg != "."]
-    for rx in (_WIN_HOME_RE, _MAC_HOME_RE):
-        m = rx.match(s)
-        if m:
-            rest = (m.group(1) or "").strip("/")
-            return True, [seg for seg in rest.split("/") if seg and seg != "."]
-    return False, []
+# 建议的安装目录 (给「下载安装包」方式用) —— 跟 Qoder 的标准布局一致:
+#   skill  → ~/.qoder-cn/skills/<code>/
+#   plugin → ~/.qoder-cn/plugins/cache/qoder-marketplace/<code>/<version>/
+# ⚠️ 后端**不写盘**了 —— 安装一律在用户本机完成 (选目录 / 下载安装包自行解压).
+SKILL_INSTALL_DIR = "~/.qoder-cn/skills"
+PLUGIN_INSTALL_DIR = "~/.qoder-cn/plugins/cache/qoder-marketplace"
 
 
 async def _setting(key: str, default: str = "") -> str:
@@ -573,20 +513,19 @@ async def list_notification_receipts(
 
 @router.get("/config", response_model=MarketConfigOut)
 async def get_market_config(_user: User = Depends(get_current_user)) -> MarketConfigOut:
-    """市场当前生效的配置 —— 设置页用来展示"工作区在哪 / 远端是哪个 / 装到哪".
+    """市场当前生效的配置 —— 设置页用来展示"工作区在哪 / 远端是哪个".
 
     注意是**生效值** (DB 设置 > env 初值), 不是 schema 里的默认值.
     """
     st = git_sync.workspace_status()
-    enabled = (await _setting("marketplace.install.enabled", "true")).lower()
     return MarketConfigOut(
         workspace=str(git_sync.WORKSPACE),
         remote=git_sync.git_remote(),
         branch=git_sync.git_branch(),
         web_url=((await _setting("marketplace.git.web_url", "")) or "").strip(),
-        skill_dir=await _setting("marketplace.install.skill_dir", ""),
-        plugin_dir=await _setting("marketplace.install.plugin_dir", ""),
-        install_enabled=enabled in ("true", "1", "yes", "on"),
+        skill_dir=SKILL_INSTALL_DIR,
+        plugin_dir=PLUGIN_INSTALL_DIR,
+        install_enabled=True,
         is_repo=bool(st.get("is_repo")),
         head=st.get("head", ""),
     )
@@ -817,7 +756,13 @@ async def download_package(
 async def get_install_target(
     code: str, _user: User = Depends(get_current_user)
 ) -> AssetInstallTargetOut:
-    """前端点安装时先查这个: 本地安装目录 + 解析后的目标路径."""
+    """前端点安装时先查这个: 能不能装 + 建议装到哪.
+
+    ⚠️ 后端不再写盘 —— 安装一律在用户本机完成:
+      · 「选择目录安装」浏览器 File System Access 写盘 (前端要文件清单 → /bundle)
+      · 「下载安装包」自行解压
+    所以这里只给: 可装判断 + 建议的目标目录 (Qoder 标准布局).
+    """
     async with AsyncSessionLocal() as session:
         a = (
             await session.execute(select(Asset).where(Asset.code == code))
@@ -825,28 +770,10 @@ async def get_install_target(
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
 
-    skill_raw = await _setting("marketplace.install.skill_dir", "~/.qoder-cn/skills")
-    plugin_raw = await _setting(
-        "marketplace.install.plugin_dir", "~/.qoder-cn/plugins/cache/qoder-marketplace"
-    )
-    skill_dir = resolve_host_path(skill_raw)
-    plugin_dir = resolve_host_path(plugin_raw)
     if a.kind == "skill":
-        target = skill_dir / a.code
-        install_raw = skill_raw
+        target = f"{SKILL_INSTALL_DIR}/{a.code}"
     else:
-        target = plugin_dir / a.code / a.version
-        install_raw = plugin_raw
-
-    # ---- 跨平台自动定位 (前端通道) ----
-    # 配置里写的是**家目录相对路径** (~/qoder-cn/skills) 时, 前端可以"记住家目录
-    # 句柄"再逐级派生, 装的时候不用弹目录选择器让用户自己翻.
-    # 这里给的是**安装根目录**相对家目录的路径段 (不含 code / version) ——
-    # 前端派生出根目录后再拼 code/version, 这样装不同资产时目录是一致的.
-    under_home, rel_path = split_home_path(install_raw)
-
-    enabled = (await _setting("marketplace.install.enabled", "true")).lower()
-    server_ok = enabled in ("true", "1", "yes", "on")
+        target = f"{PLUGIN_INSTALL_DIR}/{a.code}/{a.version}"
 
     # 这个包现在装不装得上 —— 前端据此把按钮置灰, 不用等点了才知道
     files = _content_files(git_sync.WORKSPACE / a.git_path)
@@ -855,16 +782,11 @@ async def get_install_target(
         code=a.code,
         kind=a.kind,
         version=a.version,
-        skill_dir=str(skill_dir),
-        plugin_dir=str(plugin_dir),
-        target=str(target),
-        server_channel_available=server_ok,
-        skill_dir_host=skill_raw,
-        plugin_dir_host=plugin_raw,
+        target=target,
+        skill_dir_host=SKILL_INSTALL_DIR,
+        plugin_dir_host=PLUGIN_INSTALL_DIR,
         installable=not block_reason,
         install_block_reason=block_reason,
-        install_under_home=under_home,
-        install_root_rel_path=rel_path,
     )
 
 
@@ -940,8 +862,8 @@ def _content_files(base: Path) -> list[str]:
 def _install_block_reason(kind: str, files: list[str]) -> str:
     """这个包按 kind 能不能装? 不能就返回原因 (空串 = 能装).
 
-    判定口径必须与 `_install_files` 里落盘前的那道校验**完全一致** ——
-    否则会出现"前端说能装, 点了却 422"的割裂.
+    判定口径: skill 必须有 SKILL.md, plugin 必须有 .qoder-plugin/plugin.json ——
+    与前端写盘时的校验一致, 否则会出现"前端说能装, 点了却失败"的割裂.
     """
     if kind == "mcp":
         return "连接器不支持一键安装, 请在宿主 MCP 配置里手动添加"
@@ -958,79 +880,6 @@ def _install_block_reason(kind: str, files: list[str]) -> str:
         if ".qoder-plugin" in parts[:-1]:
             return ""
     return "插件包内没有 .qoder-plugin/plugin.json"
-
-
-def _install_files(base: Path, target: Path, kind: str) -> None:
-    """把资产**内容文件**原子地装到 target.
-
-    只拷内容文件 —— manifest.json 与 package/ 是仓库侧的东西, 不该进用户目录.
-    兼容新旧两种布局 (files/ 子目录 or 直接在资产根下).
-
-    原子性: 先写临时目录 → 校验 → 旧目录改名备份 → rename → 删备份.
-    失败时清理临时目录, **不动原目录**.
-    """
-    root = pkg.files_root(base)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.parent / f".tmp-{target.name}-{uuid.uuid4().hex[:8]}"
-    backup = target.parent / f".bak-{target.name}-{uuid.uuid4().hex[:8]}"
-    try:
-        tmp.mkdir(parents=True)
-        for src in pkg.content_files(base):
-            rel = src.relative_to(root)
-            dst = tmp / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-        if kind == "skill":
-            if not any(tmp.rglob("SKILL.md")):
-                raise pkg.PackageError("安装包内没有 SKILL.md")
-        elif not any(tmp.rglob(".qoder-plugin")) and not any(tmp.rglob("plugin.json")):
-            raise pkg.PackageError("安装包内没有 .qoder-plugin/plugin.json")
-        if target.exists():
-            target.rename(backup)
-        tmp.rename(target)
-        shutil.rmtree(backup, ignore_errors=True)
-    except Exception:
-        shutil.rmtree(tmp, ignore_errors=True)
-        if backup.exists() and not target.exists():
-            backup.rename(target)
-        raise
-
-
-def _remove_install_dirs(paths: list[str], code: str = "") -> list[str]:
-    """删掉服务端安装目录, 并顺手清掉空的版本父目录.
-
-    ⚠️ 两个坑:
-    1. 一个资产可能装过**多个版本** (plugin 是 <plugin_dir>/<code>/<version>/),
-       卸载必须把**每一个**版本的目录都删掉 —— 只删最后一个会留垃圾.
-    2. 删掉版本目录后, 空的 <code>/ 父目录也得清掉, 否则留下一个空壳目录.
-    """
-    removed: list[str] = []
-    for raw in paths:
-        if not raw:
-            continue
-        try:
-            p = Path(raw)
-            if p.is_dir():
-                shutil.rmtree(p)
-                if p.exists():
-                    logger.error("清理安装目录后仍存在 path=%s", raw)
-                    continue
-                removed.append(raw)
-                parent = p.parent
-                if code and parent.name == code and parent.is_dir():
-                    # 先清掉残留的安装锁文件 (老版本把锁放在 code 目录里),
-                    # 否则目录非空 → rmdir 失败 → 留个空壳
-                    for f in list(parent.iterdir()):
-                        if f.is_file() and f.name.startswith(".install-"):
-                            try:
-                                f.unlink()
-                            except OSError:
-                                pass
-                    if not any(parent.iterdir()):
-                        parent.rmdir()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("清理安装目录失败 path=%s err=%s", raw, e)
-    return removed
 
 
 @router.post("/{code}/install")
@@ -1068,41 +917,16 @@ async def install_asset(
                 ),
             )
 
-        written = ""
+        # ⚠️ 服务端写盘通道已下线 —— 安装一律在**用户本机**完成:
+        #    「选择目录安装」(浏览器 File System Access 写盘) 或「下载安装包」自行解压.
+        #    原因: 服务端写盘要求用户信任服务器能操作它的磁盘, 权限边界不清;
+        #    而浏览器无法静默获得家目录授权 —— 两条路都得用户自己动手.
         if channel == "server":
-            enabled = (await _setting("marketplace.install.enabled", "true")).lower()
-            if enabled not in ("true", "1", "yes", "on"):
-                raise HTTPException(status_code=503, detail="安装功能已关闭")
-            base = git_sync.WORKSPACE / a.git_path
-            src = pkg.files_root(base)
-            if not src.is_dir():
-                raise HTTPException(status_code=404, detail="资产文件尚未落盘")
-            skill_raw = await _setting("marketplace.install.skill_dir", "~/.qoder-cn/skills")
-            plugin_raw = await _setting(
-                "marketplace.install.plugin_dir",
-                "~/.qoder-cn/plugins/cache/qoder-marketplace",
+            raise HTTPException(
+                status_code=400,
+                detail="服务端安装通道已下线, 请改用「选择目录安装」或下载安装包",
             )
-            if a.kind == "skill":
-                install_root = resolve_host_path(skill_raw)
-                target = install_root / a.code
-            else:
-                install_root = resolve_host_path(plugin_raw)
-                target = install_root / a.code / a.version
-            try:
-                # ⚠️ 锁文件放**安装根目录**下, 不能放 target.parent ——
-                #    plugin 的 target.parent 是 <code>/ 目录, 锁文件会落在里面,
-                #    卸载时该目录就永远删不掉 (只剩一个带锁文件的空壳).
-                with git_sync._FileLock(install_root / f".install-{a.code}.lock"):
-                    _install_files(base, target, a.kind)
-            except pkg.PackageError as e:
-                # 包本身不合规 (缺 SKILL.md / plugin.json) —— 是资产的问题, 不是服务端的
-                raise HTTPException(status_code=422, detail=f"安装包不合规: {e}") from e
-            except Exception as e:  # noqa: BLE001
-                logger.error("install 失败 code=%s err=%s", a.code, e)
-                raise HTTPException(status_code=500, detail=f"安装失败: {e}") from e
-            written = str(target)
-        else:
-            written = install_path
+        written = install_path
 
         # 安装记录按 **(code, version, client_id)** 定位, 不能只按 (code, client_id).
         # ⚠️ 以前只按 (code, client_id) 找 —— 装第二个版本会把第一条**覆盖**,
@@ -1172,16 +996,11 @@ async def uninstall_asset(
         ).scalars().all()
         if not rows:
             return {"ok": True, "code": code, "removed": False}
-        removed_paths: list[str] = []
         for row in rows:
             row.status = "uninstalled"
-            if row.install_path and row.channel == "server":
-                # ⚠️ 要**收集全部**, 不能只留最后一个 ——
-                #    plugin 装过多个版本时每个版本一个目录, 只删一个会留垃圾.
-                removed_paths.append(row.install_path)
         await session.commit()
-
-        _remove_install_dirs(removed_paths, code=code)
+        # ⚠️ 不删任何目录 —— 文件装在**用户本机**, 后端够不着.
+        #    (服务端写盘通道已下线, 目录归用户自己管)
 
         await _audit(
             session, code=code, action="uninstall", actor=_user,
@@ -1467,7 +1286,6 @@ async def delete_asset(
             ) from e
 
         # 3) 推送成功 → 动 DB
-        install_dirs: list[str] = []
         async with AsyncSessionLocal() as session:
             a = await session.get(Asset, asset_id)
             installs = (
@@ -1476,10 +1294,6 @@ async def delete_asset(
                 )
             ).scalars().all()
             removed_installs = len(installs)
-            install_dirs = [
-                r.install_path for r in installs
-                if r.install_path and r.channel == "server"
-            ]
             for r in installs:
                 await session.delete(r)
             if a is not None:
@@ -1490,10 +1304,8 @@ async def delete_asset(
                 detail={"git_path": git_path, "removed_installs": removed_installs},
             )
             await session.commit()
-
-        # 4) 清掉用户机器上的服务端安装目录 —— "彻底删除"就不该在磁盘留垃圾.
-        #    资产没了之后就没法再走卸载接口了, 残留目录将永远没人能清.
-    _remove_install_dirs(install_dirs, code=code)
+        # ⚠️ 用户本机的安装目录不动 —— 后端够不着, 也不该替用户删文件.
+        #    (服务端写盘通道已下线)
 
     await notify_market(
         "delete", name=asset_name, version=version, actor=_user.username,
