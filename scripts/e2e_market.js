@@ -102,8 +102,11 @@ async function snap(page) {
       syncChip: txt(document.querySelector('.ad-sync-chip')),
       dlgChanCount: document.querySelectorAll('.inst-chan').length,
       dlgTarget: txt(document.querySelector('.inst-chan-d')),
+      // 目标路径显示在「下载安装包」那一条的说明里
+      dlgZipTarget: txt(document.querySelectorAll('.inst-chan-d')[1]),
       dlgPerm: txt(document.querySelector('.inst-perm')),
       dlgAlert: txt(document.querySelector('.el-dialog .el-alert__title')),
+      dlgWhole: txt(document.querySelector('.el-dialog')),
       msgBox: txt(document.querySelector('.el-message-box__message')),
       // 包体检
       pvState: txt(document.querySelector('.pv-box')),
@@ -282,16 +285,37 @@ async function codeByName(page, name) {
   await page.waitForSelector('.inst-chan', { timeout: 10000 });
   await sleep(1200);
   s = await snap(page);
-  check('E1 安装向导读到目标目录', s.dlgChanCount === 2 && /\//.test(s.dlgTarget || ''), `target=${s.dlgTarget}`);
+  check('E1 安装向导有两种方式', s.dlgChanCount === 2, `chan=${s.dlgChanCount}`);
   check('E2 向导显示权限提示', (s.dlgPerm || '').length > 5, (s.dlgPerm || '').slice(0, 60));
+  check('E2b 没有服务端安装选项了', !/服务器/.test(s.dlgWhole || ''), '不应出现"装到服务器配置的目录"');
+  check('E2c 目标路径是家目录相对形式',
+    String(s.dlgZipTarget || '').includes('~/.qoder-cn'), s.dlgZipTarget);
   await page.screenshot({ path: path.join(OUT_DIR, '02-install.png') });
-  await clickByText(page, '.el-dialog__footer .el-button', '开始安装');
-  await sleep(2500);
-  s = await snap(page);
-  check('E3 服务端通道安装成功', /已安装/.test(s.dlgAlert || ''), s.dlgAlert || '(无提示)');
-  await page.screenshot({ path: path.join(OUT_DIR, '03-installed.png') });
+  // ⚠️ 这里**不能**点「开始安装」—— 会弹出目录选择器, 无头 Chrome 里会挂住.
+  //    安装记录走 API (channel=frontend) 验证 —— 真实写盘要有头浏览器才能授权.
   await clickByText(page, '.el-dialog__footer .el-button', '取消');
   await sleep(800);
+
+  // 记录一次安装 (前端通道) → 卡片应出现「已安装」标记
+  const installed = await page.evaluate(async (code) => {
+    const tk = localStorage.getItem('testmate:token');
+    const H = { Authorization: 'Bearer ' + tk };
+    // 先取当前版本 —— 版本不符会 409, 那是正确的校验, 不是失败
+    const t = await (await fetch('/api/v1/assets/' + code + '/install-target', { headers: H })).json();
+    const fd = new FormData();
+    fd.append('version', t.version);
+    fd.append('channel', 'frontend');
+    // client_id 必须跟前端用的**同一个**, 否则列表不会标「已安装」
+    // (前端从 localStorage 取, 见 utils/clientId.ts)
+    fd.append('client_id', localStorage.getItem('testmate.client_id') || 'e2e-market');
+    fd.append('client_kind', 'web');
+    fd.append('install_path', '~/.qoder-cn/skills/' + code);
+    const r = await fetch('/api/v1/assets/' + code + '/install', {
+      method: 'POST', headers: H, body: fd,
+    });
+    return r.status;
+  }, code);
+  check('E3 前端通道安装记录成功', installed === 200, `status=${installed}`);
 
   // 安装后卡片应出现「已安装」标记
   await page.reload({ waitUntil: 'domcontentloaded' });

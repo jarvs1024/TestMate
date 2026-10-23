@@ -1,18 +1,25 @@
 #!/usr/bin/env node
 /**
- * 一键安装「自动定位家目录」—— 前端 UI 验收.
+ * 一键安装 —— **两种手动方式**的界面验收.
  *
- * 验的是用户真正看到的东西:
+ * 安装现在的形态:
+ *   ① 选择目录安装 —— 浏览器弹目录选择器, 把文件写进去
+ *   ② 下载安装包   —— 下 zip, 自己解压
+ * ⚠️ 不再有「装到服务器配置的目录」—— 服务端写盘通道已下线.
+ *
+ * 验用户真正看到的东西:
  *   1. 安装对话框能打开
- *   2. 显示的目标路径是**家目录相对**形式 (~/.qoder-cn/skills/<code>)
- *   3. 勾上"自动装到"时, 提示语讲清了首次要选一次家目录
- *   4. 有「记住我的家目录 / 换一个安装目录 / 清除记忆」三个入口
- *   5. 全程无 JS 错误
+ *   2. **没有**服务端安装选项
+ *   3. 两种手动方式都在, 默认选「选择目录安装」
+ *   4. 目标路径是家目录相对形式 (~/.qoder-cn/skills/<code>)
+ *   5. 主按钮文案随方式变
+ *   6. 「下载安装包」方式说明了解压到哪
+ *   7. 全程无 JS 错误
  *
  * ⚠️ 真正的写盘要在有头浏览器里手动授权目录, 无头环境做不到 ——
- *    这里验的是"自动定位的路径与提示是否正确", 写盘由单测覆盖.
+ *    这里验的是"选项与提示是否正确", 写盘由单元测试覆盖.
  *
- * 用法: node scripts/e2e_install_autolocate.js
+ * 用法: node scripts/e2e_install_manual.js
  */
 const puppeteer = require('puppeteer-core');
 const path = require('path');
@@ -65,8 +72,7 @@ function check(name, ok, detail) {
 
     // 先点开详情抽屉 —— 「安装」按钮在抽屉里 (.ad-actions), 不在卡片上
     const openedCard = await page.evaluate(() => {
-      const cards = [...document.querySelectorAll('.asset-card')];
-      const c = cards[0];
+      const c = document.querySelector('.asset-card');
       if (!c) return false;
       const nameEl = c.querySelector('.ac-name, .ac-title, h3, .name');
       (nameEl || c).click();
@@ -88,66 +94,67 @@ function check(name, ok, detail) {
     check('E3 详情抽屉里有可点的安装按钮', opened);
     if (!opened) throw new Error('没有找到安装按钮');
 
-    // 先等对话框加载完, 再切到**前端通道** —— 自动定位区块只在前端通道下渲染
     await page.waitForSelector('.inst-chan', { timeout: 15000 });
-    await sleep(500);
-    await page.evaluate(() => {
-      const r = document.querySelectorAll('.inst-chan input')[1];
-      if (r) { r.click(); }
-    });
-    await page.waitForSelector('.inst-auto', { timeout: 15000 });
     await sleep(800);
 
     const ui = await page.evaluate(() => {
       const txt = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
+      const chanTitles = [...document.querySelectorAll('.inst-chan-t')].map(txt);
+      const radios = [...document.querySelectorAll('.inst-chan input')].map((r) => r.value);
+      const footerBtns = [...document.querySelectorAll('.el-dialog__footer button')].map(txt);
       return {
-        autoTitle: txt(document.querySelector('.inst-auto-t')),
-        autoPath: txt(document.querySelector('.inst-auto-path')),
-        autoDesc: txt(document.querySelector('.inst-auto-d')),
-        buttons: [...document.querySelectorAll('.inst-auto-actions button')].map(txt),
-        frontendChan: txt(document.querySelectorAll('.inst-chan-d')[1]),
+        chanTitles,
+        radios,
+        checked: [...document.querySelectorAll('.inst-chan input')]
+          .filter((r) => r.checked).map((r) => r.value),
         note: txt(document.querySelector('.inst-note')),
-        checked: !!document.querySelector('.inst-auto-row input')?.checked,
+        zipDesc: txt(document.querySelectorAll('.inst-chan-d')[1]),
+        primaryBtn: footerBtns[footerBtns.length - 1],
+        wholeDialog: txt(document.querySelector('.el-dialog')),
       };
     });
 
-    check('E4 自动安装区块渲染出来', !!ui.autoTitle, ui.autoTitle);
-    check('E5 目标路径是家目录相对形式',
-      /^~\//.test(ui.autoPath) && /skills|plugins/.test(ui.autoPath),
-      ui.autoPath);
-    check('E6 提示语说清了首次授权一次',
-      /首次|选一次|主目录|记住/.test(ui.autoDesc),
-      ui.autoDesc);
-    check('E7 三个操作入口都在',
-      ui.buttons.length === 3
-      && ui.buttons.some((b) => /家目录/.test(b))
-      && ui.buttons.some((b) => /换一个安装目录/.test(b))
-      && ui.buttons.some((b) => /清除记忆/.test(b)),
-      ui.buttons.join(' | '));
-    check('E8 前端通道文案说明自动定位',
-      /自动定位|指定安装位置/.test(ui.frontendChan),
-      ui.frontendChan);
-    check('E8b 默认勾选自动定位',
-      !!ui.checked,
-      `checked=${ui.checked} 标题="${ui.autoTitle}"`);
+    check('E4 只有两种安装方式',
+      ui.radios.length === 2 && ui.radios.includes('dir') && ui.radios.includes('zip'),
+      `radios=${ui.radios.join(',')}`);
+    check('E5 没有「装到服务器配置的目录」',
+      !/服务器/.test(ui.wholeDialog),
+      ui.chanTitles.join(' | '));
+    check('E6 默认选「选择目录安装」',
+      ui.checked.length === 1 && ui.checked[0] === 'dir',
+      `checked=${ui.checked.join(',')}`);
+    check('E7 目标路径是家目录相对形式',
+      /~\/\.qoder-cn/.test(ui.zipDesc),
+      ui.zipDesc);
+    check('E8 主按钮文案随方式变',
+      /选择目录并安装/.test(ui.primaryBtn),
+      ui.primaryBtn);
+    check('E9 提示说明了选哪个目录',
+      /安装根目录/.test(ui.note),
+      ui.note);
 
-    // 已经在前端通道上了, 确认自动定位提示
+    // 切到「下载安装包」→ 主按钮与说明都要变
+    await page.evaluate(() => {
+      const r = [...document.querySelectorAll('.inst-chan input')].find((x) => x.value === 'zip');
+      if (r) { r.click(); }
+    });
+    await sleep(600);
     const after = await page.evaluate(() => {
       const txt = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
+      const footerBtns = [...document.querySelectorAll('.el-dialog__footer button')].map(txt);
       return {
-        desc: txt(document.querySelector('.inst-auto-d')),
-        path: txt(document.querySelector('.inst-auto-path')),
-        checked: !!document.querySelector('.inst-auto-row input')?.checked,
+        note: txt(document.querySelector('.inst-note')),
+        primaryBtn: footerBtns[footerBtns.length - 1],
       };
     });
-    check('E9 切到前端通道后仍显示自动路径',
-      /^~\//.test(after.path), after.path);
-    check('E10 提示语说明浏览器安全限制',
-      /首次|授权|选一次|主目录/.test(after.desc), after.desc);
+    check('E10 切到下载方式后主按钮变「下载安装包」',
+      /下载安装包/.test(after.primaryBtn), after.primaryBtn);
+    check('E11 下载方式说明了解压到哪',
+      /解压到/.test(after.note), after.note);
 
-    await page.screenshot({ path: path.join(OUT_DIR, 'install-autolocate.png'), fullPage: false });
+    await page.screenshot({ path: path.join(OUT_DIR, 'install-manual.png'), fullPage: false });
 
-    check('E11 全程无 JS 错误', errors.length === 0, errors.slice(0, 2).join(' ; '));
+    check('E12 全程无 JS 错误', errors.length === 0, errors.slice(0, 2).join(' ; '));
   } finally {
     await browser.close();
   }

@@ -75,14 +75,23 @@ function check(name, ok, detail) {
     [...document.querySelectorAll('#sec-agents code')].map((c) => c.textContent.trim()));
   const expect = [
     'marketplace.git.remote', 'marketplace.git.branch', 'marketplace.git.web_url',
-    'marketplace.install.skill_dir', 'marketplace.install.plugin_dir',
-    'marketplace.install.enabled', 'marketplace.publisher_ids',
+    'marketplace.publisher_ids',
     'marketplace.sync.interval_seconds', 'marketplace.max_package_mb',
     'marketplace.marketplace_name', 'marketplace.public_base_url',
   ];
   const missing = expect.filter((k) => !keys.includes(k));
   check('A2 资产市场配置项全部渲染出来', missing.length === 0,
     missing.length ? '缺: ' + missing.join(',') : `${expect.length} 项齐全`);
+
+  // ⚠️ 服务端写盘通道下线 → 安装目录不再可配, 这三项必须**消失**
+  const removed = [
+    'marketplace.install.skill_dir', 'marketplace.install.plugin_dir',
+    'marketplace.install.enabled',
+  ];
+  const stillThere = removed.filter((k) => keys.includes(k));
+  check('A2b 安装目录配置项已移除',
+    stillThere.length === 0,
+    stillThere.length ? '还在: ' + stillThere.join(',') : '三项均已移除');
 
   const ws = await page.evaluate(() => {
     const el = document.querySelector('#sec-agents .workdir');

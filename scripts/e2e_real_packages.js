@@ -196,15 +196,8 @@ async function waitJob(token, jobId, timeoutMs = 60000) {
   return last;
 }
 
-// ---------- 落盘比对 ----------
-function installDirFor(pkg, version) {
-  const home = os.homedir();
-  return pkg.kind === 'skill'
-    ? path.join(home, '.qoder-cn', 'skills', pkg.code)
-    : path.join(home, '.qoder-cn', 'plugins', 'cache', 'qoder-marketplace', pkg.code, version);
-}
-
-/** 包内归档路径 → 安装后应有的相对路径 (顶层公共目录会被剥掉) */
+// ---------- 内容比对 ----------
+/** 包内归档路径 → 落盘后应有的相对路径 (顶层公共目录会被剥掉) */
 function expectedLayout(files) {
   const tops = new Set(Object.keys(files).map((p) => p.split('/')[0]));
   const strip = tops.size === 1 ? [...tops][0] + '/' : '';
@@ -215,34 +208,42 @@ function expectedLayout(files) {
   return out;
 }
 
-/** 逐字比对安装产物: 包内每个文件都要存在且内容完全一致, 且不能有多余文件 */
-function compareInstalled(pkg, version) {
-  const dir = installDirFor(pkg, version);
+/**
+ * 用 bundle 接口把内容拉回来, 与包内容逐字比对.
+ *
+ * ⚠️ 服务端写盘通道已下线 —— 文件由浏览器写在**用户本机**, 后端不再碰磁盘.
+ *    内容正确性靠这条链路验证: 上传 → 解包 → 落工作区 → bundle 返回给前端写盘.
+ *    (前端那一步写盘是纯文件复制, 由前端单测覆盖)
+ */
+async function compareViaBundle(token, pkg, code) {
+  const r = await api(`/api/v1/assets/${code}/bundle`, { token });
+  if (r.status !== 200 || !r.json || !r.json.files) {
+    return {
+      ok: false, count: 0, got: {}, missing: ['(bundle 请求失败)'],
+      mismatch: [], extra: [], detail: `status=${r.status}`,
+    };
+  }
   const expect = expectedLayout(pkg.files);
+  const got = {};
+  for (const f of r.json.files) got[f.path] = f;
   const missing = [];
   const mismatch = [];
   for (const [rel, content] of Object.entries(expect)) {
-    const f = path.join(dir, rel);
-    if (!fs.existsSync(f)) { missing.push(rel); continue; }
-    const got = fs.readFileSync(f, 'utf8');
-    if (got !== content) {
-      mismatch.push(`${rel} (期望 ${content.length} 字节, 实际 ${got.length} 字节)`);
+    const f = got[rel];
+    if (!f) { missing.push(rel); continue; }
+    const text = f.encoding === 'base64'
+      ? Buffer.from(f.content, 'base64').toString('utf8')
+      : f.content;
+    if (text !== content) {
+      mismatch.push(`${rel} (期望 ${content.length} 字节, 实际 ${text.length} 字节)`);
     }
   }
-  // 多余文件 (排除目录)
-  const extra = [];
-  const walk = (d, base) => {
-    if (!fs.existsSync(d)) return;
-    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-      const rel = base ? `${base}/${e.name}` : e.name;
-      if (e.isDirectory()) walk(path.join(d, e.name), rel);
-      else if (!Object.prototype.hasOwnProperty.call(expect, rel)) extra.push(rel);
-    }
-  };
-  walk(dir, '');
+  const extra = Object.keys(got).filter((k) => !(k in expect));
   return {
-    dir, count: Object.keys(expect).length,
-    missing, mismatch, extra, ok: !missing.length && !mismatch.length && !extra.length,
+    ok: !missing.length && !mismatch.length && !extra.length,
+    count: Object.keys(expect).length,
+    got, missing, mismatch, extra,
+    detail: `${r.json.total} 个文件`,
   };
 }
 
@@ -376,10 +377,11 @@ async function runLifecycle(pkg, token, pubToken, tag) {
   // ⑯ 安装目标 (target 字段才是解析后的完整目标路径, 含 code)
   const tgt = await api(`${A}/install-target`, { token });
   check(`${tag} ⑯ 安装目标路径正确`,
-    tgt.status === 200 && tgt.json.target && tgt.json.target.includes(pkg.code),
-    `target=${tgt.json && tgt.json.target} skill_dir=${tgt.json && tgt.json.skill_dir}`);
+    tgt.status === 200 && tgt.json.target && tgt.json.target.includes(pkg.code)
+    && tgt.json.target.startsWith('~/'),
+    `target=${tgt.json && tgt.json.target}`);
 
-  // ⑰ 服务端安装
+  // ⑰ 服务端写盘通道已下线 → 明确拒绝, 并说清该改用哪条路
   const inst = await api(`${A}/install`, {
     method: 'POST', token,
     form: (() => {
@@ -391,9 +393,26 @@ async function runLifecycle(pkg, token, pubToken, tag) {
       return f;
     })(),
   });
-  check(`${tag} ⑰ 服务端安装成功`,
-    inst.status === 200 && inst.json.ok === true,
-    `status=${inst.status} ${inst.text.slice(0, 140)}`);
+  check(`${tag} ⑰ 服务端通道已下线被拒绝`,
+    inst.status === 400 && /下载安装包/.test((inst.json && inst.json.detail) || ''),
+    `status=${inst.status} ${((inst.json && inst.json.detail) || '').slice(0, 90)}`);
+
+  // ⑰c 前端通道 (选目录 / 下载安装包) → 只留安装记录
+  const instFe = await api(`${A}/install`, {
+    method: 'POST', token,
+    form: (() => {
+      const f = new FormData();
+      f.append('version', pkg.version);
+      f.append('channel', 'frontend');
+      f.append('client_id', 'e2e-real');
+      f.append('client_kind', 'web');
+      f.append('install_path', tgt.json.target);
+      return f;
+    })(),
+  });
+  check(`${tag} ⑰c 前端通道安装记录成功`,
+    instFe.status === 200 && instFe.json.ok === true,
+    `status=${instFe.status} ${instFe.text.slice(0, 120)}`);
 
   // ⑰b 请求的版本与资产当前版本不一致 → 必须明确报错.
   //    (以前会静默把当前版本的文件装进去, 却把安装记录写成请求的版本 →
@@ -403,7 +422,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     form: (() => {
       const f = new FormData();
       f.append('version', '9.9.9');
-      f.append('channel', 'server');
+      f.append('channel', 'frontend');
       f.append('client_id', 'e2e-real');
       f.append('client_kind', 'web');
       return f;
@@ -412,25 +431,25 @@ async function runLifecycle(pkg, token, pubToken, tag) {
   check(`${tag} ⑰b 装不存在的版本被明确拒绝`, wrong.status === 409,
     `status=${wrong.status} ${((wrong.json && wrong.json.detail) || '').slice(0, 90)}`);
 
-  // ⑱ 落盘产物逐字比对 (核心)
-  const cmp = compareInstalled(pkg, pkg.version);
-  check(`${tag} ⑱ 安装产物逐字一致 (${cmp.count} 个文件)`,
+  // ⑱ 内容逐字比对 (核心): 包内容 == 后端解包落工作区后返回给前端的内容
+  const cmp = await compareViaBundle(token, pkg, pkg.code);
+  check(`${tag} ⑱ 内容逐字一致 (${cmp.count} 个文件)`,
     cmp.ok,
-    cmp.ok ? cmp.dir
+    cmp.ok ? cmp.detail
       : `缺=${cmp.missing.join(',')} 不一致=${cmp.mismatch.join(',')} 多余=${cmp.extra.join(',')}`);
 
   // ⑲ plugin.json 能被解析 (plugin 专属)
   if (pkg.kind === 'plugin') {
-    const pj = path.join(cmp.dir, '.qoder-plugin', 'plugin.json');
+    const pj = cmp.got['.qoder-plugin/plugin.json'];
     let parsed = null;
-    try { parsed = JSON.parse(fs.readFileSync(pj, 'utf8')); } catch { /* 解析失败 */ }
+    try { parsed = JSON.parse(pj ? pj.content : ''); } catch { /* 解析失败 */ }
     check(`${tag} ⑲ plugin.json 可解析且字段正确`,
       parsed && parsed.name === 'trace-kit' && parsed.version === '1.2.0'
       && Array.isArray(parsed.commands) === false && parsed.commands === './commands',
       parsed ? `name=${parsed.name} version=${parsed.version} commands=${parsed.commands}` : '解析失败');
   } else {
-    const sk = path.join(cmp.dir, 'SKILL.md');
-    const txt = fs.existsSync(sk) ? fs.readFileSync(sk, 'utf8') : '';
+    const sk = cmp.got['SKILL.md'];
+    const txt = sk ? sk.content : '';
     check(`${tag} ⑲ SKILL.md frontmatter 完整`,
       txt.startsWith('---') && txt.includes('name: ssd-log-triage')
       && txt.includes('allowed-tools:') && txt.includes('metadata:'),
@@ -468,16 +487,16 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     form: (() => {
       const f = new FormData();
       f.append('version', newVersion);
-      f.append('channel', 'server');
+      f.append('channel', 'frontend');
       f.append('client_id', 'e2e-real');
       f.append('client_kind', 'web');
       return f;
     })(),
   });
-  check(`${tag} ㉕ 新版本安装成功`, inst2.status === 200, `status=${inst2.status}`);
-  const cmp2 = compareInstalled(pkg, newVersion);
-  check(`${tag} ㉖ 新版本产物逐字一致`, cmp2.ok,
-    cmp2.ok ? cmp2.dir : `缺=${cmp2.missing.join(',')} 不一致=${cmp2.mismatch.join(',')}`);
+  check(`${tag} ㉕ 新版本安装记录成功`, inst2.status === 200, `status=${inst2.status}`);
+  const cmp2 = await compareViaBundle(token, pkg, pkg.code);
+  check(`${tag} ㉖ 新版本内容逐字一致`, cmp2.ok,
+    cmp2.ok ? cmp2.detail : `缺=${cmp2.missing.join(',')} 不一致=${cmp2.mismatch.join(',')}`);
 
   // ㉖b 装完最新版 → 不该再提示可更新
   const ups2 = await api('/api/v1/assets/me/updates?client_id=e2e-real', { token: pubToken });
@@ -524,7 +543,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
   });
   check(`${tag} ㉙ 重新上架成功`, re.status === 200, `status=${re.status}`);
 
-  // ㉚ 前端通道安装记录
+  // ㉚ 「下载安装包」这条路: 用户下载后自行解压 → 同样记一笔安装
   const fe = await api(`${A}/install`, {
     method: 'POST', token,
     form: (() => {
@@ -533,17 +552,28 @@ async function runLifecycle(pkg, token, pubToken, tag) {
       f.append('channel', 'frontend');
       f.append('client_id', 'e2e-real-fe');
       f.append('client_kind', 'web');
-      f.append('install_path', '/Users/jarvs/.qoder-cn/skills/' + pkg.code);
+      f.append('install_path', tgt.json.target);
       return f;
     })(),
   });
-  check(`${tag} ㉚ 前端通道安装记录成功`, fe.status === 200, `status=${fe.status}`);
+  check(`${tag} ㉚ 下载安装包方式的安装记录成功`, fe.status === 200, `status=${fe.status}`);
 
-  // ㉛ 文件包下载 (前端通道靠它写盘)
+  // ㉛ 文件包下载 (选目录安装靠它拿明文文件写盘)
   const bundle = await api(`${A}/bundle`, { token });
   check(`${tag} ㉛ 文件包可下载`,
     bundle.status === 200 && (bundle.json.files || []).length > 0,
     `${(bundle.json.files || []).length} 个文件`);
+
+  // ㉛b 安装包 (zip) 能下载 —— 「下载安装包」这条路要用
+  const zdl = await fetch(
+    `${API}/api/v1/assets/${pkg.code}/versions/${newVersion}/download`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const zbuf = Buffer.from(await zdl.arrayBuffer());
+  check(`${tag} ㉛b 安装包 zip 可下载`,
+    zdl.status === 200 && zbuf.length > 0
+    && zbuf.subarray(0, 2).toString('latin1') === 'PK',
+    `status=${zdl.status} ${zbuf.length} 字节`);
 
   // ㉗ 卸载 (client_id 是 Query 参数)
   const uninst = await api(`${A}/install?client_id=e2e-real`, {

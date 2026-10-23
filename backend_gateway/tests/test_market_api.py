@@ -167,7 +167,6 @@ async def test_visibility_installed_unpublished_still_visible(client, auth, ws,
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", "/tmp/tm-test-skills")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="unpub-demo")
@@ -175,7 +174,7 @@ async def test_visibility_installed_unpublished_still_visible(client, auth, ws,
     cid = "client-installed"
     r = await client.post(
         f"{API}/unpub-demo/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": cid,
+        data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
               "client_kind": "web"},
         headers=pauth,
     )
@@ -341,15 +340,18 @@ async def test_preview_package_rejects_garbage(client, auth, publisher_user):
 
 
 # ---------- 安装 ----------
+#
+# ⚠️ 服务端写盘通道已下线 —— 安装统一在**用户本机**完成:
+#   ① 「选择目录安装」浏览器 File System Access 写盘 (前端拿 /bundle 的明文文件)
+#   ② 「下载安装包」自行解压
+# 后端只负责**记录**安装状态 (哪个客户端、什么版本、装没装).
 
-async def test_install_writes_files(client, auth, ws, restore_git_config,  # noqa: ARG001
-                                    tmp_path, publisher_user):
-    """服务端通道安装 → 文件真的落到配置目录."""
+async def test_install_records_frontend_install(client, auth, ws, restore_git_config,  # noqa: ARG001
+                                                publisher_user):
+    """前端通道安装 → 只留记录, 文件由浏览器写在用户自己电脑上."""
     from tests.conftest import set_setting
 
-    install_dir = tmp_path / "qoder-skills"
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", str(install_dir))
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="inst-demo")
@@ -357,92 +359,105 @@ async def test_install_writes_files(client, auth, ws, restore_git_config,  # noq
     cid = "c-inst"
     r = await client.post(
         f"{API}/inst-demo/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": cid,
-              "client_kind": "web"},
+        data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
+              "client_kind": "web", "install_path": "skills"},
         headers=pauth,
     )
     assert r.status_code == 200, r.text
     j = r.json()
     assert j["ok"] is True
-    assert (install_dir / "inst-demo" / "SKILL.md").exists()
+    assert j["channel"] == "frontend"
 
-    # 再查列表 → 标记为已安装
+    # 列表标记为已安装
     r_list = await client.get(f"{API}?limit=100&client_id={cid}", headers=pauth)
     item = next(i for i in r_list.json()["items"] if i["code"] == "inst-demo")
     assert item["installed"] is True
 
-    # 卸载 → 目录被清掉, 记录也没了
+    # 卸载 → 记录标记为已卸载, 列表不再标记已安装
     r2 = await client.request("DELETE", f"{API}/inst-demo/install",
                               params={"client_id": cid}, headers=pauth)
     assert r2.status_code == 200, r2.text
-    assert not (install_dir / "inst-demo").exists()
+    r_list2 = await client.get(f"{API}?limit=100&client_id={cid}", headers=pauth)
+    item2 = next(i for i in r_list2.json()["items"] if i["code"] == "inst-demo")
+    assert item2["installed"] is False
+
+
+async def test_install_rejects_server_channel(client, auth, ws, restore_git_config,  # noqa: ARG001
+                                               publisher_user):
+    """服务端写盘通道已下线 → 400, 且说清该改用哪条路."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="srv-demo")
+
+    r = await client.post(
+        f"{API}/srv-demo/install",
+        data={"version": "1.0.0", "channel": "server", "client_id": "c-srv",
+              "client_kind": "web"},
+        headers=pauth,
+    )
+    assert r.status_code == 400, r.text
+    assert "下载安装包" in r.json()["detail"]
+    # 也不该留下安装记录
+    r_list = await client.get(f"{API}/me/installed?client_id=c-srv", headers=pauth)
+    assert not any(i["code"] == "srv-demo" for i in r_list.json()["items"])
 
 
 async def test_install_rejects_version_mismatch(client, auth, ws, restore_git_config,  # noqa: ARG001
-                                                tmp_path, publisher_user):
-    """请求的版本与资产当前版本不一致 → 409, 且**不落盘、不留安装记录**.
+                                                publisher_user):
+    """请求的版本与资产当前版本不一致 → 409, 且**不留安装记录**.
 
-    以前会静默把当前版本的文件装进去, 却把安装记录写成请求的版本 →
+    以前会静默装成当前版本, 却把安装记录写成请求的版本 →
     「可更新」不再提示, 用户永远装不到新版, 而且全程没有任何报错.
     """
     from tests.conftest import set_setting
 
-    install_dir = tmp_path / "qoder-skills"
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", str(install_dir))
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="ver-demo")
 
     r = await client.post(
         f"{API}/ver-demo/install",
-        data={"version": "9.9.9", "channel": "server", "client_id": "c-ver",
+        data={"version": "9.9.9", "channel": "frontend", "client_id": "c-ver",
               "client_kind": "web"},
         headers=pauth,
     )
     assert r.status_code == 409, r.text
     assert "9.9.9" in r.json()["detail"]
-    # 关键: 不许落盘
-    assert not (install_dir / "ver-demo").exists()
-    # 也不许留下安装记录
     r_list = await client.get(f"{API}/me/installed?client_id=c-ver", headers=pauth)
     assert not any(i["code"] == "ver-demo" for i in r_list.json()["items"])
 
 
 async def test_install_accepts_matching_version(client, auth, ws, restore_git_config,  # noqa: ARG001
-                                                tmp_path, publisher_user):
+                                                publisher_user):
     """版本一致时正常安装 —— 别让上一条的校验误伤正常流程."""
     from tests.conftest import set_setting
 
-    install_dir = tmp_path / "qoder-skills"
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", str(install_dir))
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="ver-ok")
 
     r = await client.post(
         f"{API}/ver-ok/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": "c-ver-ok",
+        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-ver-ok",
               "client_kind": "web"},
         headers=pauth,
     )
     assert r.status_code == 200, r.text
-    assert (install_dir / "ver-ok" / "SKILL.md").exists()
+    r_list = await client.get(f"{API}/me/installed?client_id=c-ver-ok", headers=pauth)
+    assert any(i["code"] == "ver-ok" for i in r_list.json()["items"])
 
 
-async def test_install_target_exposes_home_relative_path(client, auth, ws,  # noqa: ARG001
-                                                          restore_git_config, publisher_user):
-    """install-target 要把"家目录下的相对路径"告诉前端, 前端才能自动定位.
-
-    ⚠️ 这里曾经把字段名写错过 (install_rel_path vs install_root_rel_path),
-    Pydantic **静默忽略**未知字段 → 前端拿到空数组, 自动定位直接失效.
-    所以 API 层必须测到 —— 光测路径解析的纯函数不够.
-    """
+async def test_install_target_suggests_dir(client, auth, ws,  # noqa: ARG001
+                                            restore_git_config, publisher_user):
+    """install-target 给出建议的安装目录 (Qoder 标准布局) —— 下载安装包时告诉用户解压到哪."""
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", "~/.qoder-cn/skills")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="home-demo")
@@ -450,153 +465,120 @@ async def test_install_target_exposes_home_relative_path(client, auth, ws,  # no
     r = await client.get(f"{API}/home-demo/install-target", headers=auth)
     assert r.status_code == 200, r.text
     j = r.json()
-    assert j["install_under_home"] is True, j
-    assert j["install_root_rel_path"] == [".qoder-cn", "skills"], j
-    # 原始配置值还得留着 (「复制安装命令」要用)
+    assert j["target"] == "~/.qoder-cn/skills/home-demo", j
     assert j["skill_dir_host"] == "~/.qoder-cn/skills", j
+    # 服务端通道相关的字段**不该再出现**
+    assert "server_channel_available" not in j, j
+    assert "install_root_rel_path" not in j, j
 
 
-async def test_install_target_windows_home_path(client, auth, ws,  # noqa: ARG001
-                                                 restore_git_config, publisher_user):
-    """Windows 绝对家目录路径也要能自动定位."""
+async def test_install_target_plugin_suggests_versioned_dir(client, auth, ws,  # noqa: ARG001
+                                                            restore_git_config, publisher_user):
+    """plugin 的建议目录带版本段 (对齐 Qoder 的 cache/<market>/<plugin>/<version>)."""
+    import io
+    import json as _json
+    import zipfile
+
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", r"C:\Users\张三\.qoder-cn\skills")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
-    await _upload(client, pauth, code="win-demo")
 
-    j = (await client.get(f"{API}/win-demo/install-target", headers=auth)).json()
-    assert j["install_under_home"] is True, j
-    assert j["install_root_rel_path"] == [".qoder-cn", "skills"], j
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(".qoder-plugin/plugin.json", _json.dumps({"name": "p", "version": "1.0.0"}))
+        z.writestr("README.md", "# p\n")
+    pkg = ("p.zip", buf.getvalue(), "application/zip")
+    await _upload(client, pauth, code="plug-demo", kind="plugin", pkg_bytes=pkg)
+
+    j = (await client.get(f"{API}/plug-demo/install-target", headers=auth)).json()
+    assert j["target"] == (
+        "~/.qoder-cn/plugins/cache/qoder-marketplace/plug-demo/1.0.0"
+    ), j
+    assert j["plugin_dir_host"] == "~/.qoder-cn/plugins/cache/qoder-marketplace", j
 
 
-async def test_install_target_outside_home_not_auto_locatable(client, auth, ws,  # noqa: ARG001
-                                                               restore_git_config, publisher_user):
-    """目录不在家目录下 → 不能自动定位, 前端得让用户手动选."""
+async def test_uninstall_does_not_delete_user_files(client, auth, ws,  # noqa: ARG001
+                                                     restore_git_config, tmp_path):
+    """卸载**不碰用户文件** —— 文件在用户本机, 后端够不着, 也不该替用户删."""
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", "/opt/skills")
-    await _enable_publisher(publisher_user)
-    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
-    await _upload(client, pauth, code="opt-demo")
+    pauth = auth
+    await _upload(client, pauth, code="keep-demo")
 
-    j = (await client.get(f"{API}/opt-demo/install-target", headers=auth)).json()
-    assert j["install_under_home"] is False, j
-    assert j["install_root_rel_path"] == [], j
+    # 假装用户本机装过 (后端只存路径字符串)
+    await client.post(
+        f"{API}/keep-demo/install",
+        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-keep",
+              "client_kind": "web", "install_path": "/home/u/.qoder-cn/skills/keep-demo"},
+        headers=pauth,
+    )
+    user_dir = tmp_path / "user-skills" / "keep-demo"
+    user_dir.mkdir(parents=True)
+    (user_dir / "SKILL.md").write_text("# 用户自己的文件\n")
 
-
-async def test_uninstall_removes_all_version_dirs(client, auth, ws,  # noqa: ARG001
-                                                  restore_git_config, tmp_path):
-    """卸载要删掉**所有**版本的安装目录, 不能只删最后一个.
-
-    plugin 装过多个版本时每个版本一个目录 (…/<code>/<version>/),
-    以前只删最后一个 → 用户磁盘上留垃圾.
-    """
-    from app.db.session import AsyncSessionLocal
-    from app.models.asset import AssetInstall
-
-    install_dir = tmp_path / "qoder-plugins"
-    v1 = install_dir / "multi" / "1.0.0"
-    v2 = install_dir / "multi" / "1.1.0"
-    for d in (v1, v2):
-        d.mkdir(parents=True)
-        (d / "README.md").write_text("x\n")
-
-    async with AsyncSessionLocal() as s:
-        for ver in ("1.0.0", "1.1.0"):
-            s.add(AssetInstall(code="multi", version=ver, user_id=1, client_id="c-multi",
-                               client_kind="web", status="installed", channel="server",
-                               install_path=str(install_dir / "multi" / ver)))
-        await s.commit()
-
-    async with AsyncSessionLocal() as s:
-        from sqlalchemy import select as _sel
-        got = (await s.execute(
-            _sel(AssetInstall).where(AssetInstall.code == "multi")
-        )).scalars().all()
-        assert len(got) == 2, f"测试数据没进库: {len(got)} 条"
-        assert all(g.install_path and g.channel == "server" for g in got), \
-            f"安装记录字段不对: {[(g.version, g.install_path, g.channel) for g in got]}"
-
-    r = await client.request("DELETE", f"{API}/multi/install",
-                              params={"client_id": "c-multi"}, headers=auth)
+    r = await client.request("DELETE", f"{API}/keep-demo/install",
+                              params={"client_id": "c-keep"}, headers=pauth)
     assert r.status_code == 200, r.text
-    assert r.json()["removed"] is True, r.text
-    assert not v1.exists(), "第一个版本的目录没删掉"
-    assert not v2.exists(), "第二个版本的目录没删掉"
-    assert not (install_dir / "multi").exists(), "空的 code 父目录没清掉"
+    # 文件还在 —— 卸载只改记录
+    assert (user_dir / "SKILL.md").exists(), "卸载不该删用户自己的文件"
 
 
-async def test_delete_asset_removes_install_dirs(client, auth, ws,  # noqa: ARG001
-                                                  restore_git_config, tmp_path,
-                                                  publisher_user):
-    """彻底删除资产 → 用户机器上的安装目录也要清掉.
-
-    资产没了之后就没法再走卸载接口, 残留目录将永远没人能清.
-    """
+async def test_delete_asset_removes_install_records(client, auth, ws,  # noqa: ARG001
+                                                     restore_git_config, publisher_user):
+    """彻底删除资产 → 安装记录一并清掉."""
     from tests.conftest import set_setting
 
-    install_dir = tmp_path / "qoder-skills"
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", str(install_dir))
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="del-demo")
 
-    r = await client.post(
+    await client.post(
         f"{API}/del-demo/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": "c-del",
+        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-del",
               "client_kind": "web"},
         headers=pauth,
     )
-    assert r.status_code == 200, r.text
-    assert (install_dir / "del-demo" / "SKILL.md").exists()
-
     d = await client.delete(f"{API}/del-demo", headers=auth)
     assert d.status_code == 200, d.text
-    assert not (install_dir / "del-demo").exists(), "删除资产后安装目录残留"
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetInstall
+    from sqlalchemy import select as _sel
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(
+            _sel(AssetInstall).where(AssetInstall.code == "del-demo")
+        )).scalars().all()
+        assert not rows, f"删资产后安装记录应清空, 实际还有 {len(rows)} 条"
 
 
-async def test_install_two_versions_keeps_both_paths(client, auth, ws,  # noqa: ARG001
-                                                       restore_git_config, tmp_path,
-                                                       publisher_user):
-    """装两个版本 → 两条安装记录, 旧版本的目录也要能被追踪和清理.
+async def test_install_two_versions_keeps_both_records(client, auth, ws,  # noqa: ARG001
+                                                       restore_git_config, publisher_user):
+    """装两个版本 → 两条安装记录, 旧版本的记录不能被覆盖.
 
-    以前安装记录只按 (code, client_id) 定位, 装第二版会把第一版**覆盖** →
-    旧版本目录 (…/<code>/<version>/) 谁都不知道它在哪儿, 卸载/删资产都清不掉,
-    永远留在用户磁盘上.
+    安装记录按 (code, version, client_id) 定位 —— 只按 (code, client_id) 的话,
+    装第二版会把第一版覆盖, 「可更新」就再也提示不出来.
     """
     from app.db.session import AsyncSessionLocal
     from app.models.asset import Asset, AssetInstall
     from sqlalchemy import select as _sel
     from tests.conftest import set_setting
 
-    plugin_dir = tmp_path / "qoder-plugins"
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.plugin_dir", str(plugin_dir))
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="two-ver")
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr(".qoder-plugin/plugin.json",
-                   json.dumps({"name": "two-ver", "version": "1.0.0"}))
-        z.writestr("README.md", "# two-ver\n")
-    pkg = ("p.zip", buf.getvalue(), "application/zip")
-
-    await _upload(client, pauth, code="two-ver", kind="plugin", pkg_bytes=pkg,
-                  version="1.0.0")
     r1 = await client.post(
         f"{API}/two-ver/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": "c-tv",
+        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-tv",
               "client_kind": "web"},
         headers=pauth,
     )
     assert r1.status_code == 200, r1.text
-    assert (plugin_dir / "two-ver" / "1.0.0").is_dir()
 
     # 模拟"发布了新版本" —— 资产版本变成 1.1.0
     async with AsyncSessionLocal() as s:
@@ -608,59 +590,34 @@ async def test_install_two_versions_keeps_both_paths(client, auth, ws,  # noqa: 
 
     r2 = await client.post(
         f"{API}/two-ver/install",
-        data={"version": "1.1.0", "channel": "server", "client_id": "c-tv",
+        data={"version": "1.1.0", "channel": "frontend", "client_id": "c-tv",
               "client_kind": "web"},
         headers=pauth,
     )
     assert r2.status_code == 200, r2.text
-    assert (plugin_dir / "two-ver" / "1.1.0").is_dir()
 
-    # 两个版本的路径都要被记住
     async with AsyncSessionLocal() as s:
         rows = (await s.execute(
             _sel(AssetInstall).where(AssetInstall.code == "two-ver")
         )).scalars().all()
-        paths = {r.version: r.install_path for r in rows}
-        assert len(rows) == 2, f"安装记录应有两版, 实际 {len(rows)}: {paths}"
-        assert paths.get("1.0.0", "").endswith("1.0.0"), paths
-        assert paths.get("1.1.0", "").endswith("1.1.0"), paths
+        versions = {r.version for r in rows}
+        assert versions == {"1.0.0", "1.1.0"}, f"应有两版记录, 实际 {versions}"
 
-    # 安装次数按**客户端**算, 不按版本 —— 同一台机器装两个版本只算一次
-    # (卡片上显示的 ⬇ install_count, 不能随版本升级虚高)
+    # 安装次数按**客户端**算 —— 同一台机器装几个版本都只算一次
     async with AsyncSessionLocal() as s:
         a = (await s.execute(
             _sel(Asset).where(Asset.code == "two-ver")
         )).scalar_one()
         assert a.install_count == 1, f"安装次数应为 1, 实际 {a.install_count}"
 
-    # 同秒装两版时也要取**后装**的那版
-    # (MySQL DATETIME 秒级精度 → 两条 installed_at 相同, 只比时间戳会取错)
+    # 同秒装两版时也要取**后装**的那版 (DATETIME 秒级精度)
     from app.api.marketplace import _install_map
     m = await _install_map(["two-ver"], "c-tv")
     assert m["two-ver"][0] == "1.1.0", f"应取后装的 1.1.0, 实际 {m['two-ver'][0]}"
 
-    # 卸载 → 两个版本的目录都要清掉
-    u = await client.request("DELETE", f"{API}/two-ver/install",
-                              params={"client_id": "c-tv"}, headers=pauth)
-    assert u.status_code == 200, u.text
-    assert not (plugin_dir / "two-ver" / "1.0.0").exists(), "旧版本目录没删掉"
-    assert not (plugin_dir / "two-ver" / "1.1.0").exists(), "新版本目录没删掉"
-    # 锁文件不能落在 code 目录里 —— 否则卸载后那个目录永远删不掉 (只剩空壳)
-    assert not (plugin_dir / "two-ver" / ".install-two-ver.lock").exists(), \
-        "安装锁文件落在 code 目录里"
-    assert not (plugin_dir / "two-ver").exists(), "code 目录没清干净"
-
-    # 多版本记录下 "可更新" 不能 500
-    # (以前 _install_map 拿 tuple[0] (版本号字符串) 去跟 installed_at 比大小,
-    #  一个 code 只有一条记录时被 `cur is None` 短路了, 改成按版本分行后才炸)
-    upd = await client.get(f"{API}/me/updates?client_id=c-tv", headers=pauth)
-    assert upd.status_code == 200, upd.text
-    assert "items" in upd.json()
-
 
 async def test_uninstalled_asset_hidden_after_unpublish(client, auth, ws,  # noqa: ARG001
-                                                         restore_git_config, tmp_path,
-                                                         publisher_user):
+                                                         restore_git_config, publisher_user):
     """卸载之后, 下架的资产不该再出现在普通用户列表里.
 
     可见性判断以前没过滤安装记录的 status —— 卸载过的也还算"我已安装的",
@@ -668,18 +625,16 @@ async def test_uninstalled_asset_hidden_after_unpublish(client, auth, ws,  # noq
     """
     from tests.conftest import set_setting
 
-    install_dir = tmp_path / "qoder-skills"
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", str(install_dir))
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     # ⚠️ 资产由 **admin** 上传 —— publisher 只是安装者.
-    #    否则 publisher 既是作者又是安装者, 命中"我提交的"规则, 卸载后照样可见, 测不出来.
+    #    否则 publisher 既是作者又是安装者, 命中"我提交的"规则, 卸载后照样可见.
     await _upload(client, auth, code="gone-demo")
 
     r = await client.post(
         f"{API}/gone-demo/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": "c-gone",
+        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-gone",
               "client_kind": "web"},
         headers=pauth,
     )
@@ -703,7 +658,7 @@ async def test_uninstalled_asset_hidden_after_unpublish(client, auth, ws,  # noq
 
 async def test_install_blocked_when_package_invalid(client, auth, ws,  # noqa: ARG001
                                                     restore_git_config, publisher_user):
-    """包不合规 → 422, 不是 500."""
+    """包不合规 (缺 SKILL.md) → install-target 说不能装, 并说清原因."""
     from app.db.session import AsyncSessionLocal
     from app.models.asset import Asset
     from tests.conftest import set_setting
@@ -714,19 +669,13 @@ async def test_install_blocked_when_package_invalid(client, auth, ws,  # noqa: A
                     publish_status="published",
                     git_path="assets/skills/misc/badinst"))
         await s.commit()
-    # 目录在, 但里面没有 SKILL.md → 落盘前的校验就该拦下
     d = ws / "assets/skills/misc/badinst/files"
     d.mkdir(parents=True, exist_ok=True)
     (d / "README.md").write_text("# 没有 SKILL.md\n")
 
-    r = await client.post(
-        f"{API}/badinst/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": "x",
-              "client_kind": "web"},
-        headers=auth,
-    )
-    assert r.status_code == 422, r.text
-    assert "SKILL.md" in r.json()["detail"]
+    j = (await client.get(f"{API}/badinst/install-target", headers=auth)).json()
+    assert j["installable"] is False, j
+    assert "SKILL.md" in j["install_block_reason"], j
 
 
 async def test_install_target_reports_installability(client, auth, ws,  # noqa: ARG001
@@ -766,7 +715,7 @@ async def test_install_mcp_rejected(client, auth, ws,  # noqa: ARG001
 
     r = await client.post(
         f"{API}/conn-demo/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": "x",
+        data={"version": "1.0.0", "channel": "frontend", "client_id": "x",
               "client_kind": "web"},
         headers=auth,
     )
@@ -808,7 +757,7 @@ async def test_delete_removes_everything(client, auth, ws, restore_git_config,  
     cid = "c-del"
     await client.post(
         f"{API}/del-demo/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": cid,
+        data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
               "client_kind": "web"},
         headers=pauth,
     )
@@ -916,14 +865,13 @@ async def test_me_installed_and_updates(client, auth, ws,  # noqa: ARG001
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", "/tmp/tm-test-skills2")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="mine-demo")
     cid = "c-mine"
     await client.post(
         f"{API}/mine-demo/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": cid,
+        data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
               "client_kind": "web"},
         headers=pauth,
     )

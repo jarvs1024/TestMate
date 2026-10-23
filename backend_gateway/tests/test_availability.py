@@ -69,12 +69,14 @@ async def test_concurrent_upload_same_code_does_not_mix_files(client, auth, ws,
 async def test_concurrent_install_same_asset_is_serialized(client, auth, ws,  # noqa: ARG001
                                                             restore_git_config, tmp_path,
                                                             publisher_user):
-    """并发安装同一个资产 → 目标目录里是完整的一套, 不是半截."""
+    """并发记录同一个资产的安装 → 两个客户端各留一条, 不互相覆盖.
+
+    ⚠️ 服务端写盘通道已下线 —— 文件由浏览器写在用户本机, 后端只留记录.
+       所以这里验的是"并发记录不串", 不再验目录内容.
+    """
     from tests.conftest import set_setting
 
-    install_dir = tmp_path / "skills-conc"
     await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.install.skill_dir", str(install_dir))
     await set_setting("marketplace.publisher_usernames", publisher_user["username"])
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
 
@@ -99,15 +101,23 @@ async def test_concurrent_install_same_asset_is_serialized(client, auth, ws,  # 
     async def install(cid: str):
         return await client.post(
             f"{API}/conc-inst/install",
-            data={"version": "1.0.0", "channel": "server", "client_id": cid,
+            data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
                   "client_kind": "web"},
             headers=pauth,
         )
 
     rs = await asyncio.gather(install("c1"), install("c2"))
     assert all(r.status_code == 200 for r in rs), [r.text for r in rs]
-    assert (install_dir / "conc-inst" / "SKILL.md").exists()
-    assert (install_dir / "conc-inst" / "ref" / "a.md").exists()
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetInstall
+    from sqlalchemy import select
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(
+            select(AssetInstall).where(AssetInstall.code == "conc-inst")
+        )).scalars().all()
+        assert {r.client_id for r in rows} == {"c1", "c2"}, \
+            f"两个客户端的安装记录应都在, 实际 {[r.client_id for r in rows]}"
 
 
 # ---------- 崩溃恢复 ----------

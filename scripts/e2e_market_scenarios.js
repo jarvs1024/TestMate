@@ -342,21 +342,33 @@ z.close()
     await ins.page.waitForSelector('.inst-chan', { timeout: 10000 });
     await sleep(1200);
     const dlg = await ins.page.evaluate(() => ({
-      target: document.querySelector('.inst-chan-d')?.textContent.trim(),
+      // 目标路径显示在「下载安装包」那一条的说明里
+      target: document.querySelectorAll('.inst-chan-d')[1]?.textContent.trim(),
       perm: document.querySelector('.inst-perm')?.textContent.replace(/\s+/g, ' ').trim(),
       canInstall: ![...document.querySelectorAll('.el-dialog__footer .el-button')].some(
-        (b) => b.textContent.includes('开始安装') && b.classList.contains('is-disabled')),
+        (b) => b.textContent.includes('选择目录并安装') && b.classList.contains('is-disabled')),
+      primaryBtn: [...document.querySelectorAll('.el-dialog__footer .el-button')]
+        .map((b) => b.textContent.trim()).pop(),
     }));
     check('⑭ 安装向导读到目标目录', !!dlg.target && dlg.target.includes('qoder'), dlg.target);
-    check('⑮ 「开始安装」可点', dlg.canInstall === true, `canInstall=${dlg.canInstall}`);
-    await ins.page.evaluate(() => {
-      const b = [...document.querySelectorAll('.el-dialog__footer .el-button')].find((x) => x.textContent.includes('开始安装'));
-      b && b.click();
-    });
-    await sleep(3500);
-    const alertText = await ins.page.evaluate(() =>
-      document.querySelector('.el-dialog .el-alert__title')?.textContent.trim() || '');
-    check('⑯ 安装成功', /已安装到/.test(alertText), alertText.slice(0, 60));
+    check('⑮ 「选择目录并安装」可点', dlg.canInstall === true, `btn=${dlg.primaryBtn}`);
+    // ⚠️ 这里**不能**点安装按钮 —— 会弹出目录选择器, 无头 Chrome 里会挂住.
+    //    改成走 API 记录安装 (channel=frontend); 真实写盘要有头浏览器才能授权.
+    const instStatus = await ins.page.evaluate(async (code) => {
+      const tk = localStorage.getItem('testmate:token');
+      const H = { Authorization: 'Bearer ' + tk };
+      const t = await (await fetch('/api/v1/assets/' + code + '/install-target', { headers: H })).json();
+      const fd = new FormData();
+      fd.append('version', t.version);
+      fd.append('channel', 'frontend');
+      // client_id 必须跟前端用的**同一个**, 否则卡片不会标「已安装」
+      fd.append('client_id', localStorage.getItem('testmate.client_id') || 'scn');
+      fd.append('client_kind', 'web');
+      fd.append('install_path', t.target);
+      const r = await fetch('/api/v1/assets/' + code + '/install', { method: 'POST', headers: H, body: fd });
+      return r.status;
+    }, ASSET);
+    check('⑯ 安装成功', instStatus === 200, `status=${instStatus}`);
     await ins.page.screenshot({ path: path.join(OUT_DIR, '21-scenario-install.png') });
     await ins.page.evaluate(() => {
       const b = [...document.querySelectorAll('.el-dialog__footer .el-button')].find((x) => /取消|关闭/.test(x.textContent));
