@@ -105,6 +105,18 @@ def _remote_manifests(ref: str) -> dict[str, dict]:
     return out
 
 
+def _remote_publish_status(rman: dict | None) -> str | None:
+    """远端 manifest 里的上下架状态 —— **没有就返回 None, 不猜**.
+
+    ⚠️ 以前这里写的是 `rman.get("publish_status") or "published"` ——
+    猜错的后果: 老资产 / 早期上传的资产 manifest 里没有这个字段,
+    同步器就把**待审核的资产直接改成已上架**, 审核形同虚设.
+    缺字段时以本地为准 (index.json 里是有这个字段的).
+    """
+    ps = (rman or {}).get("publish_status")
+    return ps if ps else None
+
+
 def _resolve_winner(
     code: str, local: dict | None, remote: dict | None
 ) -> tuple[str, str]:
@@ -189,7 +201,12 @@ async def sync_once() -> dict[str, Any]:
                     ]
                     to_checkout.extend(paths)
                     changed += 1
-                    remote_won[code] = rman.get("publish_status") or "published"
+                    # ⚠️ 远端 manifest 没有 publish_status 时**不能猜成 published** ——
+                    #    老资产 / 早期上传的资产会缺这个字段, 猜错等于
+                    #    **把待审核的资产直接改成已上架**, 审核就形同虚设.
+                    ps = _remote_publish_status(rman)
+                    if ps:
+                        remote_won[code] = ps
                     if lman is not None:
                         conflicts.append(
                             {
