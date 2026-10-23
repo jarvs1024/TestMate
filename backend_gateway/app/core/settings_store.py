@@ -296,7 +296,11 @@ SETTING_SCHEMA: list[dict] = [
         "category": "marketplace",
         "value_type": "string",
         "default": "~/.qoder-cn/skills",
-        "description": "skill 安装目录 (宿主路径; 容器内 ~ 会翻译成 /host-home)",
+        "description": (
+            "skill 安装目录 —— **用 ~/ 表示家目录** (三平台通用: Linux/macOS/Windows 都认), "
+            "前端会自动定位到每个用户自己的家目录, 不用每次手选; "
+            "容器内 ~ 会翻译成 /host-home"
+        ),
         "is_secret": False,
     },
     {
@@ -304,7 +308,10 @@ SETTING_SCHEMA: list[dict] = [
         "category": "marketplace",
         "value_type": "string",
         "default": "~/.qoder-cn/plugins/cache/qoder-marketplace",
-        "description": "plugin 安装目录 (对齐 Qoder 的 cache/<market>/<plugin>/<version> 布局)",
+        "description": (
+            "plugin 安装目录 (对齐 Qoder 的 cache/<market>/<plugin>/<version> 布局) —— "
+            "同样**用 ~/ 表示家目录**, 前端可自动定位"
+        ),
         "is_secret": False,
     },
     {

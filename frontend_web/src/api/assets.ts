@@ -122,6 +122,10 @@ export interface InstallTarget {
   /** 这个包现在能不能装 —— false 时前端应把按钮置灰并说明原因 */
   installable: boolean;
   install_block_reason: string;
+  /** 安装目录是否在用户家目录下 —— true 才能用"记住家目录句柄"自动定位 */
+  install_under_home: boolean;
+  /** 安装根目录相对家目录的路径段, 如 ["qoder-cn","skills"] —— 不含 code/version */
+  install_root_rel_path: string[];
 }
 
 /** 上传前的包体检结果 */

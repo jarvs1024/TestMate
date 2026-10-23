@@ -431,6 +431,63 @@ async def test_install_accepts_matching_version(client, auth, ws, restore_git_co
     assert (install_dir / "ver-ok" / "SKILL.md").exists()
 
 
+async def test_install_target_exposes_home_relative_path(client, auth, ws,  # noqa: ARG001
+                                                          restore_git_config, publisher_user):
+    """install-target 要把"家目录下的相对路径"告诉前端, 前端才能自动定位.
+
+    ⚠️ 这里曾经把字段名写错过 (install_rel_path vs install_root_rel_path),
+    Pydantic **静默忽略**未知字段 → 前端拿到空数组, 自动定位直接失效.
+    所以 API 层必须测到 —— 光测路径解析的纯函数不够.
+    """
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("marketplace.install.skill_dir", "~/.qoder-cn/skills")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="home-demo")
+
+    r = await client.get(f"{API}/home-demo/install-target", headers=auth)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["install_under_home"] is True, j
+    assert j["install_root_rel_path"] == [".qoder-cn", "skills"], j
+    # 原始配置值还得留着 (「复制安装命令」要用)
+    assert j["skill_dir_host"] == "~/.qoder-cn/skills", j
+
+
+async def test_install_target_windows_home_path(client, auth, ws,  # noqa: ARG001
+                                                 restore_git_config, publisher_user):
+    """Windows 绝对家目录路径也要能自动定位."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("marketplace.install.skill_dir", r"C:\Users\张三\.qoder-cn\skills")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="win-demo")
+
+    j = (await client.get(f"{API}/win-demo/install-target", headers=auth)).json()
+    assert j["install_under_home"] is True, j
+    assert j["install_root_rel_path"] == [".qoder-cn", "skills"], j
+
+
+async def test_install_target_outside_home_not_auto_locatable(client, auth, ws,  # noqa: ARG001
+                                                               restore_git_config, publisher_user):
+    """目录不在家目录下 → 不能自动定位, 前端得让用户手动选."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("marketplace.install.skill_dir", "/opt/skills")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="opt-demo")
+
+    j = (await client.get(f"{API}/opt-demo/install-target", headers=auth)).json()
+    assert j["install_under_home"] is False, j
+    assert j["install_root_rel_path"] == [], j
+
+
 async def test_uninstall_removes_all_version_dirs(client, auth, ws,  # noqa: ARG001
                                                   restore_git_config, tmp_path):
     """卸载要删掉**所有**版本的安装目录, 不能只删最后一个.

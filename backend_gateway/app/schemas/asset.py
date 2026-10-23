@@ -108,6 +108,15 @@ class AssetInstallTargetOut(BaseModel):
     installable: bool = True
     install_block_reason: str = ""
 
+    # ---- 跨平台自动定位 (前端通道) ----
+    # 安装目录是不是在**用户家目录**下 —— 是的话前端可以"记住家目录句柄"后
+    # 自动派生, 不用每次都弹目录选择器让用户自己翻.
+    install_under_home: bool = False
+    # **安装根目录**相对家目录的路径段, 如 ["qoder-cn", "skills"] (不含 code/version).
+    # 前端用目录句柄逐级 getDirectoryHandle 派生 —— 不需要知道是哪个系统,
+    # 也不用碰路径分隔符, Linux / macOS / Windows 一套逻辑.
+    install_root_rel_path: list[str] = []
+
 
 class PackagePreviewOut(BaseModel):
     """上传前的包体检结果.

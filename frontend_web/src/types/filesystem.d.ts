@@ -8,20 +8,32 @@
  * (vite 无法把 .d.ts 当运行时模块解析).
  */
 
-export interface FileSystemDirectoryHandle {
-  readonly kind: 'directory';
+export interface FileSystemHandle {
+  readonly kind: 'file' | 'directory';
   readonly name: string;
+  isSameEntry(other: FileSystemHandle): Promise<boolean>;
+}
+
+/** 权限状态 —— 记住的目录句柄可能被用户撤销授权 */
+export type FileSystemPermissionMode = 'read' | 'readwrite';
+export type FileSystemPermissionState = 'granted' | 'denied' | 'prompt';
+
+export interface FileSystemDirectoryHandle extends FileSystemHandle {
+  readonly kind: 'directory';
   getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<FileSystemDirectoryHandle>;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<FileSystemFileHandle>;
   removeEntry(name: string, options?: { recursive?: boolean }): Promise<void>;
   entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
   values(): AsyncIterableIterator<FileSystemHandle>;
   [Symbol.asyncIterator](): AsyncIterableIterator<[string, FileSystemHandle]>;
+  /** 查当前授权状态 (不需要用户手势) */
+  queryPermission?(descriptor?: { mode?: FileSystemPermissionMode }): Promise<FileSystemPermissionState>;
+  /** 请求授权 (必须在用户手势的调用栈里) */
+  requestPermission?(descriptor?: { mode?: FileSystemPermissionMode }): Promise<FileSystemPermissionState>;
 }
 
-export interface FileSystemFileHandle {
+export interface FileSystemFileHandle extends FileSystemHandle {
   readonly kind: 'file';
-  readonly name: string;
   getFile(): Promise<File>;
   createWritable(options?: { keepExistingData?: boolean }): Promise<FileSystemWritableFileStream>;
 }
@@ -34,6 +46,7 @@ export interface FileSystemWritableFileStream extends WritableStream {
 export interface DirectoryPickerOptions {
   id?: string;
   mode?: 'read' | 'readwrite';
+  /** 预定位: 传句柄或已知目录名 ('desktop' | 'documents' | 'downloads' | …) */
   startIn?: FileSystemHandle | string;
 }
 

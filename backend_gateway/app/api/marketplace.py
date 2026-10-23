@@ -94,6 +94,52 @@ def resolve_host_path(raw: str) -> Path:
     return Path(raw)
 
 
+# 家目录的各种写法 —— 设置项里统一用 `~/`, 但 Windows 用户可能填 %USERPROFILE%\
+_HOME_PREFIXES = ("~", "%USERPROFILE%", "%HOMEPATH%", "$HOME", "${HOME}")
+
+# 各系统"家目录"的绝对路径形态 —— 用户也可能直接填绝对路径.
+#   Windows: C:\Users\张三\.qoder-cn\skills
+#   macOS:   /Users/zhangsan/.qoder-cn/skills
+_WIN_HOME_RE = re.compile(r"^[A-Za-z]:/Users/[^/]+(?:/(.*))?$")
+_MAC_HOME_RE = re.compile(r"^/Users/[^/]+(?:/(.*))?$")
+
+
+def split_home_path(raw: str) -> tuple[bool, list[str]]:
+    """把配置里的安装目录拆成 **(是否在家目录下, 家目录下的相对路径段)**.
+
+    设置项统一用 `~/xxx` 表示家目录 (跨平台), 同时兼容这些写法:
+        ~/xxx                    (推荐, 三平台通用)
+        %USERPROFILE%\\xxx        (Windows 原生)
+        $HOME/xxx                (shell 习惯)
+        C:\\Users\\张三\\xxx       (Windows 绝对家目录)
+        /Users/zhangsan/xxx      (macOS 绝对家目录)
+
+    前端拿到相对路径段后用目录句柄逐级派生, 既不用知道用户是哪个系统,
+    也不用碰路径分隔符 —— Linux / macOS / Windows 同一套逻辑.
+
+    ⚠️ 先把反斜杠换成正斜杠再拆 —— 否则 "C:\\Users\\x\\.qoder-cn"
+    会被按反斜杠拆错.
+
+    返回 (False, []) = 这个路径**不在家目录下** (如 /opt/skills):
+    前端没法靠"记住家目录句柄"自动定位, 只能让用户手动选.
+    """
+    s = (raw or "").strip().replace("\\", "/")
+    if not s:
+        return False, []
+    for p in _HOME_PREFIXES:
+        if s == p:
+            return True, []
+        if s.startswith(p + "/"):
+            rest = s[len(p) + 1:]
+            return True, [seg for seg in rest.split("/") if seg and seg != "."]
+    for rx in (_WIN_HOME_RE, _MAC_HOME_RE):
+        m = rx.match(s)
+        if m:
+            rest = (m.group(1) or "").strip("/")
+            return True, [seg for seg in rest.split("/") if seg and seg != "."]
+    return False, []
+
+
 async def _setting(key: str, default: str = "") -> str:
     try:
         from app.core.settings_store import get
@@ -787,8 +833,17 @@ async def get_install_target(
     plugin_dir = resolve_host_path(plugin_raw)
     if a.kind == "skill":
         target = skill_dir / a.code
+        install_raw = skill_raw
     else:
         target = plugin_dir / a.code / a.version
+        install_raw = plugin_raw
+
+    # ---- 跨平台自动定位 (前端通道) ----
+    # 配置里写的是**家目录相对路径** (~/qoder-cn/skills) 时, 前端可以"记住家目录
+    # 句柄"再逐级派生, 装的时候不用弹目录选择器让用户自己翻.
+    # 这里给的是**安装根目录**相对家目录的路径段 (不含 code / version) ——
+    # 前端派生出根目录后再拼 code/version, 这样装不同资产时目录是一致的.
+    under_home, rel_path = split_home_path(install_raw)
 
     enabled = (await _setting("marketplace.install.enabled", "true")).lower()
     server_ok = enabled in ("true", "1", "yes", "on")
@@ -808,6 +863,8 @@ async def get_install_target(
         plugin_dir_host=plugin_raw,
         installable=not block_reason,
         install_block_reason=block_reason,
+        install_under_home=under_home,
+        install_root_rel_path=rel_path,
     )
 
 

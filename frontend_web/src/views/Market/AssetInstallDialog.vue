@@ -46,16 +46,39 @@
           <div class="inst-chan-body">
             <div class="inst-chan-t">装到我的本机目录</div>
             <div class="inst-chan-d">
-              {{ canFrontend ? '浏览器会弹出目录选择器, 由你指定安装位置'
-                              : '当前浏览器不支持 File System Access API (仅 Chrome / Edge 可用)' }}
+              {{ canFrontend ? frontendHint : '当前浏览器不支持 File System Access API (仅 Chrome / Edge 可用)' }}
             </div>
           </div>
         </label>
       </div>
 
+      <!-- 前端通道: 自动定位 (记住目录句柄 → 以后不再弹选择器) -->
+      <div v-if="channel === 'frontend' && canFrontend" class="inst-auto">
+        <label class="inst-auto-row">
+          <input type="checkbox" v-model="autoInstall" />
+          <div>
+            <div class="inst-auto-t">
+              {{ autoInstall ? '自动装到' : '手动选择目录' }}
+              <code class="inst-auto-path mono">{{ localTargetPath }}</code>
+            </div>
+            <div class="inst-auto-d">
+              {{ autoHint }}
+            </div>
+          </div>
+        </label>
+
+        <div class="inst-auto-actions">
+          <el-button size="small" @click="pickHomeDir">
+            {{ homeHandle ? '换一家目录' : '记住我的家目录' }}
+          </el-button>
+          <el-button size="small" @click="pickOtherDir">换一个安装目录</el-button>
+          <el-button size="small" text @click="forgetDirs">清除记忆</el-button>
+        </div>
+      </div>
+
       <div v-if="channel === 'frontend'" class="inst-note">
-        前端通道每次安装都需重新授权目录 —— 浏览器出于安全不会记住授权。
-        本通道**不解压**, 直接写后端提供的明文文件。
+        前端通道**不解压**, 直接写后端提供的明文文件。
+        浏览器出于安全不会自动授权目录 —— 首次需要你选一次, 之后本机会记住。
       </div>
 
       <el-alert v-if="error" type="error" :closable="false" class="inst-err"
@@ -87,8 +110,11 @@ import {
   type AssetItem, type InstallTarget,
 } from '@/api/assets';
 import {
-  base64ToArrayBuffer, pickDirectory, supportsFileSystemAccess, writeFileInto,
+  base64ToArrayBuffer, deriveDirectory, forgetDirHandle, HOME_HANDLE_KEY,
+  INSTALL_ROOT_HANDLE_KEY, loadDirHandle, pickDirectory, queryPermission,
+  saveDirHandle, supportsFileSystemAccess, writeFileInto,
 } from '@/utils/fileSystemAccess';
+import type { FileSystemDirectoryHandle } from '@/types/filesystem';
 
 const props = defineProps<{ modelValue: boolean; asset: AssetItem | null }>();
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'done'): void }>();
@@ -106,7 +132,119 @@ const error = ref('');
 const doneMsg = ref('');
 const done = ref(false);
 
+/** 记住的用户家目录句柄 —— 用来派生 ~/xxx 的安装目录 */
+const homeHandle = ref<FileSystemDirectoryHandle | null>(null);
+/** 记住的安装根目录句柄 —— 装不同资产时目录一致 */
+const rootHandle = ref<FileSystemDirectoryHandle | null>(null);
+/** 是否走"自动定位" (不再弹目录选择器) */
+const autoInstall = ref(true);
+const homeGranted = ref(false);
+const rootGranted = ref(false);
+
 const canFrontend = computed(() => supportsFileSystemAccess());
+
+/** 最终安装目标 (用户本机视角, 用 ~ 表示家目录) */
+const localTargetPath = computed(() => {
+  const t = target.value;
+  if (!t) return '';
+  const base = t.kind === 'skill'
+    ? (t.skill_dir_host || '~/.qoder-cn/skills')
+    : (t.plugin_dir_host || '~/.qoder-cn/plugins/cache/qoder-marketplace');
+  return t.kind === 'skill'
+    ? `${base}/${t.code}`
+    : `${base}/${t.code}/${t.version}`;
+});
+
+/** 有没有可能自动定位 (记住的根目录, 或家目录 + 配置在家目录下) */
+const canAutoLocate = computed(() => {
+  const t = target.value;
+  if (!t) return false;
+  if (rootGranted.value) return true;
+  return homeGranted.value && t.install_under_home;
+});
+
+const autoHint = computed(() => {
+  const t = target.value;
+  if (!t) return '';
+  if (rootGranted.value) return '已记住安装目录 —— 点「开始安装」直接写入, 不再询问目录。';
+  if (homeGranted.value && t.install_under_home) {
+    return '已记住你的家目录 —— 自动装到上面这个位置, 以后也不再询问。';
+  }
+  if (t.install_under_home) {
+    return '首次请选一次你的用户主目录 (macOS/Linux 一般是 /Users/你的用户名, '
+      + 'Windows 是 C:\\Users\\你的用户名) —— 之后每次安装全自动。';
+  }
+  return '管理员配置的目录不在家目录下, 无法自动定位 —— 每次安装需要手动选一次目录。';
+});
+
+const frontendHint = computed(() => {
+  if (!target.value) return '';
+  return canAutoLocate.value
+    ? '装到你自己的电脑, 路径按配置自动定位'
+    : '浏览器会弹出目录选择器, 由你指定安装位置';
+});
+
+/** 目标目录下该资产自己的子路径 (skill 是 code, plugin 是 code/version) */
+function subRel(): string[] {
+  const t = target.value;
+  if (!t) return [];
+  return t.kind === 'skill' ? [t.code] : [t.code, t.version];
+}
+
+/** 拿到安装根目录句柄 (优先记住的根目录, 其次从家目录派生) */
+async function resolveRoot(): Promise<FileSystemDirectoryHandle> {
+  const t = target.value;
+  if (!t) throw new Error('还没读到安装目标');
+  if (rootHandle.value && (await queryPermission(rootHandle.value)) === 'granted') {
+    return rootHandle.value;
+  }
+  if (homeHandle.value && t.install_under_home) {
+    if ((await queryPermission(homeHandle.value)) === 'granted') {
+      const root = await deriveDirectory(homeHandle.value, t.install_root_rel_path);
+      await saveDirHandle(INSTALL_ROOT_HANDLE_KEY, root);
+      rootHandle.value = root;
+      rootGranted.value = true;
+      return root;
+    }
+  }
+  throw new Error('自动定位失败 —— 请点「换一个安装目录」手动选择');
+}
+
+/** 记住我的家目录 —— 之后靠它派生安装目录 */
+async function pickHomeDir() {
+  const h = await pickDirectory('downloads');
+  await saveDirHandle(HOME_HANDLE_KEY, h);
+  homeHandle.value = h;
+  homeGranted.value = true;
+  const t = target.value;
+  if (t?.install_under_home) {
+    const root = await deriveDirectory(h, t.install_root_rel_path);
+    await saveDirHandle(INSTALL_ROOT_HANDLE_KEY, root);
+    rootHandle.value = root;
+    rootGranted.value = true;
+  }
+  autoInstall.value = true;
+}
+
+/** 手动换一个安装目录 (记住它, 下次直接用) */
+async function pickOtherDir() {
+  const picked = await pickDirectory(rootHandle.value || 'downloads');
+  await saveDirHandle(INSTALL_ROOT_HANDLE_KEY, picked);
+  rootHandle.value = picked;
+  rootGranted.value = true;
+  autoInstall.value = true;
+}
+
+/** 清除本机记住的目录 */
+async function forgetDirs() {
+  await forgetDirHandle(HOME_HANDLE_KEY);
+  await forgetDirHandle(INSTALL_ROOT_HANDLE_KEY);
+  homeHandle.value = null;
+  rootHandle.value = null;
+  homeGranted.value = false;
+  rootGranted.value = false;
+  autoInstall.value = false;
+}
 
 /** 手抄命令: 给不能用 File System Access API 的浏览器 (非 Chromium) 一条退路 */
 const installCmd = computed(() => {
@@ -157,6 +295,17 @@ async function load() {
   try {
     target.value = await getInstallTarget(props.asset.code);
     channel.value = target.value.server_channel_available ? 'server' : 'frontend';
+    // 读回本机记住的目录 (IndexedDB) —— 有就直接自动定位, 不再问用户
+    const [h, r] = await Promise.all([
+      loadDirHandle(HOME_HANDLE_KEY),
+      loadDirHandle(INSTALL_ROOT_HANDLE_KEY),
+    ]);
+    homeHandle.value = h;
+    rootHandle.value = r;
+    homeGranted.value = h ? (await queryPermission(h)) === 'granted' : false;
+    rootGranted.value = r ? (await queryPermission(r)) === 'granted' : false;
+    // 默认走自动定位 (配置在家目录下就能用) —— 用户点"开始安装"时再引导选一次家目录
+    autoInstall.value = canAutoLocate.value || !!target.value.install_under_home;
   } catch (e: any) {
     error.value = e?.response?.data?.detail || e?.message || '读取安装目标失败';
   } finally {
@@ -188,7 +337,36 @@ async function doInstall() {
       if (!window.showDirectoryPicker) {
         throw new Error('当前浏览器不支持 File System Access API');
       }
-      const dir = await pickDirectory();
+      const t2 = t;
+      let dir: FileSystemDirectoryHandle;
+      let recorded = '';
+      if (autoInstall.value && t2.install_under_home && !canAutoLocate.value) {
+        // 首次自动定位: 引导用户选一次**家目录** ——
+        // 选一次就够, 之后 skill / plugin 都能从它派生, 不用分别选
+        const h = await pickDirectory('downloads');
+        await saveDirHandle(HOME_HANDLE_KEY, h);
+        homeHandle.value = h;
+        homeGranted.value = true;
+        const root = await deriveDirectory(h, t2.install_root_rel_path);
+        await saveDirHandle(INSTALL_ROOT_HANDLE_KEY, root);
+        rootHandle.value = root;
+        rootGranted.value = true;
+        dir = await deriveDirectory(root, subRel());
+        recorded = [...t2.install_root_rel_path, ...subRel()].join('/');
+      } else if (autoInstall.value && canAutoLocate.value) {
+        // 自动定位: 记住的根目录 / 家目录派生 —— **不再弹选择器**
+        const root = await resolveRoot();
+        dir = await deriveDirectory(root, subRel());
+        recorded = [...t2.install_root_rel_path, ...subRel()].join('/');
+      } else {
+        // 手动选安装根目录, 并记住它 —— 下次直接用
+        const root = await pickDirectory(rootHandle.value || 'downloads');
+        await saveDirHandle(INSTALL_ROOT_HANDLE_KEY, root);
+        rootHandle.value = root;
+        rootGranted.value = true;
+        dir = await deriveDirectory(root, subRel());
+        recorded = [root.name, ...subRel()].join('/');
+      }
       const bundle = await getAssetBundle(a.code);
       for (const f of bundle.files) {
         const data: BlobPart = f.encoding === 'base64'
@@ -198,9 +376,9 @@ async function doInstall() {
       }
       const r = await installAsset(a.code, t.version, {
         channel: 'frontend',
-        installPath: dir.name,
+        installPath: recorded,
       });
-      doneMsg.value = `已安装 ${bundle.total} 个文件到 ${dir.name}`;
+      doneMsg.value = `已安装 ${bundle.total} 个文件到 ${recorded}`;
       void r;
     }
     done.value = true;
@@ -268,5 +446,25 @@ async function doInstall() {
   margin-top: 10px; font-size: 11.5px; color: var(--ink-500);
   background: var(--surface-sunken); padding: 8px 10px; border-radius: var(--radius-sm);
 }
+
+.inst-auto {
+  margin-top: 10px; border: 1px solid var(--border);
+  border-radius: var(--radius-card); padding: 10px 12px;
+  background: var(--surface-sunken);
+}
+.inst-auto-row { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
+.inst-auto-row input { margin-top: 3px; }
+.inst-auto-t {
+  font-size: 13px; font-weight: 600; color: var(--ink-900);
+  display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap;
+}
+.inst-auto-path {
+  font-size: 11.5px; color: var(--primary); background: var(--surface);
+  border: 1px solid var(--border); padding: 1px 6px; border-radius: var(--radius-sm);
+  word-break: break-all;
+}
+.inst-auto-d { font-size: 11.5px; color: var(--ink-500); margin-top: 4px; line-height: 1.6; }
+.inst-auto-actions { margin-top: 9px; display: flex; gap: 6px; flex-wrap: wrap; }
+
 .inst-err { margin-top: 12px; }
 </style>
