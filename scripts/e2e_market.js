@@ -147,6 +147,8 @@ async function codeByName(page, name) {
   const errors = [];
   // 有些步骤会**故意**触发 4xx (比如验证资产已删除), 那不是缺陷
   let expectHttpError = false;
+  // ⚠️ 关掉缓存 —— 否则会加载上一次的旧 JS, 调已下线的端点
+  await page.setCacheEnabled(false);
   page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
   page.on('console', (m) => {
     if (m.type() === 'error' && !expectHttpError) errors.push('[console.error] ' + m.text());
@@ -292,37 +294,11 @@ async function codeByName(page, name) {
       s.adBtnLabels.join(' | '));
     await page.screenshot({ path: path.join(OUT_DIR, '02-install.png') });
 
-    // 记录一次安装 (前端通道) → 卡片应出现「已安装」标记
-    const installed = await page.evaluate(async (code) => {
-      const tk = localStorage.getItem('testmate:token');
-      const H = { Authorization: 'Bearer ' + tk };
-      // 先取当前版本 —— 版本不符会 409, 那是正确的校验, 不是失败
-      const t = await (await fetch('/api/v1/assets/' + code + '/install-target', { headers: H })).json();
-      const fd = new FormData();
-      fd.append('version', t.version);
-      fd.append('channel', 'download');
-      // client_id 必须跟前端用的**同一个**, 否则列表不会标「已安装」
-      // (前端从 localStorage 取, 见 utils/clientId.ts)
-      fd.append('client_id', localStorage.getItem('testmate.client_id') || 'e2e-market');
-      fd.append('client_kind', 'web');
-      fd.append('install_path', '~/.qoder-cn/skills/' + code);
-      const r = await fetch('/api/v1/assets/' + code + '/install', {
-        method: 'POST', headers: H, body: fd,
-      });
-      return r.status;
-    }, code);
-    check('E3 前端通道安装记录成功', installed === 200, `status=${installed}`);
-
-    // 安装后卡片应出现「已安装」标记
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.asset-card', { timeout: 15000 });
-    await sleep(1500);
-    s = await snap(page);
-    const installedCard = s.cards.find((c) => c.name === (s.cards[0] || {}).name) || s.cards[0];
-    check('E4 安装后卡片标记「已安装」', /已安装/.test((installedCard && installedCard.badge) || ''), installedCard ? installedCard.badge : '(无卡片)');
-
     // ---------- F. 下架 / 重新上架 ----------
-    await clickByText(page, '.asset-card', (installedCard && installedCard.name) || '');
+    // 装相关的检查已下线 (安装只是下载) —— 这里直接用列表里的第一张卡
+    s = await snap(page);
+    const firstCard = s.cards[0] || {};
+    await clickByText(page, '.asset-card', firstCard.name || '');
     await page.waitForSelector('.el-drawer', { timeout: 10000 });
     await sleep(1500);
     await clickByText(page, '.ad-actions .el-button', '下架');

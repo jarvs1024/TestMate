@@ -55,6 +55,8 @@ function check(name, ok, detail) {
       downloadPath: dlDir,
       eventsEnabled: true,
     });
+    // ⚠️ 关掉缓存 —— 否则会加载上一次的旧 JS, 调已下线的端点
+    await page.setCacheEnabled(false);
     page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
     page.on('console', (m) => { if (m.type() === 'error') errors.push('[console] ' + m.text()); });
 

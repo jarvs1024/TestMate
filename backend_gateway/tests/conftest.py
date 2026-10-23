@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
 
 # ===== 必须在 import app.* 之前设置 =====
 _TEST_DB = os.environ.get("TESTMATE_TEST_DB", "testmate_test")
@@ -41,7 +42,6 @@ import app.models  # noqa: E402,F401  —— 让 Base.metadata 认识所有表
 _TABLES = (
     "asset_audits",
     "asset_notifications",
-    "asset_installs",
     "asset_jobs",
     "assets",
     "system_settings",
@@ -82,6 +82,16 @@ async def _clean_tables():
                 )
         finally:
             conn.close()
+        # ⚠️ 测试库直接**重建** schema —— 改了模型 (加列/删列/删表) 之后,
+        #    旧表会让 ORM 查询报"未知列", 而且很难一眼看出是哪个改动引起的.
+        #    测试库是专用的, 重建没有代价.
+        def _drop_all_tables(conn, *args, **kwargs):
+            names = sa.inspect(conn).get_table_names()
+            for n in names:
+                conn.execute(text(f"DROP TABLE IF EXISTS `{n}`"))
+
+        async with engine.begin() as conn:
+            await conn.run_sync(_drop_all_tables)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         _DB_READY = True

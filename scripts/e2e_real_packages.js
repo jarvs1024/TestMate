@@ -10,11 +10,11 @@
  *
  * 每种包都走完整生命周期:
  *   体检 → 上传 → 待审 → 驳回 → 重提 → 通过 → 上架 → 可见 → 详情/文档/文件清单
- *   → 安装(服务端落盘) → **落盘产物逐字比对** → 更新版本 → 再装 → 卸载
+ *   → **内容逐字比对**(bundle 接口) → 更新版本 → 再比对
  *   → 下架 → 已装仍可见 → 重上架 → 彻底删除
  *
  * 另覆盖其余市场端点: 分类 / 配置 / 任务 / 审计 / 回执 / 同步状态 / GitLab 探测
- *     / 我的安装 / 可更新 / 安装目标 / 文件包 / 前端通道记录.
+ *     / 文件包 / 历史版本下载.
  *
  * 用法: node scripts/e2e_real_packages.js
  */
@@ -153,7 +153,7 @@ function uploadForm(pkg, over = {}) {
     code: pkg.code, kind: pkg.kind, name: pkg.name, version: pkg.version,
     summary: pkg.summary, description: pkg.description, use_when: pkg.use_when,
     not_for: pkg.not_for, category: pkg.category, icon: pkg.icon,
-    tags: pkg.tags, keywords: pkg.keywords, author: pkg.author,
+    tags: pkg.tags, keywords: pkg.keywords,
     featured: 'false', permissions: pkg.permissions,
     install_steps: pkg.install_steps, bindings: '{}',
   };
@@ -374,63 +374,6 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     && hitDirs.length === wantDirs.length,
     `${fileList.length} 文件 / ${trees.length} 目录, 子目录命中 ${hitDirs.length}/${wantDirs.length}`);
 
-  // ⑯ 安装目标 (target 字段才是解析后的完整目标路径, 含 code)
-  const tgt = await api(`${A}/install-target`, { token });
-  check(`${tag} ⑯ 安装目标路径正确`,
-    tgt.status === 200 && tgt.json.target && tgt.json.target.includes(pkg.code)
-    && tgt.json.target.startsWith('~/'),
-    `target=${tgt.json && tgt.json.target}`);
-
-  // ⑰ 服务端写盘通道已下线 → 明确拒绝, 并说清该改用哪条路
-  const inst = await api(`${A}/install`, {
-    method: 'POST', token,
-    form: (() => {
-      const f = new FormData();
-      f.append('version', pkg.version);
-      f.append('channel', 'server');
-      f.append('client_id', 'e2e-real');
-      f.append('client_kind', 'web');
-      return f;
-    })(),
-  });
-  check(`${tag} ⑰ 服务端通道已下线被拒绝`,
-    inst.status === 400 && /下载安装包/.test((inst.json && inst.json.detail) || ''),
-    `status=${inst.status} ${((inst.json && inst.json.detail) || '').slice(0, 90)}`);
-
-  // ⑰c 前端通道 (选目录 / 下载安装包) → 只留安装记录
-  const instFe = await api(`${A}/install`, {
-    method: 'POST', token,
-    form: (() => {
-      const f = new FormData();
-      f.append('version', pkg.version);
-      f.append('channel', 'download');
-      f.append('client_id', 'e2e-real');
-      f.append('client_kind', 'web');
-      f.append('install_path', tgt.json.target);
-      return f;
-    })(),
-  });
-  check(`${tag} ⑰c 前端通道安装记录成功`,
-    instFe.status === 200 && instFe.json.ok === true,
-    `status=${instFe.status} ${instFe.text.slice(0, 120)}`);
-
-  // ⑰b 请求的版本与资产当前版本不一致 → 必须明确报错.
-  //    (以前会静默把当前版本的文件装进去, 却把安装记录写成请求的版本 →
-  //     「可更新」不再提示, 用户永远装不到新版, 且全程无报错)
-  const wrong = await api(`${A}/install`, {
-    method: 'POST', token,
-    form: (() => {
-      const f = new FormData();
-      f.append('version', '9.9.9');
-      f.append('channel', 'download');
-      f.append('client_id', 'e2e-real');
-      f.append('client_kind', 'web');
-      return f;
-    })(),
-  });
-  check(`${tag} ⑰b 装不存在的版本被明确拒绝`, wrong.status === 409,
-    `status=${wrong.status} ${((wrong.json && wrong.json.detail) || '').slice(0, 90)}`);
-
   // ⑱ 内容逐字比对 (核心): 包内容 == 后端解包落工作区后返回给前端的内容
   const cmp = await compareViaBundle(token, pkg, pkg.code);
   check(`${tag} ⑱ 内容逐字一致 (${cmp.count} 个文件)`,
@@ -456,12 +399,6 @@ async function runLifecycle(pkg, token, pubToken, tag) {
       `前 40 字: ${txt.slice(0, 40).replace(/\n/g, '⏎')}`);
   }
 
-  // ⑳ 我的安装 (按 client_id 过滤)
-  const mine = await api('/api/v1/assets/me/installed?client_id=e2e-real', { token: pubToken });
-  check(`${tag} ⑳ 「我的安装」含该资产`,
-    (mine.json.items || []).some((i) => i.code === pkg.code),
-    `${(mine.json.items || []).length} 个已安装`);
-
   // ㉑ 更新版本 → 装新版 (必须走 PUT /{code}, POST /upload 是"新建", 已存在会 409)
   const newVersion = pkg.kind === 'skill' ? '1.4.0' : '1.3.0';
   const upd = await updatePackage(pubToken, pkg, { version: newVersion });
@@ -475,34 +412,9 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     det.json && det.json.version === newVersion,
     `version=${det.json && det.json.version}`);
 
-  // ㉔ 「可更新」: 此刻已装的是旧版、资产已是新版 → **应该**提示可更新
-  //    ⚠️ 时序很关键: 必须在"装新版"**之前**查 —— 装完最新版就不再提示了.
-  const ups = await api('/api/v1/assets/me/updates?client_id=e2e-real', { token: pubToken });
-  check(`${tag} ㉔ 更新后出现在「可更新」里`,
-    (ups.json.items || []).some((i) => i.code === pkg.code),
-    `${(ups.json.items || []).length} 个可更新`);
-
-  const inst2 = await api(`${A}/install`, {
-    method: 'POST', token,
-    form: (() => {
-      const f = new FormData();
-      f.append('version', newVersion);
-      f.append('channel', 'download');
-      f.append('client_id', 'e2e-real');
-      f.append('client_kind', 'web');
-      return f;
-    })(),
-  });
-  check(`${tag} ㉕ 新版本安装记录成功`, inst2.status === 200, `status=${inst2.status}`);
   const cmp2 = await compareViaBundle(token, pkg, pkg.code);
   check(`${tag} ㉖ 新版本内容逐字一致`, cmp2.ok,
     cmp2.ok ? cmp2.detail : `缺=${cmp2.missing.join(',')} 不一致=${cmp2.mismatch.join(',')}`);
-
-  // ㉖b 装完最新版 → 不该再提示可更新
-  const ups2 = await api('/api/v1/assets/me/updates?client_id=e2e-real', { token: pubToken });
-  check(`${tag} ㉖b 装完最新版后不再提示可更新`,
-    !(ups2.json.items || []).some((i) => i.code === pkg.code),
-    `${(ups2.json.items || []).length} 个可更新`);
 
   // ㉖c 历史版本下载 —— 更新前的那个包还留在 package/ 里, 应该还能下
   const dl = await fetch(
@@ -543,21 +455,6 @@ async function runLifecycle(pkg, token, pubToken, tag) {
   });
   check(`${tag} ㉙ 重新上架成功`, re.status === 200, `status=${re.status}`);
 
-  // ㉚ 「下载安装包」这条路: 用户下载后自行解压 → 同样记一笔安装
-  const fe = await api(`${A}/install`, {
-    method: 'POST', token,
-    form: (() => {
-      const f = new FormData();
-      f.append('version', newVersion);
-      f.append('channel', 'download');
-      f.append('client_id', 'e2e-real-fe');
-      f.append('client_kind', 'web');
-      f.append('install_path', tgt.json.target);
-      return f;
-    })(),
-  });
-  check(`${tag} ㉚ 下载安装包方式的安装记录成功`, fe.status === 200, `status=${fe.status}`);
-
   // ㉛ 文件包下载 (选目录安装靠它拿明文文件写盘)
   const bundle = await api(`${A}/bundle`, { token });
   check(`${tag} ㉛ 文件包可下载`,
@@ -574,12 +471,6 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     zdl.status === 200 && zbuf.length > 0
     && zbuf.subarray(0, 2).toString('latin1') === 'PK',
     `status=${zdl.status} ${zbuf.length} 字节`);
-
-  // ㉗ 卸载 (client_id 是 Query 参数)
-  const uninst = await api(`${A}/install?client_id=e2e-real`, {
-    method: 'DELETE', token,
-  });
-  check(`${tag} ㉗ 卸载成功`, uninst.status === 200, `status=${uninst.status}`);
 
   // ㉘ 从工作区 index.json 回灌 DB (模拟 DB 记录丢失)
   const before = await api(A, { token });
@@ -702,6 +593,8 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
     const ctx = await browser.createBrowserContext();
     const page = await ctx.newPage();
     const jsErrors = [];
+    // ⚠️ 关掉缓存 —— 否则会加载上一次的旧 JS, 调已下线的端点
+    await page.setCacheEnabled(false);
     page.on('pageerror', (e) => jsErrors.push(String(e.message)));
     page.on('console', (m) => { if (m.type() === 'error') jsErrors.push(m.text()); });
     await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' });

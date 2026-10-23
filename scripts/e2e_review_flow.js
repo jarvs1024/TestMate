@@ -96,6 +96,8 @@ async function openPage(browser, token, user) {
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
   const errors = [];
+  // ⚠️ 关掉缓存 —— 否则会加载上一次的旧 JS, 调已下线的端点
+  await page.setCacheEnabled(false);
   page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('[console.error] ' + m.text()); });
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' });
@@ -257,8 +259,22 @@ async function openPage(browser, token, user) {
     b && b.click();
   });
   await sleep(1000);
-  const promptInput = await adm.page.$('.el-message-box__input input, .el-message-box input');
-  if (promptInput) await promptInput.type('权限声明不完整, 请补充后再提交');
+  // ⚠️ 必须**轮询等输入框出现**并用 evaluate 填值 ——
+  //    填不上 → inputValidator 拦下 → 点「驳回」静默无效 (看着像点了, 其实请求没发)
+  let filled = false;
+  for (let i = 0; i < 25; i++) {
+    filled = await adm.page.evaluate((text) => {
+      const el = document.querySelector('.el-message-box input');
+      if (!el) return false;
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, text);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }, '权限声明不完整, 请补充后再提交');
+    if (filled) break;
+    await sleep(200);
+  }
   await sleep(400);
   await adm.page.evaluate(() => {
     const b = [...document.querySelectorAll('.el-message-box__btns .el-button')].find((x) => x.textContent.includes('驳回'));

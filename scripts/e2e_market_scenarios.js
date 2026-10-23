@@ -62,6 +62,8 @@ async function openAs(browser, token, user) {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   const errors = [];
+  // ⚠️ 关掉缓存 —— 否则会加载上一次的旧 JS, 调已下线的端点
+  await page.setCacheEnabled(false);
   page.on('pageerror', (e) => errors.push(String(e.message)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' });
@@ -356,49 +358,15 @@ z.close()
     check('⑭ 抽屉里有「下载」按钮', insBtns.includes('下载'), insBtns.join(' | '));
     check('⑮ 没有装到本地/重新安装/卸载',
       !insBtns.some((b) => /安装到本地|重新安装|卸载/.test(b)), insBtns.join(' | '));
-    // ⚠️ 这里**不点**下载 —— 无头 Chrome 里下载会落磁盘, 断言不方便;
-    //    改成走 API 记录安装 (channel=download).
-    const instStatus = await ins.page.evaluate(async (code) => {
-      const tk = localStorage.getItem('testmate:token');
-      const H = { Authorization: 'Bearer ' + tk };
-      const t = await (await fetch('/api/v1/assets/' + code + '/install-target', { headers: H })).json();
-      const fd = new FormData();
-      fd.append('version', t.version);
-      fd.append('channel', 'download');
-      // client_id 必须跟前端用的**同一个**, 否则卡片不会标「已安装」
-      fd.append('client_id', localStorage.getItem('testmate.client_id') || 'scn');
-      fd.append('client_kind', 'web');
-      fd.append('install_path', t.target);
-      const r = await fetch('/api/v1/assets/' + code + '/install', { method: 'POST', headers: H, body: fd });
-      return r.status;
-    }, ASSET);
-    check('⑯ 安装成功', instStatus === 200, `status=${instStatus}`);
-    await ins.page.screenshot({ path: path.join(OUT_DIR, '21-scenario-install.png') });
-    await ins.page.evaluate(() => {
-      const b = [...document.querySelectorAll('.el-dialog__footer .el-button')].find((x) => /取消|关闭/.test(x.textContent));
-      b && b.click();
-    });
-    await sleep(600);
-
-    await ins.page.reload({ waitUntil: 'domcontentloaded' });
-    await ins.page.waitForSelector('.asset-card', { timeout: 15000 });
-    await sleep(1500);
-    await ins.page.evaluate(() => {
-      const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
-      t && t.click();
-    });
-    await sleep(1500);
-    const insBadges = await ins.page.evaluate((name) => {
-      const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(name));
-      return c ? [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()) : null;
-    }, '场景验证技能');
-    check('⑰ 小李的卡片标着「已安装」', !!(insBadges && insBadges.includes('✓ 已安装')), JSON.stringify(insBadges));
-
-    // ===== ⑤ 管理员下架 → 已装的人仍看得见, 但标「已下架」 =====
+    // ===== ⑤ 管理员下架 → 别人看不到, 但**作者**仍看得到 (标「已下架」) =====
+    //    可见性规则: 在架 ∪ 我提交的.
+    //    (以前还有「我已安装的」—— 安装只是下载, 后端不知道用户装没装, 那条规则也去掉了)
     await api(`/api/v1/assets/${ASSET}/unpublish`, {
       method: 'POST', token: adminToken, body: { comment: '临时下架' },
     });
     await sleep(2500);
+
+    // 别人 (小李) 看不到
     await ins.page.reload({ waitUntil: 'domcontentloaded' });
     await ins.page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1500);
@@ -407,12 +375,27 @@ z.close()
       t && t.click();
     });
     await sleep(1500);
-    const afterUnpub = await ins.page.evaluate((name) => {
+    const insSees = await ins.page.evaluate((name) =>
+      [...document.querySelectorAll('.asset-card')].some((x) => x.textContent.includes(name)),
+    '场景验证技能');
+    check('⑱ 下架后别人看不到', !insSees, `小李仍能看到=${insSees}`);
+
+    // 作者 (小王) 看得到, 且标「已下架」
+    await pub.page.reload({ waitUntil: 'domcontentloaded' });
+    await pub.page.waitForSelector('.asset-card', { timeout: 15000 });
+    await sleep(1500);
+    // ⚠️ 市场页默认停在「插件」tab —— 场景资产是 skill, 得切过去才看得见
+    await pub.page.evaluate(() => {
+      const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
+      t && t.click();
+    });
+    await sleep(1500);
+    const pubBadges = await pub.page.evaluate((name) => {
       const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(name));
       return c ? [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()) : null;
     }, '场景验证技能');
-    check('⑱ 下架后已装的人仍能看到', !!afterUnpub, JSON.stringify(afterUnpub));
-    check('⑲ 卡片标着「已下架」', !!(afterUnpub && afterUnpub.includes('⚠️ 已下架')), JSON.stringify(afterUnpub));
+    check('⑲ 作者看得到且标「已下架」',
+      !!(pubBadges && pubBadges.includes('⚠️ 已下架')), JSON.stringify(pubBadges));
 
     // 重新上架
     await api(`/api/v1/assets/${ASSET}/publish`, {

@@ -63,64 +63,7 @@ async def test_concurrent_upload_same_code_does_not_mix_files(client, auth, ws,
     assert len(names) in (1, 2), f"落盘文件数异常: {names}"
     body = (ws / "assets/skills/misc/conc-same/files/SKILL.md").read_text()
     marker = "A" if "MARKER-A" in body else "B"
-    assert f"only-{marker}.md" in names, f"SKILL.md 与 extra 文件来自不同的包: {names}"
-
-
-async def test_concurrent_install_same_asset_is_serialized(client, auth, ws,  # noqa: ARG001
-                                                            restore_git_config, tmp_path,
-                                                            publisher_user):
-    """并发记录同一个资产的安装 → 两个客户端各留一条, 不互相覆盖.
-
-    ⚠️ 服务端写盘通道已下线 —— 文件由浏览器写在用户本机, 后端只留记录.
-       所以这里验的是"并发记录不串", 不再验目录内容.
-    """
-    from tests.conftest import set_setting
-
-    await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.publisher_usernames", publisher_user["username"])
-    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
-
-    import io
-    import zipfile
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("SKILL.md", "---\nname: conc-inst\ndescription: d\n---\n\n# x\n")
-        z.writestr("ref/a.md", "a\n")
-    payload = ("p.zip", buf.getvalue(), "application/zip")
-    data = {
-        "code": "conc-inst", "kind": "skill", "name": "并发安装", "version": "1.0.0",
-        "summary": "s", "description": "d", "use_when": "w", "not_for": "n",
-        "category": "misc", "icon": "x", "tags": "[]", "keywords": "[]",
-        "featured": "false", "permissions": "{}", "install_steps": "[]", "bindings": "{}",
-    }
-    r = await client.post(f"{API}/upload", data=data,
-                          files={"package": payload}, headers=pauth)
-    assert r.status_code == 202, r.text
-
-    async def install(cid: str):
-        return await client.post(
-            f"{API}/conc-inst/install",
-            data={"version": "1.0.0", "channel": "download", "client_id": cid,
-                  "client_kind": "web"},
-            headers=pauth,
-        )
-
-    rs = await asyncio.gather(install("c1"), install("c2"))
-    assert all(r.status_code == 200 for r in rs), [r.text for r in rs]
-
-    from app.db.session import AsyncSessionLocal
-    from app.models.asset import AssetInstall
-    from sqlalchemy import select
-    async with AsyncSessionLocal() as s:
-        rows = (await s.execute(
-            select(AssetInstall).where(AssetInstall.code == "conc-inst")
-        )).scalars().all()
-        assert {r.client_id for r in rows} == {"c1", "c2"}, \
-            f"两个客户端的安装记录应都在, 实际 {[r.client_id for r in rows]}"
-
-
-# ---------- 崩溃恢复 ----------
+    assert f"only-{marker}.md" in names, f"SKILL.md 与 extra 文件来自不同的包: {names}"# ---------- 崩溃恢复 ----------
 
 async def test_recover_pending_jobs_picks_up_staged(ws, restore_git_config):  # noqa: ARG001
     """进程重启后, 卡在 staged/syncing 的任务要重新入队, 不能丢."""
@@ -170,16 +113,6 @@ async def test_list_survives_missing_workspace(client, auth, ws,  # noqa: ARG001
 async def test_doc_endpoint_404_for_unknown_code(client, auth):
     """不存在的资产 → 404, 不是 500."""
     r = await client.get(f"{API}/no-such-asset/doc", headers=auth)
-    assert r.status_code == 404
-
-
-async def test_install_unknown_asset_404(client, auth):
-    r = await client.post(
-        f"{API}/no-such-asset/install",
-        data={"version": "1.0.0", "channel": "server", "client_id": "c",
-              "client_kind": "web"},
-        headers=auth,
-    )
     assert r.status_code == 404
 
 
