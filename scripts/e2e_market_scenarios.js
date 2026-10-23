@@ -131,6 +131,10 @@ z.close()
   const pubToken = await login(PUBLISHER.username, PUBLISHER.password);
   const insToken = await login(INSTALLER.username, INSTALLER.password);
 
+  // 预清理: 上一轮崩了会留下同名资产 (上传会 409, 后面全乱)
+  const stale = await api(`/api/v1/assets/${ASSET}`, { method: 'DELETE', token: adminToken });
+  if (stale.status === 200) console.log('  [预清理] 已删除残留资产', ASSET);
+
   // 场景前置: 开审核 + 把小王加进发布白名单
   // ⚠️ 改的是**生产设置** —— 先存原值, 结束必须还原.
   //    (只删测试账号是不够的: 白名单里留着已删除的测试账号 = 脏配置)
@@ -206,6 +210,17 @@ z.close()
 
     const st = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
     check('③ 资产状态为待审核', st.json && st.json.publish_status === 'pending', st.json && st.json.publish_status);
+
+
+    // ===== ③b 复验: 同步器不能把待审资产改成已上架 =====
+    // 同步器每 30 秒从远端拉一次. 远端 manifest 里**缺** publish_status 时,
+    // 曾经被猜成 published → 待审核的资产自动上架, 审核形同虚设.
+    // 这个 bug 只在冲突判定触发时发作, 所以以前表现为"端到端偶发失败".
+    await sleep(35000);
+    const stAfterSync = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    check('③b 等一个同步周期后仍是待审核',
+      stAfterSync.json && stAfterSync.json.publish_status === 'pending',
+      `publish_status=${stAfterSync.json && stAfterSync.json.publish_status}`);
 
     // ===== ② 审核台: 管理员能看到并驳回 =====
     const adm = await openAs(browser, adminToken, { id: 1, username: ADMIN, role: 'admin' });
@@ -339,28 +354,28 @@ z.close()
       const b = [...document.querySelectorAll('.ad-actions .el-button')].find((x) => x.textContent.includes('安装到本地'));
       b && b.click();
     });
-    await ins.page.waitForSelector('.inst-chan', { timeout: 10000 });
+    await ins.page.waitForSelector('.inst-pkg', { timeout: 10000 });
     await sleep(1200);
     const dlg = await ins.page.evaluate(() => ({
-      // 目标路径显示在「下载安装包」那一条的说明里
-      target: document.querySelectorAll('.inst-chan-d')[1]?.textContent.trim(),
+      // 解压目标显示在「安装包」区块的第二行
+      target: document.querySelectorAll('.inst-pkg-val')[1]?.textContent.trim(),
       perm: document.querySelector('.inst-perm')?.textContent.replace(/\s+/g, ' ').trim(),
       canInstall: ![...document.querySelectorAll('.el-dialog__footer .el-button')].some(
-        (b) => b.textContent.includes('选择目录并安装') && b.classList.contains('is-disabled')),
+        (b) => b.textContent.includes('下载安装包') && b.classList.contains('is-disabled')),
       primaryBtn: [...document.querySelectorAll('.el-dialog__footer .el-button')]
         .map((b) => b.textContent.trim()).pop(),
     }));
-    check('⑭ 安装向导读到目标目录', !!dlg.target && dlg.target.includes('qoder'), dlg.target);
-    check('⑮ 「选择目录并安装」可点', dlg.canInstall === true, `btn=${dlg.primaryBtn}`);
-    // ⚠️ 这里**不能**点安装按钮 —— 会弹出目录选择器, 无头 Chrome 里会挂住.
-    //    改成走 API 记录安装 (channel=frontend); 真实写盘要有头浏览器才能授权.
+    check('⑭ 安装向导写清解压目标', !!dlg.target && dlg.target.includes('qoder'), dlg.target);
+    check('⑮ 「下载安装包」可点', dlg.canInstall === true, `btn=${dlg.primaryBtn}`);
+    // ⚠️ 这里**不能**点下载按钮 —— 无头 Chrome 里下载会落到磁盘, 断言不方便;
+    //    改成走 API 记录安装 (channel=download).
     const instStatus = await ins.page.evaluate(async (code) => {
       const tk = localStorage.getItem('testmate:token');
       const H = { Authorization: 'Bearer ' + tk };
       const t = await (await fetch('/api/v1/assets/' + code + '/install-target', { headers: H })).json();
       const fd = new FormData();
       fd.append('version', t.version);
-      fd.append('channel', 'frontend');
+      fd.append('channel', 'download');
       // client_id 必须跟前端用的**同一个**, 否则卡片不会标「已安装」
       fd.append('client_id', localStorage.getItem('testmate.client_id') || 'scn');
       fd.append('client_kind', 'web');

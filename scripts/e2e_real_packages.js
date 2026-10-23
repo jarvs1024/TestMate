@@ -403,7 +403,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     form: (() => {
       const f = new FormData();
       f.append('version', pkg.version);
-      f.append('channel', 'frontend');
+      f.append('channel', 'download');
       f.append('client_id', 'e2e-real');
       f.append('client_kind', 'web');
       f.append('install_path', tgt.json.target);
@@ -422,7 +422,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     form: (() => {
       const f = new FormData();
       f.append('version', '9.9.9');
-      f.append('channel', 'frontend');
+      f.append('channel', 'download');
       f.append('client_id', 'e2e-real');
       f.append('client_kind', 'web');
       return f;
@@ -487,7 +487,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     form: (() => {
       const f = new FormData();
       f.append('version', newVersion);
-      f.append('channel', 'frontend');
+      f.append('channel', 'download');
       f.append('client_id', 'e2e-real');
       f.append('client_kind', 'web');
       return f;
@@ -549,7 +549,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     form: (() => {
       const f = new FormData();
       f.append('version', newVersion);
-      f.append('channel', 'frontend');
+      f.append('channel', 'download');
       f.append('client_id', 'e2e-real-fe');
       f.append('client_kind', 'web');
       f.append('install_path', tgt.json.target);

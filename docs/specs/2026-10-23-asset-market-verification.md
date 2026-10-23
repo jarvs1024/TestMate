@@ -133,27 +133,56 @@ python3 scripts/make_real_packages.py --out-dir .e2e-out
 
 ## 7. 安装方式（2026-10-23 调整）
 
-服务端写盘通道已下线 —— 安装统一在**用户本机**完成:
+安装**只有一条路**: 下载安装包 —— 后端给 zip, 用户自己解压.
 
-| 方式 | 做法 | 适用 |
-|---|---|---|
-| 选择目录安装 | 浏览器 File System Access 弹目录选择器, 把后端给的明文文件写进去 | Chromium 系 (Chrome / Edge) |
-| 下载安装包 | 下 zip, 自行解压到 `~/.qoder-cn/skills/<code>/` | 所有浏览器 |
+| 做法 | 说明 |
+|---|---|
+| 下载安装包 | 下 `<code>-<version>.zip`, 解压到 `~/.qoder-cn/skills/<code>/` (plugin 是 `~/.qoder-cn/plugins/cache/qoder-marketplace/<code>/<version>/`) |
 
-- 界面里**没有**「装到服务器配置的目录」了
-- 设置页的三个安装目录项 (`marketplace.install.skill_dir` / `.plugin_dir` / `.enabled`) 已移除,
-  DB 里的残留行在启动时一并清掉
-- 后端不再写盘: `resolve_host_path` / `_install_files` / `_remove_install_dirs` 全部删除,
+- 界面里**没有**任何"装到服务器"或"写入本机"的选项 —— 浏览器写盘 (File System Access)
+  和服务端写盘**都已下线**
+- 设置页的三个安装目录项 (`marketplace.install.skill_dir` / `.plugin_dir` / `.enabled`)
+  已移除, DB 里的残留行在启动时一并清掉
+- 后端不写盘: `resolve_host_path` / `_install_files` / `_remove_install_dirs` 全部删除,
   install 端点只保留**安装记录** (哪个客户端、什么版本、装没装)
 - 卸载同理 —— 后端只改记录, **不碰用户自己的文件**
+- 「复制安装命令」保留为兜底 (给不想点下载的人)
 
-## 8. 已知未覆盖
+## 8. 这轮又挖出来的 bug
 
-- **前端 File System Access 通道的真实写盘** —— 无头浏览器里拿不到目录选择器,
-  只验证了「前端已写盘 → 后端记录安装」这一半 (`channel=frontend` 记录成功)。
-  完整落盘需人工在有头浏览器里点一次。
-- **连接器 (mcp) 类型的上传** —— 后端明确不支持一键安装, 安装端点返回 409 已有单测覆盖,
-  但没走完整的上传 → 审核 → 上架链路 (mcp 资产靠 seed 写入)。
-- **内容逐字比对的口径变了** —— 服务端写盘下线后, "包内容 == 安装产物" 改成
+### 8.1 同步器把待审核资产改成已上架 ⚠️
+
+同步器 (`sync_puller`) 每 30 秒从远端拉一次, 以**远端 manifest.json** 的
+`publish_status` 为权威回灌 DB. 但:
+
+- **上传时**写的 manifest.json 来自 `build_manifest()`, **根本没有 publish_status 字段**
+  (只有上下架走 `_set_publish_state` 时才写这个字段)
+- 同步器读到 `None` 时**猜成 "published"** → 把 DB 里的 `pending` 覆盖掉
+
+**后果: 任何待审核的资产, 下一个同步周期就会被自动改成已上架 —— 审核形同虚设.**
+而且只在冲突判定触发时发作, 表现为"端到端偶发失败", 极难复现.
+
+两处都修了:
+
+1. **根本修法** —— 上传时把最终 `publish_status` 写进 manifest.json (权威来源统一)
+2. **防御** —— 同步器遇到远端 manifest 缺这个字段时**不猜**, 以本地为准
+   (`_remote_publish_status()` 提成纯函数, 可单测)
+
+复验: e2e 新增 ③b「等一个同步周期(35 秒)后仍是待审核」✓
+
+### 8.2 e2e 脚本崩了会留下残留资产
+
+`e2e_market_scenarios.js` 中途失败时资产没删 → 下次跑上传直接 **409**,
+后面整条流程状态全乱. 已在脚本开头加**预清理**, 让它可重复运行.
+
+另外 `e2e_market.js` 的通知开关恢复原本不在 `finally` 里 —— 中途失败会把
+"静音通知"这个**生产配置**留在关的状态. 已移进 `finally` (并把 `browser.close()`
+也挪进去, 否则异常时浏览器进程泄漏); Z2 改成跟**原值**比而不是硬编码 `true`.
+
+## 9. 已知未覆盖
+
+- **mcp 类型的上传链路** —— 后端明确不支持一键安装, 安装端点返回 409 已有单测覆盖,
+  但没走完整的上传 → 审核 → 上架链路 (mcp 资产靠 seed 写入).
+- **内容逐字比对的口径** —— 服务端写盘下线后, "包内容 == 安装产物" 改成
   "包内容 == bundle 接口返回的内容" (上传 → 解包 → 落工作区 → 传给前端写盘),
-  前端写盘那一步由单元测试覆盖。
+  前端写盘那一步由单元测试覆盖.
