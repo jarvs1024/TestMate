@@ -2,18 +2,15 @@
 /**
  * 一键安装 —— **下载安装包**的界面验收.
  *
- * 安装现在只有一条路: 下载 zip, 自己解压到 ~/.qoder-cn/skills/<code>/.
- * ⚠️ 浏览器写盘 (File System Access) 与服务端写盘**都已下线** ——
- *    设置里也没有"安装目录"了.
+ * 安装现在只有一条路: 详情抽屉里点「下载」, zip 落到浏览器的默认下载目录,
+ * 用户自己解压. 界面里**没有**「安装到本地 / 重新安装 / 卸载」.
  *
  * 验用户真正看到的东西:
- *   1. 安装对话框能打开
- *   2. **没有**选目录 / 写入本机的选项
- *   3. 写清下载的文件名与"解压到哪"
- *   4. 主按钮就是「下载安装包」
- *   5. 点了真的能下载 (文件名正确)
- *   6. 有「复制安装命令」兜底
- *   7. 全程无 JS 错误
+ *   1. 详情抽屉能打开
+ *   2. 有「下载」按钮, 且**没有**装到本地/重新安装/卸载
+ *   3. 点下载真的把 zip 落到了磁盘 (文件名正确)
+ *   4. 提示说清解压到哪
+ *   5. 全程无 JS 错误
  *
  * 用法: node scripts/e2e_install_download.js
  */
@@ -47,8 +44,8 @@ function check(name, ok, detail) {
   const errors = [];
   try {
     const page = await browser.newPage();
-    // ⚠️ 无头 Chrome 默认**禁止下载** —— 必须用 CDP 显式允许, 否则点下载没反应
-    // ⚠️ Browser 域的指令要走 **browser 级** CDP session (page 级的不生效)
+    // ⚠️ 无头 Chrome 默认**禁止下载** —— 必须用 CDP 显式允许
+    //    (Browser 域要走 browser 级 session, page 级的不生效)
     const dlDir = path.join(OUT_DIR, 'downloads');
     fs.rmSync(dlDir, { recursive: true, force: true });
     fs.mkdirSync(dlDir, { recursive: true });
@@ -79,7 +76,7 @@ function check(name, ok, detail) {
     await page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1500);
 
-    // 先点开详情抽屉 —— 「安装」按钮在抽屉里 (.ad-actions), 不在卡片上
+    // 点开详情抽屉
     const openedCard = await page.evaluate(() => {
       const c = document.querySelector('.asset-card');
       if (!c) return false;
@@ -91,74 +88,56 @@ function check(name, ok, detail) {
     if (!openedCard) throw new Error('没有找到卡片');
 
     await page.waitForSelector('.ad-actions', { timeout: 15000 });
-    await sleep(600);
-
-    const opened = await page.evaluate(() => {
-      const b = [...document.querySelectorAll('.ad-actions button')].find(
-        (x) => /安装/.test(x.textContent || '') && !x.disabled,
-      );
-      if (b) { b.click(); return true; }
-      return false;
-    });
-    check('E3 详情抽屉里有可点的安装按钮', opened);
-    if (!opened) throw new Error('没有找到安装按钮');
-
-    await page.waitForSelector('.inst-pkg', { timeout: 15000 });
     await sleep(800);
 
-    const ui = await page.evaluate(() => {
-      const txt = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
-      const footerBtns = [...document.querySelectorAll('.el-dialog__footer button')].map(txt);
-      return {
-        chanCount: document.querySelectorAll('.inst-chan').length,
-        pkgRows: [...document.querySelectorAll('.inst-pkg-row')].map(txt),
-        note: txt(document.querySelector('.inst-note')),
-        primaryBtn: footerBtns[footerBtns.length - 1],
-        footerBtns,
-        wholeDialog: txt(document.querySelector('.el-dialog')),
-      };
-    });
+    const btns = await page.evaluate(() =>
+      [...document.querySelectorAll('.ad-actions button')]
+        .map((b) => (b.textContent || '').trim()));
 
-    check('E4 没有选目录 / 本机写入的选项',
-      ui.chanCount === 0 && !/选择目录|写入你选的目录|本地目录/.test(ui.wholeDialog),
-      `chan=${ui.chanCount}`);
-    check('E5 写清了文件名与解压目标',
-      ui.pkgRows.length === 2
-      && /\.zip$/.test(ui.pkgRows[0]) && ui.pkgRows[1].includes('~/'),
-      ui.pkgRows.join(' | '));
-    check('E6 主按钮就是「下载安装包」',
-      /下载安装包/.test(ui.primaryBtn), ui.primaryBtn);
-    check('E7 有「复制安装命令」兜底',
-      ui.footerBtns.some((b) => /复制安装命令/.test(b)),
-      ui.footerBtns.join(' | '));
+    check('E3 有「下载」按钮', btns.includes('下载'), btns.join(' | '));
+    check('E4 没有装到本地/重新安装/卸载',
+      !btns.some((b) => /安装到本地|重新安装|卸载/.test(b)),
+      btns.join(' | '));
 
-    // 点下载 → 应该真的把 zip 落到下载目录
-    // ⚠️ 无头 Chrome 里 puppeteer 的 download 事件可能不触发, 所以直接查目录
+    // 点下载 → zip 应该落到下载目录
     let downloaded = '';
     page.on('download', async (dl) => {
       downloaded = dl.suggestedFilename();
       try { await dl.cancel(); } catch { /* 已取消 */ }
     });
     await page.evaluate(() => {
-      const b = [...document.querySelectorAll('.el-dialog__footer .el-button')]
-        .find((x) => x.textContent.includes('下载安装包'));
+      const b = [...document.querySelectorAll('.ad-actions button')]
+        .find((x) => (x.textContent || '').trim() === '下载');
       b && b.click();
     });
-    await sleep(4000);
+
+    // ⚠️ Element Plus 的消息默认 3 秒就消失 —— 得**轮询**着抓, 不能等完再查
+    let msg = '';
+    for (let i = 0; i < 25; i++) {
+      await sleep(200);
+      msg = await page.evaluate(() =>
+        document.querySelector('.el-message')?.textContent.trim()
+        || document.querySelector('.el-message-box__message')?.textContent.trim() || '');
+      if (msg) break;
+    }
+    check('E6 提示说清下载与解压位置',
+      /已下载/.test(msg) && /解压/.test(msg), msg.slice(0, 80));
+
+    // 再等一下让 zip 落盘
+    for (let i = 0; i < 20; i++) {
+      const f = fs.existsSync(dlDir) ? fs.readdirSync(dlDir) : [];
+      if (f.some((x) => x.endsWith('.zip'))) break;
+      await sleep(250);
+    }
     const files = fs.existsSync(dlDir) ? fs.readdirSync(dlDir) : [];
     const zips = files.filter((f) => f.endsWith('.zip'));
-    check('E8 点下载真的把 zip 落到了磁盘',
+    check('E5 点下载真的把 zip 落到了磁盘',
       zips.length > 0 || /\.zip$/.test(downloaded),
       zips.length ? `下载目录: ${zips.join(', ')}` : (downloaded || '(没有下载事件, 目录也空)'));
 
-    const done = await page.evaluate(() =>
-      document.querySelector('.el-dialog .el-alert__title')?.textContent.trim() || '');
-    check('E9 提示了下载完成与解压位置',
-      /已下载/.test(done) && /解压/.test(done), done.slice(0, 70));
-
     await page.screenshot({ path: path.join(OUT_DIR, 'install-download.png'), fullPage: false });
 
-    check('E10 全程无 JS 错误', errors.length === 0, errors.slice(0, 2).join(' ; '));
+    check('E7 全程无 JS 错误', errors.length === 0, errors.slice(0, 2).join(' ; '));
   } finally {
     await browser.close();
   }

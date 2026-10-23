@@ -350,24 +350,13 @@ z.close()
     }, '场景验证技能');
     await ins.page.waitForSelector('.el-drawer', { timeout: 10000 });
     await sleep(1200);
-    await ins.page.evaluate(() => {
-      const b = [...document.querySelectorAll('.ad-actions .el-button')].find((x) => x.textContent.includes('安装到本地'));
-      b && b.click();
-    });
-    await ins.page.waitForSelector('.inst-pkg', { timeout: 10000 });
-    await sleep(1200);
-    const dlg = await ins.page.evaluate(() => ({
-      // 解压目标显示在「安装包」区块的第二行
-      target: document.querySelectorAll('.inst-pkg-val')[1]?.textContent.trim(),
-      perm: document.querySelector('.inst-perm')?.textContent.replace(/\s+/g, ' ').trim(),
-      canInstall: ![...document.querySelectorAll('.el-dialog__footer .el-button')].some(
-        (b) => b.textContent.includes('下载安装包') && b.classList.contains('is-disabled')),
-      primaryBtn: [...document.querySelectorAll('.el-dialog__footer .el-button')]
-        .map((b) => b.textContent.trim()).pop(),
-    }));
-    check('⑭ 安装向导写清解压目标', !!dlg.target && dlg.target.includes('qoder'), dlg.target);
-    check('⑮ 「下载安装包」可点', dlg.canInstall === true, `btn=${dlg.primaryBtn}`);
-    // ⚠️ 这里**不能**点下载按钮 —— 无头 Chrome 里下载会落到磁盘, 断言不方便;
+    // 安装 = 下载: 抽屉里一个「下载」按钮, 没有对话框了.
+    const insBtns = await ins.page.evaluate(() =>
+      [...document.querySelectorAll('.ad-actions button')].map((b) => (b.textContent || '').trim()));
+    check('⑭ 抽屉里有「下载」按钮', insBtns.includes('下载'), insBtns.join(' | '));
+    check('⑮ 没有装到本地/重新安装/卸载',
+      !insBtns.some((b) => /安装到本地|重新安装|卸载/.test(b)), insBtns.join(' | '));
+    // ⚠️ 这里**不点**下载 —— 无头 Chrome 里下载会落磁盘, 断言不方便;
     //    改成走 API 记录安装 (channel=download).
     const instStatus = await ins.page.evaluate(async (code) => {
       const tk = localStorage.getItem('testmate:token');

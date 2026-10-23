@@ -412,12 +412,6 @@ export async function downloadAssetPackage(code: string, version: string): Promi
   return resp as unknown as Blob;
 }
 
-export async function uninstallAsset(code: string): Promise<void> {
-  await request.delete(`/assets/${encodeURIComponent(code)}/install`, {
-    params: { client_id: getClientId() },
-  });
-}
-
 export async function unpublishAsset(code: string, comment = ''): Promise<void> {
   const fd = new FormData();
   fd.append('comment', comment);

@@ -116,14 +116,14 @@
           重新提交审核
         </el-button>
 
+        <!-- 安装 = 下载安装包, 自己解压.
+             不做「装到本地 / 重新安装 / 卸载」那一套 —— 服务器不该替用户管磁盘. -->
         <el-button
           v-if="item.kind !== 'mcp'"
-          :type="item.installed ? 'default' : 'primary'"
-          class="ad-btn" :loading="busy" @click="openInstall"
-        >{{ item.installed ? '重新安装' : '安装到本地' }}</el-button>
-        <el-button v-else disabled class="ad-btn">连接器暂不支持一键安装</el-button>
-
-        <el-button v-if="item.installed" class="ad-btn" @click="doUninstall">卸载</el-button>
+          type="primary"
+          class="ad-btn" :loading="busy" @click="doDownload"
+        >下载</el-button>
+        <el-button v-else disabled class="ad-btn">连接器不支持下载</el-button>
         <el-button v-if="canEdit" class="ad-btn" @click="emit('edit', item)">更新版本</el-button>
         <el-button v-if="canEdit" class="ad-btn" :type="unpub ? 'primary' : 'warning'"
                    plain @click="togglePublish">
@@ -139,12 +139,6 @@
         资产真实存储在 GitLab 仓库; 上传与更新会生成新的 commit, 历史版本可在 git 中回溯。
       </div>
     </template>
-
-    <AssetInstallDialog
-      v-if="item"
-      v-model="installOpen"
-      :asset="item"
-      @done="emit('changed')" />
   </el-drawer>
 </template>
 
@@ -152,13 +146,14 @@
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  deleteAsset, getAssetDoc, publishAsset, reviewAsset, submitForReview,
-  uninstallAsset, unpublishAsset,
+  deleteAsset, downloadAssetPackage, getAssetDoc, installAsset, publishAsset,
+  reviewAsset, submitForReview,
+  unpublishAsset,
   type AssetDoc, type AssetItem,
 } from '@/api/assets';
 import { useUserStore } from '@/stores/user';
 import { renderMarkdown } from '@/utils/markdown';
-import AssetInstallDialog from './AssetInstallDialog.vue';
+import { downloadBlob } from '@/utils/download';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -177,7 +172,6 @@ const doc = ref<AssetDoc | null>(null);
 const docLoading = ref(false);
 const docError = ref('');
 const busy = ref(false);
-const installOpen = ref(false);
 
 const unpub = computed(() => props.item?.publish_status === 'unpublished');
 
@@ -236,27 +230,37 @@ watch(() => props.modelValue, (open) => {
   if (open && props.item?.code) loadDoc(props.item.code);
 });
 
-function openInstall() {
-  installOpen.value = true;
-}
+/** 建议的解压目录 (Qoder 标准布局, ~ 表示家目录) */
+const targetDir = computed(() => {
+  const it = props.item;
+  if (!it) return '';
+  return it.kind === 'skill'
+    ? `~/.qoder-cn/skills/${it.code}`
+    : `~/.qoder-cn/plugins/cache/qoder-marketplace/${it.code}/${it.version}`;
+});
 
-async function doUninstall() {
-  if (!props.item) return;
-  try {
-    await ElMessageBox.confirm(
-      `确认卸载 ${props.item.name}？将删除已安装的文件。`, '卸载资产',
-      { type: 'warning', confirmButtonText: '卸载', cancelButtonText: '取消' },
-    );
-  } catch {
-    return;  // 用户取消
-  }
+/**
+ * 下载安装包 —— 落到浏览器的默认下载目录, 用户自己解压.
+ *
+ * ⚠️ 不做"装到本地": 浏览器写盘要用户逐次授权家目录 (权限问题太多),
+ *    服务端写盘又要求服务器能操作用户磁盘 (权限边界不清).
+ *    下载是最省心、也最没有争议的一条路.
+ */
+async function doDownload() {
+  const it = props.item;
+  if (!it) return;
   busy.value = true;
   try {
-    await uninstallAsset(props.item.code);
-    ElMessage.success('已卸载');
+    const blob = await downloadAssetPackage(it.code, it.version);
+    downloadBlob(blob, `${it.code}-${it.version}.zip`);
+    // 记一笔 —— 卡片上的「安装 N」靠它
+    await installAsset(it.code, it.version);
+    ElMessage.success(
+      `已下载 ${it.code}-${it.version}.zip, 解压到 ${targetDir.value}/ 即完成安装`,
+    );
     emit('changed');
   } catch (e: any) {
-    ElMessage.error('卸载失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('下载失败: ' + (e?.response?.data?.detail || e?.message));
   } finally {
     busy.value = false;
   }

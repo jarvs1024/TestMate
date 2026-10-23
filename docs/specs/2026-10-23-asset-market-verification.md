@@ -133,20 +133,21 @@ python3 scripts/make_real_packages.py --out-dir .e2e-out
 
 ## 7. 安装方式（2026-10-23 调整）
 
-安装**只有一条路**: 下载安装包 —— 后端给 zip, 用户自己解压.
+安装**只有一条路**: 详情抽屉里点「下载」, zip 落到浏览器的默认下载目录,
+用户自己解压.
 
 | 做法 | 说明 |
 |---|---|
-| 下载安装包 | 下 `<code>-<version>.zip`, 解压到 `~/.qoder-cn/skills/<code>/` (plugin 是 `~/.qoder-cn/plugins/cache/qoder-marketplace/<code>/<version>/`) |
+| 下载 | 下 `<code>-<version>.zip`, 解压到 `~/.qoder-cn/skills/<code>/` (plugin 是 `~/.qoder-cn/plugins/cache/qoder-marketplace/<code>/<version>/`) |
 
-- 界面里**没有**任何"装到服务器"或"写入本机"的选项 —— 浏览器写盘 (File System Access)
-  和服务端写盘**都已下线**
+- 详情抽屉的动作区现在只有: **下载** / 更新版本 / 下架 / 彻底删除
+- 「安装到本地」「重新安装」「卸载」**全部去掉**, 安装对话框也一并删掉
+- 浏览器写盘 (File System Access) 与服务端写盘**都已下线**
 - 设置页的三个安装目录项 (`marketplace.install.skill_dir` / `.plugin_dir` / `.enabled`)
   已移除, DB 里的残留行在启动时一并清掉
 - 后端不写盘: `resolve_host_path` / `_install_files` / `_remove_install_dirs` 全部删除,
   install 端点只保留**安装记录** (哪个客户端、什么版本、装没装)
-- 卸载同理 —— 后端只改记录, **不碰用户自己的文件**
-- 「复制安装命令」保留为兜底 (给不想点下载的人)
+- 下载后仍会记一笔 —— 卡片上的「安装 N」才有意义 (同一版本重复下载不会重复计数)
 
 ## 8. 这轮又挖出来的 bug
 

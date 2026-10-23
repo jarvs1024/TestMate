@@ -100,6 +100,8 @@ async function snap(page) {
       steps: [...document.querySelectorAll('.steps li')].map((s) => txt(s)),
       gitPath: txt(document.querySelector('.ad-git code')),
       syncChip: txt(document.querySelector('.ad-sync-chip')),
+      adBtnLabels: [...document.querySelectorAll('.ad-actions button')]
+        .map((b) => (b.textContent || '').trim()),
       dlgChanCount: document.querySelectorAll('.inst-chan').length,
       dlgTarget: txt(document.querySelector('.inst-chan-d')),
       // 解压目标显示在「安装包」区块的第二行
@@ -281,21 +283,14 @@ async function codeByName(page, name) {
     check('D7 同步状态标签', /已同步|待同步|失败/.test(s.syncChip || ''), s.syncChip);
     await page.screenshot({ path: path.join(OUT_DIR, '01-drawer.png') });
 
-    // ---------- E. 安装向导 ----------
-    await clickByText(page, '.ad-actions .el-button', '安装');
-    await page.waitForSelector('.inst-pkg', { timeout: 10000 });
-    await sleep(1200);
+    // ---------- E. 下载安装包 ----------
+    // ⚠️ 安装 = 下载: 详情抽屉里一个「下载」按钮, 点了就下 zip, 没有别的选项.
     s = await snap(page);
-    check('E1 安装向导只剩「下载安装包」一种方式', s.dlgChanCount === 0, `chan=${s.dlgChanCount}`);
-    check('E2 向导显示权限提示', (s.dlgPerm || '').length > 5, (s.dlgPerm || '').slice(0, 60));
-    check('E2b 没有服务端安装选项了', !/服务器/.test(s.dlgWhole || ''), '不应出现"装到服务器配置的目录"');
-    check('E2c 解压目标是家目录相对形式',
-      String(s.dlgPkgTarget || '').includes('~/.qoder-cn'), s.dlgPkgTarget);
+    check('E1 详情抽屉有「下载」按钮', s.adBtnLabels.includes('下载'), s.adBtnLabels.join(' | '));
+    check('E2 没有装到本地/重新安装/卸载',
+      !s.adBtnLabels.some((b) => /安装到本地|重新安装|卸载/.test(b)),
+      s.adBtnLabels.join(' | '));
     await page.screenshot({ path: path.join(OUT_DIR, '02-install.png') });
-    // ⚠️ 这里**不能**点「开始安装」—— 会弹出目录选择器, 无头 Chrome 里会挂住.
-    //    安装记录走 API (channel=download) 验证 —— 下载本身不需要浏览器授权.
-    await clickByText(page, '.el-dialog__footer .el-button', '取消');
-    await sleep(800);
 
     // 记录一次安装 (前端通道) → 卡片应出现「已安装」标记
     const installed = await page.evaluate(async (code) => {
