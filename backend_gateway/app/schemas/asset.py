@@ -28,7 +28,6 @@ class AssetOut(BaseModel):
     git_commit_sha: str = ""
     # 资产在 GitLab 上的网页地址 (由 marketplace.git.web_url 拼出; 没配就为空)
     git_web_url: str = ""
-    install_count: int = 0
     updated_at: datetime | None = None
     # 同步状态: staged / pushed / failed
     sync_status: str = "staged"
@@ -37,10 +36,8 @@ class AssetOut(BaseModel):
     publish_status: str = "published"
     # 最近一次审核意见 (驳回理由 / 审核备注)
     review_note: str = ""
-    # 本地态
-    installed: bool = False
-    updatable: bool = False
-    install_path: str = ""
+    # 当前用户能不能审这个资产 (管理员或被授权的审核人) —— 前端据此显示审核按钮
+    can_review: bool = False
 
     class Config:
         from_attributes = True
@@ -90,25 +87,6 @@ class AssetFileBundleOut(BaseModel):
     total: int
 
 
-class AssetInstallTargetOut(BaseModel):
-    """前端点安装时先查这个: 能不能装 + 建议装到哪.
-
-    ⚠️ 后端不再写盘 —— 安装在用户本机完成 (选目录 / 下载安装包),
-    所以这里没有"服务端目录"这回事, 只有一份**建议**的目标路径.
-    """
-
-    code: str
-    kind: str
-    version: str
-    # 建议的安装目录 (Qoder 标准布局, ~ 表示家目录)
-    target: str
-    skill_dir_host: str = ""
-    plugin_dir_host: str = ""
-    # 这个包**现在能不能装** —— 前端据此把按钮置灰并说明原因
-    installable: bool = True
-    install_block_reason: str = ""
-
-
 class PackagePreviewOut(BaseModel):
     """上传前的包体检结果.
 
@@ -152,7 +130,6 @@ class AssetDeleteOut(BaseModel):
 
     ok: bool = True
     code: str = ""
-    removed_installs: int = 0
     commit_sha: str = ""
 
 
@@ -254,7 +231,6 @@ class SyncStatusOut(BaseModel):
     conflict_count: int = 0
     pending_count: int = 0
     failed_count: int = 0
-    updatable_count: int = 0
     unpublished_count: int = 0
     # 上架审核: 待审核 / 已驳回 的资产数 (管理员审核台的徽标)
     awaiting_review_count: int = 0

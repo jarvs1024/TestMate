@@ -230,6 +230,18 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
+        "key": "marketplace.review.reviewer_usernames",
+        "category": "marketplace",
+        "value_type": "string",
+        "default": "",
+        "description": (
+            "可以审上架审核的用户 (逗号分隔, 如 zhangsan,lisi) —— "
+            "团队里 admin 一个人审不过来时用. 管理员永远有审核权; "
+            "审核人**只能审**, 不能改别人上传的资产"
+        ),
+        "is_secret": False,
+    },
+    {
         "key": "marketplace.review.admin_self_approve",
         "category": "marketplace",
         "value_type": "bool",

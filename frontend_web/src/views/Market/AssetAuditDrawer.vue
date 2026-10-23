@@ -78,8 +78,6 @@ const ACTIONS = [
   { value: 'publish', label: '上架' },
   { value: 'unpublish', label: '下架' },
   { value: 'delete', label: '删除' },
-  { value: 'install', label: '安装' },
-  { value: 'uninstall', label: '卸载' },
 ];
 
 const tab = ref('audit');
@@ -109,6 +107,8 @@ function eventLabel(e: string): string {
     update: '版本更新',
     unpublish: '资产下架',
     delete: '资产删除',
+    review: '新资产待审核',
+    reject: '审核未通过',
   } as Record<string, string>)[e] || e;
 }
 

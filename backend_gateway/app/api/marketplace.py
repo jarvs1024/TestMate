@@ -44,7 +44,7 @@ from app.core.market_catalog import (
     validate_files,
 )
 from app.db.session import AsyncSessionLocal
-from app.models.asset import Asset, AssetAudit, AssetInstall, AssetJob
+from app.models.asset import Asset, AssetAudit, AssetJob
 from app.models.user import User
 from app.schemas.asset import (
     AssetAuditListOut,
@@ -55,7 +55,6 @@ from app.schemas.asset import (
     AssetFileContent,
     AssetFileNode,
     AssetFilesOut,
-    AssetInstallTargetOut,
     AssetJobListOut,
     AssetJobOut,
     AssetListOut,
@@ -154,6 +153,40 @@ async def require_publisher(user: User = Depends(get_current_user)) -> User:
     raise HTTPException(status_code=403, detail="不在发布者白名单内, 联系管理员开通")
 
 
+async def _reviewer_names() -> set[str]:
+    """被授权的审核人 (管理员永远有审核权)."""
+    raw = await _setting("marketplace.review.reviewer_usernames", "")
+    return {
+        x.strip().lower()
+        for x in raw.replace("，", ",").replace(";", ",").split(",")
+        if x.strip()
+    }
+
+
+async def _is_reviewer(user: User) -> bool:
+    role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if role == "admin":
+        return True
+    names = await _reviewer_names()
+    return bool(names) and (user.username or "").strip().lower() in names
+
+
+async def require_reviewer(user: User = Depends(get_current_user)) -> User:
+    """能审上架审核的人 —— 管理员, 或被授权的审核人.
+
+    团队里 admin 一个人审不过来 (那是唯一的瓶颈). 所以允许把**审核权**
+    单独授予别人 —— 但只给审核权, **不给**改别人资产的权限 (那是作者的事).
+    """
+    role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if role == "admin":
+        return user
+    if role == "anonymous":
+        raise HTTPException(status_code=401, detail="未登录")
+    if await _is_reviewer(user):
+        return user
+    raise HTTPException(status_code=403, detail="只有管理员或审核人可以审核上架")
+
+
 async def require_admin(user: User = Depends(get_current_user)) -> User:
     """管理员 —— 上架审核人."""
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
@@ -162,6 +195,32 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     if role == "anonymous":
         raise HTTPException(status_code=401, detail="未登录")
     raise HTTPException(status_code=403, detail="只有管理员可以审核上架")
+
+
+async def _assert_can_modify(code: str, user: User) -> Asset:
+    """校验操作者有权改动这个资产 —— **作者本人或管理员**.
+
+    ⚠️ 以前这些写操作只查"是不是发布者"(白名单), 于是**任何在白名单里的用户
+    都能下架/删除/更新别人的资产** —— 多用户场景下这是越权.
+    白名单的含义是"可以往市场上放东西", 不是"可以改别人放的东西".
+
+    管理员仍然可以改任何人的资产 (运营需要, 比如清理不合规的资产).
+    """
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+    if a is None:
+        raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+    role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if role == "admin":
+        return a
+    if (a.author or "").strip().lower() != (user.username or "").strip().lower():
+        raise HTTPException(
+            status_code=403,
+            detail="只能操作自己上传的资产 (管理员可操作任意资产)",
+        )
+    return a
 
 
 async def _review_required(user: User) -> bool:
@@ -211,12 +270,10 @@ async def _audit(
 
 # ---------- 读 ----------
 
-def _to_out(a: Asset, installs: dict[str, tuple[str, str, str]]) -> AssetOut:
+def _to_out(a: Asset, can_review: bool = False) -> AssetOut:
     out = AssetOut.model_validate(a)
-    ver, status, path = installs.get(a.code, ("", "", ""))
-    out.installed = status == "installed"
-    out.install_path = path
-    out.updatable = bool(out.installed and ver and ver != a.version)
+    # 当前用户能不能审这个资产 —— 前端据此显示「通过审核 / 驳回」按钮
+    out.can_review = can_review
     return out
 
 
@@ -234,35 +291,6 @@ async def _apply_git_web_url(items: list[AssetOut]) -> None:
             it.git_web_url = f"{base}/-/tree/{branch}/{it.git_path}"
 
 
-async def _install_map(codes: list[str], client_id: str) -> dict[str, tuple[str, str, str]]:
-    if not codes:
-        return {}
-    async with AsyncSessionLocal() as session:
-        rows = (
-            await session.execute(
-                select(AssetInstall).where(
-                    AssetInstall.code.in_(codes), AssetInstall.client_id == client_id
-                )
-            )
-        ).scalars().all()
-    out: dict[str, tuple[str, str, str]] = {}
-    # 同一 code 可能有**多个版本**的安装记录 (每个版本一行), 要取最近装的那个.
-    # ⚠️ 比较必须用 installed_at, 不能拿 tuple 的第 0 项 —— 那是**版本号字符串**,
-    #    datetime 和 str 比较会直接 TypeError.
-    #    (以前一个 code 只有一行, `cur is None` 把右边的比较短路了, 这个坑一直藏着;
-    #     安装记录改成按版本分行后才暴露出来)
-    # ⚠️ 而且 MySQL DATETIME 是**秒级**精度 —— 同一秒里装两个版本时 installed_at
-    #    完全相同, 只比时间戳会取到先装的那版 → 明明装了新版却被误报"可更新".
-    #    加上自增 id 做次级键: 后建的 id 更大 → 取后装的那版.
-    latest: dict[str, tuple[datetime, int]] = {}
-    for r in rows:
-        ts = (r.installed_at or datetime.min, r.id or 0)
-        if r.code not in out or ts > latest.get(r.code, (datetime.min, 0)):
-            out[r.code] = (r.version, r.status, r.install_path)
-            latest[r.code] = ts
-    return out
-
-
 @router.get("", response_model=AssetListOut)
 async def list_assets(
     kind: str | None = Query(None),
@@ -278,7 +306,7 @@ async def list_assets(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     client_id: str = Query("local"),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> AssetListOut:
     """资产列表.
 
@@ -293,9 +321,11 @@ async def list_assets(
     ⚠️ 非管理员按状态过滤时**只能看自己的** —— 待审核/已驳回的资产还没对外发布,
     别人的不该被列出来.
     """
-    username = (_user.username or "").strip()
-    role = _user.role.value if hasattr(_user.role, "value") else str(_user.role)
+    username = (user.username or "").strip()
+    role = user.role.value if hasattr(user.role, "value") else str(user.role)
     is_admin = role == "admin"
+    # 审核人 (admin 或被授权的人) 能处理所有待审资产 —— 团队里 admin 一个人审不过来
+    is_reviewer = await _is_reviewer(user)
 
     async with AsyncSessionLocal() as session:
         stmt = select(Asset)
@@ -308,35 +338,32 @@ async def list_assets(
             stmt = stmt.where(Asset.author == username)
         elif status in ("pending", "rejected", "unpublished", "published"):
             stmt = stmt.where(Asset.publish_status == status)
-            if not is_admin and status != "published":
-                # 非管理员只能看自己的未发布资产 —— 别人的待审/被驳回内容不该被列出来
+            if not (is_admin or is_reviewer) and status != "published":
+                # 别人只能看自己的未发布资产 —— 别人的待审/被驳回内容不该被列出来.
+                # 审核人例外: 他要处理的就是这一批.
                 stmt = stmt.where(Asset.author == username)
         elif status == "all" or include_unpublished:
-            # 不限上架状态 —— 但同样只对管理员开放 (include_unpublished 是旧参数, 语义等同 all)
-            if not is_admin:
+            # 不限上架状态 —— 但只对管理员/审核人开放
+            # (include_unpublished 是旧参数, 语义等同 all)
+            if not (is_admin or is_reviewer):
                 stmt = stmt.where(
                     or_(
                         Asset.publish_status == "published",
                         Asset.author == username,
                     )
                 )
-        elif is_admin:
-            # 管理员是市场运营者 —— 列表里能看到**全部**资产 (含待审核/已驳回/已下架),
-            # 每张卡片自己标着状态, 扫一眼就知道哪些要处理
+        elif is_admin or is_reviewer:
+            # 管理员/审核人是市场运营者 —— 列表里能看到**全部**资产
+            # (含待审核/已驳回/已下架), 每张卡片自己标着状态
             pass
         else:
-            # 默认可见性: 在架 ∪ 我提交的 ∪ 我已安装的
-            # ⚠️ 必须过滤 status == "installed" —— 卸载过的不能再算"已安装",
-            #    否则卸载后下架的资产还赖在列表里 (用户明明已经卸了).
-            installed = select(AssetInstall.code).where(
-                AssetInstall.client_id == client_id,
-                AssetInstall.status == "installed",
-            )
+            # 默认可见性: 在架 ∪ 我提交的
+            # (以前还有「我已安装的」—— 现在安装只是下载, 后端不知道用户装没装,
+            #  拿下载记录当"已安装"是虚假语义, 去掉更干净)
             stmt = stmt.where(
                 or_(
                     Asset.publish_status == "published",
                     Asset.author == username,
-                    Asset.code.in_(installed),
                 )
             )
         if q:
@@ -356,11 +383,15 @@ async def list_assets(
         elif sort == "name":
             rows.sort(key=lambda a: a.name)
         else:
-            rows.sort(key=lambda a: (bool(a.featured), a.install_count or 0), reverse=True)
+            # 以前按 install_count (下载次数) 排 —— 下载数已下线, 改成"最近更新"
+            rows.sort(
+                key=lambda a: (bool(a.featured), a.updated_at or datetime.min),
+                reverse=True,
+            )
         page = rows[offset : offset + limit]
 
-    installs = await _install_map([a.code for a in page], client_id)
-    items = [_to_out(a, installs) for a in page]
+    is_reviewer = await _is_reviewer(user)
+    items = [_to_out(a, can_review=is_reviewer) for a in page]
     await _apply_git_web_url(items)
     return AssetListOut(items=items, total=total)
 
@@ -473,19 +504,12 @@ async def sync_status(
                 elif a.publish_status == "rejected":
                     my_review += 1
 
-    installs = await _install_map([a.code for a in rows], client_id)
-    updatable = sum(
-        1
-        for a in rows
-        if installs.get(a.code, ("", "", ""))[0] and installs[a.code][0] != a.version
-    )
     puller = get_puller()
     return SyncStatusOut(
         has_remote_updates=puller.has_remote_updates,
         conflict_count=puller.conflict_count,
         pending_count=pending,
         failed_count=failed,
-        updatable_count=updatable,
         unpublished_count=unpublished,
         awaiting_review_count=awaiting_review,
         rejected_count=rejected,
@@ -531,66 +555,11 @@ async def get_market_config(_user: User = Depends(get_current_user)) -> MarketCo
     )
 
 
-@router.get("/me/installed", response_model=AssetListOut)
-async def my_installed(
-    client_id: str = Query("local"),
-    _user: User = Depends(get_current_user),
-) -> AssetListOut:
-    async with AsyncSessionLocal() as session:
-        inst = (
-            await session.execute(
-                select(AssetInstall).where(
-                    AssetInstall.client_id == client_id,
-                    AssetInstall.status == "installed",
-                )
-            )
-        ).scalars().all()
-        codes = [i.code for i in inst]
-        if not codes:
-            return AssetListOut(items=[], total=0)
-        rows = (
-            await session.execute(select(Asset).where(Asset.code.in_(codes)))
-        ).scalars().all()
-    installs = await _install_map(codes, client_id)
-    return AssetListOut(items=[_to_out(a, installs) for a in rows], total=len(rows))
-
-
-@router.get("/me/updates", response_model=AssetListOut)
-async def my_updates(
-    client_id: str = Query("local"),
-    _user: User = Depends(get_current_user),
-) -> AssetListOut:
-    """本地已装版本 vs 远端最新版本 —— 不一致就是"可更新"."""
-    async with AsyncSessionLocal() as session:
-        inst = (
-            await session.execute(
-                select(AssetInstall).where(
-                    AssetInstall.client_id == client_id,
-                    AssetInstall.status == "installed",
-                )
-            )
-        ).scalars().all()
-        codes = [i.code for i in inst]
-        if not codes:
-            return AssetListOut(items=[], total=0)
-        rows = (
-            await session.execute(select(Asset).where(Asset.code.in_(codes)))
-        ).scalars().all()
-    installs = await _install_map(codes, client_id)
-    out = [
-        _to_out(a, installs)
-        for a in rows
-        if installs.get(a.code, ("", "", ""))[0]
-        and installs[a.code][0] != a.version
-    ]
-    return AssetListOut(items=out, total=len(out))
-
-
 @router.get("/{code}", response_model=AssetOut)
 async def get_asset(
     code: str,
     client_id: str = Query("local"),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> AssetOut:
     async with AsyncSessionLocal() as session:
         a = (
@@ -598,8 +567,7 @@ async def get_asset(
         ).scalar_one_or_none()
         if a is None:
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-        installs = await _install_map([code], client_id)
-        out = [_to_out(a, installs)]
+        out = [_to_out(a, can_review=await _is_reviewer(user))]
         await _apply_git_web_url(out)
         return out[0]
 
@@ -752,44 +720,6 @@ async def download_package(
 
 # ---------- 安装 ----------
 
-@router.get("/{code}/install-target", response_model=AssetInstallTargetOut)
-async def get_install_target(
-    code: str, _user: User = Depends(get_current_user)
-) -> AssetInstallTargetOut:
-    """前端点安装时先查这个: 能不能装 + 建议装到哪.
-
-    ⚠️ 后端不再写盘 —— 安装一律在用户本机完成:
-      · 「选择目录安装」浏览器 File System Access 写盘 (前端要文件清单 → /bundle)
-      · 「下载安装包」自行解压
-    所以这里只给: 可装判断 + 建议的目标目录 (Qoder 标准布局).
-    """
-    async with AsyncSessionLocal() as session:
-        a = (
-            await session.execute(select(Asset).where(Asset.code == code))
-        ).scalar_one_or_none()
-    if a is None:
-        raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-
-    if a.kind == "skill":
-        target = f"{SKILL_INSTALL_DIR}/{a.code}"
-    else:
-        target = f"{PLUGIN_INSTALL_DIR}/{a.code}/{a.version}"
-
-    # 这个包现在装不装得上 —— 前端据此把按钮置灰, 不用等点了才知道
-    files = _content_files(git_sync.WORKSPACE / a.git_path)
-    block_reason = _install_block_reason(a.kind, files)
-    return AssetInstallTargetOut(
-        code=a.code,
-        kind=a.kind,
-        version=a.version,
-        target=target,
-        skill_dir_host=SKILL_INSTALL_DIR,
-        plugin_dir_host=PLUGIN_INSTALL_DIR,
-        installable=not block_reason,
-        install_block_reason=block_reason,
-    )
-
-
 # ---------- 包预检 (上传前体检) ----------
 
 @router.post("/preview-package", response_model=PackagePreviewOut)
@@ -880,138 +810,6 @@ def _install_block_reason(kind: str, files: list[str]) -> str:
         if ".qoder-plugin" in parts[:-1]:
             return ""
     return "插件包内没有 .qoder-plugin/plugin.json"
-
-
-@router.post("/{code}/install")
-async def install_asset(
-    code: str,
-    version: str = Form(...),
-    channel: str = Form("download"),
-    client_id: str = Form("local"),
-    client_kind: str = Form("web"),
-    install_path: str = Form(""),
-    _user: User = Depends(get_current_user),
-) -> dict[str, Any]:
-    """记录一次**下载安装包**.
-
-    ⚠️ 后端**不写盘** —— 文件由用户自己下载并解压:
-      「下载安装包」下 zip, 自行解压到 ~/.qoder-cn/skills/<code>/
-    这里只留一条记录 (哪个客户端、什么版本、装没装), 让「我的安装」「可更新」能用.
-    """
-    async with AsyncSessionLocal() as session:
-        a = (
-            await session.execute(select(Asset).where(Asset.code == code))
-        ).scalar_one_or_none()
-        if a is None:
-            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-        if a.kind == "mcp":
-            raise HTTPException(status_code=409, detail="连接器暂不支持一键安装")
-        # ⚠️ 请求的版本必须与资产当前版本一致.
-        #    之前服务端写盘时, 落盘用的是**资产当前版本**的内容与目录,
-        #    而安装记录写的是**请求的**版本 —— 两者不一致时会出现:
-        #      请求装 1.3.0 → 实际把 1.2.0 的文件装进 1.2.0 目录,
-        #      记录却写"已安装 1.3.0" → 之后「可更新」不再提示, 用户永远装不到新版,
-        #      而且全程没有任何报错.
-        #    所以不一致就直接拒掉, 提示刷新 (前端点的永远是当前版本, 不会误伤).
-        if version and version != a.version:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"资产 {code} 当前版本是 {a.version}, 与请求的 {version} 不一致, "
-                    "请刷新后重试"
-                ),
-            )
-
-        # ⚠️ 服务端写盘通道已下线 —— 安装只剩「下载安装包」这一条手动路径.
-        #    原因: 服务端写盘要求用户信任服务器能操作它的磁盘, 权限边界不清;
-        #    浏览器写盘又需要用户逐次授权家目录, 权限问题太多. 下载最省心.
-        if channel == "server":
-            raise HTTPException(
-                status_code=400,
-                detail="服务端安装通道已下线, 请改用「下载安装包」",
-            )
-        written = install_path
-
-        # 安装记录按 **(code, version, client_id)** 定位, 不能只按 (code, client_id).
-        # ⚠️ 以前只按 (code, client_id) 找 —— 装第二个版本会把第一条**覆盖**,
-        #    旧版本的 install_path 就此丢失. plugin 装过多个版本时, 旧版本目录
-        #    (…/<code>/<version>/) 谁都不知道它在哪儿, 卸载/删资产都清不掉,
-        #    永远留在用户磁盘上.
-        target_version = version or a.version
-        row = (
-            await session.execute(
-                select(AssetInstall).where(
-                    AssetInstall.code == code,
-                    AssetInstall.version == target_version,
-                    AssetInstall.client_id == client_id,
-                )
-            )
-        ).scalars().first()
-        if row is None:
-            # 这个 client 以前装过这个资产吗 (任何版本)?
-            # ⚠️ 安装次数按**客户端**算, 不按版本 —— 同一台机器装几个版本都只算一次.
-            #    (以前一个 code 一条记录, 装任何版本都命中同一条, 天然只算一次;
-            #     改成按版本分行后必须显式区分, 否则热门资产的数字会随版本升级虚高)
-            seen = (
-                await session.execute(
-                    select(AssetInstall.id).where(
-                        AssetInstall.code == code,
-                        AssetInstall.client_id == client_id,
-                    ).limit(1)
-                )
-            ).first()
-            row = AssetInstall(
-                code=code, client_id=client_id, user_id=_user.id, version=target_version,
-            )
-            session.add(row)
-            if not seen:
-                a.install_count = (a.install_count or 0) + 1
-        row.version = target_version
-        row.client_kind = client_kind
-        row.status = "installed"
-        row.install_path = written
-        row.channel = channel
-        row.sha256 = a.git_commit_sha
-        await session.commit()
-
-        await _audit(
-            session, code=code, action="install", actor=_user,
-            asset_id=a.id, detail={"version": row.version, "channel": channel,
-                                   "install_path": written},
-        )
-        await session.commit()
-        return {"ok": True, "code": code, "version": row.version,
-                "install_path": written, "channel": channel}
-
-
-@router.delete("/{code}/install")
-async def uninstall_asset(
-    code: str,
-    client_id: str = Query("local"),
-    _user: User = Depends(get_current_user),
-) -> dict[str, Any]:
-    async with AsyncSessionLocal() as session:
-        rows = (
-            await session.execute(
-                select(AssetInstall).where(
-                    AssetInstall.code == code, AssetInstall.client_id == client_id
-                )
-            )
-        ).scalars().all()
-        if not rows:
-            return {"ok": True, "code": code, "removed": False}
-        for row in rows:
-            row.status = "uninstalled"
-        await session.commit()
-        # ⚠️ 不删任何目录 —— 文件装在**用户本机**, 后端够不着.
-        #    (服务端写盘通道已下线, 目录归用户自己管)
-
-        await _audit(
-            session, code=code, action="uninstall", actor=_user,
-            detail={"client_id": client_id},
-        )
-        await session.commit()
-        return {"ok": True, "code": code, "removed": True}
 
 
 # ---------- 上架 / 下架 ----------
@@ -1111,17 +909,18 @@ async def _set_publish_state(
 async def unpublish_asset(
     code: str,
     comment: str = Form(""),
-    _user: User = Depends(require_publisher),
+    user: User = Depends(require_publisher),
 ) -> dict[str, Any]:
     """下架: 标记 + 从索引里移除, 但**保留文件** (在用用户要能看到"已下架")."""
+    await _assert_can_modify(code, user)
     out = await _set_publish_state(
         code=code, publish_status="unpublished", action="unpublish",
-        comment=comment, user=_user,
+        comment=comment, user=user,
     )
     if not out.get("changed"):
         return out
     await notify_market(
-        "unpublish", name=out["name"], version=out["version"], actor=_user.username,
+        "unpublish", name=out["name"], version=out["version"], actor=user.username,
         detail=comment or "已从市场下架", link="", code=code,
     )
     return {"ok": True, "code": code, "publish_status": "unpublished"}
@@ -1134,7 +933,7 @@ async def review_asset(
     code: str,
     decision: str = Form(..., description="approve | reject"),
     comment: str = Form(""),
-    _user: User = Depends(require_admin),
+    _user: User = Depends(require_reviewer),
 ) -> dict[str, Any]:
     """管理员审核上架.
 
@@ -1210,17 +1009,18 @@ async def submit_for_review(
 async def publish_asset(
     code: str,
     comment: str = Form(""),
-    _user: User = Depends(require_publisher),
+    user: User = Depends(require_publisher),
 ) -> dict[str, Any]:
     """重新上架."""
+    await _assert_can_modify(code, user)
     out = await _set_publish_state(
         code=code, publish_status="published", action="publish",
-        comment=comment, user=_user,
+        comment=comment, user=user,
     )
     if not out.get("changed"):
         return out
     await notify_market(
-        "publish", name=out["name"], version=out["version"], actor=_user.username,
+        "publish", name=out["name"], version=out["version"], actor=user.username,
         detail=comment or "重新上架", link="", code=code,
     )
     return {"ok": True, "code": code, "publish_status": "published"}
@@ -1236,6 +1036,8 @@ async def delete_asset(
 ) -> AssetDeleteOut:
     """彻底删除一个资产 (不只是下架).
 
+    ⚠️ 只能删**自己上传的**资产 (管理员例外) —— 白名单只是"能发布"的意思.
+
     与「下架」的区别:
       下架 —— 标记 + 从索引移除, **文件保留**; 已装的用户还能继续用, 看到「已下架」提示
       删除 —— 连文件带索引带 DB 记录一起没, 不可恢复
@@ -1247,6 +1049,7 @@ async def delete_asset(
       4. 推送成功 → 删 DB 行 + 安装记录, 记审计, 发通知
     反过来做的话, push 失败会导致"DB 没了但 GitLab 还在" → 拉取同步器会把资产复活.
     """
+    await _assert_can_modify(code, _user)
     async with AsyncSessionLocal() as session:
         a = (
             await session.execute(select(Asset).where(Asset.code == code))
@@ -1292,20 +1095,12 @@ async def delete_asset(
         # 3) 推送成功 → 动 DB
         async with AsyncSessionLocal() as session:
             a = await session.get(Asset, asset_id)
-            installs = (
-                await session.execute(
-                    select(AssetInstall).where(AssetInstall.code == code)
-                )
-            ).scalars().all()
-            removed_installs = len(installs)
-            for r in installs:
-                await session.delete(r)
             if a is not None:
                 await session.delete(a)
             await _audit(
                 session, code=code, action="delete", actor=_user, asset_id=asset_id,
                 comment=comment or "管理员删除",
-                detail={"git_path": git_path, "removed_installs": removed_installs},
+                detail={"git_path": git_path},
             )
             await session.commit()
         # ⚠️ 用户本机的安装目录不动 —— 后端够不着, 也不该替用户删文件.
@@ -1315,9 +1110,9 @@ async def delete_asset(
         "delete", name=asset_name, version=version, actor=_user.username,
         detail=comment or "资产已从市场删除", link="", code=code,
     )
-    logger.info("delete 资产 code=%s 安装记录清理 %s 条", code, removed_installs)
+    logger.info("delete 资产 code=%s", code)
     return AssetDeleteOut(
-        ok=True, code=code, removed_installs=removed_installs,
+        ok=True, code=code,
         commit_sha=result.commit_sha,
     )
 
@@ -1399,7 +1194,10 @@ async def _stage_asset_locked(
             tags=payload_in.tags,
             keywords=payload_in.keywords,
             icon=payload_in.icon,
-            author=payload_in.author or user.username,
+            # ⚠️ 作者**强制**取上传者, 不接受前端指定.
+            #    否则任何人都能把资产挂到别人名下 (冒充), 而作者的权限
+            #    (改自己的资产) 也就跟着落到别人头上了.
+            author=user.username,
             featured=payload_in.featured,
             homepage=payload_in.homepage,
             permissions=payload_in.permissions,
@@ -1423,7 +1221,11 @@ async def _stage_asset_locked(
         ).scalar_one_or_none()
     if action == "create" and existing is not None:
         raise HTTPException(
-            status_code=409, detail=f"资产 {manifest['code']} 已存在, 请用更新接口"
+            status_code=409,
+            detail=(
+                f"资产 {manifest['code']} 已存在 (作者: {existing.author or '未知'}), "
+                "请用更新接口"
+            ),
         )
     if action == "update" and existing is None:
         raise HTTPException(
@@ -1616,7 +1418,6 @@ async def upload_asset(
     icon: str = Form("🧩"),
     tags: str = Form("[]"),
     keywords: str = Form("[]"),
-    author: str = Form(""),
     featured: bool = Form(False),
     permissions: str = Form("{}"),
     install_steps: str = Form("[]"),
@@ -1632,7 +1433,7 @@ async def upload_asset(
             description=description, use_when=use_when, not_for=not_for,
             category=category, icon=icon,
             tags=json.loads(tags or "[]"), keywords=json.loads(keywords or "[]"),
-            author=author, featured=featured,
+            author=user.username, featured=featured,
             permissions=json.loads(permissions or "{}"),
             install_steps=json.loads(install_steps or "[]"),
             bindings=json.loads(bindings or "{}"),
@@ -1672,7 +1473,6 @@ async def update_asset(
     icon: str = Form("🧩"),
     tags: str = Form("[]"),
     keywords: str = Form("[]"),
-    author: str = Form(""),
     featured: bool = Form(False),
     permissions: str = Form("{}"),
     install_steps: str = Form("[]"),
@@ -1681,14 +1481,21 @@ async def update_asset(
     package: UploadFile | None = File(None),
     user: User = Depends(require_publisher),
 ) -> AssetJobOut:
-    """发布新版本 (覆盖同名文件, git 历史保留旧版)."""
+    """更新一个已存在的资产 (发新版本).
+
+    ⚠️ 只能更新**自己上传的**资产 (管理员例外) —— 否则任何白名单用户都能
+    改别人的资产, 覆盖掉别人精心写的内容.
+    """
+    await _assert_can_modify(code, user)
+
+    # 发布新版本 (覆盖同名文件, git 历史保留旧版)
     try:
         payload = UploadAssetIn(
             code=code, kind=kind, name=name, summary=summary, version=version,
             description=description, use_when=use_when, not_for=not_for,
             category=category, icon=icon,
             tags=json.loads(tags or "[]"), keywords=json.loads(keywords or "[]"),
-            author=author, featured=featured,
+            author=user.username, featured=featured,
             permissions=json.loads(permissions or "{}"),
             install_steps=json.loads(install_steps or "[]"),
             bindings=json.loads(bindings or "{}"),

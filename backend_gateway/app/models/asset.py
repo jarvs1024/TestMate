@@ -71,8 +71,6 @@ class Asset(Base):
     # 最近一次审核意见 (驳回理由 / 审核备注) —— 审核动作也记在 asset_audits 里
     review_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
-    install_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -162,27 +160,3 @@ class AssetNotification(Base):
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
-
-
-class AssetInstall(Base):
-    """本机安装记录 — 这是**本地态**, 永远不进 GitLab (每台机器不同)."""
-
-    __tablename__ = "asset_installs"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    version: Mapped[str] = mapped_column(String(32), nullable=False, default="")
-    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    client_id: Mapped[str] = mapped_column(String(64), nullable=False, default="local", index=True)
-    client_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="web")
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="installed")
-    # 实际安装到的路径 (宿主路径, 如 /Users/xxx/.qoder-cn/skills/xxx)
-    install_path: Mapped[str] = mapped_column(String(512), nullable=False, default="")
-    # 安装时的包 sha256 — 用于判断"本地装的是不是最新版"
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")
-    # 安装通道: server(服务端写盘) / frontend(浏览器 File System Access API 写盘)
-    channel: Mapped[str] = mapped_column(String(16), nullable=False, default="server")
-    installed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
-    )

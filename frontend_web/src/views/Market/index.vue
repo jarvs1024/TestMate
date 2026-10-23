@@ -34,7 +34,6 @@
         <template v-if="sync.failed_count">{{ sync.failed_count }} 个资产同步失败</template>
         <template v-else-if="sync.conflict_count">{{ sync.conflict_count }} 个资产更新冲突已自动解决</template>
         <template v-else-if="sync.pending_count">{{ sync.pending_count }} 个资产待同步到 GitLab</template>
-        <template v-else-if="sync.updatable_count">{{ sync.updatable_count }} 个已安装资产有新版本</template>
         <span class="sb-sub">{{ syncSubHint }}</span>
       </span>
       <button v-if="sync.failed_count" class="sb-btn" :disabled="retrying" @click="retryAll">
@@ -92,7 +91,7 @@
     </div>
 
     <AssetDetailDrawer
-      v-model="drawerOpen" :item="current" :can-edit="true"
+      v-model="drawerOpen" :item="current" :can-edit="canEdit"
       @edit="openUpdate" @deleted="current = null" @changed="onAssetChanged" />
 
     <AssetUploadDialog
@@ -146,6 +145,20 @@ const rawItems = ref<AssetItem[]>([]);
 
 const userStore = useUserStore();
 
+/** 能不能改这个资产 (更新版本 / 下架 / 彻底删除) —— **作者本人或管理员**.
+ *  ⚠️ 之前是硬编码 true —— 任何登录用户打开别人的资产都能看到并操作这些按钮,
+ *    后端也没拦 (只查"是不是发布者"). 多用户场景下这是完整的越权链路.
+ *    现在前端按作者判断, 后端也加了同样的校验 (见 _assert_can_modify).
+ */
+const canEdit = computed(() => {
+  const it = current.value;
+  if (!it) return false;
+  if (userStore.user?.role === 'admin') return true;
+  const me = (userStore.user?.username || '').trim().toLowerCase();
+  const author = (it.author || '').trim().toLowerCase();
+  return !!me && !!author && me === author;
+});
+
 
 
 const items = ref<AssetItem[]>([]);
@@ -163,7 +176,7 @@ const uploadOpen = ref(false);
 const uploadMode = ref<'create' | 'update'>('create');
 const sync = ref<SyncStatus>({
   has_remote_updates: false, conflict_count: 0, pending_count: 0,
-  failed_count: 0, updatable_count: 0, unpublished_count: 0,
+  failed_count: 0, unpublished_count: 0,
   awaiting_review_count: 0, rejected_count: 0, my_review_count: 0, my_pending_count: 0,
   last_sync_at: null,
 });
@@ -174,7 +187,7 @@ const list = computed(() => items.value ?? []);
 
 const hasSyncNotice = computed(() =>
   sync.value.pending_count > 0 || sync.value.failed_count > 0 ||
-  sync.value.conflict_count > 0 || sync.value.updatable_count > 0);
+  sync.value.conflict_count > 0);
 
 const syncSubHint = computed(() => {
   if (sync.value.failed_count) return '资产仍在本机工作区, 只是没推到 GitLab';

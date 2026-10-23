@@ -82,7 +82,6 @@
       <div class="ad-foot mono">
         <span>作者 {{ item.author || '未知' }}</span>
         <span>更新 {{ (item.updated_at || '').slice(0, 10) || '—' }}</span>
-        <span>安装 {{ item.install_count }}</span>
       </div>
 
       <div v-if="item.git_path" class="ad-git mono">
@@ -102,11 +101,11 @@
 
       <div class="ad-actions">
         <!-- ===== 审核操作 (管理员) ===== -->
-        <el-button v-if="isAdmin && item.publish_status === 'pending'"
+        <el-button v-if="canReview && item.publish_status === 'pending'"
                    type="primary" class="ad-btn" :loading="busy" @click="doReview('approve')">
           通过审核
         </el-button>
-        <el-button v-if="isAdmin && item.publish_status === 'pending'"
+        <el-button v-if="canReview && item.publish_status === 'pending'"
                    type="warning" plain class="ad-btn" :loading="busy" @click="doReview('reject')">
           驳回
         </el-button>
@@ -132,7 +131,6 @@
         <el-button v-if="canEdit" class="ad-btn danger" @click="doDelete">
           彻底删除
         </el-button>
-        <span v-if="item.updatable" class="ad-upd">已安装旧版本, 可更新</span>
       </div>
 
       <div class="ad-proto-note">
@@ -146,7 +144,7 @@
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  deleteAsset, downloadAssetPackage, getAssetDoc, installAsset, publishAsset,
+  deleteAsset, downloadAssetPackage, getAssetDoc, publishAsset,
   reviewAsset, submitForReview,
   unpublishAsset,
   type AssetDoc, type AssetItem,
@@ -178,6 +176,9 @@ const unpub = computed(() => props.item?.publish_status === 'unpublished');
 const userStore = useUserStore();
 /** 审核人是管理员 */
 const isAdmin = computed(() => userStore.user?.role === 'admin');
+/** 能不能审 —— 管理员, 或被授权的审核人 (item.can_review 由后端算).
+ *  ⚠️ 之前只看 isAdmin, 团队里被授权的审核人点不了审核按钮. */
+const canReview = computed(() => isAdmin.value || !!props.item?.can_review);
 /** 能不能重新提交审核 —— 资产作者本人 (或管理员) */
 const canSubmit = computed(() => {
   const a = props.item;
@@ -253,12 +254,11 @@ async function doDownload() {
   try {
     const blob = await downloadAssetPackage(it.code, it.version);
     downloadBlob(blob, `${it.code}-${it.version}.zip`);
-    // 记一笔 —— 卡片上的「安装 N」靠它
-    await installAsset(it.code, it.version);
+    // ⚠️ 不记任何安装状态 —— 安装只是下载, 后端不知道用户到底装没装,
+    //    记了也是虚假语义 ("已安装" 徽标会骗人)
     ElMessage.success(
       `已下载 ${it.code}-${it.version}.zip, 解压到 ${targetDir.value}/ 即完成安装`,
     );
-    emit('changed');
   } catch (e: any) {
     ElMessage.error('下载失败: ' + (e?.response?.data?.detail || e?.message));
   } finally {
@@ -379,10 +379,8 @@ async function doDelete() {
   }
   busy.value = true;
   try {
-    const r = await deleteAsset(code, '用户从市场页删除');
-    ElMessage.success(
-      `已删除${r.removed_installs ? `, 清理 ${r.removed_installs} 条安装记录` : ''}`,
-    );
+    await deleteAsset(code, '用户从市场页删除');
+    ElMessage.success('已删除');
     emit('update:modelValue', false);
     emit('deleted');
     emit('changed');

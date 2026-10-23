@@ -1,5 +1,5 @@
 <template>
-  <div class="asset-card" :class="{ 'is-installed': item.installed }"
+  <div class="asset-card"
        role="button" :tabindex="0"
        @click="emit('open', item)"
        @keydown.enter="emit('open', item)"
@@ -18,10 +18,6 @@
               :title="item.review_note || '审核未通过'">❌ 已驳回</span>
         <span v-else-if="item.publish_status === 'unpublished'" class="ac-badge off"
               title="已从市场下架, 文件仍保留">⚠️ 已下架</span>
-        <span v-if="item.updatable" class="ac-badge updatable"
-              title="已安装, 但仓库里有了新版本">↑ 可更新</span>
-        <span v-else-if="item.installed" class="ac-badge installed"
-              title="已安装到本机">✓ 已安装</span>
         <span v-if="item.sync_status === 'staged'" class="ac-badge staged"
               title="已保存到本地工作区, 正在同步到 GitLab">🕐 待同步</span>
         <span v-else-if="item.sync_status === 'failed'" class="ac-badge failed"
@@ -37,8 +33,7 @@
     </div>
 
     <div class="ac-meta">
-      <span class="meta-item">⬇ {{ item.install_count }}</span>
-      <span class="meta-item">· {{ item.author || '未知' }}</span>
+      <span class="meta-item">{{ item.author || '未知' }}</span>
       <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
     </div>
   </div>
@@ -129,8 +124,6 @@ const permTitle = computed(() => {
   padding: 3px 8px; border-radius: var(--radius-pill);
   font-size: 10.5px; font-weight: 600; white-space: nowrap;
 }
-.ac-badge.installed { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
-.ac-badge.updatable { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
 .ac-badge.staged { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
 .ac-badge.failed { background: rgba(239, 68, 68, 0.12); color: var(--err); }
 .ac-badge.pending { background: rgba(59, 130, 246, 0.14); color: var(--primary); }

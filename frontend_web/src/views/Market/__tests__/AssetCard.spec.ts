@@ -1,7 +1,8 @@
 /**
  * 资产卡片的**状态徽标** —— 状态是卡片自己的属性, 不是视图筛选.
  *
- * 徽标同时可能挂多个 (已安装 + 可更新 / 待审核 + 待同步 …).
+ * 徽标同时可能挂多个 (待审核 + 待同步 …).
+ * ⚠️ 不再有「已安装 / 可更新」—— 安装只是下载, 后端不知道用户装没装.
  */
 import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
@@ -15,9 +16,9 @@ function item(over: Partial<AssetItem> = {}): AssetItem {
     category: 'misc', tags: [], keywords: [], author: 'admin', featured: false,
     homepage: null, permissions: {}, install_steps: [], bindings: {},
     git_path: 'assets/skills/misc/demo', git_commit_sha: '', git_web_url: '',
-    install_count: 0, updated_at: null,
+    updated_at: null,
     sync_status: 'pushed', last_error: '', publish_status: 'published',
-    review_note: '', installed: false, updatable: false, install_path: '',
+    review_note: '', can_review: false,
     ...over,
   };
 }
@@ -32,16 +33,11 @@ describe('AssetCard 状态徽标', () => {
     expect(badges(w)).toEqual([]);
   });
 
-  it('已安装 → ✓ 已安装', () => {
-    const w = mount(AssetCard, { props: { item: item({ installed: true }) } });
-    expect(badges(w)).toContain('✓ 已安装');
-  });
-
-  it('可更新 → ↑ 可更新 (且不再重复标已安装)', () => {
-    const w = mount(AssetCard, { props: { item: item({ installed: true, updatable: true }) } });
+  it('不再有「已安装 / 可更新」徽标 —— 安装只是下载', () => {
+    const w = mount(AssetCard, { props: { item: item() } });
     const b = badges(w);
-    expect(b).toContain('↑ 可更新');
     expect(b).not.toContain('✓ 已安装');
+    expect(b).not.toContain('↑ 可更新');
   });
 
   it('待审核 → 📋 待审核', () => {
@@ -71,11 +67,11 @@ describe('AssetCard 状态徽标', () => {
 
   it('多个状态可以同时出现', () => {
     const w = mount(AssetCard, {
-      props: { item: item({ publish_status: 'pending', installed: true, updatable: true }) },
+      props: { item: item({ publish_status: 'pending', sync_status: 'staged' }) },
     });
     const b = badges(w);
     expect(b).toContain('📋 待审核');
-    expect(b).toContain('↑ 可更新');
+    expect(b).toContain('🕐 待同步');
   });
 
   it('点卡片 → 抛 open 事件带该资产', async () => {

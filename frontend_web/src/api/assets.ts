@@ -42,7 +42,6 @@ export interface AssetItem {
   git_commit_sha: string;
   /** 资产在 GitLab 上的网页地址 (由 marketplace.git.web_url 拼出; 没配就为空) */
   git_web_url: string;
-  install_count: number;
   updated_at: string | null;
   /** 同步状态: staged(待同步) / pushed(已同步) / failed(失败) */
   sync_status: 'staged' | 'pushed' | 'failed' | string;
@@ -51,9 +50,8 @@ export interface AssetItem {
   publish_status: 'published' | 'pending' | 'rejected' | 'unpublished' | string;
   /** 最近一次审核意见 (驳回理由) */
   review_note: string;
-  installed: boolean;
-  updatable: boolean;
-  install_path: string;
+  /** 当前用户能不能审这个资产 (管理员或被授权的审核人) */
+  can_review: boolean;
 }
 
 export interface AssetListResp {
@@ -108,18 +106,7 @@ export interface AssetBundle {
   total: number;
 }
 
-export interface InstallTarget {
-  code: string;
-  kind: string;
-  version: string;
-  /** 建议的安装目录 (~ 表示家目录) —— 选目录方式用它提示, 下载方式告诉用户解压到哪 */
-  target: string;
-  skill_dir_host: string;
-  plugin_dir_host: string;
-  /** 这个包现在能不能装 —— false 时前端应把按钮置灰并说明原因 */
-  installable: boolean;
-  install_block_reason: string;
-}
+
 
 /** 上传前的包体检结果 */
 export interface PackagePreview {
@@ -170,7 +157,6 @@ export interface SyncStatus {
   conflict_count: number;
   pending_count: number;
   failed_count: number;
-  updatable_count: number;
   unpublished_count: number;
   /** 待审核 / 已驳回 的资产数 (审核台徽标) */
   awaiting_review_count: number;
@@ -262,20 +248,8 @@ export async function getAssetBundle(code: string): Promise<AssetBundle> {
   return apiGet<AssetBundle>(`/assets/${encodeURIComponent(code)}/bundle`);
 }
 
-export async function getInstallTarget(code: string): Promise<InstallTarget> {
-  return apiGet<InstallTarget>(`/assets/${encodeURIComponent(code)}/install-target`);
-}
-
 export async function getSyncStatus(): Promise<SyncStatus> {
   return apiGet<SyncStatus>('/assets/sync-status', { client_id: getClientId() });
-}
-
-export async function listMyInstalled(): Promise<AssetListResp> {
-  return apiGet<AssetListResp>('/assets/me/installed', { client_id: getClientId() });
-}
-
-export async function listMyUpdates(): Promise<AssetListResp> {
-  return apiGet<AssetListResp>('/assets/me/updates', { client_id: getClientId() });
 }
 
 export async function listAudits(code?: string): Promise<{ items: AssetAudit[]; total: number }> {
@@ -325,7 +299,7 @@ export async function submitForReview(
 
 /** 彻底删除资产 (不只是下架) */
 export async function deleteAsset(code: string, comment = ''): Promise<{
-  ok: boolean; code: string; removed_installs: number; commit_sha: string;
+  ok: boolean; code: string; commit_sha: string;
 }> {
   return apiDelete('/assets/' + encodeURIComponent(code), { comment });
 }
@@ -377,25 +351,6 @@ export async function uploadAsset(form: UploadForm): Promise<AssetJob> {
 
 export async function updateAsset(code: string, form: UploadForm): Promise<AssetJob> {
   return apiPut<AssetJob>(`/assets/${encodeURIComponent(code)}`, toFormData(form, false));
-}
-
-/**
- * 记录一次"下载安装包" —— 后端只留记录, 文件由用户自己下载并解压.
- * ⚠️ 服务端写盘与浏览器写盘都已下线, 安装只有下载这一条路.
- */
-export async function installAsset(
-  code: string, version: string,
-  opts: { installPath?: string } = {},
-): Promise<{ ok: boolean; code: string; version: string; install_path: string; channel: string }> {
-  const fd = new FormData();
-  fd.append('version', version);
-  fd.append('channel', 'download');
-  fd.append('client_id', getClientId());
-  fd.append('client_kind', 'web');
-  if (opts.installPath) fd.append('install_path', opts.installPath);
-  return (await request.post(`/assets/${encodeURIComponent(code)}/install`, fd)) as unknown as {
-    ok: boolean; code: string; version: string; install_path: string; channel: string;
-  };
 }
 
 /**
