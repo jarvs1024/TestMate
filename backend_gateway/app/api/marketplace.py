@@ -886,13 +886,18 @@ def _install_block_reason(kind: str, files: list[str]) -> str:
 async def install_asset(
     code: str,
     version: str = Form(...),
-    channel: str = Form("server"),
+    channel: str = Form("download"),
     client_id: str = Form("local"),
     client_kind: str = Form("web"),
     install_path: str = Form(""),
     _user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """记录本机安装. channel=server 时由后端真正写盘; frontend 时前端已写好, 这里只记录."""
+    """记录一次**下载安装包**.
+
+    ⚠️ 后端**不写盘** —— 文件由用户自己下载并解压:
+      「下载安装包」下 zip, 自行解压到 ~/.qoder-cn/skills/<code>/
+    这里只留一条记录 (哪个客户端、什么版本、装没装), 让「我的安装」「可更新」能用.
+    """
     async with AsyncSessionLocal() as session:
         a = (
             await session.execute(select(Asset).where(Asset.code == code))
@@ -902,7 +907,7 @@ async def install_asset(
         if a.kind == "mcp":
             raise HTTPException(status_code=409, detail="连接器暂不支持一键安装")
         # ⚠️ 请求的版本必须与资产当前版本一致.
-        #    落盘用的是**资产当前版本**的内容与目录 (工作区里只有当前版本),
+        #    之前服务端写盘时, 落盘用的是**资产当前版本**的内容与目录,
         #    而安装记录写的是**请求的**版本 —— 两者不一致时会出现:
         #      请求装 1.3.0 → 实际把 1.2.0 的文件装进 1.2.0 目录,
         #      记录却写"已安装 1.3.0" → 之后「可更新」不再提示, 用户永远装不到新版,
@@ -917,14 +922,13 @@ async def install_asset(
                 ),
             )
 
-        # ⚠️ 服务端写盘通道已下线 —— 安装一律在**用户本机**完成:
-        #    「选择目录安装」(浏览器 File System Access 写盘) 或「下载安装包」自行解压.
+        # ⚠️ 服务端写盘通道已下线 —— 安装只剩「下载安装包」这一条手动路径.
         #    原因: 服务端写盘要求用户信任服务器能操作它的磁盘, 权限边界不清;
-        #    而浏览器无法静默获得家目录授权 —— 两条路都得用户自己动手.
+        #    浏览器写盘又需要用户逐次授权家目录, 权限问题太多. 下载最省心.
         if channel == "server":
             raise HTTPException(
                 status_code=400,
-                detail="服务端安装通道已下线, 请改用「选择目录安装」或下载安装包",
+                detail="服务端安装通道已下线, 请改用「下载安装包」",
             )
         written = install_path
 
@@ -1521,6 +1525,16 @@ async def _stage_asset_locked(
             a.review_note = ""
         elif existing is None:
             a.publish_status = "published"
+
+        # ⚠️ manifest.json 是**权威** —— 必须带上 publish_status.
+        #    少了它, 同步器 (sync_puller) 读到 None 会当成 published →
+        #    **待审核的资产会被自动改成已上架**, 审核形同虚设.
+        #    (上下架走 _set_publish_state, 那里本来就写这个字段 —— 上传这条路漏了)
+        manifest["publish_status"] = a.publish_status
+        git_sync.write_text(
+            f"{base}/manifest.json",
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+        )
         # 资产在 GitLab 上的网页地址 —— 市场页可以给个「在 GitLab 查看」链接
         web_base = ((await _setting("marketplace.git.web_url", "")) or "").strip().rstrip("/")
         a.git_web_url = (

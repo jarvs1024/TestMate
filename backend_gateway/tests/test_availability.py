@@ -101,7 +101,7 @@ async def test_concurrent_install_same_asset_is_serialized(client, auth, ws,  # 
     async def install(cid: str):
         return await client.post(
             f"{API}/conc-inst/install",
-            data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
+            data={"version": "1.0.0", "channel": "download", "client_id": cid,
                   "client_kind": "web"},
             headers=pauth,
         )

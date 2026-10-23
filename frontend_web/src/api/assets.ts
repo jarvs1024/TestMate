@@ -380,8 +380,8 @@ export async function updateAsset(code: string, form: UploadForm): Promise<Asset
 }
 
 /**
- * 记录"本机已安装" —— 文件由浏览器写在用户自己电脑上, 后端只留个记录.
- * ⚠️ 服务端写盘通道已下线, 不再有 channel=server.
+ * 记录一次"下载安装包" —— 后端只留记录, 文件由用户自己下载并解压.
+ * ⚠️ 服务端写盘与浏览器写盘都已下线, 安装只有下载这一条路.
  */
 export async function installAsset(
   code: string, version: string,
@@ -389,7 +389,7 @@ export async function installAsset(
 ): Promise<{ ok: boolean; code: string; version: string; install_path: string; channel: string }> {
   const fd = new FormData();
   fd.append('version', version);
-  fd.append('channel', 'frontend');
+  fd.append('channel', 'download');
   fd.append('client_id', getClientId());
   fd.append('client_kind', 'web');
   if (opts.installPath) fd.append('install_path', opts.installPath);

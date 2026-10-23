@@ -27,40 +27,21 @@
         <ol><li v-for="(s, i) in asset.install_steps" :key="i">{{ s }}</li></ol>
       </div>
 
-      <div class="inst-h">安装方式</div>
-      <div class="inst-channels">
-        <label class="inst-chan" :class="{ disabled: !canFrontend }">
-          <input type="radio" value="dir" v-model="method" :disabled="!canFrontend" />
-          <div class="inst-chan-body">
-            <div class="inst-chan-t">选择目录安装</div>
-            <div class="inst-chan-d">
-              {{ canFrontend
-                ? '浏览器弹出目录选择器, 把文件直接写进你选的目录'
-                : '当前浏览器不支持 File System Access API (仅 Chrome / Edge 可用), 请改用下载安装包' }}
-            </div>
-          </div>
-        </label>
-
-        <label class="inst-chan">
-          <input type="radio" value="zip" v-model="method" />
-          <div class="inst-chan-body">
-            <div class="inst-chan-t">下载安装包</div>
-            <div class="inst-chan-d">
-              下载 zip 后自行解压到 <code class="inst-target mono">{{ target.target }}/</code>
-            </div>
-          </div>
-        </label>
+      <div class="inst-h">安装包</div>
+      <div class="inst-pkg">
+        <div class="inst-pkg-row">
+          <span class="inst-pkg-label">文件</span>
+          <code class="inst-pkg-val mono">{{ pkgName }}</code>
+        </div>
+        <div class="inst-pkg-row">
+          <span class="inst-pkg-label">解压到</span>
+          <code class="inst-pkg-val mono">{{ target.target }}/</code>
+        </div>
       </div>
 
       <div class="inst-note">
-        <template v-if="method === 'dir'">
-          请选**安装根目录** (如 <code class="mono">{{ rootDir }}/</code>) ——
-          资产自己的子目录 (skill 是 <code class="mono">&lt;code&gt;/</code>,
-          plugin 是 <code class="mono">&lt;code&gt;/&lt;version&gt;/</code>) 会自动创建。
-        </template>
-        <template v-else>
-          下载后用 unzip / 7-Zip 解压到 <code class="mono">{{ target.target }}/</code> 即可。
-        </template>
+        下载后自行解压到上面那个目录即可 —— 解压出来的文件会被 Qoder 直接识别。
+        需要一条命令搞定? 点「复制安装命令」。
       </div>
 
       <el-alert v-if="error" type="error" :closable="false" class="inst-err"
@@ -78,7 +59,7 @@
       <el-button :disabled="!installCmd" @click="copyCmd">复制安装命令</el-button>
       <el-button type="primary" :loading="installing"
                  :disabled="!target || !target.installable" @click="doInstall">
-        {{ method === 'zip' ? '下载安装包' : '选择目录并安装' }}
+        下载安装包
       </el-button>
     </template>
   </el-dialog>
@@ -88,12 +69,10 @@
 import { computed, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
-  downloadAssetPackage, getAssetBundle, getInstallTarget, installAsset,
+  downloadAssetPackage, getInstallTarget, installAsset,
   type AssetItem, type InstallTarget,
 } from '@/api/assets';
-import {
-  base64ToArrayBuffer, downloadBlob, pickDirectory, supportsFileSystemAccess, writeFileInto,
-} from '@/utils/fileSystemAccess';
+import { downloadBlob } from '@/utils/download';
 
 const props = defineProps<{ modelValue: boolean; asset: AssetItem | null }>();
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'done'): void }>();
@@ -104,24 +83,19 @@ const visible = computed({
 });
 
 const target = ref<InstallTarget | null>(null);
-/** 安装方式: dir=选目录写盘, zip=下载安装包自行解压 */
-const method = ref<'dir' | 'zip'>('dir');
 const loading = ref(false);
 const installing = ref(false);
 const error = ref('');
 const doneMsg = ref('');
 const done = ref(false);
 
-const canFrontend = computed(() => supportsFileSystemAccess());
-
-/** 建议的安装根目录 (用户选目录时要选它) */
-const rootDir = computed(() => {
+/** 下载下来的文件名 */
+const pkgName = computed(() => {
   const t = target.value;
-  if (!t) return '';
-  return t.kind === 'skill' ? t.skill_dir_host : t.plugin_dir_host;
+  return t ? `${t.code}-${t.version}.zip` : '';
 });
 
-/** 手抄命令: 给不能用 File System Access API 的浏览器 (非 Chromium) 一条退路 */
+/** 手抄命令: 不想点下载的人可以照着敲 */
 const installCmd = computed(() => {
   const t = target.value;
   if (!t) return '';
@@ -166,8 +140,6 @@ async function load() {
   doneMsg.value = '';
   try {
     target.value = await getInstallTarget(props.asset.code);
-    // 浏览器不支持目录选择器时, 只能用下载安装包
-    method.value = canFrontend.value ? 'dir' : 'zip';
   } catch (e: any) {
     error.value = e?.response?.data?.detail || e?.message || '读取安装信息失败';
   } finally {
@@ -177,13 +149,6 @@ async function load() {
 
 watch(() => props.asset?.code, () => { if (visible.value) load(); });
 
-/** 资产在安装根目录下的相对路径 (skill: <code>/, plugin: <code>/<version>/) */
-function subPrefix(): string {
-  const t = target.value;
-  if (!t) return '';
-  return t.kind === 'skill' ? `${t.code}/` : `${t.code}/${t.version}/`;
-}
-
 async function doInstall() {
   const a = props.asset;
   const t = target.value;
@@ -192,40 +157,17 @@ async function doInstall() {
   error.value = '';
   done.value = false;
   try {
-    if (method.value === 'zip') {
-      // ---- 下载安装包: 拉成 blob 再触发保存 (下载端点要带 token, 不能直接开链接) ----
-      const blob = await downloadAssetPackage(a.code, t.version);
-      downloadBlob(blob, `${a.code}-${t.version}.zip`);
-      // 也记一笔安装 —— 用户主动下载就是要装, 徽标要跟上
-      await installAsset(a.code, t.version, { installPath: t.target });
-      doneMsg.value = `已下载 ${a.code}-${t.version}.zip, 解压到 ${t.target}/ 即完成安装`;
-    } else {
-      // ---- 选目录安装: 浏览器写盘 ----
-      if (!window.showDirectoryPicker) {
-        throw new Error('当前浏览器不支持 File System Access API, 请改用下载安装包');
-      }
-      const root = await pickDirectory();
-      const bundle = await getAssetBundle(a.code);
-      const prefix = subPrefix();
-      for (const f of bundle.files) {
-        const data: BlobPart = f.encoding === 'base64'
-          ? base64ToArrayBuffer(f.content)
-          : f.content;
-        await writeFileInto(root, prefix + f.path, data);
-      }
-      const r = await installAsset(a.code, t.version, { installPath: root.name });
-      doneMsg.value = `已安装 ${bundle.total} 个文件到 ${root.name}/${prefix}`;
-      void r;
-    }
+    // 下载端点要带 token, 不能直接开链接 → 先取成 blob 再触发保存
+    const blob = await downloadAssetPackage(a.code, t.version);
+    downloadBlob(blob, `${a.code}-${t.version}.zip`);
+    // 记一笔安装 —— 用户主动下载就是要装, 徽标要跟上
+    await installAsset(a.code, t.version, { installPath: t.target });
+    doneMsg.value = `已下载 ${a.code}-${t.version}.zip, 解压到 ${t.target}/ 即完成安装`;
     done.value = true;
-    ElMessage.success(method.value === 'zip' ? '安装包已下载' : '安装完成');
+    ElMessage.success('安装包已下载');
     emit('done');
   } catch (e: any) {
-    if (e?.name === 'AbortError') {
-      error.value = '已取消';
-    } else {
-      error.value = e?.response?.data?.detail || e?.message || '安装失败';
-    }
+    error.value = e?.response?.data?.detail || e?.message || '下载失败';
   } finally {
     installing.value = false;
   }
@@ -265,30 +207,22 @@ async function doInstall() {
 .inst-steps ol { margin: 0; padding-left: 18px; }
 .inst-steps li { font-size: 12px; color: var(--ink-700); line-height: 1.7; }
 
-.inst-channels { display: flex; flex-direction: column; gap: 8px; }
-.inst-chan {
-  display: flex; gap: 9px; align-items: flex-start;
+.inst-pkg {
   border: 1px solid var(--border); border-radius: var(--radius-card);
-  padding: 10px 12px; cursor: pointer; transition: all 0.15s ease;
+  padding: 10px 12px; background: var(--surface-sunken);
 }
-.inst-chan:hover:not(.disabled) { border-color: var(--primary); }
-.inst-chan.disabled { opacity: 0.55; cursor: not-allowed; }
-.inst-chan input { margin-top: 3px; }
-.inst-chan-t { font-size: 13px; font-weight: 600; color: var(--ink-900); }
-.inst-chan-d { font-size: 11px; color: var(--ink-500); margin-top: 3px; word-break: break-all; }
-.inst-target {
-  font-size: 11px; color: var(--ink-700); background: var(--surface-sunken);
-  padding: 1px 5px; border-radius: var(--radius-sm);
+.inst-pkg-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+.inst-pkg-row:last-child { margin-bottom: 0; }
+.inst-pkg-label { font-size: 11px; color: var(--ink-500); min-width: 42px; }
+.inst-pkg-val {
+  font-size: 11.5px; color: var(--ink-700); background: var(--surface);
+  border: 1px solid var(--border); padding: 1px 6px; border-radius: var(--radius-sm);
+  word-break: break-all;
 }
 
 .inst-note {
   margin-top: 10px; font-size: 11.5px; color: var(--ink-500);
   background: var(--surface-sunken); padding: 8px 10px; border-radius: var(--radius-sm);
-}
-.inst-note code {
-  font-family: var(--font-mono); font-size: 11px;
-  background: var(--surface); border: 1px solid var(--border);
-  padding: 1px 5px; border-radius: var(--radius-sm); color: var(--ink-700);
 }
 .inst-err { margin-top: 12px; }
 </style>

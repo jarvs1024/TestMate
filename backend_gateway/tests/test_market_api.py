@@ -174,7 +174,7 @@ async def test_visibility_installed_unpublished_still_visible(client, auth, ws,
     cid = "client-installed"
     r = await client.post(
         f"{API}/unpub-demo/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
+        data={"version": "1.0.0", "channel": "download", "client_id": cid,
               "client_kind": "web"},
         headers=pauth,
     )
@@ -346,9 +346,9 @@ async def test_preview_package_rejects_garbage(client, auth, publisher_user):
 #   ② 「下载安装包」自行解压
 # 后端只负责**记录**安装状态 (哪个客户端、什么版本、装没装).
 
-async def test_install_records_frontend_install(client, auth, ws, restore_git_config,  # noqa: ARG001
+async def test_install_records_download(client, auth, ws, restore_git_config,  # noqa: ARG001
                                                 publisher_user):
-    """前端通道安装 → 只留记录, 文件由浏览器写在用户自己电脑上."""
+    """下载安装包 → 只留一条记录, 文件由用户自己下载并解压."""
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
@@ -359,14 +359,14 @@ async def test_install_records_frontend_install(client, auth, ws, restore_git_co
     cid = "c-inst"
     r = await client.post(
         f"{API}/inst-demo/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
+        data={"version": "1.0.0", "channel": "download", "client_id": cid,
               "client_kind": "web", "install_path": "skills"},
         headers=pauth,
     )
     assert r.status_code == 200, r.text
     j = r.json()
     assert j["ok"] is True
-    assert j["channel"] == "frontend"
+    assert j["channel"] == "download"
 
     # 列表标记为已安装
     r_list = await client.get(f"{API}?limit=100&client_id={cid}", headers=pauth)
@@ -421,7 +421,7 @@ async def test_install_rejects_version_mismatch(client, auth, ws, restore_git_co
 
     r = await client.post(
         f"{API}/ver-demo/install",
-        data={"version": "9.9.9", "channel": "frontend", "client_id": "c-ver",
+        data={"version": "9.9.9", "channel": "download", "client_id": "c-ver",
               "client_kind": "web"},
         headers=pauth,
     )
@@ -443,7 +443,7 @@ async def test_install_accepts_matching_version(client, auth, ws, restore_git_co
 
     r = await client.post(
         f"{API}/ver-ok/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-ver-ok",
+        data={"version": "1.0.0", "channel": "download", "client_id": "c-ver-ok",
               "client_kind": "web"},
         headers=pauth,
     )
@@ -511,7 +511,7 @@ async def test_uninstall_does_not_delete_user_files(client, auth, ws,  # noqa: A
     # 假装用户本机装过 (后端只存路径字符串)
     await client.post(
         f"{API}/keep-demo/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-keep",
+        data={"version": "1.0.0", "channel": "download", "client_id": "c-keep",
               "client_kind": "web", "install_path": "/home/u/.qoder-cn/skills/keep-demo"},
         headers=pauth,
     )
@@ -538,7 +538,7 @@ async def test_delete_asset_removes_install_records(client, auth, ws,  # noqa: A
 
     await client.post(
         f"{API}/del-demo/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-del",
+        data={"version": "1.0.0", "channel": "download", "client_id": "c-del",
               "client_kind": "web"},
         headers=pauth,
     )
@@ -574,7 +574,7 @@ async def test_install_two_versions_keeps_both_records(client, auth, ws,  # noqa
 
     r1 = await client.post(
         f"{API}/two-ver/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-tv",
+        data={"version": "1.0.0", "channel": "download", "client_id": "c-tv",
               "client_kind": "web"},
         headers=pauth,
     )
@@ -590,7 +590,7 @@ async def test_install_two_versions_keeps_both_records(client, auth, ws,  # noqa
 
     r2 = await client.post(
         f"{API}/two-ver/install",
-        data={"version": "1.1.0", "channel": "frontend", "client_id": "c-tv",
+        data={"version": "1.1.0", "channel": "download", "client_id": "c-tv",
               "client_kind": "web"},
         headers=pauth,
     )
@@ -634,7 +634,7 @@ async def test_uninstalled_asset_hidden_after_unpublish(client, auth, ws,  # noq
 
     r = await client.post(
         f"{API}/gone-demo/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": "c-gone",
+        data={"version": "1.0.0", "channel": "download", "client_id": "c-gone",
               "client_kind": "web"},
         headers=pauth,
     )
@@ -715,7 +715,7 @@ async def test_install_mcp_rejected(client, auth, ws,  # noqa: ARG001
 
     r = await client.post(
         f"{API}/conn-demo/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": "x",
+        data={"version": "1.0.0", "channel": "download", "client_id": "x",
               "client_kind": "web"},
         headers=auth,
     )
@@ -757,7 +757,7 @@ async def test_delete_removes_everything(client, auth, ws, restore_git_config,  
     cid = "c-del"
     await client.post(
         f"{API}/del-demo/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
+        data={"version": "1.0.0", "channel": "download", "client_id": cid,
               "client_kind": "web"},
         headers=pauth,
     )
@@ -871,7 +871,7 @@ async def test_me_installed_and_updates(client, auth, ws,  # noqa: ARG001
     cid = "c-mine"
     await client.post(
         f"{API}/mine-demo/install",
-        data={"version": "1.0.0", "channel": "frontend", "client_id": cid,
+        data={"version": "1.0.0", "channel": "download", "client_id": cid,
               "client_kind": "web"},
         headers=pauth,
     )
