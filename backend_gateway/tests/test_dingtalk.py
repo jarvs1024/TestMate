@@ -66,7 +66,7 @@ async def test_notify_market_records_receipt_on_success(monkeypatch):
     """发送成功 → 落一条 sent 回执."""
     sent: list[dict] = []
 
-    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, is_at_all=False):
+    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, at_user_ids=None, is_at_all=False):
         sent.append({"title": title, "text": text})
         return {"errcode": 0, "errmsg": "ok"}
 
@@ -128,7 +128,7 @@ async def test_notify_market_prepends_keyword(monkeypatch):
     """关键词必须出现在消息里 —— 机器人校验不到就发不出去."""
     sent: list[dict] = []
 
-    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, is_at_all=False):
+    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, at_user_ids=None, is_at_all=False):
         sent.append({"title": title, "text": text})
         return {"errcode": 0}
 
@@ -281,7 +281,7 @@ async def test_retry_failed_notifications(monkeypatch):
 
     attempts: list[str] = []
 
-    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, is_at_all=False):
+    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, at_user_ids=None, is_at_all=False):
         attempts.append(text)
         return {"errcode": 0}
 
@@ -362,7 +362,10 @@ async def test_retry_respects_max_attempts(monkeypatch):
         return {"errcode": 0}
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
-    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.market_webhook": "http://x/hook"}))
+    monkeypatch.setattr(dingtalk, "get", _fake_get({
+        "dingtalk.market_webhook": "http://x/hook",
+        "dingtalk.notify_on_publish": "true",
+    }))
 
     n = await dingtalk.retry_failed_notifications()
     assert n == 0
@@ -401,20 +404,23 @@ async def test_retry_skips_not_yet_due(monkeypatch):
 # ---------- 两个通知频道 (两个群) ----------
 
 def test_event_to_channel_mapping():
-    """市场动作 → 市场群; 审核相关 → 审核群."""
+    """审核群只收"要管理员处理"的事; 其余 (资产已经变了) 走市场群."""
+    # 审核群: 需要管理员处理
+    assert dingtalk._CHANNEL_OF_EVENT["review"] == "review"
+    assert dingtalk._CHANNEL_OF_EVENT["unpublish_request"] == "review"
+    # 市场群: 资产已经变了
     assert dingtalk._CHANNEL_OF_EVENT["publish"] == "market"
     assert dingtalk._CHANNEL_OF_EVENT["update"] == "market"
     assert dingtalk._CHANNEL_OF_EVENT["unpublish"] == "market"
-    assert dingtalk._CHANNEL_OF_EVENT["review"] == "review"
-    assert dingtalk._CHANNEL_OF_EVENT["reject"] == "review"
-    assert dingtalk._CHANNEL_OF_EVENT["delete"] == "review"
+    assert dingtalk._CHANNEL_OF_EVENT["reject"] == "market"
+    assert dingtalk._CHANNEL_OF_EVENT["delete"] == "market"
 
 
 async def test_notify_uses_channel_webhook(monkeypatch):
     """每个事件要发到**自己频道**的 webhook —— 审核通知不能跑到市场群去."""
     sent: list[tuple[str, str]] = []
 
-    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, is_at_all=False):
+    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, at_user_ids=None, is_at_all=False):
         sent.append((webhook, title))
         return {"errcode": 0}
 
@@ -504,6 +510,79 @@ async def test_retry_uses_each_row_channel(monkeypatch):
     async with AsyncSessionLocal() as s:
         row = (await s.execute(select(AssetNotification))).scalar_one()
     assert row.status == "sent"
+
+
+# ---------- 通知内容 (@人 / 资产类型) ----------
+
+async def test_publish_at_all_and_kind_in_text(monkeypatch):
+    """上架成功 → @所有人, 并且消息里要说清"这是个啥" (技能包/插件)."""
+    sent: list[dict] = []
+
+    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None,
+                        at_user_ids=None, is_at_all=False):
+        sent.append({"title": title, "text": text, "at": at_user_ids or [],
+                     "all": is_at_all})
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+
+    async def _get(key, default=None):
+        return {
+            "dingtalk.notify_on_publish": "true",
+            "dingtalk.market_webhook": "http://market/hook",
+        }.get(key, default)
+
+    monkeypatch.setattr(dingtalk, "get", _get)
+
+    ok = await dingtalk.notify_market(
+        "publish", name="代码检视流水线", version="1.2.0", actor="jarvs",
+        kind="plugin", category="自动代码", code="crp",
+    )
+    assert ok is True
+    assert sent[0]["all"] is True, "上架成功要 @所有人"
+    assert "@所有人" in sent[0]["text"], sent[0]["text"]
+    assert "插件" in sent[0]["text"], sent[0]["text"]
+    assert "自动代码" in sent[0]["text"], sent[0]["text"]
+    assert "1.2.0" in sent[0]["text"], sent[0]["text"]
+
+
+async def test_reject_at_author_only(monkeypatch):
+    """审核不通过 → 只 @发布者 (不是 @所有人)."""
+    sent: list[dict] = []
+
+    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None,
+                        at_user_ids=None, is_at_all=False):
+        sent.append({"text": text, "at": at_user_ids or [], "all": is_at_all})
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+
+    async def _get(key, default=None):
+        return {
+            "dingtalk.notify_on_reject": "true",
+            "dingtalk.market_webhook": "http://market/hook",
+        }.get(key, default)
+
+    monkeypatch.setattr(dingtalk, "get", _get)
+
+    ok = await dingtalk.notify_market(
+        "reject", name="某技能", actor="admin", author="jarvs",
+        kind="skill", code="demo",
+    )
+    assert ok is True
+    assert sent[0]["all"] is False, "审核不通过不该 @所有人"
+    assert sent[0]["at"] == ["jarvs"], sent[0]
+    assert "@jarvs" in sent[0]["text"], sent[0]["text"]
+    assert "技能包" in sent[0]["text"], sent[0]["text"]
+
+
+def test_parse_mentions():
+    """重试时要能从正文还原 @ 了谁 (回执里没单独存 at 名单)."""
+    at_all, users = dingtalk._parse_mentions("### 标题\n- 类型: 插件\n@所有人\n@jarvs")
+    assert at_all is True
+    assert users == ["jarvs"]
+    at_all, users = dingtalk._parse_mentions("没有 @ 的消息")
+    assert at_all is False and users == []
 
 
 # ---------- 辅助 ----------

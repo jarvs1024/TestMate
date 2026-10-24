@@ -28,17 +28,19 @@ NOTIFY_KEYS = [
     "dingtalk.notify_on_reject",
 ]
 
-# 默认**打开**的三个: 上架 / 更新 / 下架 (市场动作, 大家要知道)
+# 默认**打开**的: 上架 / 更新 / 彻底下架 (市场动作) + 上架待审核 / 下架申请 / 审核不通过
+# (2026-10-24 流程重排: 审核相关的也默认开 —— 都是"要有人处理"的事)
 NOTIFY_ON_BY_DEFAULT = [
     "dingtalk.notify_on_publish",
     "dingtalk.notify_on_update",
     "dingtalk.notify_on_unpublish",
-]
-# 默认**关闭**的三个: 删除 / 待审核 / 驳回
-NOTIFY_OFF_BY_DEFAULT = [
-    "dingtalk.notify_on_delete",
     "dingtalk.notify_on_review",
     "dingtalk.notify_on_reject",
+    "dingtalk.notify_on_unpublish_request",
+]
+# 默认**关闭**的: 直接删除 (不走审核, 少打扰)
+NOTIFY_OFF_BY_DEFAULT = [
+    "dingtalk.notify_on_delete",
 ]
 
 
@@ -82,10 +84,12 @@ def test_notify_switches_defaults_in_schema():
 def test_default_changes_registered():
     """改了默认值就必须登记迁移 —— 否则老环境永远不变."""
     for key in NOTIFY_ON_BY_DEFAULT:
+        if key == "dingtalk.notify_on_unpublish_request":
+            continue   # 新增的 key, seed 会直接写默认值, 不用迁移
         assert key in DEFAULT_CHANGES, f"{key} 改了默认值, 得登记 DEFAULT_CHANGES"
         old, new = DEFAULT_CHANGES[key]
         assert old is False and new is True, f"{key} 应登记 False → True, 实际={old!r} → {new!r}"
-    # 默认没动的三个不用登记 (登记了也是空迁移, 还会刷无意义的日志)
+    # 默认没动的那个不用登记 (登记了也是空迁移, 还会刷无意义的日志)
     for key in NOTIFY_OFF_BY_DEFAULT:
         assert key not in DEFAULT_CHANGES, f"{key} 默认值没改, 不该登记迁移"
 
@@ -108,7 +112,10 @@ async def test_seed_defaults_migrates_off_rows_to_on():
     from app.models.system_setting import SystemSetting
 
     async with AsyncSessionLocal() as s:
+        # 新增的 key (unpublish_request) 不预置行 —— 让 seed 按新默认写
         for key in NOTIFY_ON_BY_DEFAULT:
+            if key == "dingtalk.notify_on_unpublish_request":
+                continue
             s.add(SystemSetting(key=key, value={"v": False}, category="notification",
                                 description="", is_secret=False))
         for key in NOTIFY_OFF_BY_DEFAULT:

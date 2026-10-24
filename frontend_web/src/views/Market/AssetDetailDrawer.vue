@@ -120,14 +120,11 @@
         </el-button>
 
         <!-- ===== 下架审核 (仅管理员) =====
-             通过 = 资产被彻底删除 (不可恢复), 所以只有管理员能拍板. -->
+             通过 = 资产被彻底删除 (不可恢复), 所以只有管理员能拍板.
+             ⚠️ 没有「驳回下架」—— 管理员不点头的话申请就一直挂着, 作者可自行撤销. -->
         <el-button v-if="isAdmin && item.publish_status === 'unpublish_pending'"
-                   type="danger" class="ad-btn" :loading="busy" @click="doReviewUnpublish('approve')">
+                   type="danger" class="ad-btn" :loading="busy" @click="doReviewUnpublish()">
           通过下架并删除
-        </el-button>
-        <el-button v-if="isAdmin && item.publish_status === 'unpublish_pending'"
-                   type="warning" plain class="ad-btn" :loading="busy" @click="doReviewUnpublish('reject')">
-          驳回下架
         </el-button>
         <!-- ===== 撤销下架申请 (作者本人) ===== -->
         <el-button v-if="canEdit && item.publish_status === 'unpublish_pending'"
@@ -343,51 +340,33 @@ async function doApplyUnpublish() {
   }
 }
 
-/** 管理员审核下架申请: 通过 = 彻底删除 / 驳回 = 恢复在架 */
-async function doReviewUnpublish(decision: 'approve' | 'reject') {
+/**
+ * 管理员审核下架申请: 通过 = 彻底删除.
+ *
+ * ⚠️ 没有「驳回」—— 管理员不点头的话申请就一直挂着, 作者可以自己撤销.
+ */
+async function doReviewUnpublish() {
   const it = props.item;
   if (!it) return;
   const code = it.code;
   const name = it.name;
-  let comment = '';
-  if (decision === 'approve') {
-    try {
-      await ElMessageBox.confirm(
-        `确认通过「${name}」的下架申请?\n`
-        + `通过后资产会被「彻底删除」: GitLab 上的文件、索引与记录都会消失, 不可恢复。\n`
-        + `已下载到用户本机的安装包不会被清理。`,
-        '通过下架申请',
-        { type: 'error', confirmButtonText: '确认删除', cancelButtonText: '取消' },
-      );
-    } catch {
-      return;
-    }
-  } else {
-    try {
-      const r = await ElMessageBox.prompt(
-        `驳回「${name}」的下架申请需要给发布者一个理由 (会显示在资产详情里)`,
-        '驳回下架申请',
-        {
-          type: 'warning', confirmButtonText: '驳回', cancelButtonText: '取消',
-          inputPlaceholder: '例如: 还有人在用, 先别删',
-          inputValidator: (v: string) => (v || '').trim() ? true : '请填写驳回理由',
-        },
-      );
-      comment = r.value || '';
-    } catch {
-      return;
-    }
+  try {
+    await ElMessageBox.confirm(
+      `确认通过「${name}」的下架申请?\n`
+      + `通过后资产会被「彻底删除」: GitLab 上的文件、索引与记录都会消失, 不可恢复。\n`
+      + `已下载到用户本机的安装包不会被清理。`,
+      '通过下架申请',
+      { type: 'error', confirmButtonText: '确认删除', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;
   }
   busy.value = true;
   try {
-    await reviewUnpublish(code, decision, comment);
-    if (decision === 'approve') {
-      ElMessage.success('已通过下架申请, 资产已删除');
-      emit('update:modelValue', false);
-      emit('deleted');
-    } else {
-      ElMessage.success('已驳回, 资产保持上架');
-    }
+    await reviewUnpublish(code, 'approve');
+    ElMessage.success('已通过下架申请, 资产已删除');
+    emit('update:modelValue', false);
+    emit('deleted');
     emit('changed');
   } catch (e: any) {
     ElMessage.error('审核失败: ' + (e?.response?.data?.detail || e?.message));

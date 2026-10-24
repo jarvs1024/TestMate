@@ -100,14 +100,17 @@ function check(name, ok, detail) {
     'dingtalk.notify_on_publish', 'dingtalk.notify_on_update',
     'dingtalk.notify_on_unpublish', 'dingtalk.notify_on_delete',
     'dingtalk.notify_on_review', 'dingtalk.notify_on_reject',
+    'dingtalk.notify_on_unpublish_request',
   ];
+  // 默认开: 市场动作 (上架/更新/彻底下架) + 审核相关 (上架待审核/下架申请/审核不通过)
   const SWITCHES_ON_BY_DEFAULT = [
     'dingtalk.notify_on_publish', 'dingtalk.notify_on_update',
-    'dingtalk.notify_on_unpublish',
+    'dingtalk.notify_on_unpublish', 'dingtalk.notify_on_review',
+    'dingtalk.notify_on_reject', 'dingtalk.notify_on_unpublish_request',
   ];
+  // 默认关: 直接删除 (不走审核, 少打扰)
   const SWITCHES_OFF_BY_DEFAULT = [
-    'dingtalk.notify_on_delete', 'dingtalk.notify_on_review',
-    'dingtalk.notify_on_reject',
+    'dingtalk.notify_on_delete',
   ];
   const switchState = await page.evaluate(async (keys) => {
     const tk = localStorage.getItem('testmate:token');
@@ -153,13 +156,13 @@ function check(name, ok, detail) {
 
   const shouldBeOn = SWITCHES_ON_BY_DEFAULT.filter((k) => switchState[k] && switchState[k].value === true);
   const shouldBeOff = SWITCHES_OFF_BY_DEFAULT.filter((k) => switchState[k] && switchState[k].value === true);
-  check('S15 上架/更新/下架 三个开关默认是「开」',
+  check('S15 市场动作 + 审核相关 六个开关默认是「开」',
     shouldBeOn.length === SWITCHES_ON_BY_DEFAULT.length,
     shouldBeOn.length === SWITCHES_ON_BY_DEFAULT.length
-      ? 'publish/update/unpublish 全开'
+      ? 'publish/update/unpublish/review/reject/unpublish_request 全开'
       : `没开: ${SWITCHES_ON_BY_DEFAULT.filter((k) => !shouldBeOn.includes(k)).join(', ')}`);
-  check('S15b 删除/待审核/驳回 三个开关默认是「关」', shouldBeOff.length === 0,
-    shouldBeOff.length ? `还开着: ${shouldBeOff.join(', ')}` : 'delete/review/reject 全关');
+  check('S15b 「直接删除」开关默认是「关」', shouldBeOff.length === 0,
+    shouldBeOff.length ? `还开着: ${shouldBeOff.join(', ')}` : 'delete 关');
   check('S16 开关值是真布尔 (不是 "false" 字符串)',
     SWITCHES.every((k) => switchState[k] && typeof switchState[k].value === 'boolean'),
     JSON.stringify(SWITCHES.map((k) => [k, switchState[k] && switchState[k].value])));
@@ -174,7 +177,8 @@ function check(name, ok, detail) {
     const want = SWITCHES_ON_BY_DEFAULT.includes(x.key) ? 'ON' : 'OFF';
     return (x.stxt || '').trim() !== want;
   });
-  check('S17 页面上六个开关显示与默认一致', uiSwitches.length === 6 && uiWrong.length === 0,
+  check('S17 页面上七个开关显示与默认一致',
+    uiSwitches.length === SWITCHES.length && uiWrong.length === 0,
     uiSwitches.map((x) => `${x.key}=${(x.stxt || '').trim()}`).join(' '));
 
   // ---------- 跑一遍真实的"上架 → 申请下架 → 彻底下架", 看每一步发了什么通知 ----------
@@ -244,6 +248,7 @@ function check(name, ok, detail) {
     await setSwitches({
       'dingtalk.notify_on_publish': false,
       'dingtalk.notify_on_unpublish': false,
+      'dingtalk.notify_on_unpublish_request': false,
     });
     quiet = await runUnpublishFlow('e2e-notify-quiet');
     check('S18 开关关着时整条下架链路不产生任何通知回执',
@@ -365,10 +370,11 @@ function check(name, ok, detail) {
   //    验完**必须还原** (改生产设置一定要在 try/finally 里).
   let marketNotify;
   try {
-    // 只开上架/下架两个 —— 这条链路只用到这两个事件
+    // 这条链路用到三个事件: 上架 / 申请下架 / 彻底下架
     await setSwitches({
       'dingtalk.notify_on_publish': true,
       'dingtalk.notify_on_unpublish': true,
+      'dingtalk.notify_on_unpublish_request': true,
     });
 
     marketNotify = await runUnpublishFlow('e2e-notify-live');
@@ -378,8 +384,8 @@ function check(name, ok, detail) {
     check('S13 上架时通知一次 (publish)',
       marketNotify.dUpload.filter((e) => e === 'publish').length === 1,
       `上架后新通知: ${JSON.stringify(marketNotify.dUpload)}`);
-    check('S13b 申请下架**不通知** (等彻底下架才发)',
-      marketNotify.dApply.length === 0,
+    check('S13b 申请下架通知**审核群** (unpublish_request)',
+      marketNotify.dApply.filter((e) => e === 'unpublish_request').length === 1,
       `申请下架后新通知: ${JSON.stringify(marketNotify.dApply)}`);
     check('S13c 彻底下架后才通知 (unpublish)',
       marketNotify.dApprove.filter((e) => e === 'unpublish').length === 1,

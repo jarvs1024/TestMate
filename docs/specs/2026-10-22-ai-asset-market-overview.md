@@ -76,8 +76,27 @@
 | `marketplace.public_base_url` | 对外可达基地址 |
 | `dingtalk.market_webhook` / `.market_secret` / `.market_keyword` | **市场群**的钉钉机器人地址 / 加签密钥 / **关键词**（机器人默认开启关键词校验，消息里必须含该词） |
 | `dingtalk.review_webhook` / `.review_secret` / `.review_keyword` | **审核群**的同样三项（两个群各配各的；测试环境可以把两边配成一样的） |
-| `dingtalk.notify_on_publish` / `.update` / `.unpublish` | **市场群**的事件开关 —— 上架 / 更新 / 彻底下架 **默认打开** |
-| `dingtalk.notify_on_delete` / `.review` / `.reject` | **审核群**的事件开关 —— 删除 / 待审核 / 驳回 **默认关闭**（不刷屏） |
+| `dingtalk.notify_on_publish` / `.update` / `.unpublish` | **市场群**开关 —— 上架 / 更新 / 彻底下架 **默认开**（都 @所有人） |
+| `dingtalk.notify_on_review` / `.unpublish_request` / `.reject` | 上架待审核、下架申请（发**审核群**）、审核不通过（发**市场群** @发布者）—— **默认开** |
+| `dingtalk.notify_on_delete` | 直接删除时通知市场群 **默认关**（不走审核，少打扰） |
+
+### 通知流程（2026-10-24 重排）
+
+```
+用户上架 ─▶ 待上架审核 ──通知──▶ 审核群
+              ├─ 审核通过 ──通知(@所有人)──▶ 市场群   「🎉 新资产上架」
+              └─ 审核不通过 ──通知(@发布者)──▶ 市场群   「❌ 资产审核未通过」
+
+用户下架申请 ──通知──▶ 审核群            「🗑 申请下架, 待确认」
+              └─ 管理员通过 ──通知(@所有人)──▶ 市场群  「🗑 资产已下架」(资产被彻底删除)
+                 (没有"驳回" —— 不点头就一直挂着, 作者可自行撤销)
+
+版本更新 ──通知(@所有人)──▶ 市场群       「📦 资产版本更新」
+```
+
+- 通知里会写清**资产类型**（技能包 / 插件 / 连接器）+ 分类 + 版本 + 操作人 + 资产号。
+- **@所有人** 与 **@发布者** 由事件决定（`_EVENT_AT`）；重试时从回执正文还原 @ 名单。
+- 下架审核**只有 approve** —— 不通过就不处理，作者可以自己撤销申请。
 | 下架通知时机 | 下架走审核：**申请阶段不通知**，等管理员确认、资产**真的被移除**才通知一次（`unpublish` 事件）；撤销申请不通知（资产从没被移除过） |
 
 ## 四、前端（`frontend_web/src/views/Market/`）
@@ -108,7 +127,7 @@ node e2e_market_scenarios.js   # 真实业务场景：多角色完整生命周�
 node e2e_market.js             # 市场页功能（38 断言）
 node e2e_review_flow.js        # 上架审核闭环（15 断言）
 node e2e_market_settings.js    # 市场设置与 GitLab 链接（8 断言）
-node e2e_dingtalk_settings.js  # 钉钉通知配置与送达（14 断言）
+node e2e_dingtalk_settings.js  # 钉钉通知配置与送达（19 断言）
 ```
 
 > 端到端脚本用 puppeteer-core 驱动**本机真实 Chrome**，不走内置 Browser ——

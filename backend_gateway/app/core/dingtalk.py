@@ -71,17 +71,23 @@ async def send_markdown(
     *,
     secret: str = "",
     at_mobiles: list[str] | None = None,
+    at_user_ids: list[str] | None = None,
     is_at_all: bool = False,
 ) -> dict[str, Any]:
-    """发一条 markdown 消息. 失败抛异常, 由调用方决定怎么处理."""
+    """发一条 markdown 消息. 失败抛异常, 由调用方决定怎么处理.
+
+    ⚠️ @人的规矩: **正文里必须带上 @xxx**, 钉钉才会把它渲染成提醒 ——
+       只在 at 字段里写是不生效的.
+    """
     url = build_signed_url(webhook, secret) if secret else webhook
     body: dict[str, Any] = {
         "msgtype": "markdown",
         "markdown": {"title": title, "text": text},
     }
-    if at_mobiles or is_at_all:
+    if at_mobiles or at_user_ids or is_at_all:
         body["at"] = {
             "atMobiles": at_mobiles or [],
+            "atUserIds": at_user_ids or [],
             "isAtAll": bool(is_at_all),
         }
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
@@ -96,39 +102,55 @@ async def send_markdown(
 
 # ---------- 市场通知 ----------
 
+# 通知事件表 (2026-10-24 重排):
+#
+#   审核群 (审核钉钉) —— 需要管理员**处理**的事:
+#       review            上架待审核
+#       unpublish_request 下架申请
+#   市场群 (用户群钉钉) —— 资产**已经变了**的事:
+#       publish  上架成功 @所有人
+#       update   版本更新 @所有人
+#       unpublish 彻底下架 @所有人
+#       reject   上架审核不通过 @发布者
+#       delete   管理员直接删除 @所有人
 _EVENT_TEXT = {
+    "review": "📋 新资产待审核",
+    "unpublish_request": "🗑 申请下架, 待确认",
     "publish": "🎉 新资产上架",
     "update": "📦 资产版本更新",
     # ⚠️ unpublish = **彻底下架** (资产已从市场移除), 不是"有人申请下架".
-    #    申请阶段不通知 —— 通知等真的移除后再发 (2026-10-24).
+    #    申请阶段走 unpublish_request 事件 (发审核群).
     "unpublish": "🗑 资产已下架",
     "delete": "🗑 资产已删除",
-    "review": "📋 新资产待审核",
     "reject": "❌ 资产审核未通过",
 }
 
 _SWITCH_KEY = {
+    "review": "dingtalk.notify_on_review",
+    "unpublish_request": "dingtalk.notify_on_unpublish_request",
     "publish": "dingtalk.notify_on_publish",
     "update": "dingtalk.notify_on_update",
     "unpublish": "dingtalk.notify_on_unpublish",
     "delete": "dingtalk.notify_on_delete",
-    "review": "dingtalk.notify_on_review",
     "reject": "dingtalk.notify_on_reject",
 }
 
 # ---------- 两个通知频道 (两个群) ----------
-# 市场动作 (上架 / 更新 / 彻底下架) 走**市场群**;
-# 审核相关 (待审核 / 驳回 / 删除) 走**审核群** —— 免得审核消息跟市场消息混在一起.
+# 审核群: 需要管理员处理的事 (上架审核 / 下架申请)
+# 市场群: 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
 #
 # 每个频道有自己的一套 webhook / 加签密钥 / 关键词 —— 两个群通常是两个不同的机器人,
 # 密钥和关键词校验都不一样. (测试环境可以把两边配成一样的)
 _CHANNEL_OF_EVENT = {
+    # 审核群
+    "review": "review",
+    "unpublish_request": "review",
+    # 市场群
     "publish": "market",
     "update": "market",
     "unpublish": "market",
-    "review": "review",
-    "reject": "review",
-    "delete": "review",
+    "reject": "market",
+    "delete": "market",
 }
 
 _CHANNEL_KEYS = {
@@ -146,6 +168,26 @@ _CHANNEL_KEYS = {
 
 _CHANNEL_LABEL = {"market": "市场群", "review": "审核群"}
 
+# 资产类型 → 中文 (通知里要说明"这是个啥": skill 还是插件)
+_KIND_LABEL = {
+    "skill": "技能包",
+    "plugin": "插件",
+    "mcp": "连接器",
+}
+
+# 各事件默认 @ 谁:
+#   at_all=True  → @所有人 (资产变了, 大家都该知道)
+#   at_author    → @发布者 (他的东西被拒了, 得让他知道)
+_EVENT_AT = {
+    "review": {"at_all": False, "at_author": False},
+    "unpublish_request": {"at_all": False, "at_author": False},
+    "publish": {"at_all": True, "at_author": False},
+    "update": {"at_all": True, "at_author": False},
+    "unpublish": {"at_all": True, "at_author": False},
+    "reject": {"at_all": False, "at_author": True},
+    "delete": {"at_all": True, "at_author": False},
+}
+
 
 async def _channel_config(channel: str) -> tuple[str, str, str]:
     """取某个频道的 (webhook, 加签密钥, 关键词)."""
@@ -156,8 +198,19 @@ async def _channel_config(channel: str) -> tuple[str, str, str]:
     return webhook, secret, keyword
 
 
-async def _deliver(webhook: str, secret: str, title: str, text: str) -> None:
-    await send_markdown(webhook, title, text, secret=secret)
+async def _deliver(
+    webhook: str,
+    secret: str,
+    title: str,
+    text: str,
+    *,
+    at_user_ids: list[str] | None = None,
+    is_at_all: bool = False,
+) -> None:
+    await send_markdown(
+        webhook, title, text, secret=secret,
+        at_user_ids=at_user_ids, is_at_all=is_at_all,
+    )
 
 
 async def notify_market(
@@ -169,11 +222,22 @@ async def notify_market(
     detail: str = "",
     link: str = "",
     code: str = "",
+    kind: str = "",
+    category: str = "",
+    author: str = "",
+    at_all: bool | None = None,
+    at_author: bool | None = None,
 ) -> bool:
     """发一条市场通知. 返回是否发送成功 (失败只记日志, 不抛).
 
-    event: publish | update | unpublish | delete | review | reject
-    按事件自动选频道: 市场动作 → 市场群, 审核相关 → 审核群.
+    event: review | unpublish_request | publish | update | unpublish | reject | delete
+    按事件自动选频道:
+      审核群 —— 需要管理员处理的事 (上架审核 / 下架申请)
+      市场群 —— 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
+
+    kind / category: 通知里要说明"这是个啥" (技能包? 插件? 连接器?)
+    author: 发布者 —— 审核不通过时要 @他
+    at_all / at_author: 覆盖事件默认的 @ 策略 (一般不用传)
     """
     if event not in _EVENT_TEXT:
         logger.warning("dingtalk.notify_market 未知事件: %s", event)
@@ -198,7 +262,17 @@ async def notify_market(
         logger.warning("dingtalk 读取配置失败, 跳过通知: %s", e)
         return False
 
+    at_rule = _EVENT_AT.get(event, {"at_all": False, "at_author": False})
+    do_at_all = at_rule["at_all"] if at_all is None else at_all
+    do_at_author = at_rule["at_author"] if at_author is None else at_author
+
     lines = [f"### {_EVENT_TEXT[event]} · {name}"]
+    # 类型要说清楚 —— 收到通知的人得知道这是个技能包还是插件
+    kind_line = f"- 类型: {_KIND_LABEL.get(kind, kind)}" if kind else ""
+    if category:
+        kind_line += f" · {category}"
+    if kind_line:
+        lines.append(kind_line)
     if version:
         lines.append(f"- 版本: `{version}`")
     if actor:
@@ -210,6 +284,17 @@ async def notify_market(
     text = "\n".join(lines)
     title = f"{_EVENT_TEXT[event]} · {name}"
 
+    # ---------- @谁 ----------
+    # ⚠️ 钉钉要正文里带 "@xxx" 才渲染成提醒 (at 字段只是"谁被 @" 的名单).
+    at_user_ids: list[str] = []
+    if do_at_all:
+        text += "\n@所有人"
+    if do_at_author and author:
+        at_user_ids.append(author)
+        text += f"\n@{author}"
+        if actor and actor != author:
+            text += f" (提交人: {actor})"
+
     # ⚠️ 自定义机器人默认开启**关键词校验**: 消息里必须含指定关键词, 否则报
     #    310000 "关键词不匹配", 消息根本发不出去. 关键词配在设置里 (留空则不加).
     if keyword:
@@ -218,7 +303,7 @@ async def notify_market(
 
     # 先落回执 —— 哪怕进程在发送途中挂掉, 也知道"该发一条通知"
     row = await _create_receipt(event, code, name, title, text)
-    ok = await _attempt(row, webhook, secret)
+    ok = await _attempt(row, webhook, secret, at_user_ids=at_user_ids, is_at_all=do_at_all)
     return ok
 
 
@@ -240,12 +325,41 @@ async def _create_receipt(
     return row
 
 
+def _parse_mentions(text: str) -> tuple[bool, list[str]]:
+    """从消息正文里解析 @ 了谁 —— 重试时要用 (回执里没单独存 at 名单).
+
+    正文里 @ 的人都是**独占一行**的 (我们拼消息就是这么拼的).
+    """
+    is_at_all = False
+    users: list[str] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("@"):
+            continue
+        name = line[1:].split(" ")[0].strip()
+        if not name:
+            continue
+        if name == "所有人":
+            is_at_all = True
+        else:
+            users.append(name)
+    return is_at_all, users
+
+
 async def _attempt(
-    row: AssetNotification, webhook: str, secret: str
+    row: AssetNotification,
+    webhook: str,
+    secret: str,
+    *,
+    at_user_ids: list[str] | None = None,
+    is_at_all: bool = False,
 ) -> bool:
     """发一次并更新回执. 返回是否成功."""
     try:
-        await _deliver(webhook, secret, row.title, row.text)
+        await _deliver(
+            webhook, secret, row.title, row.text,
+            at_user_ids=at_user_ids, is_at_all=is_at_all,
+        )
     except Exception as e:  # noqa: BLE001
         async with AsyncSessionLocal() as session:
             cur = await session.get(AssetNotification, row.id)
@@ -392,7 +506,9 @@ async def retry_failed_notifications() -> int:
             await _mark_skipped(r)
             skipped += 1
             continue
-        if await _attempt(r, webhook, secret):
+        # @ 了谁要从正文里还原 (回执里没单独存 at 名单)
+        at_all, at_users = _parse_mentions(r.text)
+        if await _attempt(r, webhook, secret, at_user_ids=at_users, is_at_all=at_all):
             n += 1
     if skipped:
         logger.info("dingtalk 跳过 %d 条待发通知 (开关关了或没配 webhook)", skipped)

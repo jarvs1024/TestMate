@@ -210,10 +210,13 @@ async def test_admin_approve_deletes_asset(
     assert d.status_code == 404, d.text
 
 
-async def test_admin_reject_keeps_asset(
+async def test_unpublish_review_has_no_reject(
     client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
 ):
-    """管理员驳回 → 资产恢复在架, 理由给发布者看."""
+    """下架审核**没有"驳回"** —— 不通过就不处理, 作者可自行撤销.
+
+    (2026-10-24 的流程调整: 下架审核只保留 approve.)
+    """
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
@@ -223,14 +226,15 @@ async def test_admin_reject_keeps_asset(
     await _apply_unpublish(client, pauth, "unp-reject")
 
     r = await client.post(f"{API}/unp-reject/unpublish-review",
-                          data={"decision": "reject", "comment": "还有人用, 先别删"},
+                          data={"decision": "reject", "comment": "还有人用"},
                           headers=auth)
-    assert r.status_code == 200, r.text
+    assert r.status_code == 400, r.text
+    assert "approve" in r.json()["detail"], r.text
 
+    # 资产还在, 申请还挂着
     d = await client.get(f"{API}/unp-reject", headers=auth)
     assert d.status_code == 200, d.text
-    assert d.json()["publish_status"] == "published", d.text
-    assert d.json()["review_note"] == "还有人用, 先别删", d.text
+    assert d.json()["publish_status"] == "unpublish_pending", d.text
 
 
 async def test_review_without_request_rejected(
@@ -265,6 +269,9 @@ async def test_review_bad_decision_rejected(
     r = await client.post(f"{API}/unp-baddec/unpublish-review",
                           data={"decision": "maybe"}, headers=auth)
     assert r.status_code == 400, r.text
+    # 资产没被动过
+    d = await client.get(f"{API}/unp-baddec", headers=auth)
+    assert d.status_code == 200, d.text
 
 
 # ---------- 审计留痕 ----------
@@ -305,7 +312,9 @@ async def test_notification_only_after_full_removal(
     from tests.conftest import set_setting
 
     # 配个连不上的 webhook —— 发送会失败, 但**回执照样落库** (我们要看的是"有没有发起")
+    # 两个频道都要配: 申请下架通知走**审核群**, 彻底下架通知走**市场群**
     await set_setting("dingtalk.market_webhook", "http://127.0.0.1:1/nope")
+    await set_setting("dingtalk.review_webhook", "http://127.0.0.1:1/nope")
     await set_setting("marketplace.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
@@ -318,12 +327,13 @@ async def test_notification_only_after_full_removal(
             )).scalars().all()
         return [r.event for r in rows]
 
-    # 申请下架 → 不该有 unpublish 通知 (上传本身会有一条 publish, 那是另一回事)
+    # 申请下架 → 通知**审核群** (unpublish_request 事件), 不是市场群的 unpublish
     await _apply_unpublish(client, pauth, "unp-notify")
-    assert "unpublish" not in await events_of("unp-notify"), \
-        f"申请阶段不该发下架通知: {await events_of('unp-notify')}"
+    evs = await events_of("unp-notify")
+    assert evs.count("unpublish_request") == 1, f"申请下架应通知审核群一次: {evs}"
+    assert "unpublish" not in evs, f"申请阶段不该发彻底下架通知: {evs}"
 
-    # 管理员通过 → 资产彻底下架 → 这时候才通知一次
+    # 管理员通过 → 资产彻底下架 → 这时候才在市场群通知一次
     r = await client.post(f"{API}/unp-notify/unpublish-review",
                           data={"decision": "approve"}, headers=auth)
     assert r.status_code == 200, r.text
@@ -341,6 +351,7 @@ async def test_cancel_request_sends_no_notification(
     from tests.conftest import set_setting
 
     await set_setting("dingtalk.market_webhook", "http://127.0.0.1:1/nope")
+    await set_setting("dingtalk.review_webhook", "http://127.0.0.1:1/nope")
     await set_setting("marketplace.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}

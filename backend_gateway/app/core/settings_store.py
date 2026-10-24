@@ -385,7 +385,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": True,
-        "description": "上架时通知钉钉群 (默认开启 —— 市场有新东西大家要知道)",
+        "description": "**上架成功**时通知市场群, @所有人 (默认开启)",
         "is_secret": False,
     },
     {
@@ -393,7 +393,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": True,
-        "description": "版本更新时通知钉钉群 (默认开启)",
+        "description": "**版本更新**时通知市场群, @所有人 (默认开启)",
         "is_secret": False,
     },
     {
@@ -401,7 +401,15 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": True,
-        "description": "资产被**彻底下架**(移除)时通知钉钉群 (管理员通过下架申请后; 默认开启)",
+        "description": "资产被**彻底下架**(移除)时通知市场群, @所有人 (默认开启)",
+        "is_secret": False,
+    },
+    {
+        "key": "dingtalk.notify_on_unpublish_request",
+        "category": "notification",
+        "value_type": "bool",
+        "default": True,
+        "description": "有人**申请下架**时通知审核群 (提醒管理员去确认; 默认开启)",
         "is_secret": False,
     },
     {
@@ -409,23 +417,23 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": False,
-        "description": "管理员**直接删除**资产时通知钉钉群 (不走下架审核; 默认关闭)",
+        "description": "管理员**直接删除**资产时通知市场群, @所有人 (默认关闭)",
         "is_secret": False,
     },
     {
         "key": "dingtalk.notify_on_review",
         "category": "notification",
         "value_type": "bool",
-        "default": False,
-        "description": "有资产待审核时通知钉钉群 (提醒管理员去审; 默认关闭)",
+        "default": True,
+        "description": "有资产**待上架审核**时通知审核群 (默认开启)",
         "is_secret": False,
     },
     {
         "key": "dingtalk.notify_on_reject",
         "category": "notification",
         "value_type": "bool",
-        "default": False,
-        "description": "资产审核被驳回时通知钉钉群 (默认关闭 —— 要发自己去打开)",
+        "default": True,
+        "description": "**上架审核未通过**时通知市场群, @发布者 (默认开启)",
         "is_secret": False,
     },
     {
@@ -500,6 +508,10 @@ DEFAULT_CHANGES: dict[str, tuple[Any, Any]] = {
     "dingtalk.notify_on_publish": (False, True),
     "dingtalk.notify_on_update": (False, True),
     "dingtalk.notify_on_unpublish": (False, True),
+    # ---- 通知流程重排 (2026-10-24 晚): 审核相关的也默认开 ----
+    # 上架待审核 / 审核不通过 / 下架申请 —— 都是"要有人处理"的事, 默认该通知.
+    "dingtalk.notify_on_review": (False, True),
+    "dingtalk.notify_on_reject": (False, True),
 }
 
 

@@ -89,14 +89,21 @@ describe('资产详情抽屉 · 下架申请制', () => {
     expect(texts).not.toContain('驳回下架');
   });
 
-  it('待下架审核时: 管理员看到「通过下架并删除 / 驳回下架」', async () => {
+  it('待下架审核时: 管理员看到「通过下架并删除」', async () => {
     const w = await mountDrawer({
       it: item({ publish_status: 'unpublish_pending' }),
       role: 'admin',
     });
     const texts = buttonTexts(w);
     expect(texts).toContain('通过下架并删除');
-    expect(texts).toContain('驳回下架');
+  });
+
+  it('待下架审核时: 没有「驳回下架」按钮 (下架审核不支持驳回)', async () => {
+    const w = await mountDrawer({
+      it: item({ publish_status: 'unpublish_pending' }),
+      role: 'admin',
+    });
+    expect(buttonTexts(w).join(' ')).not.toContain('驳回下架');
   });
 
   it('已下架 (unpublished) 的资产显示「重新上架」', async () => {

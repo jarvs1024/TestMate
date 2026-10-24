@@ -328,9 +328,13 @@ export async function unpublishAsset(
   };
 }
 
-/** 管理员审核下架申请: approve = 通过并**彻底删除**, reject = 驳回并恢复在架 */
+/**
+ * 管理员审核下架申请: approve = 通过并**彻底删除**
+ *
+ * ⚠️ 下架审核**没有"驳回"** —— 不通过的话不处理即可, 作者可自行撤销申请.
+ */
 export async function reviewUnpublish(
-  code: string, decision: 'approve' | 'reject', comment = '',
+  code: string, decision: 'approve' = 'approve', comment = '',
 ): Promise<{ ok: boolean; code: string; decision: string; deleted?: boolean; publish_status?: string }> {
   const fd = new FormData();
   fd.append('decision', decision);
