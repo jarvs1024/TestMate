@@ -106,6 +106,7 @@ class _FakeAsset:
         self.install_steps = kw.get("install_steps", [])
         self.bindings = kw.get("bindings", {})
         self.project = kw.get("project", "")
+        self.review_note = kw.get("review_note", "")
         self.git_path = kw.get("git_path", "assets/skills/trace/demo")
         self.download_count = kw.get("download_count", 0)
         self.publish_status = kw.get("publish_status", "published")
@@ -223,3 +224,48 @@ def test_build_manifest_carries_project():
         code="dml-demo2", kind="skill", name="演示", version="1.0.0", summary="摘要",
     )
     assert m2["project"] == ""
+
+
+async def test_project_and_review_note_survive_index_roundtrip(ws, restore_git_config):  # noqa: ARG001
+    """适用范围与审核意见要能经 index.json 往返还原.
+
+    ⚠️ 少了这一步: 别的实例同步过来后, 资产是"6100 特有"却变成通用,
+    或者"已驳回"却看不到驳回理由 —— 跨实例就丢信息了.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as s:
+        s.add(Asset(
+            code="rt-demo", name="往返演示", kind="skill", version="1.0.0",
+            publish_status="rejected", review_note="权限声明不完整",
+            git_path="assets/skills/misc/rt-demo", project="6100",
+        ))
+        await s.commit()
+
+    async with AsyncSessionLocal() as s:
+        await mc.stage_index(
+            s, override=mc.asset_to_index_entry(
+                _FakeAsset(code="rt-demo", publish_status="rejected",
+                           review_note="权限声明不完整", project="6100")
+            ),
+        )
+    raw = (ws / mc.INDEX_PATH).read_text(encoding="utf-8")
+    d = json.loads(raw)
+    entry = next(x for x in d["assets"] if x["code"] == "rt-demo")
+    assert entry["project"] == "6100"
+    assert entry["review_note"] == "权限声明不完整"
+
+    # 把 DB 里的值改掉, 再从索引回灌 —— 应该被索引里的值还原
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(select(Asset).where(Asset.code == "rt-demo"))).scalar_one()
+        a.project = ""
+        a.review_note = ""
+        await s.commit()
+    async with AsyncSessionLocal() as s:
+        await mc.apply_index_to_db(s)
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(select(Asset).where(Asset.code == "rt-demo"))).scalar_one()
+        assert a.project == "6100"
+        assert a.review_note == "权限声明不完整"
