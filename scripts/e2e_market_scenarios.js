@@ -368,8 +368,9 @@ z.close()
     await ins.page.waitForSelector('.el-drawer', { timeout: 10000 });
     await sleep(1200);
     // 安装 = 下载: 抽屉里一个「下载」按钮, 没有对话框了.
+    // 下载按钮在「安装卡」(.ins-btn), 其余动作在固定底栏 (.ad-actions)
     const insBtns = await ins.page.evaluate(() =>
-      [...document.querySelectorAll('.ad-actions button')].map((b) => (b.textContent || '').trim()));
+      [...document.querySelectorAll('.ad-actions button, .ins-btn')].map((b) => (b.textContent || '').trim()));
     check('⑭ 抽屉里有「下载」按钮', insBtns.includes('下载'), insBtns.join(' | '));
     check('⑮ 没有装到本地/重新安装/卸载',
       !insBtns.some((b) => /安装到本地|重新安装|卸载/.test(b)), insBtns.join(' | '));

@@ -137,8 +137,13 @@ async function snap(page) {
       steps: [...document.querySelectorAll('.steps li')].map((s) => txt(s)),
       gitPath: txt(document.querySelector('.ad-git code')),
       syncChip: txt(document.querySelector('.ad-sync-chip')),
-      adBtnLabels: [...document.querySelectorAll('.ad-actions button')]
+      // 下载按钮搬到「安装卡」(.ins-btn) 了, 其余动作在固定底栏 (.ad-actions)
+      adBtnLabels: [...document.querySelectorAll('.ad-actions button, .ins-btn')]
         .map((b) => (b.textContent || '').trim()),
+      insDir: txt(document.querySelector('.ins-dir')),
+      useWhen: txt(document.querySelector('.ad-block-h.ok')?.parentElement?.querySelector('.ad-block-b')),
+      tagCount: document.querySelectorAll('.ad-tags .tag').length,
+      techOpen: !!document.querySelector('.tech-toggle'),
       dlgChanCount: document.querySelectorAll('.inst-chan').length,
       dlgTarget: txt(document.querySelector('.inst-chan-d')),
       // 解压目标显示在「安装包」区块的第二行
@@ -334,8 +339,14 @@ async function codeByName(page, name) {
     check('D1 详情抽屉打开', s.drawerOpen && !!s.drawerName, s.drawerName);
     check('D2 文档正文已渲染', s.docHtmlLen > 40, `html ${s.docHtmlLen} 字节`);
     check('D3 文档已消毒(无 script/iframe/img)', s.docHasScript === false);
-    check('D4 权限区块有内容', s.permRows > 0 || s.permEmpty, `permRows=${s.permRows} empty=${s.permEmpty}`);
-    check('D5 安装步骤展示', s.steps.length > 0, s.steps.join(' / '));
+    // ⚠️ 2026-10-24: 权限声明 / 安装步骤 / 不适用 的独立区块去掉了
+    //    (权限声明上传时已不让填; 安装步骤和不适用 README 里本来就有)
+    check('D4 抽屉里没有权限声明/安装步骤/不适用的独立区块',
+      s.permRows === 0 && !s.permEmpty && s.steps.length === 0,
+      `permRows=${s.permRows} steps=${s.steps.length}`);
+    check('D4b 安装卡说清"装到哪"', /解压到/.test(s.insDir || ''), s.insDir);
+    check('D4c 「适用场景」和标签还在', s.useWhen || s.tagCount > 0,
+      `useWhen=${s.useWhen} tags=${s.tagCount}`);
     check('D6 GitLab 存储路径展示', /assets\//.test(s.gitPath || ''), s.gitPath);
     check('D7 同步状态标签', /已同步|待同步|失败/.test(s.syncChip || ''), s.syncChip);
     await page.screenshot({ path: path.join(OUT_DIR, '01-drawer.png') });

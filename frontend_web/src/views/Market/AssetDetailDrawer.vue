@@ -32,16 +32,38 @@
                 :closable="false" show-icon class="ad-alert"
                 title="该资产已被下架" />
 
+      <!-- ① 安装卡 (吸顶: 无论滚到哪, "下载"和"装到哪"都在眼前) -->
+      <div class="ad-install">
+        <template v-if="item.kind !== 'mcp'">
+          <div class="ins-h">
+            <span class="ins-t">⬇ 下载安装包</span>
+            <code class="ins-file">{{ item.code }}-{{ item.version }}.zip</code>
+          </div>
+          <el-button type="primary" class="ins-btn" :loading="busy" @click="doDownload">
+            下载
+          </el-button>
+          <div class="ins-dir">
+            <span class="ins-dir-l">解压到</span>
+            <code>{{ targetDir }}/</code>
+          </div>
+          <p class="ins-tip">解压到宿主的这个目录, 重启 Agent 会话后即可使用</p>
+        </template>
+        <template v-else>
+          <div class="ins-h"><span class="ins-t">🔌 连接器</span></div>
+          <p class="ins-tip">
+            连接器不打包下载 —— 请在宿主的 MCP 配置里手动添加
+            (<code>{{ item.code }}</code>), 配置说明见下面的 README。
+          </p>
+        </template>
+      </div>
+
       <p class="ad-summary">{{ item.description || item.summary }}</p>
 
       <div class="ad-block">
         <div class="ad-block-h ok">✓ 适用场景</div>
         <div class="ad-block-b">{{ item.use_when || '—' }}</div>
       </div>
-      <div class="ad-block">
-        <div class="ad-block-h warn">✗ 不适用</div>
-        <div class="ad-block-b">{{ item.not_for || '—' }}</div>
-      </div>
+      <!-- ⚠️ 「不适用」去掉了 (2026-10-24): README 里已经写了, 页面再列一遍是重复. -->
 
       <!-- 文档正文: SKILL.md (skill) / README.md (plugin) -->
       <div class="ad-block">
@@ -54,30 +76,10 @@
         <div v-else class="ad-doc-empty">暂无文档内容</div>
       </div>
 
-      <!-- 权限声明 -->
-      <div class="ad-block ad-perm" :class="{ 'is-empty': permRows.length === 0 }">
-        <div class="ad-block-h perm">
-          🔐 权限声明
-          <span v-if="permRows.length" class="perm-count">{{ permRows.length }} 项</span>
-          <span v-else class="perm-none">无</span>
-        </div>
-        <div v-if="permRows.length === 0" class="ad-block-b muted">
-          该资产不读写本地文件、不发起网络请求、不执行外部命令。
-        </div>
-        <ul v-else class="perm-list">
-          <li v-for="r in permRows" :key="r.label">
-            <span class="perm-label">{{ r.label }}</span>
-            <code v-for="v in r.values" :key="v" class="perm-val">{{ v }}</code>
-          </li>
-        </ul>
-      </div>
+      <!-- ⚠️ 权限声明 / 安装步骤 的独立区块都去掉了 (2026-10-24):
+           权限声明 —— 上传表单里已经不让填了, 留着只会显示"没填"却像是"确认不需要";
+           安装步骤 —— README 里本来就有一份, 两处重复. -->
 
-      <div v-if="item.install_steps?.length" class="ad-block">
-        <div class="ad-block-h">安装步骤</div>
-        <ol class="steps">
-          <li v-for="(s, i) in item.install_steps" :key="i">{{ s }}</li>
-        </ol>
-      </div>
 
       <div class="ad-tags">
         <span v-for="t in item.tags" :key="t" class="tag">#{{ t }}</span>
@@ -88,13 +90,26 @@
         <span>更新 {{ (item.updated_at || '').slice(0, 10) || '—' }}</span>
       </div>
 
-      <div v-if="item.git_path" class="ad-git mono">
-        <span class="ad-git-label">GitLab 存储</span>
-        <code>{{ item.git_path }}</code>
-        <code v-if="item.git_commit_sha">{{ item.git_commit_sha.slice(0, 12) }}</code>
-        <a v-if="item.git_web_url" class="ad-git-link" :href="item.git_web_url"
-           target="_blank" rel="noopener">↗ 在 GitLab 查看</a>
-        <span class="ad-sync-chip" :class="item.sync_status">{{ syncLabel }}</span>
+      <!-- 技术信息: GitLab 路径 / commit / 同步状态 —— 普通用户用不上, 默认收起 -->
+      <div class="ad-tech">
+        <button type="button" class="tech-toggle" @click="techOpen = !techOpen">
+          <span>🔧 技术信息</span>
+          <span class="tech-caret">{{ techOpen ? '▾' : '▸' }}</span>
+        </button>
+        <div v-show="techOpen" class="tech-body">
+          <div class="tech-line mono">
+            <span>资产号 {{ item.code }}</span>
+            <span>下载 {{ item.download_count || 0 }} 次</span>
+          </div>
+          <div v-if="item.git_path" class="ad-git mono">
+            <span class="ad-git-label">GitLab 存储</span>
+            <code>{{ item.git_path }}</code>
+            <code v-if="item.git_commit_sha">{{ item.git_commit_sha.slice(0, 12) }}</code>
+            <a v-if="item.git_web_url" class="ad-git-link" :href="item.git_web_url"
+               target="_blank" rel="noopener">↗ 在 GitLab 查看</a>
+            <span class="ad-sync-chip" :class="item.sync_status">{{ syncLabel }}</span>
+          </div>
+        </div>
       </div>
 
       <div v-if="item.sync_status === 'failed' && item.last_error" class="ad-err">
@@ -103,7 +118,11 @@
         <p class="ad-err-hint">资产仍在本机工作区, 修复后可重试同步。</p>
       </div>
 
-      <div class="ad-actions">
+      <!-- 说明: 动作按钮放在抽屉的**固定底栏** (见文末 #footer) —— 文档再长也点得到 -->
+    </template>
+
+    <template #footer>
+      <div v-if="item" class="ad-actions">
         <!-- ===== 审核操作 (管理员) ===== -->
         <el-button v-if="canReview && item.publish_status === 'pending'"
                    type="primary" class="ad-btn" :loading="busy" @click="doReview('approve')">
@@ -132,15 +151,9 @@
           撤销下架申请
         </el-button>
 
-        <!-- 安装 = 下载安装包, 自己解压.
+        <!-- ⚠️ 「下载」不在这里 —— 它跟"装到哪"放一起了 (见顶部安装卡).
              不做「装到本地 / 重新安装 / 卸载」那一套 —— 服务器不该替用户管磁盘. -->
-        <el-button
-          v-if="item.kind !== 'mcp'"
-          type="primary"
-          class="ad-btn" :loading="busy" @click="doDownload"
-        >下载</el-button>
-        <el-button v-else disabled class="ad-btn">连接器不支持下载</el-button>
-        <el-button v-if="canEdit" class="ad-btn" @click="emit('edit', item)">更新版本</el-button>
+        <el-button v-if="canEdit" class="ad-btn" @click="emit('edit', item)">发布新版本</el-button>
         <el-button v-if="canEdit && item.publish_status === 'published'"
                    class="ad-btn" type="warning" plain @click="doApplyUnpublish">
           申请下架
@@ -153,10 +166,6 @@
           ⚠️ 这里**没有**「彻底删除」按钮 (2026-10-24 起) ——
              删除是不可逆的动作, 必须走「申请下架 → 管理员确认」, 有人拍板.
         -->
-      </div>
-
-      <div class="ad-proto-note">
-        资产真实存储在 GitLab 仓库; 上传与更新会生成新的 commit, 历史版本可在 git 中回溯。
       </div>
     </template>
   </el-drawer>
@@ -192,6 +201,8 @@ const doc = ref<AssetDoc | null>(null);
 const docLoading = ref(false);
 const docError = ref('');
 const busy = ref(false);
+/** 技术信息 (GitLab 路径/commit/同步状态) 默认收起 —— 普通用户用不上 */
+const techOpen = ref(false);
 
 const userStore = useUserStore();
 /** 审核人是管理员 */
@@ -230,16 +241,6 @@ const syncLabel = computed(() => {
   }
 });
 
-const permRows = computed(() => {
-  const p = props.item?.permissions || {};
-  return [
-    { label: '读取文件', values: p.filesystem_read || [] },
-    { label: '写入文件', values: p.filesystem_write || [] },
-    { label: '访问网络', values: p.network || [] },
-    { label: '执行命令', values: p.process_exec || [] },
-    { label: '读取凭据', values: p.secrets || [] },
-  ].filter((r) => r.values.length > 0);
-});
 
 async function loadDoc(code: string) {
   docLoading.value = true;
@@ -616,7 +617,48 @@ async function doSubmit() {
 .ad-err pre { margin: 0; font-size: 11px; color: var(--ink-700); white-space: pre-wrap; word-break: break-word; }
 .ad-err-hint { margin: 6px 0 0; font-size: 11px; color: var(--ink-500); }
 
-.ad-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+/* ===== 安装卡 (吸顶: 下载 + 装到哪, 永远在眼前) ===== */
+.ad-install {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-card); padding: 11px 13px; margin-bottom: 12px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+}
+.ins-h { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ins-t { font-size: 12.5px; font-weight: 700; color: var(--ink-900); }
+.ins-file {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-500);
+  margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ins-btn { width: 100%; }
+.ins-dir {
+  display: flex; align-items: baseline; gap: 6px; margin-top: 9px;
+  font-size: 11.5px; color: var(--ink-600);
+}
+.ins-dir-l { flex-shrink: 0; }
+.ins-dir code {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-800);
+  background: var(--surface-sunken); padding: 2px 6px; border-radius: 4px;
+  word-break: break-all;
+}
+.ins-tip { margin: 7px 0 0; font-size: 11px; color: var(--ink-500); line-height: 1.6; }
+.ins-tip code { font-family: var(--font-mono); font-size: 10.5px; }
+
+/* ===== 技术信息 (折叠) ===== */
+.ad-tech { margin: 4px 0 8px; }
+.tech-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: 0; padding: 7px 0; cursor: pointer;
+  font-family: inherit; font-size: 12px; color: var(--ink-600);
+}
+.tech-toggle:hover { color: var(--ink-900); }
+.tech-caret { margin-left: auto; color: var(--ink-500); font-size: 11px; }
+.tech-body { padding: 2px 0 8px; }
+.tech-line {
+  display: flex; gap: 14px; font-size: 11.5px; color: var(--ink-600); margin-bottom: 7px;
+}
+
+.ad-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ad-btn { flex: 1; min-width: 120px; }
 .ad-btn.danger { color: var(--err); border-color: rgba(239, 68, 68, 0.4); }
 .ad-btn.danger:hover { border-color: var(--err); background: rgba(239, 68, 68, 0.08); color: var(--err); }

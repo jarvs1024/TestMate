@@ -95,8 +95,9 @@ function check(name, ok, detail) {
     await page.waitForSelector('.ad-actions', { timeout: 15000 });
     await sleep(800);
 
+    // 下载按钮在「安装卡」(.ins-btn), 其余动作在固定底栏 (.ad-actions)
     const btns = await page.evaluate(() =>
-      [...document.querySelectorAll('.ad-actions button')]
+      [...document.querySelectorAll('.ad-actions button, .ins-btn')]
         .map((b) => (b.textContent || '').trim()));
 
     check('E3 有「下载」按钮', btns.includes('下载'), btns.join(' | '));
@@ -122,7 +123,7 @@ function check(name, ok, detail) {
       try { await dl.cancel(); } catch { /* 已取消 */ }
     });
     await page.evaluate(() => {
-      const b = [...document.querySelectorAll('.ad-actions button')]
+      const b = [...document.querySelectorAll('.ad-actions button, .ins-btn')]
         .find((x) => (x.textContent || '').trim() === '下载');
       b && b.click();
     });
