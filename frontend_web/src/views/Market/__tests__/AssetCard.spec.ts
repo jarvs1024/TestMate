@@ -16,7 +16,7 @@ function item(over: Partial<AssetItem> = {}): AssetItem {
     category: 'misc', tags: [], keywords: [], author: 'admin', featured: false,
     homepage: null, permissions: {}, install_steps: [], bindings: {},
     git_path: 'assets/skills/misc/demo', git_commit_sha: '', git_web_url: '',
-    updated_at: null,
+    download_count: 0, updated_at: null,
     sync_status: 'pushed', last_error: '', publish_status: 'published',
     review_note: '', can_review: false,
     ...over,
@@ -72,6 +72,11 @@ describe('AssetCard 状态徽标', () => {
     const b = badges(w);
     expect(b).toContain('📋 待审核');
     expect(b).toContain('🕐 待同步');
+  });
+
+  it('显示下载次数', () => {
+    const w = mount(AssetCard, { props: { item: item({ download_count: 7 }) } });
+    expect(w.text()).toContain('⬇ 7');
   });
 
   it('点卡片 → 抛 open 事件带该资产', async () => {

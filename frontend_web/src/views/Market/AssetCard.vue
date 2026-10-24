@@ -33,6 +33,7 @@
     </div>
 
     <div class="ac-meta">
+      <span class="meta-item">⬇ {{ item.download_count }}</span>
       <span class="meta-item">{{ item.author || '未知' }}</span>
       <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
     </div>

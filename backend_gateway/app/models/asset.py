@@ -71,6 +71,10 @@ class Asset(Base):
     # 最近一次审核意见 (驳回理由 / 审核备注) —— 审核动作也记在 asset_audits 里
     review_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # 下载次数 —— 热门度指标 (不是"安装次数": 后端只知道用户点了下载,
+    # 不知道人家到底解压没有, 那个是猜不出来的)
+    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

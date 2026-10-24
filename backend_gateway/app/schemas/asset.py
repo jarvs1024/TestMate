@@ -28,6 +28,8 @@ class AssetOut(BaseModel):
     git_commit_sha: str = ""
     # 资产在 GitLab 上的网页地址 (由 marketplace.git.web_url 拼出; 没配就为空)
     git_web_url: str = ""
+    # 下载次数 (热门度) —— 与"是否安装"无关
+    download_count: int = 0
     updated_at: datetime | None = None
     # 同步状态: staged / pushed / failed
     sync_status: str = "staged"

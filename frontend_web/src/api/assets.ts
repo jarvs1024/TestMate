@@ -42,6 +42,8 @@ export interface AssetItem {
   git_commit_sha: string;
   /** 资产在 GitLab 上的网页地址 (由 marketplace.git.web_url 拼出; 没配就为空) */
   git_web_url: string;
+  /** 下载次数 (热门度) —— 不是"安装次数" */
+  download_count: number;
   updated_at: string | null;
   /** 同步状态: staged(待同步) / pushed(已同步) / failed(失败) */
   sync_status: 'staged' | 'pushed' | 'failed' | string;

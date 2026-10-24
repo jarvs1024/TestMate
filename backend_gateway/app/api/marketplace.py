@@ -25,7 +25,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi import Response
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, update
 
 from app.api.auth import get_current_user
 from app.core import git_sync, pkg
@@ -383,9 +383,13 @@ async def list_assets(
         elif sort == "name":
             rows.sort(key=lambda a: a.name)
         else:
-            # 以前按 install_count (下载次数) 排 —— 下载数已下线, 改成"最近更新"
+            # 精选优先, 再按下载次数 (热门度), 最后按最近更新
             rows.sort(
-                key=lambda a: (bool(a.featured), a.updated_at or datetime.min),
+                key=lambda a: (
+                    bool(a.featured),
+                    a.download_count or 0,
+                    a.updated_at or datetime.min,
+                ),
                 reverse=True,
             )
         page = rows[offset : offset + limit]
@@ -707,6 +711,14 @@ async def download_package(
             raise HTTPException(status_code=404, detail="资产文件不存在")
         data = pkg.build_zip(root)
         name = f"{code}-{version}.zip"
+
+    # 下载次数 +1 —— 原子自增 (先读后写会丢计数: 并发下载时互相覆盖)
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            update(Asset).where(Asset.code == code)
+            .values(download_count=Asset.download_count + 1)
+        )
+        await session.commit()
 
     return Response(
         content=data,

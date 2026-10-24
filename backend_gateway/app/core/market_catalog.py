@@ -194,6 +194,7 @@ def asset_to_index_entry(a: Asset) -> dict[str, Any]:
         "install_steps": list(a.install_steps or []),
         "bindings": dict(a.bindings or {}),
         "git_path": a.git_path,
+        "download_count": a.download_count,
         # 生命周期状态也在索引里 —— 上下架必须能被别的实例看到
         "publish_status": a.publish_status or "published",
         "updated_at": a.updated_at.isoformat() if a.updated_at else "",
@@ -308,6 +309,8 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         a.git_path = e.get("git_path") or ""
         # 上下架状态: 索引里没有这一项的旧数据按 published 处理
         a.publish_status = e.get("publish_status") or "published"
+        if e.get("download_count") is not None:
+            a.download_count = int(e["download_count"])
         if e.get("updated_at"):
             from datetime import datetime
 
