@@ -37,7 +37,7 @@ CATEGORIES: list[dict[str, Any]] = [
     },
     {
         "slug": "env",
-        "name": "环境助手",
+        "name": "环境运维",
         "order": 20,
         "desc": "机台 / 设备 / 测试环境的准备与操作",
     },
@@ -77,7 +77,8 @@ CATEGORIES: list[dict[str, Any]] = [
 # 用途: 迁移老数据 (DB / manifest / index.json / GitLab 目录) 时把旧名字换成新的.
 LEGACY_ALIASES: dict[str, str] = {
     "Spec 问答": "方案用例",
-    "机台运维": "环境助手",
+    "机台运维": "环境运维",
+    "环境助手": "环境运维",
     "老化任务": "任务调度",
     "测试报告": "流程管控",
     "Trace 诊断": "质量诊断",

@@ -218,7 +218,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "testmate-machine-ops", "kind": "mcp", "name": "TestMate 机台运维",
-        "icon": "🛠", "version": "v0.3.0", "category": "环境助手",
+        "icon": "🛠", "version": "v0.3.0", "category": "环境运维",
         "summary": "查询测试机状态 / 温箱与通道占用 / 触发常用运维动作",
         "description": "经 TestMate 网关访问机台字典与 SSH 通道, 提供机台状态查询与受限的运维动作。",
         "use_when": "测试过程中要快速查机台状态、看通道占用、拉日志或复位",
@@ -240,7 +240,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "dingtalk-notify", "kind": "mcp", "name": "钉钉通知推送",
-        "icon": "📮", "version": "v0.4.2", "category": "环境助手",
+        "icon": "📮", "version": "v0.4.2", "category": "环境运维",
         "summary": "向指定钉钉群推送 Markdown 卡片, 支持加签",
         "description": "经 TestMate 网关转发钉钉机器人 webhook, 统一管理加签与重试。",
         "use_when": "需要把测试结果 / 告警推送到团队群",

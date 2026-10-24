@@ -14,7 +14,7 @@ from app.core import market_categories as mc
 # 正式分类 (顺序 = 测试全流程的阶段顺序)
 EXPECTED = [
     ("cases", "方案用例"),
-    ("env", "环境助手"),
+    ("env", "环境运维"),
     ("schedule", "任务调度"),
     ("flow", "流程管控"),
     ("diagnose", "质量诊断"),
@@ -62,7 +62,8 @@ def test_legacy_names_map_to_new_ones():
     assert mc.normalize("老化任务") == "任务调度"
     assert mc.normalize("测试报告") == "流程管控"
     assert mc.normalize("自动化代码") == "流程管控"
-    assert mc.normalize("机台运维") == "环境助手"
+    assert mc.normalize("机台运维") == "环境运维"
+    assert mc.normalize("环境助手") == "环境运维"   # 2026-10-24 改名
     assert mc.normalize("FW 比对") == "质量诊断"
 
 

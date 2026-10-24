@@ -189,10 +189,19 @@ function check(name, ok, detail) {
     return page.evaluate(async (c) => {
     const tk = localStorage.getItem('testmate:token');
     const H = { Authorization: 'Bearer ' + tk };
+    // ⚠️ 回执是**累积**的 (表里几百条了), 不能用"总数差"算新增 ——
+    //    列表有 limit 上限, 老的会被挤出去, 差值就乱了.
+    //    改成按 **id 大于起点** 取"这次新产生的".
+    const maxId = async () => {
+      const r = await fetch('/api/v1/assets/notifications?limit=1', { headers: H });
+      const d = await r.json();
+      return (d.items || [])[0]?.id || 0;
+    };
+    const base = await maxId();
     const events = async () => {
       const r = await fetch('/api/v1/assets/notifications?limit=100', { headers: H });
       const d = await r.json();
-      return (d.items || []).filter((n) => n.code === c).map((n) => n.event);
+      return (d.items || []).filter((n) => n.code === c && n.id > base).map((n) => n.event);
     };
     const post = async (path, fields) => {
       const fd = new FormData();
@@ -210,8 +219,6 @@ function check(name, ok, detail) {
     fd.append('files', new Blob(['---\nname: ' + c + '\ndescription: 临时\n---\n\n# 临时\n'], { type: 'text/plain' }), 'SKILL.md');
     // 回执是**累积**的 (上一次跑同 code 的还在) —— 所以只取"这次新产生的那些".
     // 列表按 id 倒序 (新的在最前), 所以新增的 = 前面多出来的那几条.
-    const before = await events();
-    const since = (arr, prevLen) => arr.slice(0, Math.max(0, arr.length - prevLen));
     const up = await fetch('/api/v1/assets/upload', { method: 'POST', headers: H, body: fd });
     await new Promise((r) => setTimeout(r, 7000));
     // 开了上架审核的话资产会停在「待审核」 —— 审一下, 保证它在架 (通知链路才跑得起来)
@@ -233,11 +240,10 @@ function check(name, ok, detail) {
     const gone = await fetch(`/api/v1/assets/${c}`, { headers: H });
     return {
       up: up.status, un, ap, gone: gone.status,
-      before, afterUpload, afterApply, afterApprove,
       // 每一段"新产生"的通知 (只看这次跑的)
-      dUpload: since(afterUpload, before.length),
-      dApply: since(afterApply, afterUpload.length),
-      dApprove: since(afterApprove, afterApply.length),
+      dUpload: afterUpload,
+      dApply: afterApply,
+      dApprove: afterApprove,
     };
   }, code);
   };

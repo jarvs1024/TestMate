@@ -1,7 +1,7 @@
 """一次性迁移: 业务分类重排 (2026-10-24) —— 改分类 + 搬目录.
 
 背景: 分类从"主题词" (Trace 诊断 / FW 比对 / 老化任务 …) 改成
-      "测试全流程的阶段" (方案用例 / 环境助手 / 任务调度 / 流程管控 /
+      "测试全流程的阶段" (方案用例 / 环境运维 / 任务调度 / 流程管控 /
       质量诊断 / 知识资产 / 其他).
 
 一次做完三件事 (都在同一个 commit 里, 索引不会出现中间态):
@@ -49,8 +49,8 @@ MAPPING: dict[str, str] = {
     "review-agent-board": "流程管控",       # 审核看板
     "test-report-gen": "流程管控",          # 测试报告
     "weekly-report-assistant": "流程管控",  # 周报
-    "testmate-machine-ops": "环境助手",     # 机台 = 环境
-    "dingtalk-notify": "环境助手",          # 通知助手
+    "testmate-machine-ops": "环境运维",     # 机台 = 环境
+    "dingtalk-notify": "环境运维",          # 通知助手
 }
 
 
@@ -93,6 +93,11 @@ async def main(dry_run: bool) -> int:
 
         # ---- 1. 目录搬家 (git mv, 历史保留) ----
         for a, new_cat, old_path, new_path in plan:
+            if old_path == new_path:
+                # ⚠️ 只是**改了显示名** (slug 冻结 → 目录不动) —— 这就是
+                #    "分类改名不搬家" 的设计: 只改 manifest 里的 category 即可.
+                print(f"  ↪ 只改名, 目录不动: {old_path} ({a.category} → {new_cat})")
+                continue
             src = git_sync.WORKSPACE / old_path
             dst = git_sync.WORKSPACE / new_path
             if not src.is_dir():
@@ -129,7 +134,7 @@ async def main(dry_run: bool) -> int:
         _git(
             "-c", "user.name=testmate", "-c", "user.email=testmate@local",
             "commit", "-m",
-            "chore(market): 业务分类重排 (方案用例/环境助手/任务调度/单据流程/质量诊断/知识资产) "
+            "chore(market): 业务分类调整 "
             "—— 分类目录随之搬家",
         )
         rc, so, se = git_sync._run_git(["push", "origin", git_sync.git_branch()], cwd=git_sync.WORKSPACE)
