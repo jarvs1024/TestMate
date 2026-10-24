@@ -214,9 +214,10 @@
             <span class="grp-cnt">{{ notificationItems.length }} 项</span>
           </h2>
           <div class="hint">
-            💡 资产市场在<strong>上架 / 下架 / 更新</strong>时会往钉钉群发通知
+            💡 资产市场在<strong>上架 / 更新 / 彻底下架</strong>时会往钉钉群发通知
             —— <strong>这三个开关默认开启</strong>, 不想被打扰可以自己关掉。
             <strong>删除 / 待审核 / 驳回</strong> 默认关闭, 要发自己去打开。
+            <br />下架要走审核: <strong>申请阶段不通知</strong>, 等管理员确认、资产真的被移除才通知一次。
             配好 webhook 后点「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
           </div>
 

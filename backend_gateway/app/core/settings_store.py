@@ -401,7 +401,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": True,
-        "description": "有人**申请下架**时通知钉钉群 (提醒管理员确认; 默认开启)",
+        "description": "资产被**彻底下架**(移除)时通知钉钉群 (管理员通过下架申请后; 默认开启)",
         "is_secret": False,
     },
     {
@@ -409,7 +409,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": False,
-        "description": "资产被**彻底删除**时通知钉钉群 (默认关闭 —— 要发自己去打开)",
+        "description": "管理员**直接删除**资产时通知钉钉群 (不走下架审核; 默认关闭)",
         "is_secret": False,
     },
     {

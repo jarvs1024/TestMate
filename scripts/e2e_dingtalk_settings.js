@@ -45,7 +45,18 @@ function check(name, ok, detail) {
   // ⚠️ 关掉缓存 —— 否则会加载上一次的旧 JS, 调已下线的端点
   await page.setCacheEnabled(false);
   page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push('[console.error] ' + m.text()); });
+  // 预期内的 404 (刚被删掉的临时资产, 再查一次确认没了) —— 不算缺陷
+  const expect404 = [];
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    // HTTP 状态码错误交给下面的 response 钩子记 (它带 URL, 好定位)
+    if (/Failed to load resource/.test(m.text())) return;
+    errors.push('[console.error] ' + m.text());
+  });
+  page.on('response', (r) => {
+    if (r.status() === 404 && expect404.some((p) => r.url().includes(p))) return;
+    if (r.status() >= 400) errors.push(`[http${r.status()}] ${r.url()}`);
+  });
 
   // 登录
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' });
@@ -166,41 +177,78 @@ function check(name, ok, detail) {
   check('S17 页面上六个开关显示与默认一致', uiSwitches.length === 6 && uiWrong.length === 0,
     uiSwitches.map((x) => `${x.key}=${(x.stxt || '').trim()}`).join(' '));
 
-  // ---------- 开关关着时, 真上架/下架**不能**产生通知回执 ----------
-  // 这是"通知可以被关掉"最直接的验证: 走真实上架链路, 看回执数有没有涨.
-  // ⚠️ 上架/下架默认是**开**的 —— 所以这里得先显式关掉, 验完再还原.
+  // ---------- 跑一遍真实的"上架 → 申请下架 → 彻底下架", 看每一步发了什么通知 ----------
+  // 返回: 上架后 / 申请下架后 / 彻底下架后 三个时刻的回执事件列表.
+  // (用**临时资产**: 这条流程最后会把资产删掉, 不能拿市场里的正式资产试)
+  const runUnpublishFlow = async (code) => {
+    expect404.push(code);   // 这条流程最后会删掉资产 → 之后的 404 是预期的
+    return page.evaluate(async (c) => {
+    const tk = localStorage.getItem('testmate:token');
+    const H = { Authorization: 'Bearer ' + tk };
+    const events = async () => {
+      const r = await fetch('/api/v1/assets/notifications?limit=100', { headers: H });
+      const d = await r.json();
+      return (d.items || []).filter((n) => n.code === c).map((n) => n.event);
+    };
+    const post = async (path, fields) => {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(fields || {})) fd.append(k, v);
+      return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
+    };
+    // 上传临时资产 (admin 自己上传 → 免审直接上架)
+    const fd = new FormData();
+    fd.append('code', c); fd.append('kind', 'skill'); fd.append('name', 'E2E 通知临时资产');
+    fd.append('version', '1.0.0'); fd.append('summary', '验证下架通知时机');
+    fd.append('description', '用完即删'); fd.append('use_when', '仅测试'); fd.append('not_for', '生产');
+    fd.append('category', 'misc'); fd.append('icon', '🧪'); fd.append('tags', '[]');
+    fd.append('keywords', '[]'); fd.append('featured', 'false'); fd.append('permissions', '{}');
+    fd.append('install_steps', '[]'); fd.append('bindings', '{}');
+    fd.append('files', new Blob(['---\nname: ' + c + '\ndescription: 临时\n---\n\n# 临时\n'], { type: 'text/plain' }), 'SKILL.md');
+    // 回执是**累积**的 (上一次跑同 code 的还在) —— 所以只取"这次新产生的那些".
+    // 列表按 id 倒序 (新的在最前), 所以新增的 = 前面多出来的那几条.
+    const before = await events();
+    const since = (arr, prevLen) => arr.slice(0, Math.max(0, arr.length - prevLen));
+    const up = await fetch('/api/v1/assets/upload', { method: 'POST', headers: H, body: fd });
+    await new Promise((r) => setTimeout(r, 7000));
+    // 开了上架审核的话资产会停在「待审核」 —— 审一下, 保证它在架 (通知链路才跑得起来)
+    const st = await fetch(`/api/v1/assets/${c}`, { headers: H });
+    const stJson = await st.json();
+    if (stJson.publish_status === 'pending') {
+      await post(`/api/v1/assets/${c}/review`, { decision: 'approve', comment: 'e2e 自审' });
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+    const afterUpload = await events();
+    // 申请下架 —— 这一步**不该**通知
+    const un = await post(`/api/v1/assets/${c}/unpublish`, { confirm_code: c, comment: '通知时机验证' });
+    await new Promise((r) => setTimeout(r, 3000));
+    const afterApply = await events();
+    // 管理员通过 → 彻底下架 —— 这时候才通知
+    const ap = await post(`/api/v1/assets/${c}/unpublish-review`, { decision: 'approve', comment: '同意下架' });
+    await new Promise((r) => setTimeout(r, 7000));
+    const afterApprove = await events();
+    const gone = await fetch(`/api/v1/assets/${c}`, { headers: H });
+    return {
+      up: up.status, un, ap, gone: gone.status,
+      before, afterUpload, afterApply, afterApprove,
+      // 每一段"新产生"的通知 (只看这次跑的)
+      dUpload: since(afterUpload, before.length),
+      dApply: since(afterApply, afterUpload.length),
+      dApprove: since(afterApprove, afterApply.length),
+    };
+  }, code);
+  };
+
+  // ---------- 开关关着时, 整条链路**一条通知都不该有** ----------
   let quiet;
   try {
     await setSwitches({
       'dingtalk.notify_on_publish': false,
       'dingtalk.notify_on_unpublish': false,
     });
-    quiet = await page.evaluate(async () => {
-      const tk = localStorage.getItem('testmate:token');
-      const H = { Authorization: 'Bearer ' + tk };
-      const code = 'ssd-log-doctor';
-      const count = async () => {
-        const r = await fetch('/api/v1/assets/notifications?limit=1', { headers: H });
-        const d = await r.json();
-        return d.total ?? (d.items || []).length;
-      };
-      const post = async (path, fields) => {
-        const fd = new FormData();
-        for (const [k, v] of Object.entries(fields || {})) fd.append(k, v);
-        return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
-      };
-      const before = await count();
-      const un = await post(`/api/v1/assets/${code}/unpublish`,
-        { confirm_code: code, comment: '默认不通知验证' });
-      await new Promise((r) => setTimeout(r, 2000));
-      const cancel = await post(`/api/v1/assets/${code}/unpublish-cancel`,
-        { comment: '默认不通知验证结束' });
-      await new Promise((r) => setTimeout(r, 2000));
-      const after = await count();
-      return { before, after, un, cancel };
-    });
-    check('S18 开关关着时上下架不产生任何通知回执', quiet.after === quiet.before,
-      `回执 ${quiet.before} → ${quiet.after} (unpublish=${quiet.un} cancel=${quiet.cancel})`);
+    quiet = await runUnpublishFlow('e2e-notify-quiet');
+    check('S18 开关关着时整条下架链路不产生任何通知回执',
+      quiet.dApprove.length === 0 && quiet.dUpload.length === 0 && quiet.dApply.length === 0,
+      `上架=${JSON.stringify(quiet.dUpload)} 申请=${JSON.stringify(quiet.dApply)} 彻底下架=${JSON.stringify(quiet.dApprove)}`);
   } finally {
     await restoreSwitches();
   }
@@ -297,10 +345,11 @@ function check(name, ok, detail) {
   const logCount = await page.evaluate(() => document.querySelectorAll('#sec-notification .notif-list li').length);
   check('S10 通知回执列表有内容', logCount > 0, `${logCount} 条`);
 
-  // ---------- 市场通知真链路: 上下架 → 钉钉送达 → 回执 sent ----------
+  // ---------- 市场通知真链路: 上架 → 申请下架 → 彻底下架 ----------
   // (市场脚本 e2e_market.js 测试期间会静音通知, 所以这条专门在这里验)
   //
-  // ⚠️ 通知开关现在**默认是关的** —— 要验这条链路必须自己把开关打开,
+  // ⚠️ 通知开关默认是**开**的 (上架/更新/下架) —— 但这条链路要分别验
+  //    "什么时候发": 上架发一次 / 申请下架**不发** / 彻底下架才发.
   //    验完**必须还原** (改生产设置一定要在 try/finally 里).
   let marketNotify;
   try {
@@ -310,36 +359,19 @@ function check(name, ok, detail) {
       'dingtalk.notify_on_unpublish': true,
     });
 
-    marketNotify = await page.evaluate(async () => {
-      const tk = localStorage.getItem('testmate:token');
-      const H = { Authorization: 'Bearer ' + tk };
-      const code = 'ssd-log-doctor';
-      const post = async (path, fields) => {
-        const fd = new FormData();
-        for (const [k, v] of Object.entries(fields || {})) fd.append(k, v);
-        return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
-      };
-      // ⚠️ 下架现在是**申请制**: 要带 confirm_code, 而且提交后进「待下架审核」,
-      //    这时候不能直接 publish (会 409) —— 得先撤销申请.
-      const un = await post(`/api/v1/assets/${code}/unpublish`,
-        { confirm_code: code, comment: '钉钉通知链路验证' });
-      await new Promise((r) => setTimeout(r, 2500));
-      const cancel = await post(`/api/v1/assets/${code}/unpublish-cancel`,
-        { comment: '钉钉通知链路验证结束' });
-      await new Promise((r) => setTimeout(r, 2500));
-      const r = await fetch('/api/v1/assets/notifications?limit=5', { headers: H });
-      const d = await r.json();
-      const latest = (d.items || []).slice(0, 2);
-      return {
-        un, cancel,
-        receipts: latest.map((n) => ({ event: n.event, code: n.code, status: n.status, attempts: n.attempts, err: n.error })),
-      };
-    });
-    check('S12 申请下架 + 撤销都成功', marketNotify.un === 200 && marketNotify.cancel === 200,
-      `unpublish=${marketNotify.un} cancel=${marketNotify.cancel}`);
-    const allSent = marketNotify.receipts.length >= 2 && marketNotify.receipts.every((r) => r.status === 'sent');
-    check('S13 市场通知回执全部「已送达」', allSent,
-      marketNotify.receipts.map((r) => `${r.event}:${r.status}(${r.attempts})`).join(' '));
+    marketNotify = await runUnpublishFlow('e2e-notify-live');
+    check('S12 上架/申请下架/通过 三步都成功',
+      marketNotify.un === 200 && marketNotify.ap === 200 && marketNotify.gone === 404,
+      `apply=${marketNotify.un} approve=${marketNotify.ap} 资产=${marketNotify.gone}`);
+    check('S13 上架时通知一次 (publish)',
+      marketNotify.dUpload.filter((e) => e === 'publish').length === 1,
+      `上架后新通知: ${JSON.stringify(marketNotify.dUpload)}`);
+    check('S13b 申请下架**不通知** (等彻底下架才发)',
+      marketNotify.dApply.length === 0,
+      `申请下架后新通知: ${JSON.stringify(marketNotify.dApply)}`);
+    check('S13c 彻底下架后才通知 (unpublish)',
+      marketNotify.dApprove.filter((e) => e === 'unpublish').length === 1,
+      `彻底下架后新通知: ${JSON.stringify(marketNotify.dApprove)}`);
   } finally {
     // 还原开关 —— 不然真实环境就变成"一直发通知"了
     await restoreSwitches();

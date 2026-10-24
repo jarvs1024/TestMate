@@ -290,6 +290,76 @@ async def test_audit_records_the_whole_flow(
     assert "unpublish_approve" in actions, actions
 
 
+# ---------- 通知时机 ----------
+
+async def test_notification_only_after_full_removal(
+    client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
+):
+    """⚠️ 下架通知只在**彻底下架**之后发 —— 申请阶段不通知.
+
+    申请只是内部流程 (管理员还要审), 提前往群里发等于剧透, 之后还得再发一次.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+    from sqlalchemy import select
+    from tests.conftest import set_setting
+
+    # 配个连不上的 webhook —— 发送会失败, 但**回执照样落库** (我们要看的是"有没有发起")
+    await set_setting("dingtalk.market_webhook", "http://127.0.0.1:1/nope")
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _make_published(client, pauth, "unp-notify")
+
+    async def events_of(code):
+        async with AsyncSessionLocal() as s:
+            rows = (await s.execute(
+                select(AssetNotification).where(AssetNotification.code == code)
+            )).scalars().all()
+        return [r.event for r in rows]
+
+    # 申请下架 → 不该有 unpublish 通知 (上传本身会有一条 publish, 那是另一回事)
+    await _apply_unpublish(client, pauth, "unp-notify")
+    assert "unpublish" not in await events_of("unp-notify"), \
+        f"申请阶段不该发下架通知: {await events_of('unp-notify')}"
+
+    # 管理员通过 → 资产彻底下架 → 这时候才通知一次
+    r = await client.post(f"{API}/unp-notify/unpublish-review",
+                          data={"decision": "approve"}, headers=auth)
+    assert r.status_code == 200, r.text
+    evs = await events_of("unp-notify")
+    assert evs.count("unpublish") == 1, f"彻底下架后应该有一条 unpublish 通知: {evs}"
+
+
+async def test_cancel_request_sends_no_notification(
+    client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
+):
+    """撤销下架申请**不通知** —— 资产从头到尾没被移除过."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+    from sqlalchemy import select
+    from tests.conftest import set_setting
+
+    await set_setting("dingtalk.market_webhook", "http://127.0.0.1:1/nope")
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _make_published(client, pauth, "unp-cancel-notify")
+
+    await _apply_unpublish(client, pauth, "unp-cancel-notify")
+    r = await client.post(f"{API}/unp-cancel-notify/unpublish-cancel", data={}, headers=pauth)
+    assert r.status_code == 200, r.text
+
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(
+            select(AssetNotification).where(AssetNotification.code == "unp-cancel-notify")
+        )).scalars().all()
+    evs = [x.event for x in rows]
+    # 上架那条 publish 是上传时发的; 撤销**不能**再发任何一条
+    assert evs.count("publish") == 1, f"撤销不该再发通知: {evs}"
+    assert "unpublish" not in evs, f"撤销不该发下架通知: {evs}"
+
+
 # ---------- 列表筛选 ----------
 
 async def test_list_filter_by_unpublish_pending(

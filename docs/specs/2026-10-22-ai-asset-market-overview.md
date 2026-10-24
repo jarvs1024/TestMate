@@ -75,7 +75,8 @@
 | `marketplace.marketplace_name` | 对外 `marketplace.json` 的 name（决定 Qoder 缓存目录名） |
 | `marketplace.public_base_url` | 对外可达基地址 |
 | `dingtalk.market_webhook` / `.market_secret` / `.market_keyword` | 钉钉机器人地址 / 加签密钥 / **关键词**（机器人默认开启关键词校验，消息里必须含该词） |
-| `dingtalk.notify_on_publish` / `.update` / `.unpublish` | 六个事件的通知开关 —— **上架 / 更新 / 下架 默认打开**（市场动作，大家要知道），**删除 / 待审核 / 驳回 默认关闭**（不刷屏），要发自己在设置页打开 |
+| `dingtalk.notify_on_publish` / `.update` / `.unpublish` | 六个事件的通知开关 —— **上架 / 更新 / 彻底下架 默认打开**（市场动作，大家要知道），**删除 / 待审核 / 驳回 默认关闭**（不刷屏），要发自己在设置页打开 |
+| 下架通知时机 | 下架走审核：**申请阶段不通知**，等管理员确认、资产**真的被移除**才通知一次（`unpublish` 事件）；撤销申请不通知（资产从没被移除过） |
 
 ## 四、前端（`frontend_web/src/views/Market/`）
 

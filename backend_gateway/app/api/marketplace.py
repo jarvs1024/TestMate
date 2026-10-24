@@ -997,11 +997,9 @@ async def unpublish_asset(
         code=code, publish_status="unpublish_pending", action="unpublish_request",
         comment=comment or "申请下架", user=user, review_note=comment or "",
     )
-    if out.get("changed"):
-        await notify_market(
-            "unpublish", name=out["name"], version=out["version"], actor=user.username,
-            detail=comment or "有人申请下架, 等管理员确认", link="", code=code,
-        )
+    # ⚠️ 这里**不通知钉钉** —— 下架通知等**彻底下架** (管理员确认、资产真被移除) 才发.
+    #    申请只是内部流程, 往群里发等于提前剧透 + 之后还要再发一次, 变成刷屏.
+    #    管理员靠市场页的「有 N 个资产在等下架确认」提示条 + 卡片徽标发现待办.
     return {
         "ok": True, "code": code, "publish_status": "unpublish_pending",
         "changed": out.get("changed", False),
@@ -1044,6 +1042,8 @@ async def review_unpublish_asset(
             code=code, user=user,
             comment=comment or "管理员通过下架申请, 资产已删除",
             audit_action="unpublish_approve",
+            # ⚠️ 下架通知只在这时候发 —— 资产**彻底下架**了才通知
+            event="unpublish",
         )
         return {
             "ok": True, "code": code, "decision": "approve",
@@ -1086,12 +1086,8 @@ async def cancel_unpublish_request(
         code=code, publish_status="published", action="unpublish_cancel",
         comment=comment or "作者撤销下架申请", user=user, review_note="",
     )
-    if out.get("changed"):
-        # 资产回到在架 —— 跟「重新上架」一样, 通知一声 (谁还在用, 得知道它没被删)
-        await notify_market(
-            "publish", name=out["name"], version=out["version"], actor=user.username,
-            detail=comment or "作者撤销下架申请, 资产保持上架", link="", code=code,
-        )
+    # ⚠️ 撤销**不通知** —— 资产从头到尾没被移除过 (只是申请被撤回了),
+    #    没有"发生了什么"值得往群里说. 审计里留痕就够.
     return {
         "ok": True, "code": code, "publish_status": "published",
         "changed": out.get("changed", False),
@@ -1217,12 +1213,15 @@ async def _hard_delete_asset(
     user: User,
     comment: str,
     audit_action: str = "delete",
+    event: str = "delete",
 ) -> AssetDeleteOut:
     """彻底删除一个资产 (GitLab 文件 + 索引 + DB 记录一起没).
 
     两条路径共用它:
-      · 管理员直接删 (DELETE /{code})
-      · 管理员**通过下架申请** (POST /{code}/unpublish-review → approve)
+      · 管理员**通过下架申请** (POST /{code}/unpublish-review → approve) → event="unpublish"
+      · 管理员**直接删** (DELETE /{code}, 运维口子) → event="delete"
+
+    事件分开是有意的: "走审核下架"和"直接删"在审计里是两回事, 通知也该分得清.
 
     顺序很关键 (**先推 GitLab, 后动 DB**):
       1. index.json 剔除该资产 (DB 行还在, 用 exclude 参数)
@@ -1288,10 +1287,10 @@ async def _hard_delete_asset(
         #    (服务端写盘通道已下线)
 
     await notify_market(
-        "delete", name=asset_name, version=version, actor=user.username,
+        event, name=asset_name, version=version, actor=user.username,
         detail=comment or "资产已从市场删除", link="", code=code,
     )
-    logger.info("delete 资产 code=%s action=%s", code, audit_action)
+    logger.info("delete 资产 code=%s action=%s event=%s", code, audit_action, event)
     return AssetDeleteOut(
         ok=True, code=code,
         commit_sha=result.commit_sha,

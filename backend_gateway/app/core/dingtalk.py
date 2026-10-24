@@ -99,7 +99,9 @@ async def send_markdown(
 _EVENT_TEXT = {
     "publish": "🎉 新资产上架",
     "update": "📦 资产版本更新",
-    "unpublish": "🗑 申请下架, 待确认",
+    # ⚠️ unpublish = **彻底下架** (资产已从市场移除), 不是"有人申请下架".
+    #    申请阶段不通知 —— 通知等真的移除后再发 (2026-10-24).
+    "unpublish": "🗑 资产已下架",
     "delete": "🗑 资产已删除",
     "review": "📋 新资产待审核",
     "reject": "❌ 资产审核未通过",
