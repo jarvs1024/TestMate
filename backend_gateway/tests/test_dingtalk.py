@@ -398,6 +398,114 @@ async def test_retry_skips_not_yet_due(monkeypatch):
     assert not called
 
 
+# ---------- 两个通知频道 (两个群) ----------
+
+def test_event_to_channel_mapping():
+    """市场动作 → 市场群; 审核相关 → 审核群."""
+    assert dingtalk._CHANNEL_OF_EVENT["publish"] == "market"
+    assert dingtalk._CHANNEL_OF_EVENT["update"] == "market"
+    assert dingtalk._CHANNEL_OF_EVENT["unpublish"] == "market"
+    assert dingtalk._CHANNEL_OF_EVENT["review"] == "review"
+    assert dingtalk._CHANNEL_OF_EVENT["reject"] == "review"
+    assert dingtalk._CHANNEL_OF_EVENT["delete"] == "review"
+
+
+async def test_notify_uses_channel_webhook(monkeypatch):
+    """每个事件要发到**自己频道**的 webhook —— 审核通知不能跑到市场群去."""
+    sent: list[tuple[str, str]] = []
+
+    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, is_at_all=False):
+        sent.append((webhook, title))
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+
+    async def _get(key, default=None):
+        return {
+            "dingtalk.notify_on_publish": "true",
+            "dingtalk.notify_on_review": "true",
+            "dingtalk.market_webhook": "http://market/hook",
+            "dingtalk.review_webhook": "http://review/hook",
+        }.get(key, default)
+
+    monkeypatch.setattr(dingtalk, "get", _get)
+
+    await dingtalk.notify_market("publish", name="a", code="x")
+    await dingtalk.notify_market("review", name="b", code="y")
+
+    hooks = [h for h, _ in sent]
+    assert "http://market/hook" in hooks, hooks
+    assert "http://review/hook" in hooks, hooks
+    # 两条分别去了各自的群 (不能都去同一个)
+    assert sent[0][0] == "http://market/hook", sent
+    assert sent[1][0] == "http://review/hook", sent
+
+
+async def test_notify_skips_when_channel_webhook_missing(monkeypatch):
+    """频道没配 webhook → 该频道的通知静默跳过 (不影响另一个频道)."""
+    sent: list[str] = []
+
+    async def fake_send(webhook, title, text, **kw):
+        sent.append(webhook)
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+
+    async def _get(key, default=None):
+        return {
+            "dingtalk.notify_on_publish": "true",
+            "dingtalk.notify_on_review": "true",
+            "dingtalk.market_webhook": "http://market/hook",
+            # 审核群没配
+        }.get(key, default)
+
+    monkeypatch.setattr(dingtalk, "get", _get)
+
+    assert await dingtalk.notify_market("publish", name="a", code="x") is True
+    assert await dingtalk.notify_market("review", name="b", code="y") is False
+    assert sent == ["http://market/hook"]
+
+
+async def test_retry_uses_each_row_channel(monkeypatch):
+    """⚠️ 重试要**按事件**取频道 —— 审核类通知不能重试到市场群去."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+    from sqlalchemy import select
+
+    sent: list[tuple[str, str]] = []
+
+    async def fake_send(webhook, title, text, **kw):
+        sent.append((webhook, title))
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+
+    async def _get(key, default=None):
+        return {
+            "dingtalk.notify_on_review": "true",
+            "dingtalk.review_webhook": "http://review/hook",
+            "dingtalk.market_webhook": "http://market/hook",
+        }.get(key, default)
+
+    monkeypatch.setattr(dingtalk, "get", _get)
+
+    async with AsyncSessionLocal() as s:
+        s.add(AssetNotification(
+            event="review", code="retry-chan", asset_name="审核重试",
+            status="failed", attempts=1, error="boom",
+            title="t", text="x", next_retry_at=None,
+        ))
+        await s.commit()
+
+    n = await dingtalk.retry_failed_notifications()
+    assert n == 1
+    assert sent and sent[0][0] == "http://review/hook", sent
+
+    async with AsyncSessionLocal() as s:
+        row = (await s.execute(select(AssetNotification))).scalar_one()
+    assert row.status == "sent"
+
+
 # ---------- 辅助 ----------
 
 def _fake_get(values: dict[str, str]):

@@ -116,6 +116,45 @@ _SWITCH_KEY = {
     "reject": "dingtalk.notify_on_reject",
 }
 
+# ---------- 两个通知频道 (两个群) ----------
+# 市场动作 (上架 / 更新 / 彻底下架) 走**市场群**;
+# 审核相关 (待审核 / 驳回 / 删除) 走**审核群** —— 免得审核消息跟市场消息混在一起.
+#
+# 每个频道有自己的一套 webhook / 加签密钥 / 关键词 —— 两个群通常是两个不同的机器人,
+# 密钥和关键词校验都不一样. (测试环境可以把两边配成一样的)
+_CHANNEL_OF_EVENT = {
+    "publish": "market",
+    "update": "market",
+    "unpublish": "market",
+    "review": "review",
+    "reject": "review",
+    "delete": "review",
+}
+
+_CHANNEL_KEYS = {
+    "market": (
+        "dingtalk.market_webhook",
+        "dingtalk.market_secret",
+        "dingtalk.market_keyword",
+    ),
+    "review": (
+        "dingtalk.review_webhook",
+        "dingtalk.review_secret",
+        "dingtalk.review_keyword",
+    ),
+}
+
+_CHANNEL_LABEL = {"market": "市场群", "review": "审核群"}
+
+
+async def _channel_config(channel: str) -> tuple[str, str, str]:
+    """取某个频道的 (webhook, 加签密钥, 关键词)."""
+    wh_key, sec_key, kw_key = _CHANNEL_KEYS.get(channel, _CHANNEL_KEYS["market"])
+    webhook = (await get(wh_key, "")) or ""
+    secret = (await get(sec_key, "")) or ""
+    keyword = ((await get(kw_key, "")) or "").strip()
+    return webhook, secret, keyword
+
 
 async def _deliver(webhook: str, secret: str, title: str, text: str) -> None:
     await send_markdown(webhook, title, text, secret=secret)
@@ -133,16 +172,16 @@ async def notify_market(
 ) -> bool:
     """发一条市场通知. 返回是否发送成功 (失败只记日志, 不抛).
 
-    event: publish | update | unpublish | delete
+    event: publish | update | unpublish | delete | review | reject
+    按事件自动选频道: 市场动作 → 市场群, 审核相关 → 审核群.
     """
     if event not in _EVENT_TEXT:
         logger.warning("dingtalk.notify_market 未知事件: %s", event)
         return False
 
+    channel = _CHANNEL_OF_EVENT.get(event, "market")
     try:
-        webhook = (await get("dingtalk.market_webhook", "")) or ""
-        secret = (await get("dingtalk.market_secret", "")) or ""
-        keyword = ((await get("dingtalk.market_keyword", "")) or "").strip()
+        webhook, secret, keyword = await _channel_config(channel)
         # ⚠️ 默认**不通知** —— 开关默认关, 要发自己去设置里打开.
         #    (值可能是 JSON 布尔 / "true" 字符串 / 1, 统一用 to_bool 判)
         enabled = to_bool(await get(_SWITCH_KEY[event], False))
@@ -150,7 +189,10 @@ async def notify_market(
             logger.info("dingtalk 通知开关已关闭, 跳过 (%s)", event)
             return False
         if not webhook:
-            logger.info("dingtalk 未配置 market_webhook, 跳过通知 (%s)", event)
+            logger.info(
+                "dingtalk 未配置 %s 频道的 webhook, 跳过通知 (%s)",
+                _CHANNEL_LABEL.get(channel, channel), event,
+            )
             return False
     except Exception as e:  # noqa: BLE001
         logger.warning("dingtalk 读取配置失败, 跳过通知: %s", e)
@@ -255,24 +297,30 @@ async def list_notifications(limit: int = 50) -> tuple[list[AssetNotification], 
     return list(rows), int(total)
 
 
-async def send_test_market_message() -> tuple[bool, str, dict[str, Any] | None]:
+async def send_test_market_message(channel: str = "market") -> tuple[bool, str, dict[str, Any] | None]:
     """发一条测试消息 (不落回执 —— 测试不是市场事件).
 
     返回 (ok, 给人看的说明, 钉钉原始响应).
     用当前配置 (webhook / 关键词 / 加签密钥) 走**完整**的发送路径 ——
     配置对不对, 一按就知道, 不用靠猜.
+
+    channel: market(市场群) | review(审核群) —— 两个群各配各的, 所以要分别自检.
     """
-    webhook = (await get("dingtalk.market_webhook", "")) or ""
-    secret = (await get("dingtalk.market_secret", "")) or ""
-    keyword = ((await get("dingtalk.market_keyword", "")) or "").strip()
+    channel = channel if channel in _CHANNEL_KEYS else "market"
+    label = _CHANNEL_LABEL.get(channel, channel)
+    webhook, secret, keyword = await _channel_config(channel)
     if not webhook:
-        return False, "未配置钉钉 webhook (dingtalk.market_webhook)", None
+        return False, f"未配置钉钉 webhook (dingtalk.{channel}_webhook)", None
 
     title = "TestMate 通知配置自检"
     text = (
-        "### ✅ TestMate 通知配置自检\n"
+        f"### ✅ TestMate 通知配置自检（{label}）\n"
         "这是一条来自 TestMate 的**测试消息**, 看到即说明配置正确。\n"
-        "- 上架 / 下架 / 更新通知都会发到同一个群"
+        + (
+            "- 上架 / 更新 / 彻底下架 通知发到这个群"
+            if channel == "market"
+            else "- 待审核 / 驳回 / 删除 通知发到这个群"
+        )
     )
     if keyword:
         text = f"{keyword}\n{text}"
@@ -296,7 +344,7 @@ async def send_test_market_message() -> tuple[bool, str, dict[str, Any] | None]:
         elif errcode == 310000 or errcode == 300001:
             hint = " —— 机器人 token 无效, 请检查 webhook 地址"
         return False, f"钉钉拒绝 (errcode={errcode}): {errmsg}{hint}", resp
-    return True, "已送达钉钉群", resp
+    return True, f"已送达{label}", resp
 
 
 # ---------- 失败重试 ----------
@@ -324,15 +372,6 @@ async def retry_failed_notifications() -> int:
     if not due:
         return 0
 
-    try:
-        webhook = (await get("dingtalk.market_webhook", "")) or ""
-        secret = (await get("dingtalk.market_secret", "")) or ""
-    except Exception as e:  # noqa: BLE001
-        logger.warning("dingtalk 重试读取配置失败: %s", e)
-        return 0
-    if not webhook:
-        return 0
-
     n = 0
     skipped = 0
     for r in due:
@@ -341,10 +380,22 @@ async def retry_failed_notifications() -> int:
             await _mark_skipped(r)
             skipped += 1
             continue
+        # ⚠️ 频道要**按事件**取 —— 审核类通知不能重试到市场群去!
+        #    (之前只有一个群, 现在分两个了)
+        channel = _CHANNEL_OF_EVENT.get(r.event, "market")
+        try:
+            webhook, secret, _kw = await _channel_config(channel)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("dingtalk 重试读取配置失败: %s", e)
+            continue
+        if not webhook:
+            await _mark_skipped(r)
+            skipped += 1
+            continue
         if await _attempt(r, webhook, secret):
             n += 1
     if skipped:
-        logger.info("dingtalk 开关已关闭, 跳过 %d 条待发通知", skipped)
+        logger.info("dingtalk 跳过 %d 条待发通知 (开关关了或没配 webhook)", skipped)
     if n:
         logger.info("dingtalk 重试成功 %s 条", n)
     return n

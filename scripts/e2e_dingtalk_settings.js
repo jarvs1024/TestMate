@@ -320,16 +320,18 @@ function check(name, ok, detail) {
     check('S7 关键词已通过 UI 保存', filled);
   }
 
-  // 点「测试发送」
-  const clicked = await page.evaluate(() => {
+  // 点「测试发送」—— 两个频道各测各的 (市场群 / 审核群)
+  const clickTest = async (label) => page.evaluate((t) => {
     const b = [...document.querySelectorAll('#sec-notification button')]
-      .find((x) => x.textContent.includes('测试发送'));
+      .find((x) => x.textContent.includes(t));
     if (!b) return false;
     b.click();
     return true;
-  });
+  }, label);
+
+  const clicked = await clickTest('测试市场群');
   await sleep(4000);
-  const result = await page.evaluate(() => {
+  const readResult = async () => page.evaluate(() => {
     const el = document.querySelector('#sec-notification .test-result');
     if (!el) return null;
     return {
@@ -337,9 +339,19 @@ function check(name, ok, detail) {
       msg: (el.textContent || '').replace(/\s+/g, ' ').trim(),
     };
   });
-  check('S8 「测试发送」有结果', clicked && !!result, result ? result.msg : '(无结果)');
+  const result = await readResult();
+  check('S8 「测试市场群」有结果', clicked && !!result, result ? result.msg : '(无结果)');
   const isOk = !!result && /s-ok/.test(result.cls);
   check('S9 测试发送成功 (钉钉已接收)', isOk, result ? result.msg : '(无结果)');
+
+  // 审核群也测一下 (测试环境两个群配的是同一个 webhook, 都能发出去)
+  const clickedReview = await clickTest('测试审核群');
+  await sleep(4000);
+  const resultReview = await readResult();
+  check('S9b 「测试审核群」也有结果', clickedReview && !!resultReview,
+    resultReview ? resultReview.msg : '(无结果)');
+  const isOkReview = !!resultReview && /s-ok/.test(resultReview.cls);
+  check('S9c 审核群测试发送成功', isOkReview, resultReview ? resultReview.msg : '(无结果)');
 
   // 最近通知回执
   const logCount = await page.evaluate(() => document.querySelectorAll('#sec-notification .notif-list li').length);

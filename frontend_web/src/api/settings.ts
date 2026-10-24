@@ -49,9 +49,13 @@ export async function testReviewAgent(): Promise<TestResult> {
   return (await request.post('/settings/test/review_agent')) as TestResult;
 }
 
-/** 真发一条钉钉消息 (验证 webhook / 关键词 / 加签是否配对) */
-export async function testDingTalk(): Promise<TestResult> {
-  return (await request.post('/settings/test/dingtalk')) as TestResult;
+/**
+ * 真发一条钉钉消息 (验证 webhook / 关键词 / 加签是否配对)
+ *
+ * ⚠️ 两个频道各配各的: market(市场群: 上架/更新/彻底下架) / review(审核群: 待审核/驳回/删除)
+ */
+export async function testDingTalk(channel: 'market' | 'review' = 'market'): Promise<TestResult> {
+  return (await request.post('/settings/test/dingtalk', null, { params: { channel } })) as TestResult;
 }
 
 /** 探当前配置的 GitLab 仓库能不能连上 (SSH 鉴权 + 分支是否存在) */

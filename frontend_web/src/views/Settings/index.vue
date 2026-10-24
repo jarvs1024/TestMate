@@ -214,11 +214,12 @@
             <span class="grp-cnt">{{ notificationItems.length }} 项</span>
           </h2>
           <div class="hint">
-            💡 资产市场在<strong>上架 / 更新 / 彻底下架</strong>时会往钉钉群发通知
-            —— <strong>这三个开关默认开启</strong>, 不想被打扰可以自己关掉。
-            <strong>删除 / 待审核 / 驳回</strong> 默认关闭, 要发自己去打开。
+            💡 通知分<strong>两个群</strong>:
+            <strong>市场群</strong>收上架 / 更新 / 彻底下架 (默认开启);
+            <strong>审核群</strong>收待审核 / 驳回 / 删除 (默认关闭)。
+            两个群的 webhook / 加签密钥 / 关键词各配各的 —— 测试环境可以把两边配成一样的。
             <br />下架要走审核: <strong>申请阶段不通知</strong>, 等管理员确认、资产真的被移除才通知一次。
-            配好 webhook 后点「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
+            配好 webhook 后点对应的「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
           </div>
 
           <SettingRow v-for="(it, idx) in notificationItems" :key="it.key"
@@ -228,12 +229,19 @@
             @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
 
           <div class="test-row">
-            <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk')">
-              {{ testing === 'dingtalk' ? '发送中…' : '📨 测试发送' }}
+            <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-market')">
+              {{ testing === 'dingtalk-market' ? '发送中…' : '📨 测试市场群' }}
             </button>
-            <div v-if="testResults['dingtalk']" class="test-result" :class="`s-${testResults['dingtalk']?.status}`">
+            <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-review')">
+              {{ testing === 'dingtalk-review' ? '发送中…' : '📨 测试审核群' }}
+            </button>
+            <div v-if="testResults['dingtalk-market']" class="test-result" :class="`s-${testResults['dingtalk-market']?.status}`">
               <span class="dot"></span>
-              <span class="msg">{{ testResults['dingtalk']?.message }}</span>
+              <span class="msg">{{ testResults['dingtalk-market']?.message }}</span>
+            </div>
+            <div v-if="testResults['dingtalk-review']" class="test-result" :class="`s-${testResults['dingtalk-review']?.status}`">
+              <span class="dot"></span>
+              <span class="msg">{{ testResults['dingtalk-review']?.message }}</span>
             </div>
           </div>
 
@@ -515,7 +523,9 @@ const _testClients: Record<string, () => Promise<TestResult>> = {
   'ragflow':  testRagflow,
   'dify':     testDify,
   'review-agent': testReviewAgent,
-  'dingtalk': testDingTalk,
+  // 钉钉分两个频道 (市场群 / 审核群), 各配各的 webhook → 也要分别自检
+  'dingtalk-market': () => testDingTalk('market'),
+  'dingtalk-review': () => testDingTalk('review'),
   'gitlab': testGitLab,
 };
 async function onTest(testKey: string) {

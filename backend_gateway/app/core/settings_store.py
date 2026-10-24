@@ -439,6 +439,36 @@ SETTING_SCHEMA: list[dict] = [
         ),
         "is_secret": False,
     },
+    # ===== 审核通知频道 (另一个群) =====
+    # 市场动作 (上架/更新/彻底下架) 走市场群, 审核相关 (待审核/驳回/删除) 走审核群.
+    # 两个群通常是两个不同的机器人 —— 密钥和关键词各配各的.
+    # (测试环境可以把两边配成一样的)
+    {
+        "key": "dingtalk.review_webhook",
+        "category": "notification",
+        "value_type": "url",
+        "default": "",
+        "description": "审核通知的钉钉机器人 webhook (待审核/驳回/删除 发到这个群)",
+        "is_secret": False,
+    },
+    {
+        "key": "dingtalk.review_secret",
+        "category": "notification",
+        "value_type": "secret",
+        "default": "",
+        "description": "审核群机器人的加签密钥 (SEC 开头; 留空表示未开加签)",
+        "is_secret": True,
+    },
+    {
+        "key": "dingtalk.review_keyword",
+        "category": "notification",
+        "value_type": "string",
+        "default": "",
+        "description": (
+            "审核群机器人的关键词 (该群开了关键词校验才需要填; 留空表示不启用)"
+        ),
+        "is_secret": False,
+    },
 ]
 
 # 已废弃的设置项 —— 从 SCHEMA 移除后, DB 里的残留行在启动时一并清掉.

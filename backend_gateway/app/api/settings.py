@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlencode, urlunparse, urlparse
 from typing import Any
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -244,18 +244,23 @@ async def test_gitlab(_user: User = Depends(get_current_user)) -> SettingTestOut
 
 
 @router.post("/test/dingtalk", response_model=SettingTestOut)
-async def test_dingtalk(_user: User = Depends(get_current_user)) -> SettingTestOut:
+async def test_dingtalk(
+    channel: str = Query("market", pattern="^(market|review)$"),
+    _user: User = Depends(get_current_user),
+) -> SettingTestOut:
     """用当前 DB 的钉钉配置真发一条消息.
 
     走完整发送路径 (webhook / 关键词 / 加签密钥), 所以:
       - 配对了 → 群里立刻收到一条自检消息
       - 配错了 → 返回钉钉的原始 errcode 与原因 (比如「关键词不匹配」)
+
+    ⚠️ 两个频道各配各的 (市场群 / 审核群), 所以要分别自检 —— channel 参数选群.
     """
     if _user.role.value != "admin":
         raise HTTPException(status_code=403, detail="admin only")
     from app.core.dingtalk import send_test_market_message
 
-    ok, message, detail = await send_test_market_message()
+    ok, message, detail = await send_test_market_message(channel)
     return SettingTestOut(
         ok=ok, status="ok" if ok else "warn", message=message, detail=detail,
     )
