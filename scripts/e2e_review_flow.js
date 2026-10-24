@@ -24,7 +24,7 @@ const ADMIN = process.env.TESTMATE_USER || 'admin';
 const ADMIN_PW = process.env.TESTMATE_PASSWORD || 'Admin@123';
 const PUB = process.env.REVIEW_TEST_USER || 'e2e_publisher';
 const PUB_PW = 'E2e@Test12345';
-const CODE = 'e2e-review-probe';
+const CODE = 'dml-e2e-review-probe';
 const OUT_DIR = process.env.E2E_OUT_DIR || path.join(__dirname, '..', '.e2e-out');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -181,24 +181,36 @@ async function openPage(browser, token, user) {
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     };
-    const inputs = [...document.querySelectorAll('.el-dialog input[type=text]')];
+    const inputs = [...document.querySelectorAll('.el-drawer input[type=text]')];
     const byPlaceholder = (ph) => inputs.find((i) => (i.placeholder || '').includes(ph));
-    set(byPlaceholder('小写字母'), code);
+    // ⚠️ code 现在有统一前缀要求 (dml-)
+    set(byPlaceholder('dml-'), code);
     set(byPlaceholder('SSD 日志医生'), '审核流程端到端资产');
-    const ta = [...document.querySelectorAll('.el-dialog textarea')];
+    const ta = [...document.querySelectorAll('.el-drawer textarea')];
     const sum = ta.find((t) => (t.placeholder || '').includes('贴日志'));
     set(sum, '验证上架审核流程的资产');
   }, CODE);
   await sleep(500);
+  // 分类是必填 (新表单: 缺一项提交按钮就是禁用的) —— 选第一个
   await pub.page.evaluate(() => {
-    const b = [...document.querySelectorAll('.el-dialog__footer .el-button')].find((x) => x.textContent.includes('上架'));
+    const s = document.querySelector('.el-drawer .el-select');
+    s && s.click();
+  });
+  await sleep(700);
+  await pub.page.evaluate(() => {
+    const opt = document.querySelector('.el-select-dropdown__item');
+    opt && opt.click();
+  });
+  await sleep(700);
+  await pub.page.evaluate(() => {
+    const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => x.textContent.includes('上架'));
     b && b.click();
   });
   const jobText = await waitJobDone(pub.page);
   check('② 上传后提示「等待管理员审核」', /等待管理员审核/.test(jobText), jobText.slice(0, 90));
   await pub.page.screenshot({ path: path.join(OUT_DIR, '11-review-submitted.png') });
   await pub.page.evaluate(() => {
-    const b = [...document.querySelectorAll('.el-dialog__footer .el-button')].find((x) => /完成|关闭/.test(x.textContent));
+    const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => /完成|关闭/.test(x.textContent));
     b && b.click();
   });
   await sleep(800);

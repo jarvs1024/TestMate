@@ -199,6 +199,8 @@ export interface UploadForm {
   category: string;
   icon: string;
   tags: string[];
+  /** 搜索关键词 (同义词) —— 搜不到时靠它 */
+  keywords?: string[];
   permissions: MarketPermissions;
   install_steps: string[];
   featured: boolean;
@@ -387,7 +389,7 @@ function toFormData(f: UploadForm, includeCode: boolean): FormData {
   fd.append('category', f.category);
   fd.append('icon', f.icon);
   fd.append('tags', JSON.stringify(f.tags));
-  fd.append('keywords', JSON.stringify([]));
+  fd.append('keywords', JSON.stringify(f.keywords || []));
   fd.append('featured', String(f.featured));
   fd.append('permissions', JSON.stringify(f.permissions));
   fd.append('install_steps', JSON.stringify(f.install_steps));

@@ -75,6 +75,40 @@ function makeZip(target, files) {
 }
 
 /** 读取市场页当前状态 */
+/** 把上传抽屉的必填项补齐 (新表单: 缺一项提交按钮就是禁用的) */
+async function fillRequiredFields(page) {
+  await page.evaluate(() => {
+    const set = (el, v) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const setter2 = (el, v) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const byPh = (ph) => document.querySelector(`.el-drawer input[placeholder="${ph}"]`);
+    const byPhTa = (ph) => document.querySelector(`.el-drawer textarea[placeholder="${ph}"]`);
+    const name = byPh('SSD 日志医生'); if (name) set(name, 'E2E 体检探针');
+    const sum = byPhTa('贴日志即可定位 assert 与超时点'); if (sum) setter2(sum, 'e2e 体检探针');
+    const code = byPh('dml-ssd-log-doctor'); if (code) set(code, 'dml-e2e-probe');
+  });
+  await sleep(400);
+  // 分类是 el-select —— 打开下拉选第一个
+  await page.evaluate(() => {
+    const s = document.querySelector('.el-drawer .el-select');
+    s && s.querySelector('input')?.focus();
+    s && s.click();
+  });
+  await sleep(700);
+  await page.evaluate(() => {
+    const opt = document.querySelector('.el-select-dropdown__item');
+    opt && opt.click();
+  });
+  await sleep(700);
+}
+
 async function snap(page) {
   return page.evaluate(() => {
     const txt = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : null);
@@ -110,13 +144,14 @@ async function snap(page) {
       // 解压目标显示在「安装包」区块的第二行
       dlgPkgTarget: txt(document.querySelectorAll('.inst-pkg-val')[1]),
       dlgPerm: txt(document.querySelector('.inst-perm')),
-      dlgAlert: txt(document.querySelector('.el-dialog .el-alert__title')),
-      dlgWhole: txt(document.querySelector('.el-dialog')),
+      dlgAlert: txt(document.querySelector('.el-drawer .el-alert__title')),
+      dlgWhole: txt(document.querySelector('.up-form')),
       msgBox: txt(document.querySelector('.el-message-box__message')),
       // 包体检
       pvState: txt(document.querySelector('.pv-box')),
+      footText: txt(document.querySelector('.foot-bar')),
       submitDisabled: !!document.querySelector(
-        '.el-dialog__footer .el-button--primary.is-disabled, .el-dialog__footer .el-button--primary[disabled]',
+        '.el-drawer__footer .el-button--primary.is-disabled, .el-drawer__footer .el-button--primary[disabled]',
       ),
       // 操作记录抽屉 (用页签文案判别 —— 抽屉标题的类名随 element-plus 版本变)
       auditDrawerOpen: drawerTexts.some((t) => /操作审计/.test(t)),
@@ -397,6 +432,11 @@ async function codeByName(page, name) {
     s = await snap(page);
     check('H1 合规包体检通过', /体检通过/.test(s.pvState || ''), s.pvState);
     check('H2 体检显示文件数与展示文档', /SKILL\.md/.test(s.pvState || ''), s.pvState);
+
+    // ⚠️ 新表单: 必填项没填齐, 提交按钮就是禁用的 —— 先把必填项补上
+    await fillRequiredFields(page);
+    s = await snap(page);
+    check('H2b 必填项补齐后「还缺」清空', !/还缺/.test(s.footText || ''), s.footText);
     check('H3 合规包不禁用提交按钮', s.submitDisabled === false, `disabled=${s.submitDisabled}`);
 
     // 换成不合规的包 (缺 SKILL.md) → 体检应拦下并禁用提交
@@ -408,7 +448,7 @@ async function codeByName(page, name) {
     check('H5 不合规包禁用提交按钮', s.submitDisabled === true, `disabled=${s.submitDisabled}`);
     await page.screenshot({ path: path.join(OUT_DIR, '06-precheck.png') });
     await page.evaluate(() => {
-      const b = [...document.querySelectorAll('.el-dialog__footer .el-button')].find((x) => x.textContent.includes('取消'));
+      const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => x.textContent.includes('取消'));
       b && b.click();
     });
     await sleep(800);

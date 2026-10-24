@@ -32,7 +32,7 @@ const OUT_DIR = process.env.E2E_OUT_DIR || path.join(__dirname, '..', '.e2e-out'
 
 const PUBLISHER = { username: 'e2e_scenario_pub', password: 'Scen@12345' };
 const INSTALLER = { username: 'e2e_scenario_ins', password: 'Scen@12345' };
-const ASSET = 'scenario-ssd-skill';
+const ASSET = 'dml-scenario-ssd-skill';
 const PKG = path.join(OUT_DIR, 'scenario-skill.zip');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -186,16 +186,28 @@ z.close()
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
       };
-      const inputs = [...document.querySelectorAll('.el-dialog input[type=text]')];
+      const inputs = [...document.querySelectorAll('.el-drawer input[type=text]')];
       const byPh = (ph) => inputs.find((i) => (i.placeholder || '').includes(ph));
-      set(byPh('小写字母'), code);
+      // ⚠️ code 现在有统一前缀要求 (dml-), 资产号也用它
+      set(byPh('dml-'), code);
       set(byPh('SSD 日志医生'), '场景验证技能');
-      const ta = [...document.querySelectorAll('.el-dialog textarea')];
+      const ta = [...document.querySelectorAll('.el-drawer textarea')];
       set(ta.find((t) => (t.placeholder || '').includes('贴日志')), '端到端场景验证用技能');
     }, ASSET);
     await sleep(400);
+    // 分类是必填 (新表单: 缺一项提交按钮就是禁用的) —— 选第一个
     await pub.page.evaluate(() => {
-      const b = [...document.querySelectorAll('.el-dialog__footer .el-button')].find((x) => x.textContent.includes('上架'));
+      const s = document.querySelector('.el-drawer .el-select');
+      s && s.click();
+    });
+    await sleep(700);
+    await pub.page.evaluate(() => {
+      const opt = document.querySelector('.el-select-dropdown__item');
+      opt && opt.click();
+    });
+    await sleep(700);
+    await pub.page.evaluate(() => {
+      const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => x.textContent.includes('上架'));
       b && b.click();
     });
     // 等任务跑完 (推送要几秒)
@@ -208,7 +220,7 @@ z.close()
     }
     check('② 上传后提示等待审核', /等待管理员审核/.test(jobText), jobText.slice(0, 70));
     await pub.page.evaluate(() => {
-      const b = [...document.querySelectorAll('.el-dialog__footer .el-button')].find((x) => /完成|关闭/.test(x.textContent));
+      const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => /完成|关闭/.test(x.textContent));
       b && b.click();
     });
     await sleep(800);

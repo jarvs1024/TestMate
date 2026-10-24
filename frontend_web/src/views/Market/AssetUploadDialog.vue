@@ -1,124 +1,162 @@
 <template>
-  <el-dialog v-model="visible" :title="mode === 'update' ? `更新资产 · ${asset?.name || ''}` : '上传新资产'"
-             width="640px" :close-on-click-modal="false">
-    <el-form v-if="!job" label-position="top" class="up-form">
-      <div class="row-2">
-        <el-form-item label="类型" required>
-          <el-select v-model="form.kind" style="width:100%" :disabled="mode === 'update'">
-            <el-option value="plugin" label="插件 plugin" />
-            <el-option value="skill" label="技能 skill" />
-            <el-option value="mcp" label="连接器 mcp（只读不装）" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="分类" required>
-          <!-- ⚠️ 只给**分类表**里的选项 (不再 allow-create) ——
-               自定义分类在前端没有筛选 chip, 筛不出来 (孤儿分类);
-               实在归不进去就选「其他」. -->
-          <el-select v-model="form.category" style="width:100%" filterable>
-            <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
-              <span>{{ c.name }}</span>
-              <span class="cat-desc">{{ c.desc }}</span>
-            </el-option>
-          </el-select>
-        </el-form-item>
-      </div>
-
-      <div class="row-2">
-        <el-form-item label="资产 code" required>
-          <el-input v-model="form.code" :disabled="mode === 'update'"
-                    placeholder="小写字母/数字/连字符, 如 ssd-log-doctor" />
-        </el-form-item>
-        <el-form-item label="版本 (semver)" required>
-          <el-input v-model="form.version" placeholder="1.0.0" />
-        </el-form-item>
-      </div>
-
-      <div class="row-2">
-        <el-form-item label="名称" required>
-          <el-input v-model="form.name" placeholder="SSD 日志医生" />
-        </el-form-item>
-        <el-form-item label="图标">
-          <el-input v-model="form.icon" placeholder="🩺" />
-        </el-form-item>
-      </div>
-
-      <el-form-item label="一句话简介" required>
-        <el-input v-model="form.summary" type="textarea" :rows="2"
-                  placeholder="贴日志即可定位 assert 与超时点" />
-      </el-form-item>
-
-      <el-form-item label="详细说明">
-        <el-input v-model="form.description" type="textarea" :rows="3"
-                  placeholder="会存到 GitLab 的 README.md" />
-      </el-form-item>
-
-      <div class="row-2">
-        <el-form-item label="适用场景">
-          <el-input v-model="form.use_when" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="不适用">
-          <el-input v-model="form.not_for" type="textarea" :rows="2" />
-        </el-form-item>
-      </div>
-
-      <el-form-item label="标签 (逗号分隔)">
-        <el-input v-model="tagsText" placeholder="日志, 诊断, 速查" />
-      </el-form-item>
-
-      <el-form-item label="权限声明">
-        <div class="perm-editor">
-          <el-input v-model="permRead" placeholder="读取文件, 如 ~/lab/logs/**" />
-          <el-input v-model="permExec" placeholder="执行命令, 如 nvme, fio" />
-          <el-input v-model="permNet" placeholder="访问网络, 如 git.internal:443" />
-          <el-input v-model="permSecret" placeholder="读取凭据, 如 GITLAB_TOKEN" />
-          <p class="hint">⚠️ 这是市场区别于普通插件目录的核心, 审核与安装都会看这里。如实填写。</p>
-        </div>
-      </el-form-item>
-
-      <el-form-item label="安装步骤 (每行一步)">
-        <el-input v-model="stepsText" type="textarea" :rows="3"
-                  placeholder="将 xxx 复制到宿主 skills 目录&#10;重启 Agent 会话" />
-      </el-form-item>
-
-      <el-form-item label="安装包 (zip / tar.gz)">
-        <input ref="fileInput" type="file" class="file-input"
-               accept=".zip,.tar.gz,.tgz" @change="onPickPackage" />
-        <div v-if="pkgFile" class="file-list">
-          <span class="file-chip">{{ pkgFile.name }}
-            <b @click="clearPackage">×</b>
-          </span>
-        </div>
-        <p class="hint">
-          压缩包会在服务端解压后推送到 GitLab, 仓库里存的是解压后的文件.
-          skill 包需含 <code>SKILL.md</code>, plugin 包需含 <code>README.md</code>.
-        </p>
-
-        <!-- 包体检: 选好包就当场验, 不用填完一整张表单才被 422 拦下 -->
-        <div v-if="previewing" class="pv-box checking">正在体检安装包…</div>
-        <div v-else-if="preview" class="pv-box" :class="previewBad ? 'bad' : 'ok'">
-          <div class="pv-h">
-            <span class="pv-icon">{{ previewBad ? '❌' : '✅' }}</span>
-            <span>{{ previewBad ? '这个包装不上, 请调整后重试' : '体检通过' }}</span>
+  <el-drawer :model-value="modelValue" size="760px" direction="rtl"
+             :title="mode === 'update' ? `更新资产 · ${asset?.name || ''}` : '上传新资产'"
+             :close-on-click-modal="false" :with-header="true"
+             class="up-drawer" @update:model-value="emit('update:modelValue', $event)">
+    <template v-if="!job">
+      <el-form label-position="top" class="up-form">
+        <!-- ============ ① 安装包 (放最前: 选完立刻知道合不合格) ============ -->
+        <section class="up-sec">
+          <div class="sec-h"><span class="sec-no">1</span>安装包<span class="sec-tip">必填</span></div>
+          <div class="row-2">
+            <el-form-item label="" :error="pkgError">
+              <input ref="fileInput" type="file" class="file-input"
+                     accept=".zip,.tar.gz,.tgz" @change="onPickPackage" />
+              <div v-if="pkgFile" class="file-list">
+                <span class="file-chip">{{ pkgFile.name }}
+                  <b @click="clearPackage">×</b>
+                </span>
+              </div>
+            </el-form-item>
+            <div class="pkg-side">
+              <p class="hint">
+                压缩包会在服务端解压后推送到 GitLab, 仓库里存的是解压后的文件。<br />
+                技能包需含 <code>SKILL.md</code>, 插件包需含 <code>README.md</code>
+                和 <code>.qoder-plugin/plugin.json</code>。
+              </p>
+            </div>
           </div>
-          <div class="pv-meta mono">
-            {{ preview.total_files }} 个文件
-            · 展示文档 {{ preview.doc_file || '缺失' }}
-            <template v-if="preview.installable">· 可一键安装</template>
-            <template v-else>· {{ preview.block_reason }}</template>
+
+          <!-- 包体检: 选好包就当场验, 不用填完一整张表单才被 422 拦下 -->
+          <div v-if="previewing" class="pv-box checking">正在体检安装包…</div>
+          <div v-else-if="preview" class="pv-box" :class="previewBad ? 'bad' : 'ok'">
+            <div class="pv-h">
+              <span class="pv-icon">{{ previewBad ? '❌' : '✅' }}</span>
+              <span>{{ previewBad ? '这个包装不上, 请调整后重试' : '体检通过' }}</span>
+            </div>
+            <div class="pv-meta mono">
+              {{ preview.total_files }} 个文件
+              · 展示文档 {{ preview.doc_file || '缺失' }}
+              <template v-if="preview.installable">· 可一键安装</template>
+              <template v-else>· {{ preview.block_reason }}</template>
+            </div>
+            <ul v-if="preview.issues.length" class="pv-list">
+              <li v-for="(i, idx) in preview.issues" :key="'i' + idx">✗ {{ i }}</li>
+            </ul>
+            <ul v-if="preview.warnings.length" class="pv-list warn">
+              <li v-for="(w, idx) in preview.warnings" :key="'w' + idx">⚠ {{ w }}</li>
+            </ul>
+            <details v-if="preview.files.length" class="pv-files">
+              <summary>文件清单 ({{ preview.files.length }})</summary>
+              <code v-for="f in preview.files" :key="f">{{ f }}</code>
+            </details>
           </div>
-          <ul v-if="preview.issues.length" class="pv-list">
-            <li v-for="(i, idx) in preview.issues" :key="'i' + idx">✗ {{ i }}</li>
-          </ul>
-          <ul v-if="preview.warnings.length" class="pv-list warn">
-            <li v-for="(w, idx) in preview.warnings" :key="'w' + idx">⚠ {{ w }}</li>
-          </ul>
-          <details v-if="preview.files.length" class="pv-files">
-            <summary>文件清单 ({{ preview.files.length }})</summary>
-            <code v-for="f in preview.files" :key="f">{{ f }}</code>
-          </details>
-        </div>
-      </el-form-item>
-    </el-form>
+        </section>
+
+        <!-- ============ ② 基础信息 ============ -->
+        <section class="up-sec">
+          <div class="sec-h"><span class="sec-no">2</span>基础信息</div>
+          <div class="row-2">
+            <el-form-item label="名称" required>
+              <el-input v-model="form.name" placeholder="SSD 日志医生" />
+            </el-form-item>
+            <el-form-item label="图标" :error="iconError">
+              <div class="icon-pick">
+                <button type="button" class="icon-btn" @click="iconPanel = !iconPanel">
+                  <span class="icon-cur">{{ form.icon || '🧩' }}</span>
+                  <span class="icon-caret">▾</span>
+                </button>
+                <div v-if="iconPanel" class="icon-panel">
+                  <button v-for="ic in iconChoices" :key="ic" type="button"
+                          class="icon-cell" :class="{ on: ic === form.icon }"
+                          @click="chooseIcon(ic)">{{ ic }}</button>
+                </div>
+              </div>
+            </el-form-item>
+          </div>
+
+          <el-form-item label="一句话简介" required>
+            <el-input v-model="form.summary" type="textarea" :rows="2"
+                      placeholder="贴日志即可定位 assert 与超时点" />
+          </el-form-item>
+
+          <div class="row-2">
+            <el-form-item label="资产 code" required :error="codeError">
+              <el-input v-model="form.code" :disabled="mode === 'update'"
+                        :placeholder="CODE_EXAMPLE" @blur="codeTouched = true" />
+            </el-form-item>
+            <el-form-item label="版本 (semver)" :error="versionError">
+              <el-input v-model="form.version" placeholder="1.0.0" />
+              <p v-if="mode === 'update'" class="hint">发新版本建议 +1 (如 1.0.0 → 1.1.0)</p>
+            </el-form-item>
+          </div>
+
+          <div class="row-2">
+            <el-form-item label="分类" required>
+              <!-- ⚠️ 只给**分类表**里的选项 (不再 allow-create) ——
+                   自定义分类在前端没有筛选 chip, 筛不出来 (孤儿分类);
+                   实在归不进去就选「其他」. -->
+              <el-select v-model="form.category" style="width:100%" filterable
+                         @change="onCategoryChange">
+                <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
+                  <span>{{ c.name }}</span>
+                  <span class="cat-desc">{{ c.desc }}</span>
+                </el-option>
+              </el-select>
+            </el-form-item>
+            <el-form-item label="类型" required>
+              <el-select v-model="form.kind" style="width:100%" :disabled="mode === 'update'">
+                <el-option value="plugin" label="插件 plugin" />
+                <el-option value="skill" label="技能 skill" />
+                <el-option value="mcp" label="连接器 mcp（只读不装）" />
+              </el-select>
+            </el-form-item>
+          </div>
+        </section>
+
+        <!-- ============ ③ 进阶信息 (默认收起) ============ -->
+        <section class="up-sec">
+          <button type="button" class="sec-toggle" @click="advOpen = !advOpen">
+            <span class="sec-no">3</span>进阶信息
+            <span class="sec-caret">{{ advOpen ? '▾' : '▸' }}</span>
+          </button>
+          <div v-show="advOpen" class="adv-body">
+            <el-form-item label="详细说明">
+              <el-input v-model="form.description" type="textarea" :rows="3"
+                        placeholder="会存到 GitLab 的 README.md" />
+            </el-form-item>
+            <div class="row-2">
+              <el-form-item label="适用场景">
+                <el-input v-model="form.use_when" type="textarea" :rows="2" />
+              </el-form-item>
+              <el-form-item label="不适用">
+                <el-input v-model="form.not_for" type="textarea" :rows="2" />
+              </el-form-item>
+            </div>
+            <div class="row-2">
+              <el-form-item label="标签 (逗号分隔)">
+                <el-input v-model="tagsText" placeholder="日志, 诊断, 速查" />
+              </el-form-item>
+              <el-form-item label="搜索关键词 (逗号分隔)">
+                <el-input v-model="keywordsText" placeholder="ssd, nvme, dmesg (同义词, 搜不到就靠它)" />
+              </el-form-item>
+            </div>
+            <el-form-item label="安装步骤 (每行一步)">
+              <el-input v-model="stepsText" type="textarea" :rows="2"
+                        placeholder="将 xxx 复制到宿主 skills 目录&#10;重启 Agent 会话" />
+              <p class="hint">包里一般已有 SKILL.md / README.md, 一般不用填。</p>
+            </el-form-item>
+            <el-form-item label="">
+              <el-checkbox v-model="form.featured">设为精选 (市场首页优先展示)</el-checkbox>
+            </el-form-item>
+            <p class="hint perm-note">
+              权限声明不在这里填了 —— 审核会直接看包里的内容;
+              有特殊权限需求, 请在包的 README 里写清楚。
+            </p>
+          </div>
+        </section>
+      </el-form>
+    </template>
 
     <!-- 任务进度: staged(已存本地) → syncing(推送中) → pushed(已同步) / failed -->
     <div v-else class="job-box">
@@ -153,10 +191,22 @@
 
     <template #footer>
       <template v-if="!job">
-        <el-button @click="visible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" :disabled="previewBad" @click="submit">
-          {{ mode === 'update' ? '提交新版本' : '上架' }}
-        </el-button>
+        <!-- 缺什么一次说清, 不用点一次报一个 -->
+        <div class="foot-bar">
+          <div class="foot-left">
+            <template v-if="missing.length">
+              <span class="foot-warn">还缺: {{ missing.join('、') }}</span>
+            </template>
+            <span v-else class="foot-ok">✓ 该填的都填了</span>
+          </div>
+          <div class="foot-right">
+            <el-button @click="visible = false">取消</el-button>
+            <el-button type="primary" :loading="submitting" :disabled="!canSubmit"
+                       @click="submit">
+              {{ mode === 'update' ? '提交新版本' : '上架' }}
+            </el-button>
+          </div>
+        </div>
       </template>
       <template v-else-if="job.status === 'failed'">
         <el-button @click="visible = false">关闭</el-button>
@@ -164,14 +214,15 @@
       </template>
       <el-button v-else type="primary" @click="close">{{ job.status === 'pushed' ? '完成' : '关闭' }}</el-button>
     </template>
-  </el-dialog>
+  </el-drawer>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
-import { getAsset, getJob, listCategories, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
+import { getAsset, getJob, listAssets, listCategories, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
+import { CODE_EXAMPLE, CODE_PREFIX, GENERAL_ICONS, ICON_POOLS, pickIcon, validateCode } from './assetForm';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -196,33 +247,70 @@ const preview = ref<PackagePreview | null>(null);
 const previewing = ref(false);
 /** 上架要走审核 —— 提交完不是"已上架", 而是"已提交待审核" */
 const pendingReview = ref(false);
+/** 进阶信息默认收起 (大部分人只填基础信息) */
+const advOpen = ref(false);
+/** 图标选择面板 */
+const iconPanel = ref(false);
+/** 现有资产用过的图标 —— 自动分配时避开, 免得卡片上图标重复 */
+const usedIcons = ref<Set<string>>(new Set());
+/** 分类表 (后端下发) —— 上传/更新时只能从里面选 */
+const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
 
-/** 体检没通过就不让提交 —— 免得白填一整张表单 */
+const form = reactive({
+  code: CODE_PREFIX, kind: 'skill' as MarketKind, name: '', version: '1.0.0',
+  summary: '', description: '', use_when: '', not_for: '', category: '', icon: '🧩',
+  featured: false, tags: [] as string[], files: [] as File[],
+  install_steps: [] as string[],
+});
+const tagsText = ref('');
+const keywordsText = ref('');
+const stepsText = ref('');
+
+/** 体检结论: 包装不上 (解包失败 **或** 有问题项 —— 比如缺 SKILL.md) */
 const previewBad = computed(() => {
   const p = preview.value;
   if (!p) return false;
   return !p.ok || p.issues.length > 0;
 });
 
-const form = reactive({
-  code: '', kind: 'skill' as MarketKind, name: '', version: '1.0.0',
-  summary: '', description: '', use_when: '', not_for: '',
-  category: '', icon: '🧩', featured: false,
-  tags: [] as string[], files: [] as File[],
-  permissions: {} as Record<string, string[]>,
-  install_steps: [] as string[],
+/** 图标可选范围: 分类池 + 通用池 */
+const iconChoices = computed(() => {
+  const pool = ICON_POOLS[form.category] || [];
+  return Array.from(new Set([...pool, ...GENERAL_ICONS]));
 });
 
-// 表单里用逗号/多行文本编辑数组, 提交时转回数组
-const tagsText = ref('');
-const stepsText = ref('');
-const permRead = ref('');
-const permExec = ref('');
-const permNet = ref('');
-const permSecret = ref('');
+// ---------- 校验 ----------
+/** code 动过才提示 —— 刚打开时预填的 "dml-" 还没填完, 立刻标红只会碍眼 */
+const codeTouched = ref(false);
+const codeError = computed(() => {
+  if (props.mode === 'update' || !codeTouched.value) return '';
+  return validateCode(form.code);
+});
+const versionError = computed(() => {
+  const v = (form.version || '').trim();
+  if (!v) return '版本必填';
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(v)) return '版本格式应为 1.0.0';
+  return '';
+});
+const pkgError = computed(() => (pkgFile.value ? '' : '请选择安装包'));
+const iconError = computed(() => '');
 
-/* 分类表 (后端下发) —— 上传/更新时只能从里面选 */
-const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
+/** 缺什么 —— 一次说清, 别让人点一次报一个 */
+const missing = computed(() => {
+  const out: string[] = [];
+  if (!pkgFile.value) out.push('安装包');
+  if (!form.name.trim()) out.push('名称');
+  if (!form.summary.trim()) out.push('一句话简介');
+  if (props.mode === 'create') {
+    const c = validateCode(form.code);
+    if (c) out.push('资产 code');
+  }
+  if (!form.category) out.push('分类');
+  if (versionError.value) out.push('版本');
+  return out;
+});
+const canSubmit = computed(() => missing.value.length === 0 && !previewBad.value);
+
 async function loadCategories() {
   if (categories.value.length) return;
   try {
@@ -233,15 +321,51 @@ async function loadCategories() {
   }
 }
 
+/** 拉现有资产的图标 —— 自动分配时避开重复 */
+async function loadUsedIcons() {
+  try {
+    const r = await listAssets({ limit: 500 });
+    usedIcons.value = new Set(
+      (r?.items || []).map((i: AssetItem) => (i.icon || '').trim()).filter(Boolean),
+    );
+  } catch {
+    usedIcons.value = new Set();
+  }
+}
+
+/** 自动分配图标 (避开已被用掉的) */
+function autoIcon() {
+  form.icon = pickIcon({
+    category: form.category,
+    name: form.name,
+    summary: form.summary,
+    used: usedIcons.value,
+  });
+}
+
+function onCategoryChange() {
+  autoIcon();
+}
+
+function chooseIcon(ic: string) {
+  form.icon = ic;
+  iconTouched.value = true;   // 用户手选过 → 后面名字/分类变了也别乱改
+  iconPanel.value = false;
+}
+
 watch(() => props.modelValue, (open) => {
   if (!open) return;
   loadCategories();
+  loadUsedIcons();
   job.value = null;
   submitting.value = false;
   pkgFile.value = null;
   preview.value = null;
   previewing.value = false;
   pendingReview.value = false;
+  advOpen.value = false;
+  iconPanel.value = false;
+  codeTouched.value = false;
   if (fileInput.value) fileInput.value.value = '';
   const a = props.asset;
   if (props.mode === 'update' && a) {
@@ -251,20 +375,16 @@ watch(() => props.modelValue, (open) => {
     form.category = a.category; form.icon = a.icon; form.featured = a.featured;
     form.tags = [...a.tags]; form.install_steps = [...a.install_steps];
     form.files = [];
-    const p = a.permissions || {};
-    permRead.value = (p.filesystem_read || []).join(', ');
-    permExec.value = (p.process_exec || []).join(', ');
-    permNet.value = (p.network || []).join(', ');
-    permSecret.value = (p.secrets || []).join(', ');
+    tagsText.value = (a.tags || []).join(', ');
+    keywordsText.value = (a.keywords || []).join(', ');
+    stepsText.value = (a.install_steps || []).join('\n');
   } else {
     Object.assign(form, {
-      code: '', kind: 'skill', name: '', version: '1.0.0', summary: '',
+      code: CODE_PREFIX, kind: 'skill', name: '', version: '1.0.0', summary: '',
       description: '', use_when: '', not_for: '', category: '', icon: '🧩',
       featured: false, tags: [], files: [], install_steps: [],
-      permissions: {},
     });
-    tagsText.value = ''; stepsText.value = '';
-    permRead.value = permExec.value = permNet.value = permSecret.value = '';
+    tagsText.value = ''; keywordsText.value = ''; stepsText.value = '';
   }
 });
 
@@ -306,17 +426,20 @@ watch(() => form.kind, () => {
   if (pkgFile.value) runPreview();
 });
 
+// 名字/简介/分类变了 → 图标跟着重新猜 (但用户手选过就别乱动)
+const iconTouched = ref(false);
+watch(() => [form.name, form.summary], () => {
+  if (!iconTouched.value) autoIcon();
+});
+
 function splitList(s: string): string[] {
   return s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
 }
 
 async function submit() {
-  if (!form.name.trim() || !form.summary.trim()) {
-    ElMessage.warning('名称与简介必填');
-    return;
-  }
-  if (props.mode === 'create' && !/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/.test(form.code.trim())) {
-    ElMessage.warning('code 只能用小写字母/数字/连字符, 且不能以连字符开头结尾');
+  codeTouched.value = true;
+  if (missing.value.length) {
+    ElMessage.warning('还缺: ' + missing.value.join('、'));
     return;
   }
   submitting.value = true;
@@ -332,13 +455,10 @@ async function submit() {
     category: form.category,
     icon: form.icon || '🧩',
     tags: splitList(tagsText.value),
-    permissions: {
-      filesystem_read: splitList(permRead.value),
-      process_exec: splitList(permExec.value),
-      network: splitList(permNet.value),
-      secrets: splitList(permSecret.value),
-    },
+    keywords: splitList(keywordsText.value),
     install_steps: splitList(stepsText.value),
+    // ⚠️ 权限声明不再由表单填 (2026-10-24) —— 固定空, 审核直接看包里的内容
+    permissions: {},
     featured: form.featured,
     package: pkgFile.value,
     files: [] as File[],
@@ -408,6 +528,34 @@ function close() {
 </script>
 
 <style scoped>
+/* ===== 抽屉 ===== */
+.up-drawer :deep(.el-drawer__body) { padding-top: 4px; }
+
+/* ===== 分区 ===== */
+.up-sec {
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: 12px 14px 2px; margin-bottom: 14px; background: var(--surface);
+}
+.sec-h, .sec-toggle {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700; color: var(--ink-900); margin-bottom: 10px;
+}
+.sec-toggle {
+  width: 100%; background: none; border: 0; padding: 0 0 10px;
+  cursor: pointer; font-family: inherit; text-align: left;
+}
+.sec-no {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--primary); color: #fff; font-size: 11px; font-weight: 700;
+}
+.sec-tip {
+  font-size: 10.5px; font-weight: 600; color: var(--err);
+  background: rgba(239, 68, 68, 0.1); padding: 1px 6px; border-radius: var(--radius-pill);
+}
+.sec-caret { margin-left: auto; color: var(--ink-500); font-size: 11px; }
+.adv-body { padding-bottom: 4px; }
+
 /* 分类下拉里的说明文字 (选项右侧灰字) */
 .cat-desc {
   float: right; color: var(--ink-500); font-size: 11px;
@@ -416,12 +564,36 @@ function close() {
 }
 
 .up-form :deep(.el-form-item) { margin-bottom: 14px; }
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
-.perm-editor { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; align-items: start; }
+.pkg-side { padding-top: 2px; }
+
+/* ===== 图标选择 ===== */
+.icon-pick { position: relative; }
+.icon-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-sunken); padding: 5px 10px; cursor: pointer;
+  font-family: inherit; font-size: 16px; min-width: 74px;
+}
+.icon-caret { font-size: 10px; color: var(--ink-500); }
+.icon-panel {
+  position: absolute; z-index: 20; top: 38px; left: 0;
+  display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 6px; box-shadow: var(--shadow-md);
+}
+.icon-cell {
+  width: 26px; height: 26px; border: 0; background: none; cursor: pointer;
+  border-radius: 4px; font-size: 15px; line-height: 1;
+}
+.icon-cell:hover { background: var(--surface-sunken); }
+.icon-cell.on { background: rgba(59, 130, 246, 0.16); }
+
 .hint { margin: 2px 0 0; font-size: 11.5px; color: var(--ink-500); }
+.perm-note { margin: 0 0 10px; padding: 7px 9px; background: var(--surface-sunken);
+  border-radius: var(--radius-sm); line-height: 1.6; }
 .file-input { display: block; margin-bottom: 8px; font-size: 12.5px; }
 .file-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.hint { margin: 6px 0 0; font-size: 11.5px; color: var(--ink-500); line-height: 1.6; }
 .hint code {
   font-family: var(--font-mono); font-size: 11px;
   background: var(--surface-sunken); padding: 1px 5px; border-radius: 4px;
@@ -434,6 +606,13 @@ function close() {
 }
 .file-chip b { cursor: pointer; color: var(--ink-500); }
 .file-chip b:hover { color: var(--err); }
+
+/* ===== 底部固定条 ===== */
+.foot-bar { display: flex; align-items: center; gap: 12px; }
+.foot-left { flex: 1; min-width: 0; }
+.foot-warn { font-size: 11.5px; color: var(--warn); }
+.foot-ok { font-size: 11.5px; color: var(--ok); }
+.foot-right { display: flex; gap: 8px; }
 
 .job-box { padding: 8px 0; }
 .job-status { display: flex; align-items: center; gap: 12px; }
