@@ -11,8 +11,14 @@
           </el-select>
         </el-form-item>
         <el-form-item label="分类" required>
-          <el-select v-model="form.category" style="width:100%" filterable allow-create>
-            <el-option v-for="c in MARKET_CATEGORIES" :key="c" :value="c" :label="c" />
+          <!-- ⚠️ 只给**分类表**里的选项 (不再 allow-create) ——
+               自定义分类在前端没有筛选 chip, 筛不出来 (孤儿分类);
+               实在归不进去就选「其他」. -->
+          <el-select v-model="form.category" style="width:100%" filterable>
+            <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
+              <span>{{ c.name }}</span>
+              <span class="cat-desc">{{ c.desc }}</span>
+            </el-option>
           </el-select>
         </el-form-item>
       </div>
@@ -165,8 +171,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
-import { getAsset, getJob, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
-import { MARKET_CATEGORIES } from './marketCatalog';
+import { getAsset, getJob, listCategories, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -216,8 +221,21 @@ const permExec = ref('');
 const permNet = ref('');
 const permSecret = ref('');
 
+/* 分类表 (后端下发) —— 上传/更新时只能从里面选 */
+const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
+async function loadCategories() {
+  if (categories.value.length) return;
+  try {
+    const r = await listCategories();
+    categories.value = (r?.items || []) as typeof categories.value;
+  } catch {
+    /* 拿不到就退回空列表 —— 后端还会再归一成「其他」 */
+  }
+}
+
 watch(() => props.modelValue, (open) => {
   if (!open) return;
+  loadCategories();
   job.value = null;
   submitting.value = false;
   pkgFile.value = null;
@@ -390,6 +408,13 @@ function close() {
 </script>
 
 <style scoped>
+/* 分类下拉里的说明文字 (选项右侧灰字) */
+.cat-desc {
+  float: right; color: var(--ink-500); font-size: 11px;
+  margin-left: 16px; max-width: 320px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
 .up-form :deep(.el-form-item) { margin-bottom: 14px; }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .perm-editor { display: flex; flex-direction: column; gap: 7px; width: 100%; }

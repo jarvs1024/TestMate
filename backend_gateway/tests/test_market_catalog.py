@@ -68,12 +68,17 @@ def test_validate_version():
 
 
 def test_category_slug_and_path():
-    assert mc.category_slug("Trace 诊断") == "trace"
+    # 分类 → 目录 slug (分类表是唯一真源, 详见 test_market_categories.py)
+    assert mc.category_slug("质量诊断") == "diagnose"
+    assert mc.category_slug("方案用例") == "cases"
+    # 不在表里的分类 → 「其他」(misc), 不会再临时生成新 slug
     assert mc.category_slug("没在表里的分类") == "misc"
-    p = mc.asset_git_path("skill", "Trace 诊断", "demo")
-    assert p == "assets/skills/trace/demo"
-    p2 = mc.asset_git_path("plugin", "自动化代码", "demo")
-    assert p2 == "assets/plugins/auto-code/demo"
+    # 旧分类名也能算出旧 slug 之外的映射 —— 归一到新分类再取 slug
+    assert mc.category_slug("Trace 诊断") == "diagnose"
+    p = mc.asset_git_path("skill", "质量诊断", "demo")
+    assert p == "assets/skills/diagnose/demo"
+    p2 = mc.asset_git_path("plugin", "流程管控", "demo")
+    assert p2 == "assets/plugins/flow/demo"
 
 
 # ---------- 索引条目 ----------

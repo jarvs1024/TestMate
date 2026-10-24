@@ -140,7 +140,7 @@ ASSETS: list[dict] = [
     # ---------------- 技能 ----------------
     {
         "code": "ssd-log-cheatsheet", "kind": "skill", "name": "SSD 日志速查手册",
-        "icon": "📜", "version": "v1.4.0", "category": "Trace 诊断",
+        "icon": "📜", "version": "v1.4.0", "category": "知识资产",
         "summary": "dmesg / FW log 常见报错码与定位路径速查, 贴日志即可判断问题域",
         "description": "沉淀了 SSD 测试中最常见的 40+ 条日志特征, 覆盖 I/O timeout、assert、"
                        "SMART 告警、thermal throttle 等。\n\n"
@@ -152,7 +152,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "nvme-spec-cheatsheet", "kind": "skill", "name": "NVMe Spec 速查",
-        "icon": "📕", "version": "v2.1.0", "category": "Spec 问答",
+        "icon": "📕", "version": "v2.1.0", "category": "知识资产",
         "summary": "NVMe 1.4 / JEDEC 关键命令、字段与状态码速查, 答题带出处",
         "description": "把 NVMe 1.4 与 JEDEC 相关章节压缩成按命令组织的速查表, 每条都标注 spec 章节号。\n\n"
                        "模型回答协议问题时可以引用章节号, 避免凭空编造字段含义。",
@@ -163,7 +163,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "burn-result-reader", "kind": "skill", "name": "老化结果解读",
-        "icon": "🔥", "version": "v1.0.2", "category": "老化任务",
+        "icon": "🔥", "version": "v1.0.2", "category": "任务调度",
         "summary": "长时老化 / burn-in 数据解读: 判断失败模式, 区分真失效与环境噪声",
         "description": "老化跑完拿到一份数据后, 用它判断是真实器件失效、温箱波动、还是接触不良导致的假失效。\n\n"
                        "内置 SSD 测试组的经验判据, 避免把环境问题误报成器件问题。",
@@ -174,7 +174,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "testcase-template-gen", "kind": "skill", "name": "用例模板生成",
-        "icon": "🧪", "version": "v0.9.0", "category": "自动化代码",
+        "icon": "🧪", "version": "v0.9.0", "category": "方案用例",
         "summary": "按团队 pytest 规范生成用例骨架, 自动带 ssd_tool 导入与断言模板",
         "description": "内置团队自动化用例的代码规范: 目录结构、`import ssd_tool` 约定、fixture 写法、断言风格。\n\n"
                        "生成的骨架能直接跑, 不需要再手工改格式。",
@@ -185,7 +185,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "test-plan-assistant", "kind": "skill", "name": "测试方案助手",
-        "icon": "📝", "version": "v0.8.1", "category": "Spec 问答",
+        "icon": "📝", "version": "v0.8.1", "category": "方案用例",
         "summary": "给 Spec / 工况描述, 出一版测试方案骨架: 覆盖点、步骤、风险项",
         "description": "把一段模糊的需求描述展开成可评审的测试方案骨架, 强制产出覆盖矩阵和风险清单。",
         "use_when": "客户新功能上线前需要快速出一版测试方案初稿",
@@ -196,7 +196,7 @@ ASSETS: list[dict] = [
     # ---------------- 连接器 ----------------
     {
         "code": "review-agent-board", "kind": "mcp", "name": "ReviewAgent 评审看板",
-        "icon": "🧬", "version": "v0.2.0", "category": "自动化代码",
+        "icon": "🧬", "version": "v0.2.0", "category": "流程管控",
         "summary": "代码检视数据看板: MR 生命周期、建议采纳率、规则命中与作者分布",
         "description": "连接 ReviewAgent 的 telemetry API, 提供 MR / 建议 / 规则三个维度的聚合数据。",
         "use_when": "想看团队代码检视的整体采纳情况, 或排查某个 MR 的评审历史",
@@ -207,7 +207,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "pr-agent-review", "kind": "mcp", "name": "pr-agent 代码检视",
-        "icon": "🔍", "version": "v1.6.2", "category": "自动化代码",
+        "icon": "🔍", "version": "v1.6.2", "category": "流程管控",
         "summary": "pr-agent 检视数据查询, 与 ReviewAgent 数据可比",
         "description": "提供 pr-agent 侧的 runs / suggestions / stats 查询, 历史上用于与 ReviewAgent 做数据对照。",
         "use_when": "需要与 ReviewAgent 做数据比对, 或排查历史检视记录",
@@ -218,7 +218,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "testmate-machine-ops", "kind": "mcp", "name": "TestMate 机台运维",
-        "icon": "🛠", "version": "v0.3.0", "category": "机台运维",
+        "icon": "🛠", "version": "v0.3.0", "category": "环境助手",
         "summary": "查询测试机状态 / 温箱与通道占用 / 触发常用运维动作",
         "description": "经 TestMate 网关访问机台字典与 SSH 通道, 提供机台状态查询与受限的运维动作。",
         "use_when": "测试过程中要快速查机台状态、看通道占用、拉日志或复位",
@@ -229,7 +229,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "kb-search", "kind": "mcp", "name": "知识库检索",
-        "icon": "📚", "version": "v0.5.0", "category": "Spec 问答",
+        "icon": "📚", "version": "v0.5.0", "category": "知识资产",
         "summary": "检索团队私有知识源 (RAGFlow), 返回带出处引用的片段",
         "description": "所有智能体共享的私有知识源检索入口, 结果带章节级出处。",
         "use_when": "需要从团队沉淀的文档 / spec / 历史报告里找依据",
@@ -240,7 +240,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "dingtalk-notify", "kind": "mcp", "name": "钉钉通知推送",
-        "icon": "📮", "version": "v0.4.2", "category": "机台运维",
+        "icon": "📮", "version": "v0.4.2", "category": "环境助手",
         "summary": "向指定钉钉群推送 Markdown 卡片, 支持加签",
         "description": "经 TestMate 网关转发钉钉机器人 webhook, 统一管理加签与重试。",
         "use_when": "需要把测试结果 / 告警推送到团队群",
@@ -252,7 +252,7 @@ ASSETS: list[dict] = [
     # ---------------- 插件 ----------------
     {
         "code": "code-review-pipeline", "kind": "plugin", "name": "代码检视流水线",
-        "icon": "⚙️", "version": "v1.2.0", "category": "自动化代码",
+        "icon": "⚙️", "version": "v1.2.0", "category": "任务调度",
         "summary": "一键串联: 取 MR diff → 送检视 → 回写评论 → 汇总结果",
         "description": "把 ReviewAgent 调用、结果回写与汇总打包成一个插件, 适合 CI 流水线与批量检视场景。\n\n"
                        "插件包内含一个 MCP server, 安装前请确认权限声明。",
@@ -269,7 +269,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "weekly-report-assistant", "kind": "plugin", "name": "周报助手",
-        "icon": "📊", "version": "v0.3.1", "category": "测试报告",
+        "icon": "📊", "version": "v0.3.1", "category": "流程管控",
         "summary": "汇总本周检视 / 老化 / 用例数据, 生成周报并推送钉钉群",
         "description": "采集三类数据源, 生成带 AI 综述的周报, 推送到团队群。\n\n"
                        "推送默认走 dry-run, 需显式开启真实推送。",
@@ -281,7 +281,7 @@ ASSETS: list[dict] = [
     },
     {
         "code": "test-report-gen", "kind": "plugin", "name": "测试报告生成",
-        "icon": "📑", "version": "v1.0.0", "category": "测试报告",
+        "icon": "📑", "version": "v1.0.0", "category": "流程管控",
         "summary": "把测试数据 + 结论整理成可交付的报告 (含图表与结论页)",
         "description": "读取测试结果, 输出统一模板的测试报告, 支持导出 PDF / xlsx。",
         "use_when": "一轮测试结束后要产出交付给客户或上级的报告",

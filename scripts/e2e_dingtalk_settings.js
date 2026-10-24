@@ -204,7 +204,7 @@ function check(name, ok, detail) {
     fd.append('code', c); fd.append('kind', 'skill'); fd.append('name', 'E2E 通知临时资产');
     fd.append('version', '1.0.0'); fd.append('summary', '验证下架通知时机');
     fd.append('description', '用完即删'); fd.append('use_when', '仅测试'); fd.append('not_for', '生产');
-    fd.append('category', 'misc'); fd.append('icon', '🧪'); fd.append('tags', '[]');
+    fd.append('category', '其他'); fd.append('icon', '🧪'); fd.append('tags', '[]');
     fd.append('keywords', '[]'); fd.append('featured', 'false'); fd.append('permissions', '{}');
     fd.append('install_steps', '[]'); fd.append('bindings', '{}');
     fd.append('files', new Blob(['---\nname: ' + c + '\ndescription: 临时\n---\n\n# 临时\n'], { type: 'text/plain' }), 'SKILL.md');

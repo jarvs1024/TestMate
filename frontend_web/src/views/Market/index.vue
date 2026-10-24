@@ -71,9 +71,10 @@
         <button class="chip" :class="{ active: category === '__featured' }" @click="category = '__featured'; load()">
           ⭐ 精选
         </button>
-        <button v-for="c in MARKET_CATEGORIES" :key="c" class="chip"
-                :class="{ active: category === c }" @click="category = c; load()">
-          {{ c }}
+        <button v-for="c in categories" :key="c.name" class="chip"
+                :class="{ active: category === c.name }" :title="c.desc"
+                @click="category = c.name; load()">
+          {{ c.name }}<span v-if="c.total" class="count">{{ c.total }}</span>
         </button>
       </div>
       <select v-model="sortBy" class="sort" @change="load">
@@ -131,9 +132,9 @@ import AssetDetailDrawer from './AssetDetailDrawer.vue';
 import AssetUploadDialog from './AssetUploadDialog.vue';
 import AssetAuditDrawer from './AssetAuditDrawer.vue';
 import { useUserStore } from '@/stores/user';
-import { MARKET_CATEGORIES, MARKET_KINDS } from './marketCatalog';
+import { MARKET_KINDS } from './marketCatalog';
 import {
-  listAssets, listJobs, getSyncStatus, retryJob, syncFromGit,
+  listAssets, listCategories, listJobs, getSyncStatus, retryJob, syncFromGit,
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
 } from '@/api/assets';
 
@@ -213,6 +214,18 @@ const syncSubHint = computed(() => {
   if (sync.value.pending_count) return '已保存在本机工作区, 推送完成后才算共享给团队';
   return '本地安装的版本比仓库里的旧, 建议更新';
 });
+
+/* 分类表 (后端下发的完整分类 + 各分类资产数) —— chip 动态渲染, 不再硬编码.
+   ⚠️ 以前用硬编码的 MARKET_CATEGORIES: 用户自建的分类**没有 chip** → 筛不出来. */
+const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
+async function loadCategories() {
+  try {
+    const r = await listCategories();
+    categories.value = (r?.items || []) as typeof categories.value;
+  } catch {
+    /* 分类表拿不到就不显示 chip, 不阻塞主列表 */
+  }
+}
 
 /* Tab 上的计数: 各类型总数, 不受筛选影响 */
 async function loadKindCounts() {
@@ -369,7 +382,7 @@ watch(kind, () => load());
 
 let timer: number | null = null;
 onMounted(async () => {
-  await Promise.all([load(), loadKindCounts(), loadSyncStatus()]);
+  await Promise.all([load(), loadKindCounts(), loadSyncStatus(), loadCategories()]);
   timer = window.setInterval(pollJobs, 5000);
 });
 onUnmounted(() => {

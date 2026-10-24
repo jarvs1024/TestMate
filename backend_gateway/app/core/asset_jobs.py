@@ -112,6 +112,18 @@ async def _process(job_id: int) -> None:
         # 只提交本次资产目录 + index.json —— 绝不能 add -A
         paths = [p for p in [asset_path, "index.json"] if p]
 
+        # ⚠️ 改了分类 / 类型 → 资产目录搬家了 → **老目录要一起清掉并提交**,
+        #    否则 GitLab 里留一份残骸副本 (index.json 指向新的, 老的那份还在仓库里).
+        old_path = (payload.get("old_git_path") or "").strip()
+        if old_path and old_path != asset_path:
+            # 只提交**被 git 跟踪过**的老路径 —— 没跟踪过的路径进 pathspec 会报
+            # "pathspec did not match any files", 整个更新失败 (502).
+            if git_sync.tracked_files(old_path):
+                git_sync.remove_path(old_path)
+                paths.insert(0, old_path)
+            else:
+                git_sync.remove_path(old_path)   # 工作区里的残骸也清掉
+
         try:
             result = await git_sync.sync_paths(
                 paths=paths, message=message, author=author

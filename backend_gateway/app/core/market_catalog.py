@@ -19,6 +19,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.core import git_sync
+from app.core import market_categories
 from app.models.asset import Asset
 
 INDEX_PATH = "index.json"
@@ -27,17 +28,12 @@ INDEX_SCHEMA_VERSION = 1
 KIND_DIRS = {"plugin": "plugins", "skill": "skills", "mcp": "connectors"}
 VALID_KINDS = set(KIND_DIRS)
 
-# 分类 → 目录 slug (git 路径要安全, 不能有中文/空格)
-CATEGORY_SLUGS = {
-    "Trace 诊断": "trace",
-    "FW 比对": "fw",
-    "老化任务": "burn",
-    "Spec 问答": "spec",
-    "机台运维": "ops",
-    "自动化代码": "auto-code",
-    "测试报告": "report",
-}
-DEFAULT_CATEGORY_SLUG = "misc"
+# 分类 → 目录 slug: **唯一真源在 market_categories** (分类表 / 校验 / 目录 / 前端 chip 共用)
+# 这里保留两个别名是为了不破坏既有引用 (app/api/marketplace.py 等)
+from app.core.market_categories import (  # noqa: E402
+    MISC_SLUG as DEFAULT_CATEGORY_SLUG,
+    slug_of as _category_slug_of,
+)
 
 CODE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
@@ -54,11 +50,16 @@ class ManifestError(ValueError):
 
 
 def category_slug(category: str) -> str:
-    if category in CATEGORY_SLUGS:
-        return CATEGORY_SLUGS[category]
-    # 未知分类: 生成一个安全的 slug
-    slug = re.sub(r"[^a-z0-9-]+", "-", (category or "").lower()).strip("-")
-    return slug or DEFAULT_CATEGORY_SLUG
+    """分类 → 目录 slug.
+
+    ⚠️ 未知分类**不再临时生成 slug** —— 那样每个自造分类都会在 GitLab 里
+    开一个新目录, 分类越碎目录越乱. 统一归到「其它」(misc).
+    """
+    return _category_slug_of(category)
+
+
+# 兼容旧引用 (只读)
+CATEGORY_SLUGS = {c["name"]: c["slug"] for c in market_categories.table()}
 
 
 def asset_git_path(kind: str, category: str, code: str) -> str:
@@ -146,6 +147,9 @@ def build_manifest(
         raise ManifestError("name 必填且不超过 128 字符")
     if not summary or len(summary) > 500:
         raise ManifestError("summary 必填且不超过 500 字符")
+    # ⚠️ 分类归一: 不在分类表里的一律归「其它」——
+    #    自定义分类不该在 GitLab 里开新目录, 也不该在前端留一个筛不出来的孤儿分类.
+    category = market_categories.normalize(category)
 
     path = asset_git_path(kind, category, code)
     return {

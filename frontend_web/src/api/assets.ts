@@ -234,7 +234,11 @@ export async function listAssets(params: {
 }
 
 export async function listCategories(): Promise<{
-  items: { name: string; slug: string; by_kind: Record<string, number>; total: number }[];
+  items: {
+    name: string; slug: string; desc?: string; order?: number;
+    by_kind: Record<string, number>; total: number;
+  }[];
+  total?: number;
 }> {
   return apiGet('/assets/categories');
 }

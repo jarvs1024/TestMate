@@ -421,6 +421,13 @@ async def list_assets(
 
 @router.get("/categories")
 async def list_categories(_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """分类表 + 各分类的资产数 (按类型分开).
+
+    ⚠️ 返回的是**完整分类表** (含计数为 0 的) —— 前端据此动态渲染筛选 chip.
+    以前前端硬编码 7 个分类, 用户自建的分类**没有 chip** → 筛不出来 (孤儿分类).
+    """
+    from app.core.market_categories import table as category_table
+
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
@@ -434,17 +441,36 @@ async def list_categories(_user: User = Depends(get_current_user)) -> dict[str, 
         if not cat:
             continue
         counts.setdefault(cat, {})[k] = counts.setdefault(cat, {}).get(k, 0) + 1
-    return {
-        "items": [
+
+    items = []
+    for c in category_table():
+        by_kind = counts.get(c["name"], {})
+        items.append(
             {
-                "name": c,
-                "slug": CATEGORY_SLUGS.get(c, "misc"),
-                "by_kind": v,
-                "total": sum(v.values()),
+                "name": c["name"],
+                "slug": c["slug"],
+                "desc": c.get("desc", ""),
+                "order": c.get("order", 99),
+                "by_kind": by_kind,
+                "total": sum(by_kind.values()),
             }
-            for c, v in sorted(counts.items(), key=lambda kv: -sum(kv[1].values()))
-        ]
-    }
+        )
+    # 兜底: 表里没有但 DB 里有的 (老数据 / 别的实例写的) 也列出来, 免得资产"消失"
+    for cat, by_kind in counts.items():
+        if any(i["name"] == cat for i in items):
+            continue
+        items.append(
+            {
+                "name": cat,
+                "slug": "misc",
+                "desc": "未归类的资产",
+                "order": 98,
+                "by_kind": by_kind,
+                "total": sum(by_kind.values()),
+            }
+        )
+    items.sort(key=lambda i: (i["order"], i["name"]))
+    return {"items": items, "total": sum(i["total"] for i in items)}
 
 
 @router.get("/jobs", response_model=AssetJobListOut)
@@ -1431,6 +1457,17 @@ async def _stage_asset_locked(
     base = manifest["git_path"]
     author = _author_of(user)
     files_dir = git_sync.WORKSPACE / base / "files"
+    # 老路径 (改了分类/类型才会跟新路径不同) —— 更新时要连它一起清掉
+    old_git_path = ""
+    if action == "update":
+        async with AsyncSessionLocal() as _s:
+            _old = (
+                await _s.execute(
+                    select(Asset).where(Asset.code == manifest["code"])
+                )
+            ).scalar_one_or_none()
+        if _old is not None and _old.git_path and _old.git_path != base:
+            old_git_path = _old.git_path
 
     # ---- 0. 存在性检查 (必须在落盘**之前**) ----
     # 顺序反了会出事: 冲突的创建请求会先把文件写进工作区, 再报 409.
@@ -1588,6 +1625,9 @@ async def _stage_asset_locked(
                     f"{'chore(market): 更新资产' if action == 'update' else 'feat(market): 上架资产'}"
                     f" {a.name} {a.version}"
                 ),
+                # ⚠️ 改了分类 / 类型 → 目录路径变了 → **老目录要清掉**,
+                #    否则 GitLab 里留一份残骸副本 (index.json 指向新的, 老的那份还在).
+                "old_git_path": old_git_path,
             },
             git_path=a.git_path,
             created_by=user.id,
