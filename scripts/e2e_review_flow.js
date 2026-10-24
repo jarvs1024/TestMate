@@ -14,6 +14,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 // ⚠️ 互斥锁: 并行跑 e2e 会互相改生产设置/删资产 (见 e2e_lock.js)
 require('./e2e_lock').acquire(__filename);
+// 上传入口: 点「上传资产」→ 选形态 → 进对应表单 (2026-10-24)
+const { openUpload } = require('./e2e_upload');
 
 
 const CHROME = process.env.CHROME_PATH
@@ -39,6 +41,27 @@ async function api(pathname, opts = {}) {
   const r = await fetch(API + pathname, opts);
   const t = await r.text();
   try { return { status: r.status, json: JSON.parse(t) }; } catch { return { status: r.status, json: null }; }
+}
+
+/**
+ * 等资产卡片出现 (列表是异步取的 —— 固定 sleep 会抢跑, 卡片还没回来就断言).
+ * 找到就点开详情, 返回徽标文案.
+ */
+async function waitCard(page, code, name, timeoutMs = 15000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const r = await page.evaluate((c, n) => {
+      const el = [...document.querySelectorAll('.asset-card')]
+        .find((x) => x.textContent.includes(c) || (n && x.textContent.includes(n)));
+      if (!el) return null;
+      const badge = [...el.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()).join(' ');
+      el.click();
+      return { badge };
+    }, code, name);
+    if (r) return r;
+    await sleep(300);
+  }
+  return null;
 }
 
 async function login(username, password) {
@@ -150,10 +173,8 @@ async function openPage(browser, token, user) {
   await pub.page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1200);
 
-  await pub.page.evaluate(() => {
-    const b = [...document.querySelectorAll('.mini-btn.primary')].find((x) => x.textContent.includes('上传资产'));
-    b && b.click();
-  });
+  // 上传入口: 先选形态 (技能) → 进安装包表单
+  await openUpload(pub.page, '技能');
   await pub.page.waitForSelector('.file-input', { timeout: 10000 });
   await sleep(600);
   const pkgPath = path.join(OUT_DIR, 'dml-e2e-review-probe.zip');
@@ -227,14 +248,7 @@ async function openPage(browser, token, user) {
     b && b.click();
   });
   await sleep(1800);
-  const pubCard = await pub.page.evaluate((code) => {
-    const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(code) || x.textContent.includes('审核流程端到端资产'));
-    if (!c) return null;
-    return {
-      name: c.querySelector('.ac-name')?.textContent.trim(),
-      badge: [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()).join(' '),
-    };
-  }, CODE);
+  const pubCard = await waitCard(pub.page, CODE, '审核流程端到端资产');
   check('④ 发布者在「我提交的」视图里看到自己的资产', !!pubCard, JSON.stringify(pubCard));
   check('⑤ 卡片带「待审核」徽标', /待审核/.test(pubCard ? pubCard.badge || '' : ''), pubCard ? pubCard.badge : '(无)');
 
@@ -249,10 +263,7 @@ async function openPage(browser, token, user) {
     t && t.click();
   });
   await sleep(1800);
-  const admCard = await adm.page.evaluate((code) => {
-    const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(code) || x.textContent.includes('审核流程端到端资产'));
-    return c ? { name: c.querySelector('.ac-name')?.textContent.trim(), badge: [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()).join(' ') } : null;
-  }, CODE);
+  const admCard = await waitCard(adm.page, CODE, '审核流程端到端资产');
   check('⑥ 管理员在列表里看到待审资产 (卡片带徽标)', !!admCard, JSON.stringify(admCard));
   await adm.page.screenshot({ path: path.join(OUT_DIR, '12-review-queue.png') });
 

@@ -20,6 +20,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 // ⚠️ 互斥锁: 并行跑 e2e 会互相改生产设置/删资产 (见 e2e_lock.js)
 require('./e2e_lock').acquire(__filename);
+// 上传入口: 点「上传资产」→ 选形态 → 进对应表单 (2026-10-24)
+const { openUpload } = require('./e2e_upload');
 
 
 const CHROME = process.env.CHROME_PATH
@@ -162,10 +164,8 @@ z.close()
     const pub = await openAs(browser, pubToken, { id: 0, username: PUBLISHER.username, role: 'tester' });
     await pub.page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
     await pub.page.waitForSelector('.mini-btn.primary', { timeout: 15000 });
-    await pub.page.evaluate(() => {
-      const b = [...document.querySelectorAll('.mini-btn.primary')].find((x) => x.textContent.includes('上传资产'));
-      b && b.click();
-    });
+    // 上传入口: 先选形态 (技能) → 进安装包表单
+    await openUpload(pub.page, '技能');
     await pub.page.waitForSelector('.file-input', { timeout: 10000 });
     await sleep(400);
     const input = await pub.page.$('.file-input');

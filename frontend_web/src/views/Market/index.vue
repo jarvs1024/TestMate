@@ -21,9 +21,25 @@
         <el-tooltip content="谁在什么时候上架/下架/安装过, 以及钉钉通知送没送到" placement="bottom">
           <button class="mini-btn" @click="auditOpen = true">🕘 操作记录</button>
         </el-tooltip>
-        <el-tooltip content="把团队沉淀的技能 / 连接器 / 插件上架到 GitLab" placement="bottom">
-          <button class="mini-btn primary" @click="openCreate">＋ 上传资产</button>
-        </el-tooltip>
+        <!-- ===== 上传入口: 先选形态, 再进对应表单 (2026-10-24) =====
+             以前点开就是「技能」表单, 传连接器得滚到底改类型下拉才知道要填 JSON。 -->
+        <div class="upload-pick" ref="pickWrap">
+          <button class="mini-btn primary" @click="pickOpen = !pickOpen">
+            ＋ 上传资产 <span class="up-caret">▾</span>
+          </button>
+          <div v-if="pickOpen" class="pick-menu">
+            <div class="pick-lead">选一种资产形态 —— 三种的配置表单不一样</div>
+            <button v-for="k in KIND_META" :key="k.value" type="button"
+                    class="pick-item" @click="startCreate(k.value)">
+              <span class="pi-ic">{{ k.icon }}</span>
+              <span class="pi-body">
+                <b>{{ k.label }} <i>{{ k.code }}</i></b>
+                <span class="pi-tag">{{ k.tagline }}</span>
+              </span>
+              <span class="pi-go">→</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -108,7 +124,7 @@
       @edit="openUpdate" @deleted="current = null" @changed="onAssetChanged" />
 
     <AssetUploadDialog
-      v-model="uploadOpen" :mode="uploadMode" :asset="current"
+      v-model="uploadOpen" :mode="uploadMode" :asset="current" :initial-kind="uploadKind"
       @done="load" />
 
     <AssetAuditDrawer v-model="auditOpen" />
@@ -133,6 +149,7 @@ import AssetUploadDialog from './AssetUploadDialog.vue';
 import AssetAuditDrawer from './AssetAuditDrawer.vue';
 import { useUserStore } from '@/stores/user';
 import { MARKET_KINDS } from './marketCatalog';
+import { KIND_META } from './kindMeta';
 import {
   listAssets, listCategories, listJobs, getSyncStatus, retryJob, syncFromGit,
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
@@ -192,6 +209,11 @@ const auditOpen = ref(false);
 const current = ref<AssetItem | null>(null);
 const uploadOpen = ref(false);
 const uploadMode = ref<'create' | 'update'>('create');
+/** 上传入口选定的形态 (空 = 没选, 抽屉里再选) */
+const uploadKind = ref<MarketKind | ''>('');
+/** 上传入口的形态菜单是否展开 */
+const pickOpen = ref(false);
+const pickWrap = ref<HTMLElement | null>(null);
 const sync = ref<SyncStatus>({
   has_remote_updates: false, conflict_count: 0, pending_count: 0,
   failed_count: 0, unpublished_count: 0,
@@ -357,16 +379,34 @@ async function onAssetChanged() {
   current.value = fresh;
 }
 
-function openCreate() {
+/**
+ * 上传入口 —— **先选形态, 再开抽屉**.
+ *
+ * 形态决定了表单长什么样 (技能/插件传安装包, 连接器填 MCP JSON),
+ * 所以在入口就定下来, 免得进了表单还要自己找类型下拉。
+ */
+function startCreate(k: MarketKind) {
+  pickOpen.value = false;
   uploadMode.value = 'create';
+  uploadKind.value = k;
   uploadOpen.value = true;
 }
 
 function openUpdate(item: AssetItem) {
   current.value = item;
   uploadMode.value = 'update';
+  uploadKind.value = '';      // 更新版本: 类型不可改
   uploadOpen.value = true;
 }
+
+/** 点菜单外面 → 关掉形态菜单 */
+function onDocClick(e: MouseEvent) {
+  if (!pickOpen.value) return;
+  if (pickWrap.value && pickWrap.value.contains(e.target as Node)) return;
+  pickOpen.value = false;
+}
+onMounted(() => document.addEventListener('click', onDocClick));
+onUnmounted(() => document.removeEventListener('click', onDocClick));
 
 function resetFilters() {
   category.value = '';
@@ -448,6 +488,35 @@ onUnmounted(() => {
 .mini-btn.primary { color: #fff; border-color: transparent; background: var(--primary-grad); }
 .mini-btn.primary:hover { filter: brightness(1.06); color: #fff; }
 .tick-off { opacity: 0.3; }
+
+/* ===== 上传入口: 形态菜单 ===== */
+.upload-pick { position: relative; }
+.up-caret { font-size: 10px; opacity: 0.85; }
+.pick-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 40;
+  width: 340px; padding: 10px;
+  /* ⚠️ 菜单要**不透明** —— 半透明毛玻璃底会透出后面的卡片文字, 读不清.
+     ⚠️ 颜色只能写在 background 的**最后一层** (多层时前层必须是图像),
+        所以用渐变当第一层, 把半透明 surface 压到不透明底色上. */
+  background: linear-gradient(var(--surface), var(--surface)), var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow-lg);
+}
+.pick-lead { font-size: 12px; color: var(--ink-500); padding: 2px 6px 8px; }
+.pick-item {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%;
+  padding: 9px 10px; margin-bottom: 4px; text-align: left;
+  background: transparent; border: 1px solid transparent; border-radius: 10px;
+  cursor: pointer; font-family: inherit; transition: all 0.15s ease;
+}
+.pick-item:hover { background: var(--surface-soft); border-color: var(--border); }
+.pi-ic { font-size: 20px; line-height: 1.2; }
+.pi-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.pi-body b { font-size: 13px; color: var(--ink-900); }
+.pi-body i { font-style: normal; font-size: 11px; color: var(--ink-500); margin-left: 4px; }
+.pi-tag { font-size: 12px; color: var(--ink-500); line-height: 1.5; }
+.pi-go { color: var(--ink-500); font-size: 13px; align-self: center; }
+.pick-item:hover .pi-go { color: var(--primary); }
 
 .search {
   display: flex; align-items: center; gap: 6px;

@@ -4,7 +4,44 @@
              :close-on-click-modal="false" :with-header="true"
              class="up-drawer" @update:model-value="emit('update:modelValue', $event)">
     <template v-if="!job">
-      <el-form label-position="top" class="up-form">
+      <!-- ============ 第 ① 步: 选形态 (没定类型时先问一句) ============ -->
+      <div v-if="step === 'pick'" class="kind-pick">
+        <div class="kp-lead">
+          <b>先选资产形态</b>
+          <span>三种形态的配置方式完全不同 —— 选完直接进对应的表单。</span>
+        </div>
+        <button v-for="k in KIND_META" :key="k.value" type="button"
+                class="kp-card" @click="chooseKind(k.value)">
+          <span class="kp-ic">{{ k.icon }}</span>
+          <span class="kp-main">
+            <span class="kp-title">{{ k.label }}<i>{{ k.code }}</i></span>
+            <span class="kp-tag">{{ k.tagline }}</span>
+            <ul class="kp-needs">
+              <li v-for="n in k.needs" :key="n">{{ n }}</li>
+            </ul>
+          </span>
+          <span class="kp-go">开始配置 →</span>
+        </button>
+      </div>
+
+      <el-form v-else label-position="top" class="up-form">
+        <!-- 步骤条: 选形态 → 填配置 (形态在第 ① 步就定了, 这里只是显示进度) -->
+        <div v-if="mode === 'create'" class="flow-steps">
+          <span class="fs done">① 选形态</span>
+          <span class="fs-arrow">→</span>
+          <span class="fs on">② 填配置</span>
+        </div>
+
+        <!-- 类型头: 现在配的是哪种形态, 一眼可见, 也能随时换 -->
+        <div class="type-bar">
+          <span class="tb-ic">{{ kind.icon }}</span>
+          <span class="tb-body">
+            <b>{{ kind.label }}<i>{{ kind.code }}</i></b>
+            <span class="tb-hint">{{ kind.formHint }}</span>
+          </span>
+          <button v-if="mode === 'create'" type="button" class="tb-change"
+                  @click="step = 'pick'">更换类型</button>
+        </div>
         <!-- ============ ① 连接器配置 / 安装包 (放最前) ============ -->
         <!-- 连接器是**配置型**资产: 只有一段 MCP 配置, 没有安装包也没有 README -->
         <section v-if="isMcp" class="up-sec">
@@ -42,8 +79,12 @@
             <div class="pkg-side">
               <p class="hint">
                 压缩包会在服务端解压后推送到 GitLab, 仓库里存的是解压后的文件。<br />
-                技能包需含 <code>SKILL.md</code>, 插件包需含 <code>README.md</code>
-                和 <code>.qoder-plugin/plugin.json</code>。
+                <template v-if="form.kind === 'plugin'">
+                  插件包需含 <code>README.md</code> 和 <code>.qoder-plugin/plugin.json</code>。
+                </template>
+                <template v-else>
+                  技能包需含 <code>SKILL.md</code>。
+                </template>
               </p>
             </div>
           </div>
@@ -78,14 +119,16 @@
         <section class="up-sec">
           <div class="sec-h"><span class="sec-no">2</span>基础信息</div>
           <p class="guide">
+            <b>三条约定</b>:
             <template v-if="isMcp">
-              <b>三条约定</b>: ① 资产 code = 连接器名 (英文, <code>dml-</code> 开头);
-              ② 连接器**只有这段 MCP 配置** —— 没有安装包, 也没有 README;
+              ① 资产 code = 连接器名 (英文, <code>dml-</code> 开头);
+              ② 连接器<b>只有这段 MCP 配置</b> —— 没有安装包, 也没有 README;
               ③ 图标会自动分配, 且不跟现有资产重复 —— 都可以手动改。
             </template>
             <template v-else>
-              <b>三条约定</b>: ① 资产 code = 安装包名 = 插件名 (英文, <code>dml-</code> 开头);
-              ② 类型决定校验规则 (技能要 SKILL.md, 插件要 README.md + plugin.json);
+              ① 资产 code = 安装包名 = 插件名 (英文, <code>dml-</code> 开头);
+              ② 校验规则按形态来
+              ({{ form.kind === 'plugin' ? '插件要 README.md + plugin.json' : '技能要 SKILL.md' }});
               ③ 图标会自动分配, 且不跟现有资产重复 —— 都可以手动改。
             </template>
           </p>
@@ -129,27 +172,16 @@
             </el-form-item>
           </div>
 
-          <div class="row-2">
-            <el-form-item label="分类" required>
-              <!-- ⚠️ 只给**分类表**里的选项 (不再 allow-create) ——
-                   自定义分类在前端没有筛选 chip, 筛不出来 (孤儿分类);
-                   实在归不进去就选「其他」. -->
-              <el-select v-model="form.category" style="width:100%" filterable
-                         @change="onCategoryChange">
-                <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
-                  <span>{{ c.name }}</span>
-                  <span class="cat-desc">{{ c.desc }}</span>
-                </el-option>
-              </el-select>
-            </el-form-item>
-            <el-form-item label="类型" required>
-              <el-select v-model="form.kind" style="width:100%" :disabled="mode === 'update'">
-                <el-option value="skill" label="技能 skill（默认）" />
-                <el-option value="plugin" label="插件 plugin" />
-                <el-option value="mcp" label="连接器 mcp（配置型, 无安装包）" />
-              </el-select>
-            </el-form-item>
-          </div>
+          <!-- 分类: 抽屉里唯一的下拉 —— 其它选项都是固定的 -->
+          <el-form-item label="分类" required>
+            <el-select v-model="form.category" style="width:100%" filterable
+                       @change="onCategoryChange">
+              <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
+                <span>{{ c.name }}</span>
+                <span class="cat-desc">{{ c.desc }}</span>
+              </el-option>
+            </el-select>
+          </el-form-item>
         </section>
 
         <!-- ============ ③ 进阶信息 (默认收起) ============ -->
@@ -161,7 +193,9 @@
           <div v-show="advOpen" class="adv-body">
             <el-form-item label="详细说明">
               <el-input v-model="form.description" type="textarea" :rows="3"
-                        placeholder="会存到 GitLab 的 README.md —— 写清怎么用、前置条件、示例" />
+                        :placeholder="isMcp
+                          ? '补充说明 —— 会显示在详情页 (连接器没有 README)'
+                          : '会存到 GitLab 的 README.md —— 写清怎么用、前置条件、示例'" />
             </el-form-item>
             <div class="row-2">
               <el-form-item label="适用场景">
@@ -181,7 +215,8 @@
                 <el-input v-model="keywordsText" placeholder="同义词/技术词, 逗号分隔, 如 ssd, nvme, dmesg (搜不到时靠它)" />
               </el-form-item>
             </div>
-            <el-form-item label="安装步骤 (每行一步)">
+            <!-- 安装步骤: 只对「有安装包」的形态有意义 —— 连接器没有包可装 -->
+            <el-form-item v-if="!isMcp" label="安装步骤 (每行一步)">
               <el-input v-model="stepsText" type="textarea" :rows="2"
                         placeholder="每行一步, 如:&#10;将 xxx 复制到宿主 skills 目录&#10;重启 Agent 会话" />
               <p class="hint">包里一般已有 SKILL.md / README.md, 一般不用填。</p>
@@ -230,7 +265,7 @@
     </div>
 
     <template #footer>
-      <template v-if="!job">
+      <template v-if="!job && step === 'form'">
         <!-- 缺什么一次说清, 不用点一次报一个 -->
         <div class="foot-bar">
           <div class="foot-left">
@@ -248,6 +283,15 @@
           </div>
         </div>
       </template>
+      <!-- 还在第 ① 步 (选形态) —— 没东西可提交, 只给个「返回」 -->
+      <div v-else-if="!job" class="foot-bar">
+        <div class="foot-left">
+          <span class="foot-hint">先选一种形态, 就能进对应的配置表单</span>
+        </div>
+        <div class="foot-right">
+          <el-button @click="visible = false">取消</el-button>
+        </div>
+      </div>
       <template v-else-if="job.status === 'failed'">
         <el-button @click="visible = false">关闭</el-button>
         <el-button type="primary" :loading="submitting" @click="doRetry">重试同步</el-button>
@@ -266,12 +310,15 @@ import {
   CODE_EXAMPLE, CODE_PREFIX, GENERAL_ICONS, ICON_POOLS,
   codeFromPackageName, pickIcon, validateCode, validatePackageName,
 } from './assetForm';
+import { KIND_META, kindMeta } from './kindMeta';
 import { MCP_TEMPLATE, formatMcpConfig, parseMcpConfig } from './mcpConfig';
 
 const props = defineProps<{
   modelValue: boolean;
   mode: 'create' | 'update';
   asset?: AssetItem | null;
+  /** 入口选定的形态 (市场页下拉选完传进来) —— 空就先进第 ① 步让人选 */
+  initialKind?: MarketKind | '';
 }>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void;
@@ -314,6 +361,10 @@ const stepsText = ref('');
 
 /** 连接器形态: 只有一段 MCP 配置, 没有安装包也没有 README */
 const isMcp = computed(() => form.kind === 'mcp');
+/** 当前形态的元信息 (图标 / 需要准备什么) */
+const kind = computed(() => kindMeta(form.kind));
+/** 抽屉里的第几步: pick = 选形态, form = 填配置 */
+const step = ref<'pick' | 'form'>('form');
 /** MCP 配置的实时校验 (规则与后端一致) */
 const mcpParsed = computed(() => parseMcpConfig(mcpConfigText.value));
 const mcpConfigError = computed(() => {
@@ -449,6 +500,7 @@ watch(() => props.modelValue, (open) => {
   if (fileInput.value) fileInput.value.value = '';
   const a = props.asset;
   if (props.mode === 'update' && a) {
+    step.value = 'form';          // 更新版本: 直接进表单, 不选形态 (类型不可改)
     form.code = a.code; form.kind = a.kind; form.name = a.name; form.version = a.version;
     form.summary = a.summary; form.description = a.description;
     form.use_when = a.use_when; form.not_for = a.not_for;
@@ -461,15 +513,25 @@ watch(() => props.modelValue, (open) => {
     keywordsText.value = (a.keywords || []).join(', ');
     stepsText.value = (a.install_steps || []).join('\n');
   } else {
+    // 新建: 形态在入口就选好了 (initialKind) —— 直接进对应表单;
+    // 没带形态 (别处打开) 就先走第 ① 步让人选, 别再默认「技能」。
+    const k = (props.initialKind || 'skill') as MarketKind;
     Object.assign(form, {
-      code: CODE_PREFIX, kind: 'skill', name: '', version: '1.0.0', summary: '',
+      code: CODE_PREFIX, kind: k, name: '', version: '1.0.0', summary: '',
       description: '', use_when: '', not_for: '', category: '', icon: '🧩',
       featured: false, tags: [], files: [], install_steps: [],
     });
+    step.value = props.initialKind ? 'form' : 'pick';
     tagsText.value = ''; keywordsText.value = ''; stepsText.value = '';
     mcpConfigText.value = '';
   }
 });
+
+/** 第 ① 步: 选定形态 → 直接进对应表单 */
+function chooseKind(k: MarketKind) {
+  form.kind = k;
+  step.value = 'form';
+}
 
 async function onPickPackage(e: Event) {
   const input = e.target as HTMLInputElement;
@@ -512,6 +574,22 @@ async function runPreview() {
 // 类型变了, 体检结论也得重算 (skill 要 SKILL.md, plugin 要 plugin.json)
 watch(() => form.kind, () => {
   if (pkgFile.value) runPreview();
+});
+
+/**
+ * 连接器: MCP 配置里第一个连接器的名字 → 资产 code (省得手打一遍).
+ *
+ * 只在用户**没自己动过** code 时才填 —— 填了就别再覆盖人家的输入。
+ * 名字不合法 (中文/特殊字符) 就跳过, 让用户自己填。
+ */
+watch(() => mcpConfigText.value, () => {
+  if (props.mode !== 'create' || codeTouched.value || !isMcp.value) return;
+  const p = mcpParsed.value;
+  if (!p.ok) return;
+  const names = Object.keys((p.config as any)?.mcpServers || {});
+  const slug = (names[0] || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!slug) return;
+  form.code = slug.startsWith(CODE_PREFIX) ? slug : CODE_PREFIX + slug;
 });
 
 // 名字/简介/分类变了 → 图标跟着重新猜 (但用户手选过就别乱动)
@@ -620,6 +698,63 @@ function close() {
 <style scoped>
 /* ===== 抽屉 ===== */
 .up-drawer :deep(.el-drawer__body) { padding-top: 4px; }
+
+/* ===== 第 ① 步: 选形态 ===== */
+.kind-pick { padding: 4px 2px 0; }
+.kp-lead {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-bottom: 12px; font-size: 12.5px; color: var(--ink-500);
+}
+.kp-lead b { font-size: 14px; color: var(--ink-900); }
+.kp-card {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%;
+  padding: 12px 14px; margin-bottom: 10px; text-align: left;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-card); cursor: pointer; font-family: inherit;
+  transition: all 0.15s ease;
+}
+.kp-card:hover { border-color: var(--primary); box-shadow: var(--shadow-md); }
+.kp-ic { font-size: 26px; line-height: 1.2; }
+.kp-main { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.kp-title { font-size: 14px; font-weight: 700; color: var(--ink-900); }
+.kp-title i {
+  font-style: normal; font-size: 11px; font-weight: 500; color: var(--ink-500);
+  margin-left: 6px;
+}
+.kp-tag { font-size: 12px; color: var(--ink-700); line-height: 1.5; }
+.kp-needs { margin: 2px 0 0; padding-left: 18px; }
+.kp-needs li { font-size: 11.5px; color: var(--ink-500); line-height: 1.7; }
+.kp-go { align-self: center; font-size: 12.5px; color: var(--ink-500); white-space: nowrap; }
+.kp-card:hover .kp-go { color: var(--primary); }
+
+/* ===== 步骤条 + 类型头 ===== */
+.flow-steps {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--ink-500); margin-bottom: 10px;
+}
+.flow-steps .fs.on { color: var(--primary); font-weight: 700; }
+.flow-steps .fs.done { color: var(--ok); }
+.flow-steps .fs-arrow { color: var(--ink-500); }
+.type-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; margin-bottom: 14px;
+  background: var(--surface-sunken); border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.tb-ic { font-size: 22px; line-height: 1; }
+.tb-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.tb-body b { font-size: 13.5px; color: var(--ink-900); }
+.tb-body i {
+  font-style: normal; font-size: 11px; font-weight: 500; color: var(--ink-500);
+  margin-left: 6px;
+}
+.tb-hint { font-size: 11.5px; color: var(--ink-500); }
+.tb-change {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--ink-700); border-radius: var(--radius-pill);
+  padding: 4px 12px; font-size: 11.5px; cursor: pointer; font-family: inherit;
+}
+.tb-change:hover { border-color: var(--primary); color: var(--primary); }
 
 /* ===== 分区 ===== */
 .up-sec {

@@ -22,6 +22,8 @@ const fs = require('fs');
 const path = require('path');
 // ⚠️ 互斥锁: 并行跑 e2e 会互相改生产设置/删资产 (见 e2e_lock.js)
 require('./e2e_lock').acquire(__filename);
+// 上传入口: 点「上传资产」→ 选形态 → 进对应表单 (2026-10-24)
+const { openUpload, openUploadMenu } = require('./e2e_upload');
 
 
 const CHROME = process.env.CHROME_PATH
@@ -427,15 +429,64 @@ async function codeByName(page, name) {
     check('G1 重新同步后页面仍正常', s.cards.length > 0, `${s.cards.length} 张`);
     await page.screenshot({ path: path.join(OUT_DIR, '05-final.png'), fullPage: true });
 
+    // ---------- H0. 上传入口: 先选形态, 再进对应表单 (2026-10-24) ----------
+    await openUploadMenu(page);
+    const kinds = await page.evaluate(() =>
+      [...document.querySelectorAll('.pick-item')]
+        .map((x) => (x.textContent || '').replace(/\s+/g, ' ').trim()));
+    check('H0-1 上传入口先让用户选形态', kinds.length === 3, kinds.join(' | '));
+    check('H0-2 技能/插件/连接器三种都在',
+      /技能/.test(kinds[0] || '') && /插件/.test(kinds[1] || '') && /连接器/.test(kinds[2] || ''),
+      kinds.join(' | '));
+
+    // 选「连接器」→ 直接进 MCP 配置表单 (没有安装包)
+    await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.pick-item')].find((x) => x.textContent.includes('连接器'));
+      el && el.click();
+    });
+    await page.waitForSelector('.mcp-json', { timeout: 10000 });
+    await sleep(700);
+    const mcpState = await page.evaluate(() => ({
+      mcp: !!document.querySelector('.mcp-json'),
+      pkg: !!document.querySelector('.file-input'),
+      typeBar: (document.querySelector('.type-bar')?.textContent || '').replace(/\s+/g, ' ').trim(),
+      selects: document.querySelectorAll('.el-drawer .el-select').length,
+    }));
+    check('H0-3 选「连接器」直接进 MCP 配置页', mcpState.mcp === true, `typeBar=${mcpState.typeBar}`);
+    check('H0-4 连接器没有安装包区', mcpState.pkg === false, `typeBar=${mcpState.typeBar}`);
+    check('H0-5 类型头显示「连接器」', /连接器/.test(mcpState.typeBar || ''), mcpState.typeBar);
+    check('H0-6 表单里没有类型下拉了 (只剩分类)', mcpState.selects === 1, `el-select=${mcpState.selects}`);
+
+    // 「更换类型」→ 退回第 ① 步
+    await page.evaluate(() => {
+      const b = [...document.querySelectorAll('.tb-change')][0];
+      b && b.click();
+    });
+    await sleep(700);
+    const backToPick = await page.evaluate(() => document.querySelectorAll('.kp-card').length);
+    check('H0-7 「更换类型」能退回第一步', backToPick === 3, `${backToPick} 张卡片`);
+    await page.screenshot({ path: path.join(OUT_DIR, '08-upload-kinds.png') });
+
+    // 选「技能」→ 进安装包表单, 接着跑原来的包体检
+    await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.kp-card')].find((x) => x.textContent.includes('技能'));
+      el && el.click();
+    });
+    await page.waitForSelector('.file-input', { timeout: 10000 });
+    await sleep(700);
+    const skillState = await page.evaluate(() => ({
+      pkg: !!document.querySelector('.file-input'),
+      typeBar: (document.querySelector('.type-bar')?.textContent || '').replace(/\s+/g, ' ').trim(),
+    }));
+    check('H0-8 选「技能」进安装包表单', skillState.pkg === true, `typeBar=${skillState.typeBar}`);
+
     // ---------- H. 上传前包体检 ----------
     const goodZip = path.join(OUT_DIR, 'dml-e2e-probe.zip');
     const badZip = path.join(OUT_DIR, 'dml-e2e-bad.zip');
     makeZip(goodZip, { 'SKILL.md': '---\nname: e2e-probe\ndescription: 体检探针\n---\n\n# 体检探针\n' });
     makeZip(badZip, { 'README.md': '# 缺 SKILL.md 的包\n' });
 
-    await clickByText(page, '.mini-btn.primary', '上传资产');
-    await page.waitForSelector('.file-input', { timeout: 10000 });
-    await sleep(600);
+    await sleep(400);
     const fileInput = await page.$('.file-input');
     await fileInput.uploadFile(goodZip);
     await page.waitForSelector('.pv-box', { timeout: 15000 });
