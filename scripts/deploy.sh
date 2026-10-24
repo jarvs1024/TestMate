@@ -42,5 +42,12 @@ fi
 echo
 echo "✅ 部署完成"
 echo "  前端: http://localhost:8090    后端: http://localhost:18000"
-echo "  ⚠️ 改前端后请确认线上 bundle 已更新:"
-echo "     docker exec test-mate-frontend-1 ls -lt /usr/share/nginx/html/assets | head -3"
+
+if [ "$do_frontend" -eq 1 ]; then
+  echo
+  echo "=== 自检: 线上 bundle 跟源码对得上吗 ==="
+  scripts/check_deploy.sh || {
+    echo "❌ 部署后自检没过 —— 线上跑的不是当前源码"
+    exit 1
+  }
+fi
