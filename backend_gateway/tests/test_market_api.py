@@ -192,6 +192,52 @@ async def test_visibility_unpublished_hidden_from_others(client, auth, ws,
         "下架的资产不该被别人看到"
 
 
+async def test_download_increments_download_count(
+    client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
+):
+    """下载一次 → 下载计数 +1 (热门度指标, 不是"安装次数").
+
+    下载次数是**准确**的: 下载端点自己知道有人下了.
+    ("安装次数" 猜不出来 —— 后端不知道用户到底解压没有, 所以那个字段下线了)
+    """
+    from sqlalchemy import select as _sel
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="dl-demo")
+
+    # 先确认 0
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(
+            _sel(Asset).where(Asset.code == "dl-demo")
+        )).scalar_one()
+        assert a.download_count == 0, a.download_count
+
+    r = await client.get(f"{API}/dl-demo/versions/1.0.0/download", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    assert r.content[:2] == b"PK", "不是 zip"
+
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(
+            _sel(Asset).where(Asset.code == "dl-demo")
+        )).scalar_one()
+        assert a.download_count == 1, a.download_count
+
+    # 再下一次 → 2
+    await client.get(f"{API}/dl-demo/versions/1.0.0/download", headers=auth)
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(
+            _sel(Asset).where(Asset.code == "dl-demo")
+        )).scalar_one()
+        assert a.download_count == 2, a.download_count
+
+
 # ---------- 审核 ----------
 
 async def test_review_flow_approve(client, auth, ws, restore_git_config,  # noqa: ARG001

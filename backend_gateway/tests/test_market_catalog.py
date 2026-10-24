@@ -101,7 +101,7 @@ class _FakeAsset:
         self.install_steps = kw.get("install_steps", [])
         self.bindings = kw.get("bindings", {})
         self.git_path = kw.get("git_path", "assets/skills/trace/demo")
-        self.install_count = kw.get("install_count", 0)
+        self.download_count = kw.get("download_count", 0)
         self.publish_status = kw.get("publish_status", "published")
         self.updated_at = None
 

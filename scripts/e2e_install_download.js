@@ -101,6 +101,17 @@ function check(name, ok, detail) {
       !btns.some((b) => /安装到本地|重新安装|卸载/.test(b)),
       btns.join(' | '));
 
+    // 下载前的计数总和 (下载端点自己会 +1)
+    // 用**总和差值**而不是单个资产的计数 —— 不依赖从 DOM 里抠 code, 稳得多
+    const totalCount = async () => page.evaluate(async () => {
+      const tk = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/assets?limit=500&status=all&client_id=e2e-dl',
+        { headers: { Authorization: 'Bearer ' + tk } });
+      const d = await r.json();
+      return (d.items || []).reduce((n, i) => n + (i.download_count || 0), 0);
+    });
+    const beforeN = await totalCount();
+
     // 点下载 → zip 应该落到下载目录
     let downloaded = '';
     page.on('download', async (dl) => {
@@ -122,6 +133,10 @@ function check(name, ok, detail) {
         || document.querySelector('.el-message-box__message')?.textContent.trim() || '');
       if (msg) break;
     }
+    // 下载计数应该 +1 (热门度指标)
+    const afterN = await totalCount();
+    check('E5b 下载计数 +1', afterN === beforeN + 1, `${beforeN} → ${afterN}`);
+
     check('E6 提示说清下载与解压位置',
       /已下载/.test(msg) && /解压/.test(msg), msg.slice(0, 80));
 
