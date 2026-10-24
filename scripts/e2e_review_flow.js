@@ -64,6 +64,21 @@ async function waitCard(page, code, name, timeoutMs = 15000) {
   return null;
 }
 
+/**
+ * 等某个选择器的文本出现 (轮询) —— 固定 sleep 会在列表刷新慢一拍时误报.
+ */
+async function waitText(page, selector, pattern, timeoutMs = 15000) {
+  const t0 = Date.now();
+  const re = pattern instanceof RegExp ? pattern : new RegExp(pattern);
+  while (Date.now() - t0 < timeoutMs) {
+    const txt = await page.evaluate((sel) =>
+      (document.querySelector(sel)?.textContent || '').replace(/\s+/g, ' ').trim(), selector);
+    if (re.test(txt)) return txt;
+    await sleep(300);
+  }
+  return '';
+}
+
 async function login(username, password) {
   const r = await api('/api/v1/auth/login', {
     method: 'POST',
@@ -320,18 +335,13 @@ async function openPage(browser, token, user) {
     const b = document.querySelector('.my-review-bar .mrb-btn');
     b && b.click();
   });
-  await sleep(1600);
-  const pubReject = await pub.page.evaluate((code) => {
-    const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(code) || x.textContent.includes('审核流程端到端资产'));
-    if (!c) return null;
-    c.click();
-    return { badge: [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()).join(' ') };
-  }, CODE);
+  await sleep(600);
+  // ⚠️ 用轮询而不是固定 sleep —— 列表刷新慢一拍就会误报"看不到徽标"
+  const pubReject = await waitCard(pub.page, CODE, '审核流程端到端资产');
   check('⑩ 发布者看到「已驳回」徽标', /已驳回/.test(pubReject ? pubReject.badge || '' : ''), pubReject ? pubReject.badge : '(无)');
   await pub.page.waitForSelector('.el-drawer', { timeout: 10000 });
-  await sleep(1200);
-  const noteText = await pub.page.evaluate(() =>
-    document.querySelector('.el-alert__title')?.textContent.trim() || '');
+  // 详情里的驳回提示也是异步渲染的 —— 轮询等它出现
+  const noteText = await waitText(pub.page, '.el-alert__title', '权限声明不完整');
   check('⑪ 发布者看到驳回理由', /权限声明不完整/.test(noteText), noteText.slice(0, 80));
   const canSubmit = await pub.page.evaluate(() =>
     [...document.querySelectorAll('.ad-actions .el-button')].some((b) => b.textContent.includes('重新提交审核')));
@@ -352,11 +362,9 @@ async function openPage(browser, token, user) {
     const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
     t && t.click();
   });
-  await sleep(1800);
-  await adm.page.evaluate((code) => {
-    const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(code) || x.textContent.includes('审核流程端到端资产'));
-    c && c.click();
-  }, CODE);
+  await sleep(600);
+  // ⚠️ 轮询等卡片出现 (管理员这边列表可能还没刷完)
+  await waitCard(adm.page, CODE, '审核流程端到端资产');
   await adm.page.waitForSelector('.el-drawer', { timeout: 10000 });
   await sleep(1200);
   await adm.page.evaluate(() => {
@@ -371,17 +379,15 @@ async function openPage(browser, token, user) {
   await sleep(3000);
   await adm.page.reload({ waitUntil: 'domcontentloaded' });
   await adm.page.waitForSelector('.asset-card', { timeout: 15000 });
-  await sleep(1500);
+  await sleep(800);
   // 通过后它回到市场里 —— 切到它所属的类型(skill)才看得到
   await adm.page.evaluate(() => {
     const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
     t && t.click();
   });
-  await sleep(1800);
-  const finalCard = await adm.page.evaluate((code) => {
-    const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(code) || x.textContent.includes('审核流程端到端资产'));
-    return c ? { badge: [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()).join(' ') } : null;
-  }, CODE);
+  await sleep(600);
+  // ⚠️ 轮询 —— 审核通过后资产回到市场, 但列表刷新有延迟
+  const finalCard = await waitCard(adm.page, CODE, '审核流程端到端资产', 20000);
   check('⑬ 通过后资产出现在市场里 (不再是待审核/已驳回)', !!finalCard && !/待审核|已驳回/.test(finalCard.badge || ''), JSON.stringify(finalCard));
   await adm.page.screenshot({ path: path.join(OUT_DIR, '14-review-approved.png') });
 
