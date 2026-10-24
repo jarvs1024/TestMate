@@ -9,12 +9,12 @@ import { formatMcpConfig, parseMcpConfig } from '../mcpConfig';
 
 describe('MCP 配置解析', () => {
   it('进程型配置合法', () => {
-    const r = parseMcpConfig('{"mcpServers": {"demo": {"command": "npx", "args": ["-y", "demo"]}}}');
+    const r = parseMcpConfig('{"mcpServers": {"dml-demo": {"command": "npx", "args": ["-y", "dml-demo"]}}}');
     expect(r.ok).toBe(true);
   });
 
   it('远程型配置合法', () => {
-    const r = parseMcpConfig('{"mcpServers": {"demo": {"url": "http://h:5050/mcp"}}}');
+    const r = parseMcpConfig('{"mcpServers": {"dml-demo": {"url": "http://h:5050/mcp"}}}');
     expect(r.ok).toBe(true);
   });
 
@@ -42,33 +42,44 @@ describe('MCP 配置解析', () => {
   });
 
   it('缺 command/url 报错', () => {
-    const r = parseMcpConfig('{"mcpServers": {"demo": {"args": ["x"]}}}');
+    const r = parseMcpConfig('{"mcpServers": {"dml-demo": {"args": ["x"]}}}');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('缺启动方式');
   });
 
   it('url 协议不对报错', () => {
-    const r = parseMcpConfig('{"mcpServers": {"demo": {"url": "ftp://h/mcp"}}}');
+    const r = parseMcpConfig('{"mcpServers": {"dml-demo": {"url": "ftp://h/mcp"}}}');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('http://');
   });
 
   it('args 必须是数组', () => {
-    const r = parseMcpConfig('{"mcpServers": {"demo": {"command": "npx", "args": "x"}}}');
+    const r = parseMcpConfig('{"mcpServers": {"dml-demo": {"command": "npx", "args": "x"}}}');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('args');
   });
 
   it('env 必须是对象', () => {
-    const r = parseMcpConfig('{"mcpServers": {"demo": {"command": "npx", "env": ["A=1"]}}}');
+    const r = parseMcpConfig('{"mcpServers": {"dml-demo": {"command": "npx", "env": ["A=1"]}}}');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('env');
   });
 
   it('格式化: 合法就格式化, 不合法原样返回', () => {
-    const ok = formatMcpConfig('{"mcpServers":{"demo":{"url":"http://h/mcp"}}}');
+    const ok = formatMcpConfig('{"mcpServers":{"dml-demo":{"url":"http://h/mcp"}}}');
     expect(ok).toContain('\n  "mcpServers"');
     const bad = formatMcpConfig('{oops');
     expect(bad).toBe('{oops');
+  });
+
+  it('连接器名必须 dml- 开头', () => {
+    const r = parseMcpConfig('{"mcpServers": {"xx-xxx": {"url": "http://h/mcp"}}}');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('dml-');
+  });
+
+  it('连接器名只能用小写字母/数字/连字符', () => {
+    const r = parseMcpConfig('{"mcpServers": {"dml-Bad_Name": {"url": "http://h/mcp"}}}');
+    expect(r.ok).toBe(false);
   });
 });

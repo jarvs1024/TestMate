@@ -24,9 +24,15 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 MAX_CONFIG_BYTES = 64 * 1024
+
+# 连接器名 = 资产 code 的约定: dml- 开头 + 小写字母/数字/连字符.
+# ⚠️ 详情页会**原样展示**这份配置, 用户照着加进自己的 MCP 配置里 ——
+#    名字起得像 "xx-xxx" 会跟市场里的资产对不上, 也分不清是谁。
+CONNECTOR_NAME_RE = re.compile(r"^dml-[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class McpConfigError(ValueError):
@@ -70,6 +76,11 @@ def validate_mcp_config(cfg: Any) -> dict[str, Any]:
     for name, spec in servers.items():
         if not isinstance(name, str) or not name.strip():
             raise McpConfigError("mcpServers 里的连接器名不能为空")
+        if not CONNECTOR_NAME_RE.match(name):
+            raise McpConfigError(
+                f"连接器「{name}」的名字必须以 dml- 开头, 且只能用小写字母/数字/连字符 "
+                "(如 dml-my-connector)"
+            )
         if not isinstance(spec, dict):
             raise McpConfigError(f"连接器「{name}」的配置必须是一个对象")
 

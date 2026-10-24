@@ -4,6 +4,7 @@
  * 前端只是**提前提示** (别让用户填完一整张表单才被 422 拦下),
  * 真正的拦截在后端 —— 两边规则要一样, 不然会出现"前端说行、后端说不行".
  */
+import { CODE_PATTERN } from './assetForm';
 export interface McpParseOk {
   ok: true;
   config: Record<string, any>;
@@ -51,6 +52,15 @@ export function parseMcpConfig(text: string): McpParseResult {
     const spec = servers[name];
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
       return { ok: false, error: `连接器「${name}」的配置必须是一个对象` };
+    }
+    // ⚠️ 连接器名 = 资产 code 的约定: dml- 开头 + 小写字母/数字/连字符.
+    //    详情页会**原样展示**这份配置, 用户照着加进自己的 MCP 配置里 ——
+    //    名字起得像 "xx-xxx" 会跟市场里的资产对不上, 也分不清是谁。
+    if (!CODE_PATTERN.test(name)) {
+      return {
+        ok: false,
+        error: `连接器「${name}」的名字必须以 dml- 开头, 且只能用小写字母/数字/连字符 (如 dml-my-connector)`,
+      };
     }
     const { command, url, args } = spec as Record<string, any>;
     if (!command && !url) {

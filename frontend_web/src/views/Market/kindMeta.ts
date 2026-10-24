@@ -28,6 +28,10 @@ export interface KindMeta {
   needs: string[];
   /** 表单顶部提示: 这一步要填什么 */
   formHint: string;
+  /** 包里要有什么 (只有「有包」的形态才有 —— 连接器没有包) */
+  pkgNeed?: string;
+  /** 填表提示 —— 每个形态不一样 */
+  guide: string;
 }
 
 /** 三种形态 —— 顺序即展示顺序 (技能 → 插件 → 连接器) */
@@ -43,6 +47,8 @@ export const KIND_META: KindMeta[] = [
       '包内含 SKILL.md 及配套脚本等',
     ],
     formHint: '上传 .zip 安装包 —— 技能包 (SKILL.md + 配套脚本)',
+    pkgNeed: '包内含 SKILL.md (它就是展示文档)',
+    guide: '资产 code 用英文, 以 dml- 开头; 建议与安装包名保持一致',
   },
   {
     value: 'plugin',
@@ -55,6 +61,8 @@ export const KIND_META: KindMeta[] = [
       '包内含 README.md 及配套的 skill、脚本等',
     ],
     formHint: '上传 .zip 安装包 —— 插件包 (README.md + 配套 skill/脚本)',
+    pkgNeed: '包内含 README.md + .qoder-plugin/plugin.json',
+    guide: '资产 code 用英文, 以 dml- 开头; 建议与安装包名保持一致',
   },
   {
     value: 'mcp',
@@ -67,6 +75,7 @@ export const KIND_META: KindMeta[] = [
       '形如 {"mcpServers": {"名字": {...}}}',
     ],
     formHint: '只填一段 MCP JSON 配置',
+    guide: '资产 code 用英文, 以 dml- 开头; 建议与 MCP 配置里的连接器名一致',
   },
 ];
 

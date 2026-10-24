@@ -66,28 +66,28 @@
 
         <section v-else class="up-sec">
           <div class="sec-h"><span class="sec-no">1</span>安装包<span class="sec-tip">必填</span></div>
-          <div class="row-2">
-            <el-form-item label="" :error="pkgError || pkgNameError">
-              <input ref="fileInput" type="file" class="file-input"
-                     accept=".zip,.tar.gz,.tgz" @change="onPickPackage" />
-              <div v-if="pkgFile" class="file-list">
-                <span class="file-chip">{{ pkgFile.name }}
-                  <b @click="clearPackage">×</b>
-                </span>
-              </div>
-            </el-form-item>
-            <div class="pkg-side">
-              <p class="hint">
-                压缩包会在服务端解压后推送到 GitLab, 仓库里存的是解压后的文件。<br />
-                <template v-if="form.kind === 'plugin'">
-                  插件包需含 <code>README.md</code> 和 <code>.qoder-plugin/plugin.json</code>。
-                </template>
-                <template v-else>
-                  技能包需含 <code>SKILL.md</code>。
-                </template>
-              </p>
+          <el-form-item label="" :error="pkgError || pkgNameError">
+            <input ref="fileInput" type="file" class="file-input"
+                   accept=".zip,.tar.gz,.tgz" @change="onPickPackage" />
+            <div v-if="pkgFile" class="file-list">
+              <span class="file-chip">{{ pkgFile.name }}
+                <b @click="clearPackage">×</b>
+              </span>
             </div>
+          </el-form-item>
+
+          <!-- 包的要求: **每个形态不一样** —— 放上传区正下方, 别塞在角落小字里 -->
+          <div class="pkg-req">
+            <span class="pr-ic">📦</span>
+            <span class="pr-txt">
+              <b>{{ kind.label }}包要求</b>:
+              包名以 <code>dml-</code> 开头 (如 dml-weekly-report.zip);
+              <template v-if="kind.pkgNeed">{{ kind.pkgNeed }}。</template>
+            </span>
           </div>
+          <p class="hint">
+            压缩包会在服务端解压后推送到 GitLab, 仓库里存的是解压后的文件。
+          </p>
 
           <!-- 包体检: 选好包就当场验, 不用填完一整张表单才被 422 拦下 -->
           <div v-if="previewing" class="pv-box checking">正在体检安装包…</div>
@@ -102,8 +102,8 @@
               <template v-if="preview.installable">· 可一键安装</template>
               <template v-else>· {{ preview.block_reason }}</template>
             </div>
-            <ul v-if="preview.issues.length" class="pv-list">
-              <li v-for="(i, idx) in preview.issues" :key="'i' + idx">✗ {{ i }}</li>
+            <ul v-if="previewIssues.length" class="pv-list">
+              <li v-for="(i, idx) in previewIssues" :key="'i' + idx">✗ {{ i }}</li>
             </ul>
             <ul v-if="preview.warnings.length" class="pv-list warn">
               <li v-for="(w, idx) in preview.warnings" :key="'w' + idx">⚠ {{ w }}</li>
@@ -119,18 +119,7 @@
         <section class="up-sec">
           <div class="sec-h"><span class="sec-no">2</span>基础信息</div>
           <p class="guide">
-            <b>三条约定</b>:
-            <template v-if="isMcp">
-              ① 资产 code = 连接器名 (英文, <code>dml-</code> 开头);
-              ② 连接器<b>只有这段 MCP 配置</b> —— 没有安装包, 也没有 README;
-              ③ 图标会自动分配, 且不跟现有资产重复 —— 都可以手动改。
-            </template>
-            <template v-else>
-              ① 资产 code = 安装包名 = 插件名 (英文, <code>dml-</code> 开头);
-              ② 校验规则按形态来
-              ({{ form.kind === 'plugin' ? '插件要 README.md + plugin.json' : '技能要 SKILL.md' }});
-              ③ 图标会自动分配, 且不跟现有资产重复 —— 都可以手动改。
-            </template>
+            <b>怎么填</b>: {{ kind.guide }}
           </p>
           <div class="row-2">
             <el-form-item label="名称" required>
@@ -149,6 +138,10 @@
                           @click="chooseIcon(ic)">{{ ic }}</button>
                 </div>
               </div>
+              <p class="hint">
+                自动分配, <b>不会跟现有资产重复</b>
+                <template v-if="usedIcons.size">· 已用过的 {{ usedIcons.size }} 个不再提供</template>
+              </p>
             </el-form-item>
           </div>
 
@@ -188,46 +181,22 @@
         <section class="up-sec">
           <button type="button" class="sec-toggle" @click="advOpen = !advOpen">
             <span class="sec-no">3</span>进阶信息
+            <span class="sec-hint">可展开 · 补充适用场景与检索词</span>
             <span class="sec-caret">{{ advOpen ? '▾' : '▸' }}</span>
           </button>
           <div v-show="advOpen" class="adv-body">
-            <el-form-item label="详细说明">
-              <el-input v-model="form.description" type="textarea" :rows="3"
-                        :placeholder="isMcp
-                          ? '补充说明 —— 会显示在详情页 (连接器没有 README)'
-                          : '会存到 GitLab 的 README.md —— 写清怎么用、前置条件、示例'" />
-            </el-form-item>
             <div class="row-2">
               <el-form-item label="适用场景">
                 <el-input v-model="form.use_when" type="textarea" :rows="2"
                           placeholder="什么时候该用它 (如: 拿到一段 dmesg 需要快速判断问题域)" />
               </el-form-item>
-              <el-form-item label="不适用">
-                <el-input v-model="form.not_for" type="textarea" :rows="2"
-                          placeholder="什么时候**别**用它 (如: 需要逐行精确解析完整 trace)" />
-              </el-form-item>
-            </div>
-            <div class="row-2">
               <el-form-item label="标签 (逗号分隔)">
                 <el-input v-model="tagsText" placeholder="逗号分隔, 如 日志, 诊断, 速查 (卡片上显示)" />
               </el-form-item>
-              <el-form-item label="搜索关键词 (逗号分隔)">
-                <el-input v-model="keywordsText" placeholder="同义词/技术词, 逗号分隔, 如 ssd, nvme, dmesg (搜不到时靠它)" />
-              </el-form-item>
             </div>
-            <!-- 安装步骤: 只对「有安装包」的形态有意义 —— 连接器没有包可装 -->
-            <el-form-item v-if="!isMcp" label="安装步骤 (每行一步)">
-              <el-input v-model="stepsText" type="textarea" :rows="2"
-                        placeholder="每行一步, 如:&#10;将 xxx 复制到 Agent 的 skills 目录&#10;重启 Agent 会话" />
-              <p class="hint">包里一般已有 SKILL.md / README.md, 一般不用填。</p>
+            <el-form-item label="搜索关键词 (逗号分隔)">
+              <el-input v-model="keywordsText" placeholder="同义词/技术词, 逗号分隔, 如 ssd, nvme, dmesg (搜不到时靠它)" />
             </el-form-item>
-            <el-form-item label="">
-              <el-checkbox v-model="form.featured">设为精选 (市场首页优先展示)</el-checkbox>
-            </el-form-item>
-            <p class="hint perm-note">
-              权限声明不在这里填了 —— 审核会直接看包里的内容;
-              有特殊权限需求, 请在包的 README 里写清楚。
-            </p>
           </div>
         </section>
       </el-form>
@@ -307,7 +276,7 @@ import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
 import { getAsset, getJob, listAssets, listCategories, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
 import {
-  CODE_EXAMPLE, CODE_PREFIX, GENERAL_ICONS, ICON_POOLS,
+  CODE_EXAMPLE, CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
   codeFromPackageName, pickIcon, validateCode, validatePackageName,
 } from './assetForm';
 import { KIND_META, kindMeta } from './kindMeta';
@@ -344,6 +313,8 @@ const advOpen = ref(false);
 const iconPanel = ref(false);
 /** 现有资产用过的图标 —— 自动分配时避开, 免得卡片上图标重复 */
 const usedIcons = ref<Set<string>>(new Set());
+/** 用户手选过图标 → 后面名字/分类变了也别乱改 */
+const iconTouched = ref(false);
 /** 分类表 (后端下发) —— 上传/更新时只能从里面选 */
 const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
 
@@ -378,17 +349,37 @@ function useMcpTemplate() {
   mcpConfigText.value = MCP_TEMPLATE;
 }
 
-/** 体检结论: 包装不上 (解包失败 **或** 有问题项 —— 比如缺 SKILL.md) */
+/**
+ * 体检结论: 包装不上.
+ *
+ * ⚠️ 包名不合规 (没 dml- 开头) 也要算装不上 ——
+ *    否则用户看到「体检通过」, 却又提交不了, 前后自相矛盾。
+ */
 const previewBad = computed(() => {
   const p = preview.value;
   if (!p) return false;
+  if (pkgNameError.value) return true;
   return !p.ok || p.issues.length > 0;
 });
+/** 体检问题清单: 服务端解包问题 + 本地包名问题 */
+const previewIssues = computed(() => {
+  const p = preview.value;
+  const out: string[] = [...(p?.issues || [])];
+  if (pkgNameError.value) out.push(pkgNameError.value);
+  return out;
+});
 
-/** 图标可选范围: 分类池 + 通用池 */
+/**
+ * 图标可选范围: 分类池 + 通用池 + 兜底池, **并且排除已被别的资产用掉的**.
+ *
+ * 两条要求同时成立:
+ *  ① 不重复 —— 重复图标在卡片上根本分不清谁是谁;
+ *  ② 够多   —— 资产多了也得有的选, 所以三个池子都拉进来 (上百个)。
+ */
 const iconChoices = computed(() => {
   const pool = ICON_POOLS[form.category] || [];
-  return Array.from(new Set([...pool, ...GENERAL_ICONS]));
+  const all = Array.from(new Set([...pool, ...GENERAL_ICONS, ...FALLBACK_ICONS]));
+  return all.filter((ic) => !usedIcons.value.has(ic));
 });
 
 // ---------- 校验 ----------
@@ -462,6 +453,8 @@ async function loadUsedIcons() {
   } catch {
     usedIcons.value = new Set();
   }
+  // ⚠️ 清单拿到**之后**再分配一次 —— 否则自动分配的图标可能正好撞上别人的
+  if (!iconTouched.value) autoIcon();
 }
 
 /** 自动分配图标 (避开已被用掉的) */
@@ -593,7 +586,6 @@ watch(() => mcpConfigText.value, () => {
 });
 
 // 名字/简介/分类变了 → 图标跟着重新猜 (但用户手选过就别乱动)
-const iconTouched = ref(false);
 watch(() => [form.name, form.summary], () => {
   if (!iconTouched.value) autoIcon();
 });
@@ -615,17 +607,21 @@ async function submit() {
     name: form.name.trim(),
     version: form.version.trim() || '1.0.0',
     summary: form.summary.trim(),
-    description: form.description,
+    // ⚠️ 详细说明 / 安装步骤 / 精选 / 不适用 已经不在表单里填了 ——
+    //    更新版本时**保留原值**, 别让"没填"把老资产的这些字段清空。
+    description: props.mode === 'update' ? (props.asset?.description || '') : form.description,
     use_when: form.use_when,
-    not_for: form.not_for,
+    not_for: props.mode === 'update' ? (props.asset?.not_for || '') : form.not_for,
     category: form.category,
     icon: form.icon || '🧩',
     tags: splitList(tagsText.value),
     keywords: splitList(keywordsText.value),
-    install_steps: splitList(stepsText.value),
+    install_steps: props.mode === 'update'
+      ? [...(props.asset?.install_steps || [])]
+      : splitList(stepsText.value),
     // ⚠️ 权限声明不再由表单填 (2026-10-24) —— 固定空, 审核直接看包里的内容
     permissions: {},
-    featured: form.featured,
+    featured: props.mode === 'update' ? !!props.asset?.featured : form.featured,
     // 连接器: 只传 MCP 配置, 不传包
     mcp_config: isMcp.value ? mcpConfigText.value : '',
     package: isMcp.value ? null : pkgFile.value,
@@ -779,6 +775,8 @@ function close() {
   background: rgba(239, 68, 68, 0.1); padding: 1px 6px; border-radius: var(--radius-pill);
 }
 .sec-caret { margin-left: auto; color: var(--ink-500); font-size: 11px; }
+/* 「可展开」提示 —— 进阶信息默认收起, 得让人知道里面有东西 */
+.sec-hint { font-size: 11px; font-weight: 500; color: var(--ink-500); }
 .adv-body { padding-bottom: 4px; }
 
 /* 分类下拉里的说明文字 (选项右侧灰字) */
@@ -790,7 +788,21 @@ function close() {
 
 .up-form :deep(.el-form-item) { margin-bottom: 14px; }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; align-items: start; }
-.pkg-side { padding-top: 2px; }
+
+/* 包的要求条 —— 放在上传区正下方, 每个形态内容不同 */
+.pkg-req {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 10px; margin: 0 0 8px;
+  background: var(--surface-sunken); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: 11.5px; line-height: 1.7;
+  color: var(--ink-700);
+}
+.pkg-req .pr-ic { font-size: 14px; line-height: 1.3; }
+.pkg-req .pr-txt b { color: var(--ink-900); }
+.pkg-req code {
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--surface-soft); padding: 1px 4px; border-radius: 4px;
+}
 
 /* ===== 图标选择 ===== */
 .icon-pick { position: relative; }
@@ -804,7 +816,10 @@ function close() {
 .icon-panel {
   position: absolute; z-index: 20; top: 38px; left: 0;
   display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px;
-  background: var(--surface); border: 1px solid var(--border);
+  max-height: 260px; overflow-y: auto;
+  /* ⚠️ 不透明 —— 半透明毛玻璃底会透出下面的表单文字, 读不清 */
+  background: linear-gradient(var(--surface), var(--surface)), var(--bg-base);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm); padding: 6px; box-shadow: var(--shadow-md);
 }
 .icon-cell {

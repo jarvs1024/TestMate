@@ -25,7 +25,10 @@ vi.mock('@/api/assets', () => ({
 const stubs = {
   'el-drawer': { template: '<div class="el-drawer"><slot/><slot name="footer"/></div>' },
   'el-form': { template: '<form><slot/></form>' },
-  'el-form-item': { template: '<div class="el-form-item"><slot/></div>' },
+  'el-form-item': {
+    props: ['label'],
+    template: '<div class="el-form-item"><label v-if="label">{{ label }}</label><slot/></div>',
+  },
   'el-input': { template: '<input class="el-input"/>' },
   'el-select': { template: '<select class="el-select"><slot/></select>' },
   'el-option': { template: '<option/>' },
@@ -118,5 +121,49 @@ describe('上传抽屉: 类型头与换类型', () => {
     await w.vm.$nextTick();
     expect(w.find('.up-form').exists()).toBe(true);
     expect(w.find('.type-bar').text()).toContain('插件');
+  });
+});
+
+describe('上传抽屉: 表单内容', () => {
+  it('进阶信息只留适用场景 / 标签 / 关键词', async () => {
+    const w = await open({ initialKind: 'skill' });
+    const adv = w.find('.adv-body').text();
+    expect(adv).toContain('适用场景');
+    expect(adv).toContain('标签');
+    expect(adv).toContain('搜索关键词');
+    // 这些都不该再出现在表单里
+    expect(adv).not.toContain('详细说明');
+    expect(adv).not.toContain('不适用');
+    expect(adv).not.toContain('安装步骤');
+    expect(adv).not.toContain('设为精选');
+    expect(adv).not.toContain('权限声明');
+  });
+
+  it('进阶信息标题写明「可展开」', async () => {
+    const w = await open({ initialKind: 'skill' });
+    expect(w.find('.sec-hint').text()).toContain('可展开');
+  });
+
+  it('基础信息只留一条按形态的提示 (不再写「三条约定」)', async () => {
+    const w = await open({ initialKind: 'mcp' });
+    const guide = w.find('.guide').text();
+    expect(guide).toContain('怎么填');
+    expect(guide).not.toContain('三条约定');
+    expect(guide).toContain('dml-');
+  });
+
+  it('安装包区写清这个形态对包的要求', async () => {
+    const w = await open({ initialKind: 'skill' });
+    const req = w.find('.pkg-req').text();
+    expect(req).toContain('技能包要求');
+    expect(req).toContain('dml-');
+    expect(req).toContain('SKILL.md');
+  });
+
+  it('插件形态的要求与技能不同', async () => {
+    const w = await open({ initialKind: 'plugin' });
+    const req = w.find('.pkg-req').text();
+    expect(req).toContain('插件包要求');
+    expect(req).toContain('README.md');
   });
 });

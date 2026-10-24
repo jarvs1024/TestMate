@@ -457,6 +457,28 @@ async function codeByName(page, name) {
     check('H0-5 类型头显示「连接器」', /连接器/.test(mcpState.typeBar || ''), mcpState.typeBar);
     check('H0-6 表单里没有类型下拉了 (只剩分类)', mcpState.selects === 1, `el-select=${mcpState.selects}`);
 
+    // MCP 配置里的连接器名必须是 dml- 开头 ——
+    // 详情页会**原样展示**这份配置, 用户照着加进自己的 MCP 配置里。
+    await page.evaluate(() => {
+      const ta = document.querySelector('.up-drawer .mcp-json textarea');
+      if (!ta) return;
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, '{"mcpServers": {"xx-xxx": {"url": "http://host:5050/mcp"}}}');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await sleep(800);
+    const mcpNameErr = await page.evaluate(() => {
+      const d = document.querySelector('.up-drawer');
+      return {
+        err: (d.querySelector('.el-form-item__error')?.textContent || '').trim(),
+        msg: (d.querySelector('.mcp-msg')?.textContent || '').replace(/\s+/g, ' ').trim(),
+      };
+    });
+    check('H0-9 MCP 连接器名不以 dml- 开头 → 实时报错',
+      /dml-/.test(mcpNameErr.err + mcpNameErr.msg),
+      `${mcpNameErr.err} ${mcpNameErr.msg}`.slice(0, 110));
+
     // 「更换类型」→ 退回第 ① 步
     await page.evaluate(() => {
       const b = [...document.querySelectorAll('.tb-change')][0];
@@ -479,6 +501,61 @@ async function codeByName(page, name) {
       typeBar: (document.querySelector('.type-bar')?.textContent || '').replace(/\s+/g, ' ').trim(),
     }));
     check('H0-8 选「技能」进安装包表单', skillState.pkg === true, `typeBar=${skillState.typeBar}`);
+
+    // ---------- H1. 表单内容: 提示位置 / 图标不重复 / 进阶信息精简 ----------
+    // ⚠️ 页面上可能同时挂着多个 el-drawer (详情/上传) —— 取**最后打开**的那个
+    const formState = await page.evaluate(() => {
+      const drawer = document.querySelector('.up-drawer');
+      const txt = (sel) => (drawer.querySelector(sel)?.textContent || '').replace(/\s+/g, ' ').trim();
+      return {
+        guide: txt('.guide'),
+        pkgReq: txt('.pkg-req'),
+        adv: txt('.adv-body'),
+        advTitle: txt('.sec-toggle'),
+      };
+    });
+    check('H1-1 基础信息只留一条按形态的提示',
+      /怎么填/.test(formState.guide) && !/三条约定/.test(formState.guide), formState.guide.slice(0, 70));
+    check('H1-2 安装包要求写在上传区下方',
+      /技能包要求/.test(formState.pkgReq) && /SKILL\.md/.test(formState.pkgReq), formState.pkgReq.slice(0, 90));
+    check('H1-3 进阶信息只留适用场景/标签/关键词',
+      /适用场景/.test(formState.adv)
+      && !/详细说明|不适用|安装步骤|设为精选|权限声明/.test(formState.adv),
+      formState.adv.slice(0, 70));
+    check('H1-4 进阶信息标题写明「可展开」', /可展开/.test(formState.advTitle), formState.advTitle.slice(0, 40));
+
+    // 图标面板: 只列**没被用过**的, 而且要够多 (资产多了也有的选)
+    await page.evaluate(() => {
+      const drawer = document.querySelector('.up-drawer');
+      const b = drawer.querySelector('.icon-btn');
+      b && b.click();
+    });
+    await sleep(700);
+    const iconState = await page.evaluate(() => {
+      const drawer = document.querySelector('.up-drawer');
+      const cells = [...drawer.querySelectorAll('.icon-cell')].map((x) => x.textContent.trim());
+      const hint = [...drawer.querySelectorAll('.hint')]
+        .map((x) => x.textContent.replace(/\s+/g, ' ').trim())
+        .find((t) => /重复|已用过/.test(t)) || '';
+      return { count: cells.length, hint, cells };
+    });
+    check('H1-5 图标面板给了足够多的可选项', iconState.count >= 50, `${iconState.count} 个`);
+    check('H1-6 图标提示写明不跟现有资产重复', /重复/.test(iconState.hint), iconState.hint.slice(0, 60));
+    const usedIcons = await page.evaluate(async () => {
+      const tk = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/assets?limit=500', { headers: { Authorization: 'Bearer ' + tk } });
+      const d = await r.json();
+      return (d.items || []).map((i) => (i.icon || '').trim()).filter(Boolean);
+    });
+    const overlap = usedIcons.filter((u) => iconState.cells.includes(u));
+    check('H1-7 图标面板不含已被占用的图标', overlap.length === 0,
+      overlap.length ? `重复: ${overlap.join(' ')}` : `已用 ${usedIcons.length} 个, 面板 ${iconState.count} 个`);
+    await page.evaluate(() => {
+      const drawer = document.querySelector('.up-drawer');
+      const b = drawer.querySelector('.icon-btn');
+      b && b.click();
+    });
+    await sleep(400);
 
     // ---------- H. 上传前包体检 ----------
     const goodZip = path.join(OUT_DIR, 'dml-e2e-probe.zip');
@@ -508,6 +585,18 @@ async function codeByName(page, name) {
     s = await snap(page);
     check('H4 不合规包被体检拦下', /装不上/.test(s.pvState || ''), s.pvState);
     check('H5 不合规包禁用提交按钮', s.submitDisabled === true, `disabled=${s.submitDisabled}`);
+
+    // ⚠️ 包名不合规 (没 dml- 开头) → 体检也得说不行 ——
+    //    否则用户看到「体检通过」却又提交不了, 前后自相矛盾。
+    const wrongNameZip = path.join(OUT_DIR, 'weekly-report.zip');
+    makeZip(wrongNameZip, { 'SKILL.md': '---\nname: e2e-probe\ndescription: 体检探针\n---\n\n# 体检探针\n' });
+    const fileInput3 = await page.$('.file-input');
+    await fileInput3.uploadFile(wrongNameZip);
+    await sleep(2500);
+    s = await snap(page);
+    check('H5b 包名不以 dml- 开头 → 体检不通过', /装不上/.test(s.pvState || ''), s.pvState);
+    check('H5c 体检结论里点名包名问题', /dml-/.test(s.pvState || ''), s.pvState);
+    check('H5d 包名不对时禁用提交按钮', s.submitDisabled === true, `disabled=${s.submitDisabled}`);
     await page.screenshot({ path: path.join(OUT_DIR, '06-precheck.png') });
     await page.evaluate(() => {
       const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => x.textContent.includes('取消'));

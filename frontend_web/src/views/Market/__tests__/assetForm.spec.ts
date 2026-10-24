@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CODE_PREFIX,
+  FALLBACK_ICONS,
   GENERAL_ICONS,
   ICON_POOLS,
   codeFromPackageName,
@@ -106,5 +107,38 @@ describe('图标自动分配', () => {
       ...GENERAL_ICONS,
     ]);
     expect(pickIcon({ name: '日志诊断', used: everything })).toBeTruthy();
+  });
+});
+
+describe('图标池容量', () => {
+  it('可选图标足够多 —— 资产多了也得有的选', () => {
+    const all = new Set([
+      ...Object.values(ICON_POOLS).flat(),
+      ...GENERAL_ICONS,
+      ...FALLBACK_ICONS,
+    ]);
+    // 现在的资产已经有 18 个 —— 池子至少得是这个量级的几倍
+    expect(all.size).toBeGreaterThan(80);
+  });
+
+  it('每个分类自己的池子也有 8 个 (不够就轮到通用池)', () => {
+    for (const [cat, pool] of Object.entries(ICON_POOLS)) {
+      expect(pool.length, `${cat} 的图标太少`).toBeGreaterThanOrEqual(8);
+    }
+  });
+
+  it('每个池子内部没有重复图标', () => {
+    for (const pool of [...Object.values(ICON_POOLS), GENERAL_ICONS, FALLBACK_ICONS]) {
+      expect(new Set(pool).size, '池子里有重复图标').toBe(pool.length);
+    }
+  });
+
+  it('跨池合并去重后仍然足够多', () => {
+    const all = new Set([
+      ...Object.values(ICON_POOLS).flat(),
+      ...GENERAL_ICONS,
+      ...FALLBACK_ICONS,
+    ]);
+    expect(all.size).toBeGreaterThan(80);
   });
 });
