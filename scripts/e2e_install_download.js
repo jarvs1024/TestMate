@@ -133,6 +133,12 @@ function check(name, ok, detail) {
         || document.querySelector('.el-message-box__message')?.textContent.trim() || '');
       if (msg) break;
     }
+    // 卡片上应该显示下载次数 (⬇N)
+    const cardHasCount = await page.evaluate(() =>
+      [...document.querySelectorAll('.asset-card .meta-item')]
+        .some((e) => /⬇\s*\d+/.test(e.textContent || '')));
+    check('E5c 卡片上显示下载次数', cardHasCount);
+
     // 下载计数应该 +1 (热门度指标)
     const afterN = await totalCount();
     check('E5b 下载计数 +1', afterN === beforeN + 1, `${beforeN} → ${afterN}`);
