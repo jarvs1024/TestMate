@@ -22,15 +22,28 @@ describe('资产形态元信息', () => {
     }
   });
 
-  it('连接器明确写了「不需要安装包」', () => {
+  it('连接器不再强调「不需要安装包 / 没有 README」', () => {
     const mcp = kindMeta('mcp');
-    expect(mcp.needs.join(' ')).toContain('不需要安装包');
-    expect(mcp.formHint).toContain('不需要安装包');
+    const all = [mcp.tagline, mcp.formHint, mcp.needs.join(' ')].join(' ');
+    expect(all).not.toContain('不需要安装包');
+    expect(all).not.toContain('没有 README');
+    expect(all).not.toContain('不用打包');
   });
 
-  it('技能 / 插件说明的是安装包里要有什么', () => {
-    expect(kindMeta('skill').needs.join(' ')).toContain('SKILL.md');
-    expect(kindMeta('plugin').needs.join(' ')).toContain('plugin.json');
+  it('包内含的东西写通用描述, 不列实现细节', () => {
+    const skill = kindMeta('skill');
+    expect(skill.needs.join(' ')).toContain('SKILL.md');
+    expect(skill.needs.join(' ')).toContain('配套脚本');
+    const plugin = kindMeta('plugin');
+    expect(plugin.needs.join(' ')).toContain('README.md');
+    expect(plugin.needs.join(' ')).not.toContain('plugin.json');
+  });
+
+  it('统一叫「Agent」, 不用「宿主」', () => {
+    for (const k of KIND_META) {
+      const all = [k.tagline, k.formHint, k.needs.join(' ')].join(' ');
+      expect(all).not.toContain('宿主');
+    }
   });
 
   it('未知类型兜底回技能, 不返回空', () => {

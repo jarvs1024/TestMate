@@ -58,7 +58,7 @@
             </span>
           </div>
           <p class="hint">
-            连接器没有安装包 —— 宿主按这段配置来连 (mcpServers → 每个连接器给
+            连接器是配置型资产 —— Agent 按这段配置来连 (mcpServers → 每个连接器给
             <code>command</code>+<code>args</code> 或 <code>url</code>)。
             详情页会原样展示这份配置, 用户照着加到自己的 MCP 配置里。
           </p>
@@ -218,7 +218,7 @@
             <!-- 安装步骤: 只对「有安装包」的形态有意义 —— 连接器没有包可装 -->
             <el-form-item v-if="!isMcp" label="安装步骤 (每行一步)">
               <el-input v-model="stepsText" type="textarea" :rows="2"
-                        placeholder="每行一步, 如:&#10;将 xxx 复制到宿主 skills 目录&#10;重启 Agent 会话" />
+                        placeholder="每行一步, 如:&#10;将 xxx 复制到 Agent 的 skills 目录&#10;重启 Agent 会话" />
               <p class="hint">包里一般已有 SKILL.md / README.md, 一般不用填。</p>
             </el-form-item>
             <el-form-item label="">

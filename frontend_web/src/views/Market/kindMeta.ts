@@ -37,13 +37,12 @@ export const KIND_META: KindMeta[] = [
     label: '技能',
     code: 'skill',
     icon: '🧠',
-    tagline: '一段可复用的方法与知识, 装进宿主后 Agent 直接照着做',
+    tagline: '一段可复用的方法与知识, 装进 Agent 后直接照着做',
     needs: [
       '上传一个 .zip 安装包',
-      '包内含 SKILL.md (它就是展示文档)',
-      '包名 = 资产 code',
+      '包内含 SKILL.md 及配套脚本等',
     ],
-    formHint: '上传安装包 —— 包里要有 SKILL.md',
+    formHint: '上传 .zip 安装包 —— 技能包 (SKILL.md + 配套脚本)',
   },
   {
     value: 'plugin',
@@ -53,23 +52,21 @@ export const KIND_META: KindMeta[] = [
     tagline: '带命令、脚本和工具的扩展包, 能真的动手干活',
     needs: [
       '上传一个 .zip 安装包',
-      '包内含 README.md + .qoder-plugin/plugin.json',
-      '包名 = 资产 code',
+      '包内含 README.md 及配套的 skill、脚本等',
     ],
-    formHint: '上传安装包 —— 包里要有 README.md 和 plugin.json',
+    formHint: '上传 .zip 安装包 —— 插件包 (README.md + 配套 skill/脚本)',
   },
   {
     value: 'mcp',
     label: '连接器',
     code: 'mcp',
     icon: '🔌',
-    tagline: '一段 MCP 配置, 让宿主连到外部服务 —— 不用打包',
+    tagline: '一段 MCP 配置, 让 Agent 连到外部服务',
     needs: [
       '准备一段 MCP JSON 配置',
       '形如 {"mcpServers": {"名字": {...}}}',
-      '不需要安装包, 也没有 README',
     ],
-    formHint: '只填一段 MCP JSON 配置 —— 不需要安装包',
+    formHint: '只填一段 MCP JSON 配置',
   },
 ];
 

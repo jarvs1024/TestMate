@@ -46,7 +46,7 @@
             <span class="ins-dir-l">解压到</span>
             <code>{{ targetDir }}/</code>
           </div>
-          <p class="ins-tip">解压到宿主的这个目录, 重启 Agent 会话后即可使用</p>
+          <p class="ins-tip">解压到 Agent 的这个目录, 重启 Agent 会话后即可使用</p>
         </template>
         <template v-else>
           <div class="ins-h">
@@ -54,8 +54,8 @@
             <button type="button" class="mini-link" @click="copyMcpConfig">复制 JSON</button>
           </div>
           <p class="ins-tip">
-            连接器没有安装包 —— 它就是一段 MCP 配置.
-            复制下面的 JSON, 按里面的 server 声明加到宿主的 MCP 配置里即可.
+            连接器是配置型资产 —— 它就是一段 MCP 配置.
+            复制下面的 JSON, 按里面的 server 声明加到 Agent 的 MCP 配置里即可.
           </p>
         </template>
       </div>
