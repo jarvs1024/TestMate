@@ -63,6 +63,36 @@ export function validateCode(code: string): string {
 }
 
 /**
+ * code 与「包名 / MCP 连接器名」的**一致性**校验.
+ *
+ * 约定 (2026-10-24): **code 就是那个名字本身** ——
+ *   技能 / 插件 → code = 安装包名 (去扩展名)
+ *   连接器      → code = MCP 配置里的**某一个**连接器名 (可能配了多个)
+ *
+ * 为什么这么严: 装出来 / 抄下来要对得上 ——
+ *   包名决定装到哪, code 决定市场里的资产号; 两边对不上, 用的人一脸懵。
+ *
+ * @returns 错误文案 (空串 = 一致 / 还不用管)
+ */
+export function checkCodeSync(
+  code: string,
+  opts: { isMcp?: boolean; pkgBase?: string; mcpNames?: string[] } = {},
+): string {
+  const c = (code || '').trim();
+  if (!c) return '';                       // 还没填 —— 交给「必填」去报
+  if (opts.isMcp) {
+    const names = opts.mcpNames || [];
+    if (!names.length) return '';          // 配置还没填 —— 交给配置校验去报
+    if (names.includes(c)) return '';
+    return `资产 code 必须与 MCP 配置里的连接器名一致 (配置里是 ${names.join(' / ')})`;
+  }
+  const base = (opts.pkgBase || '').trim();
+  if (!base) return '';                    // 还没选包 —— 交给「必填」去报
+  if (c === base) return '';
+  return `资产 code 必须与安装包名一致 (包名是 ${base})`;
+}
+
+/**
  * 分类 → 图标池 (按测试全流程的阶段给)
  *
  * ⚠️ 每个分类给到 8 个 —— 资产一多, 池子不够就会被迫重复用图标,

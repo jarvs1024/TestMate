@@ -11,6 +11,7 @@ import {
   FALLBACK_ICONS,
   GENERAL_ICONS,
   ICON_POOLS,
+  checkCodeSync,
   codeFromPackageName,
   pickIcon,
   validateCode,
@@ -71,6 +72,25 @@ describe('资产 code 命名约定', () => {
 
   it('前缀常量跟校验规则一致', () => {
     expect(CODE_PREFIX).toBe('dml-');
+  });
+});
+
+describe('code 与名称的一致性', () => {
+  it('技能/插件: code 必须等于安装包名', () => {
+    expect(checkCodeSync('dml-weekly-report', { pkgBase: 'dml-weekly-report' })).toBe('');
+    expect(checkCodeSync('dml-other', { pkgBase: 'dml-weekly-report' })).toContain('安装包名');
+  });
+
+  it('连接器: code 必须是配置里的**某一个**连接器名', () => {
+    expect(checkCodeSync('dml-a', { isMcp: true, mcpNames: ['dml-a', 'dml-b'] })).toBe('');
+    expect(checkCodeSync('dml-b', { isMcp: true, mcpNames: ['dml-a', 'dml-b'] })).toBe('');
+    expect(checkCodeSync('dml-c', { isMcp: true, mcpNames: ['dml-a'] })).toContain('连接器名');
+  });
+
+  it('还没填 / 还没选包时不报「不一致」(交给必填去报)', () => {
+    expect(checkCodeSync('', { pkgBase: 'dml-x' })).toBe('');
+    expect(checkCodeSync('dml-x', {})).toBe('');
+    expect(checkCodeSync('dml-x', { isMcp: true, mcpNames: [] })).toBe('');
   });
 });
 

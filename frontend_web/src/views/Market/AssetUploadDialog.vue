@@ -151,12 +151,13 @@
           </el-form-item>
 
           <div class="row-2">
-            <el-form-item label="资产 code" required :error="codeError">
+            <el-form-item label="资产 code" required :error="codeFieldError">
               <el-input v-model="form.code" :disabled="mode === 'update'"
                         :placeholder="`${CODE_EXAMPLE} — 英文, dml- 开头`"
                         @blur="codeTouched = true" />
-              <p v-if="codePkgMismatch" class="hint warn-hint">
-                ⚠ 与安装包名不一致 (包名是 {{ pkgBaseName }}) —— 建议保持一致, 免得装出来对不上
+              <p class="hint">
+                <template v-if="isMcp">自动跟 MCP 配置里的连接器名保持一致</template>
+                <template v-else>选好安装包后自动跟包名保持一致</template>
               </p>
             </el-form-item>
             <el-form-item label="版本 (semver)" :error="versionError">
@@ -277,7 +278,7 @@ import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
 import { getAsset, getJob, listAssets, listCategories, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
 import {
   CODE_EXAMPLE, CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
-  codeFromPackageName, pickIcon, validateCode, validatePackageName,
+  checkCodeSync, codeFromPackageName, pickIcon, validateCode, validatePackageName,
 } from './assetForm';
 import { KIND_META, kindMeta } from './kindMeta';
 import { MCP_TEMPLATE, formatMcpConfig, parseMcpConfig } from './mcpConfig';
@@ -398,12 +399,37 @@ const versionError = computed(() => {
 const pkgError = computed(() => (pkgFile.value ? '' : '请选择安装包'));
 /** 安装包名 (去掉扩展名) —— 跟 code 应该一致 */
 const pkgBaseName = computed(() => codeFromPackageName(pkgFile.value?.name || ''));
-/** code 跟包名不一致 (软提示, 不拦提交) */
-const codePkgMismatch = computed(() => {
-  if (props.mode === 'update') return false;
-  if (!pkgBaseName.value || !form.code.trim()) return false;
-  return form.code.trim() !== pkgBaseName.value;
-});
+/**
+ * code 与「包名 / MCP 连接器名」是否一致.
+ *
+ * 约定 (2026-10-24): **code 就是那个名字本身** ——
+ *   技能/插件 → code = 安装包名 (去扩展名)
+ *   连接器     → code = MCP 配置里的连接器名
+ * 不一致 → 报错 + 不让上架 (免得装出来/抄下来对不上)。
+ *
+ * ⚠️ 只在**新建**时校验: 更新版本时 code 不可改, 比对没有意义
+ *    (存量资产的 code 还不带 dml- 前缀, 不能因此不让更新)。
+ */
+/**
+ * code 与「包名 / MCP 连接器名」不一致时的报错 (空串 = 一致 / 还不用管).
+ *
+ * 规则见 assetForm.checkCodeSync:
+ *   技能/插件 → code = 安装包名; 连接器 → code = 配置里的某一个连接器名。
+ *
+ * ⚠️ 只在**新建**时校验: 更新版本时 code 不可改, 比对没有意义
+ *    (存量资产的 code 还不带 dml- 前缀, 不能因此不让更新)。
+ */
+const codeSyncError = computed(() => {
+  if (props.mode === 'update') return '';
+  if (isMcp.value) {
+    const p = mcpParsed.value;
+    const names = p.ok ? Object.keys((p.config as any)?.mcpServers || {}) : [];
+    return checkCodeSync(form.code, { isMcp: true, mcpNames: names });
+  }
+  return checkCodeSync(form.code, { pkgBase: pkgBaseName.value });
+});/** code 字段上要显示的错误 (格式 + 一致性, 一起说清) */
+const codeFieldError = computed(() =>
+  [codeError.value, codeSyncError.value].filter(Boolean).join('; '));
 /** 安装包名本身的合法性 (dml- 开头 + 英文 + 合法扩展名) */
 const pkgNameError = computed(() =>
   pkgFile.value ? validatePackageName(pkgFile.value.name) : '');
@@ -423,6 +449,8 @@ const missing = computed(() => {
   if (props.mode === 'create') {
     const c = validateCode(form.code);
     if (c) out.push('资产 code');
+    // code 必须跟包名 / MCP 连接器名一致 —— 不一致不让上架
+    if (codeSyncError.value) out.push('code 与名称一致');
   }
   if (!form.category) out.push('分类');
   if (versionError.value) out.push('版本');
@@ -529,10 +557,12 @@ function chooseKind(k: MarketKind) {
 async function onPickPackage(e: Event) {
   const input = e.target as HTMLInputElement;
   pkgFile.value = input.files?.[0] ?? null;
-  // ⚠️ 包名 = 资产 code = 插件名 → 选完包就把 code 带出来 (省得再手打一遍)
+  // ⚠️ code **自动跟包名保持一致** —— 选完包就把 code 带出来。
+  //    之后用户再改 code 就会不一致 → 报错 + 不让上架 (见 codeSyncError)。
   const derived = codeFromPackageName(pkgFile.value?.name || '');
-  if (derived && props.mode === 'create' && !codeTouched.value) {
+  if (derived && props.mode === 'create') {
     form.code = derived;
+    codeTouched.value = false;   // 这是同步过来的, 不算用户手改
   }
   await runPreview();
 }
@@ -582,7 +612,8 @@ watch(() => mcpConfigText.value, () => {
   const names = Object.keys((p.config as any)?.mcpServers || {});
   const slug = (names[0] || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (!slug) return;
-  form.code = slug.startsWith(CODE_PREFIX) ? slug : CODE_PREFIX + slug;
+  // 连接器名本身就得 dml- 开头 (配置校验会拦) —— 这里原样带成 code, 不另做加工
+  form.code = slug;
 });
 
 // 名字/简介/分类变了 → 图标跟着重新猜 (但用户手选过就别乱动)

@@ -578,6 +578,45 @@ async function codeByName(page, name) {
     check('H2b 必填项补齐后「还缺」清空', !/还缺/.test(s.footText || ''), s.footText);
     check('H3 合规包不禁用提交按钮', s.submitDisabled === false, `disabled=${s.submitDisabled}`);
 
+    // ---------- H3b. code 必须跟包名一致 (不一致就不让上架) ----------
+    const setCode = async (v) => {
+      await page.evaluate((val) => {
+        const inp = document.querySelector('.up-drawer input[placeholder*="dml-"]');
+        if (!inp) return;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(inp, val);
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new Event('blur', { bubbles: true }));
+      }, v);
+      await sleep(800);
+    };
+    await setCode('dml-some-other-name');
+    const syncState = await page.evaluate(() => {
+      const d = document.querySelector('.up-drawer');
+      return {
+        err: (d.querySelector('.el-form-item__error')?.textContent || '').trim(),
+        foot: (d.querySelector('.foot-bar')?.textContent || '').replace(/\s+/g, ' ').trim(),
+        disabled: !!d.querySelector(
+          '.el-drawer__footer .el-button--primary.is-disabled, .el-drawer__footer .el-button--primary[disabled]'),
+      };
+    });
+    check('H3b code 与包名不一致 → 字段报错', /安装包名/.test(syncState.err), syncState.err.slice(0, 80));
+    check('H3c 不一致时「还缺」里点名', /一致/.test(syncState.foot), syncState.foot.slice(0, 80));
+    check('H3d 不一致时不让上架', syncState.disabled === true, `disabled=${syncState.disabled}`);
+    // 改回与包名一致 → 恢复可上架
+    await setCode('dml-e2e-probe');
+    const backState = await page.evaluate(() => {
+      const d = document.querySelector('.up-drawer');
+      return {
+        err: (d.querySelector('.el-form-item__error')?.textContent || '').trim(),
+        disabled: !!d.querySelector(
+          '.el-drawer__footer .el-button--primary.is-disabled, .el-drawer__footer .el-button--primary[disabled]'),
+      };
+    });
+    check('H3e 改回与包名一致 → 恢复可上架',
+      !/安装包名/.test(backState.err) && backState.disabled === false,
+      `err=${backState.err.slice(0, 40)} disabled=${backState.disabled}`);
+
     // 换成不合规的包 (缺 SKILL.md) → 体检应拦下并禁用提交
     const fileInput2 = await page.$('.file-input');
     await fileInput2.uploadFile(badZip);
