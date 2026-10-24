@@ -24,6 +24,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+// ⚠️ 互斥锁: 并行跑 e2e 会互相改生产设置/删资产 (见 e2e_lock.js)
+require('./e2e_lock').acquire(__filename);
+
 
 const CHROME = process.env.CHROME_PATH
   || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -572,17 +575,19 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
     'dingtalk.notify_on_unpublish', 'dingtalk.notify_on_delete',
   ];
   const saved = await getSettings(adminToken, TOUCHED);
-  // 开审核 + 加白名单 + 静音钉钉 (测试不该往真实群刷屏)
-  await setSetting(adminToken, 'marketplace.review.enabled', 'true');
-  await setSetting(adminToken, 'marketplace.publisher_usernames', PUBLISHER.username);
-  for (const k of TOUCHED.filter((x) => x.startsWith('dingtalk.'))) {
-    await setSetting(adminToken, k, 'false');
-  }
-
   const pkgs = buildPackages();
 
   let browser = null;
   try {
+    // ⚠️ 改生产设置必须**在 try 里** —— 否则中途抛错(比如浏览器起不来)
+    //    就永远还原不了, 把真实配置留在静音/白名单改掉的状态
+    // 开审核 + 加白名单 + 静音钉钉 (测试不该往真实群刷屏)
+    await setSetting(adminToken, 'marketplace.review.enabled', 'true');
+    await setSetting(adminToken, 'marketplace.publisher_usernames', PUBLISHER.username);
+    for (const k of TOUCHED.filter((x) => x.startsWith('dingtalk.'))) {
+      await setSetting(adminToken, k, 'false');
+    }
+
     browser = await puppeteer.launch({
       executablePath: CHROME,
       headless: true,

@@ -20,6 +20,9 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
+// ⚠️ 互斥锁: 并行跑 e2e 会互相改生产设置/删资产 (见 e2e_lock.js)
+require('./e2e_lock').acquire(__filename);
+
 
 const CHROME = process.env.CHROME_PATH
   || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -181,25 +184,7 @@ async function codeByName(page, name) {
     'dingtalk.notify_on_publish', 'dingtalk.notify_on_update',
     'dingtalk.notify_on_unpublish', 'dingtalk.notify_on_delete',
   ];
-  const savedSwitches = await page.evaluate(async (keys) => {
-    const tk = localStorage.getItem('testmate:token');
-    const r = await fetch('/api/v1/settings/schema', { headers: { Authorization: 'Bearer ' + tk } });
-    const d = await r.json();
-    const saved = {};
-    for (const g of d.groups || []) {
-      for (const it of g.items || []) {
-        if (keys.includes(it.key)) saved[it.key] = it.value;
-      }
-    }
-    for (const k of keys) {
-      await fetch('/api/v1/settings/' + k, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
-        body: JSON.stringify({ value: 'false' }),
-      });
-    }
-    return saved;
-  }, NOTIFY_SWITCHES);
+  let savedSwitches = {};
   const restoreSwitches = async () => {
     await page.evaluate(async (saved) => {
       const tk = localStorage.getItem('testmate:token');
@@ -216,6 +201,27 @@ async function codeByName(page, name) {
 
   // ---------- A. 列表渲染 ----------
   try {
+    // ⚠️ 静音通知**必须在 try 里** —— 否则中途抛错(比如后面某步炸了)就永远
+    //    还原不了, 把"不发通知"这个真实配置留在生产上.
+    savedSwitches = await page.evaluate(async (keys) => {
+      const tk = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/settings/schema', { headers: { Authorization: 'Bearer ' + tk } });
+      const d = await r.json();
+      const saved = {};
+      for (const g of d.groups || []) {
+        for (const it of g.items || []) {
+          if (keys.includes(it.key)) saved[it.key] = it.value;
+        }
+      }
+      for (const k of keys) {
+        await fetch('/api/v1/settings/' + k, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
+          body: JSON.stringify({ value: 'false' }),
+        });
+      }
+      return saved;
+    }, NOTIFY_SWITCHES);
     await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1200);
