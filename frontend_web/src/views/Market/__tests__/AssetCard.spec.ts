@@ -13,7 +13,7 @@ function item(over: Partial<AssetItem> = {}): AssetItem {
   return {
     code: 'demo', name: '演示资产', icon: '🧩', kind: 'skill', version: '1.0.0',
     summary: '摘要', description: '说明', use_when: '何时', not_for: '何时不',
-    category: 'misc', tags: [], keywords: [], author: 'admin', featured: false,
+    category: 'misc', project: '', tags: [], keywords: [], author: 'admin', featured: false,
     homepage: null, permissions: {}, install_steps: [], bindings: {},
     git_path: 'assets/skills/misc/demo', git_commit_sha: '', git_web_url: '',
     download_count: 0, updated_at: null,
@@ -90,5 +90,19 @@ describe('AssetCard 状态徽标', () => {
     await w.find('.asset-card').trigger('click');
     expect(w.emitted('open')).toBeTruthy();
     expect((w.emitted('open') as any)[0][0].code).toBe('demo');
+  });
+});
+
+describe('适用范围徽标', () => {
+  it('项目特有 → 卡片上标出是哪个项目', () => {
+    const w = mount(AssetCard, { props: { item: item({ project: '6100' }) } });
+    const badge = w.find('.ac-badge.proj');
+    expect(badge.exists()).toBe(true);
+    expect(badge.text()).toContain('6100');
+  });
+
+  it('通用资产 → 不标 (别给卡片加噪音)', () => {
+    const w = mount(AssetCard, { props: { item: item({ project: '' }) } });
+    expect(w.find('.ac-badge.proj').exists()).toBe(false);
   });
 });

@@ -32,6 +32,7 @@ from app.core import git_sync, pkg
 from app.core.asset_jobs import enqueue, retry_job, start_worker
 from app.core.asset_locks import code_lock
 from app.core.dingtalk import list_notifications, notify_market
+from app.core import market_projects
 from app.core.market_catalog import (
     CATEGORY_SLUGS,
     INDEX_PATH,
@@ -227,6 +228,17 @@ async def _assert_can_modify(code: str, user: User) -> Asset:
     return a
 
 
+async def _project_list() -> list[str]:
+    """项目列表 (设置项 marketplace.projects) —— 没配就用默认列表.
+
+    项目会增减 —— 所以是**配置**而不是写死的常量; 上传表单 / 市场筛选 /
+    卡片徽标都用这一份, 免得两处各写一套.
+    """
+    raw = await _setting(market_projects.SETTINGS_KEY, "")
+    projects = market_projects.parse(raw)
+    return projects or list(market_projects.DEFAULT_PROJECTS)
+
+
 async def _setting_bool(key: str, default: bool = False) -> bool:
     """读一个布尔开关.
 
@@ -312,6 +324,13 @@ async def _apply_git_web_url(items: list[AssetOut]) -> None:
 async def list_assets(
     kind: str | None = Query(None),
     category: str | None = Query(None),
+    project: str | None = Query(
+        None,
+        description=(
+            "按项目过滤: 留空=不过滤; __general=只看通用资产; "
+            "6100=6100 项目特有 **+ 通用** (通用资产在该项目同样适用)"
+        ),
+    ),
     q: str | None = Query(None),
     sort: str = Query("hot", pattern="^(hot|new|name)$"),
     include_unpublished: bool = Query(False),
@@ -350,6 +369,14 @@ async def list_assets(
             stmt = stmt.where(Asset.kind == kind)
         if category:
             stmt = stmt.where(Asset.category == category)
+        if project:
+            # ⚠️ 选某个项目 = 该项目特有 **+ 通用** ——
+            #    "我在 6100 项目能用什么" 里当然包含通用资产.
+            #    __general = 只看通用的 (筛"哪些是共享的").
+            if project == "__general":
+                stmt = stmt.where(Asset.project == "")
+            else:
+                stmt = stmt.where(or_(Asset.project == project, Asset.project == ""))
 
         if status == "mine":
             stmt = stmt.where(Asset.author == username)
@@ -471,6 +498,41 @@ async def list_categories(_user: User = Depends(get_current_user)) -> dict[str, 
         )
     items.sort(key=lambda i: (i["order"], i["name"]))
     return {"items": items, "total": sum(i["total"] for i in items)}
+
+
+@router.get("/projects")
+async def list_projects(_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """项目列表 + 每个项目的资产数.
+
+    ⚠️ 返回的是**完整列表** (含计数为 0 的) —— 前端据此渲染:
+      · 上传表单的「适用范围」下拉
+      · 市场页的项目筛选 chip
+    项目列表来自设置项 marketplace.projects (管理员可改, 不用发版)。
+    """
+    projects = await _project_list()
+
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(Asset.project).where(Asset.publish_status == "published")
+            )
+        ).all()
+    counts: dict[str, int] = {}
+    for (p,) in rows:
+        p = (p or "").strip()
+        counts[p] = counts.get(p, 0) + 1
+
+    # ⚠️ 通用项的 code 用 "general" —— 它是**筛选参数**, 不是资产里的 project 值
+    #    (资产里通用 = 空串). is_general 标出来, 前端别把它当一个项目列进下拉.
+    items = [{
+        "code": "general", "name": "通用", "total": counts.get("", 0), "is_general": True,
+    }]
+    items += [{"code": p, "name": p, "total": counts.get(p, 0)} for p in projects]
+    # 兜底: 项目已从列表里删掉, 但还有资产挂着它 —— 也列出来 (别让资产"没有归属")
+    for p, n in counts.items():
+        if p and not any(i["code"] == p for i in items):
+            items.append({"code": p, "name": p, "total": n})
+    return {"items": items, "total": len(items)}
 
 
 @router.get("/jobs", response_model=AssetJobListOut)
@@ -926,8 +988,8 @@ async def _set_publish_state(
 
     publish_status 四态: pending(待审核) / published(在架) / rejected(已驳回) / unpublished(已下架)
     """
-    # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他)
-    kind = category = author = ""
+    # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他) / 适用范围
+    kind = category = author = project = ""
     async with AsyncSessionLocal() as session:
         a = (
             await session.execute(select(Asset).where(Asset.code == code))
@@ -992,13 +1054,14 @@ async def _set_publish_state(
         job_id = job.id
         name, version = a.name, a.version
         kind, category, author = a.kind, a.category, a.author
+        project = a.project or ""
 
     enqueue(job_id)
     return {
         "ok": True, "code": code, "publish_status": publish_status,
         "changed": True, "job_id": job_id, "name": name, "version": version,
-        # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他)
-        "kind": kind, "category": category, "author": author,
+        # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他) / 适用范围
+        "kind": kind, "category": category, "author": author, "project": project,
     }
 
 
@@ -1051,6 +1114,7 @@ async def unpublish_asset(
             detail=comment or "有人申请下架, 等管理员确认",
             link="", code=code,
             kind=out.get("kind", ""), category=out.get("category", ""),
+            project=out.get("project", ""),
         )
     return {
         "ok": True, "code": code, "publish_status": "unpublish_pending",
@@ -1174,6 +1238,7 @@ async def review_asset(
                 "publish", name=out["name"], version=out["version"], actor=_user.username,
                 detail=comment or "审核通过, 已上架", link="", code=code,
                 kind=out.get("kind", ""), category=out.get("category", ""),
+            project=out.get("project", ""),
             )
         return out
 
@@ -1187,6 +1252,7 @@ async def review_asset(
             "reject", name=out["name"], version=out["version"], actor=_user.username,
             detail=note, link="", code=code,
             kind=out.get("kind", ""), category=out.get("category", ""),
+            project=out.get("project", ""),
             author=out.get("author", ""),
         )
     return out
@@ -1224,6 +1290,7 @@ async def submit_for_review(
             "review", name=out["name"], version=out["version"], actor=_user.username,
             detail=comment or "提交审核", link="", code=code,
             kind=out.get("kind", ""), category=out.get("category", ""),
+            project=out.get("project", ""),
         )
     return out
 
@@ -1257,6 +1324,7 @@ async def publish_asset(
         "publish", name=out["name"], version=out["version"], actor=user.username,
         detail=comment or "重新上架", link="", code=code,
         kind=out.get("kind", ""), category=out.get("category", ""),
+            project=out.get("project", ""),
     )
     return {"ok": True, "code": code, "publish_status": "published"}
 
@@ -1297,6 +1365,7 @@ async def _hard_delete_asset(
         version = a.version
         asset_id = a.id
         kind, category = a.kind, a.category
+        project = a.project or ""
 
     if not git_path:
         raise HTTPException(status_code=409, detail="资产没有 git 路径, 无法安全删除")
@@ -1346,7 +1415,7 @@ async def _hard_delete_asset(
     await notify_market(
         event, name=asset_name, version=version, actor=user.username,
         detail=comment or "资产已从市场删除", link="", code=code,
-        kind=kind, category=category,
+        kind=kind, category=category, project=project,
     )
     logger.info("delete 资产 code=%s action=%s event=%s", code, audit_action, event)
     return AssetDeleteOut(
@@ -1469,6 +1538,7 @@ async def _stage_asset_locked(
             use_when=payload_in.use_when,
             not_for=payload_in.not_for,
             category=payload_in.category,
+            project=payload_in.project,
             tags=payload_in.tags,
             keywords=payload_in.keywords,
             icon=payload_in.icon,
@@ -1617,6 +1687,8 @@ async def _stage_asset_locked(
         a.use_when = manifest.get("use_when") or ""
         a.not_for = manifest.get("not_for") or ""
         a.category = manifest.get("category") or ""
+        # 适用范围 (空 = 通用)
+        a.project = manifest.get("project") or ""
         # 连接器专有: MCP 配置 (非 mcp 恒为 None)
         a.mcp_config = manifest.get("mcp_config") if (a.kind or "") == "mcp" else None
         a.tags = list(manifest.get("tags") or [])
@@ -1705,6 +1777,7 @@ async def _stage_asset_locked(
             detail=manifest.get("summary", "") or "新资产待审核",
             link="", code=manifest.get("code", ""),
             kind=manifest.get("kind", ""), category=manifest.get("category", ""),
+            project=manifest.get("project", ""),
             author=manifest.get("author", "") or user.username,
         )
     else:
@@ -1715,6 +1788,7 @@ async def _stage_asset_locked(
             detail=manifest.get("summary", ""), link="",
             code=manifest.get("code", ""),
             kind=manifest.get("kind", ""), category=manifest.get("category", ""),
+            project=manifest.get("project", ""),
         )
     return out
 
@@ -1730,6 +1804,7 @@ async def upload_asset(
     use_when: str = Form(""),
     not_for: str = Form(""),
     category: str = Form(""),
+    project: str = Form("", description="适用范围: 空 = 通用; 6100 = 6100 项目特有"),
     icon: str = Form("🧩"),
     tags: str = Form("[]"),
     keywords: str = Form("[]"),
@@ -1754,6 +1829,8 @@ async def upload_asset(
             code=code, kind=kind, name=name, summary=summary, version=version,
             description=description, use_when=use_when, not_for=not_for,
             category=category, icon=icon,
+            # 适用范围: 不在项目列表里的一律归**通用** (脏值不进 manifest)
+            project=market_projects.normalize(project, await _project_list()),
             tags=json.loads(tags or "[]"), keywords=json.loads(keywords or "[]"),
             author=user.username, featured=featured,
             permissions=json.loads(permissions or "{}"),
@@ -1810,6 +1887,7 @@ async def update_asset(
     use_when: str = Form(""),
     not_for: str = Form(""),
     category: str = Form(""),
+    project: str = Form("", description="适用范围: 空 = 通用; 6100 = 6100 项目特有"),
     icon: str = Form("🧩"),
     tags: str = Form("[]"),
     keywords: str = Form("[]"),
@@ -1839,6 +1917,8 @@ async def update_asset(
             code=code, kind=kind, name=name, summary=summary, version=version,
             description=description, use_when=use_when, not_for=not_for,
             category=category, icon=icon,
+            # 适用范围: 不在项目列表里的一律归**通用** (脏值不进 manifest)
+            project=market_projects.normalize(project, await _project_list()),
             tags=json.loads(tags or "[]"), keywords=json.loads(keywords or "[]"),
             author=user.username, featured=featured,
             permissions=json.loads(permissions or "{}"),

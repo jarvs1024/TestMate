@@ -225,6 +225,7 @@ async def notify_market(
     kind: str = "",
     category: str = "",
     author: str = "",
+    project: str = "",
     at_all: bool | None = None,
     at_author: bool | None = None,
 ) -> bool:
@@ -236,6 +237,7 @@ async def notify_market(
       市场群 —— 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
 
     kind / category: 通知里要说明"这是个啥" (技能包? 插件? 连接器?)
+    project: 适用范围 (空 = 通用; 有值才写这一行)
     author: 发布者 —— 审核不通过时要 @他
     at_all / at_author: 覆盖事件默认的 @ 策略 (一般不用传)
     """
@@ -273,6 +275,9 @@ async def notify_market(
         kind_line += f" · {category}"
     if kind_line:
         lines.append(kind_line)
+    if project:
+        # 适用范围: 只有**项目特有**的资产才写这行 (通用的不占地方)
+        lines.append(f"- 适用范围: {project} 项目")
     if version:
         lines.append(f"- 版本: `{version}`")
     if actor:

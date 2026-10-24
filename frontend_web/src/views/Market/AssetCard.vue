@@ -12,6 +12,9 @@
       </div>
       <!-- 状态是**每张卡片自己的属性**, 不再做成视图筛选 -->
       <div class="ac-badges">
+        <!-- 适用范围: 项目特有的才标 (通用的不占地方) -->
+        <span v-if="item.project" class="ac-badge proj"
+              :title="`这个资产只对 ${item.project} 项目有意义 (通用资产不标)`">📁 {{ item.project }} 项目</span>
         <span v-if="item.publish_status === 'pending'" class="ac-badge pending"
               title="已提交, 等待管理员审核; 通过后才在市场里可见">📋 待审核</span>
         <span v-else-if="item.publish_status === 'rejected'" class="ac-badge rejected"
@@ -133,6 +136,8 @@ const permTitle = computed(() => {
 .ac-badge.rejected { background: rgba(239, 68, 68, 0.12); color: var(--err); }
 .ac-badge.off { background: rgba(107, 114, 128, 0.14); color: var(--ink-600, #6b7280); }
 .ac-badge.unp { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
+/* 适用范围: 项目特有 —— 用中性蓝, 跟状态徽标(红/黄/蓝)区分开 */
+.ac-badge.proj { background: rgba(20, 184, 166, 0.14); color: var(--primary-2); }
 
 .ac-summary {
   margin: 0;

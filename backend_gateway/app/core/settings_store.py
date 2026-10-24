@@ -228,14 +228,24 @@ SETTING_SCHEMA: list[dict] = [
     },
     # ===== AI 资产市场 =====
     {
+        "key": "marketplace.projects",
+        "category": "marketplace",
+        "value_type": "string",
+        "default": "6100,3361,8560,9560,3100",
+        "description": (
+            "项目列表 (逗号分隔, 如 6100,3361) —— 上架资产时选「通用」或某个项目特有, "
+            "市场页按项目筛选也用这份列表 (项目会增减, 加项目改这里就行, 不用发版)"
+        ),
+        "is_secret": False,
+    },
+    {
         "key": "marketplace.publisher_ids",
         "category": "marketplace",
         "value_type": "string",
         "default": "[]",
         "description": "允许发布的用户 ID (JSON 数组, 如 [1,2]; admin 恒可发布)",
         "is_secret": False,
-    },
-    {
+    },    {
         "key": "marketplace.publisher_usernames",
         "category": "marketplace",
         "value_type": "string",

@@ -30,6 +30,8 @@ export interface AssetItem {
   use_when: string;
   not_for: string;
   category: string;
+  /** 适用范围: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有 */
+  project: string;
   tags: string[];
   keywords: string[];
   author: string;
@@ -199,6 +201,8 @@ export interface UploadForm {
   use_when: string;
   not_for: string;
   category: string;
+  /** 适用范围: 空 = 通用; "6100" = 6100 项目特有 */
+  project?: string;
   icon: string;
   tags: string[];
   /** 搜索关键词 (同义词) —— 搜不到时靠它 */
@@ -232,6 +236,8 @@ async function apiDelete<T>(url: string, params?: Record<string, unknown>): Prom
 
 export async function listAssets(params: {
   kind?: MarketKind; category?: string; q?: string; sort?: 'hot' | 'new' | 'name';
+  /** 按项目过滤: 留空=不过滤; __general=只看通用; 6100=该项目特有 + 通用 */
+  project?: string;
   include_unpublished?: boolean; limit?: number; offset?: number;
   /** 按上架状态过滤: published | pending | rejected | unpublished | mine | all; 留空=默认可见性 */
   status?: string;
@@ -247,6 +253,18 @@ export async function listCategories(): Promise<{
   total?: number;
 }> {
   return apiGet('/assets/categories');
+}
+
+/**
+ * 项目列表 + 每个项目的资产数 —— 上传表单的「适用范围」与市场页的筛选都用它.
+ *
+ * ⚠️ 通用 (code = "") 也在列表里 —— 它是"默认选项", 不是某个项目。
+ */
+export async function listProjects(): Promise<{
+  items: { code: string; name: string; total: number; is_general?: boolean }[];
+  total?: number;
+}> {
+  return apiGet('/assets/projects');
 }
 
 export async function getAsset(code: string): Promise<AssetItem> {
@@ -391,6 +409,7 @@ function toFormData(f: UploadForm, includeCode: boolean): FormData {
   fd.append('use_when', f.use_when);
   fd.append('not_for', f.not_for);
   fd.append('category', f.category);
+  fd.append('project', f.project || '');
   fd.append('icon', f.icon);
   fd.append('tags', JSON.stringify(f.tags));
   fd.append('keywords', JSON.stringify(f.keywords || []));

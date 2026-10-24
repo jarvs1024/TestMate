@@ -83,6 +83,7 @@ function check(name, ok, detail) {
     'marketplace.publisher_ids',
     'marketplace.sync.interval_seconds', 'marketplace.max_package_mb',
     'marketplace.marketplace_name', 'marketplace.public_base_url',
+    'marketplace.projects',   // 项目列表 (资产的适用范围)
   ];
   const missing = expect.filter((k) => !keys.includes(k));
   check('A2 资产市场配置项全部渲染出来', missing.length === 0,

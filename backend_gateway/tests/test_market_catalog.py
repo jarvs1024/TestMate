@@ -105,6 +105,7 @@ class _FakeAsset:
         self.permissions = kw.get("permissions", {})
         self.install_steps = kw.get("install_steps", [])
         self.bindings = kw.get("bindings", {})
+        self.project = kw.get("project", "")
         self.git_path = kw.get("git_path", "assets/skills/trace/demo")
         self.download_count = kw.get("download_count", 0)
         self.publish_status = kw.get("publish_status", "published")
@@ -200,3 +201,25 @@ async def test_apply_index_to_db_creates_missing(ws, restore_git_config):  # noq
     async with AsyncSessionLocal() as s:
         a = (await s.execute(select(Asset).where(Asset.code == "idx-seed"))).scalar_one()
         assert a.publish_status == "published"
+
+
+def test_index_entry_carries_project():
+    """适用范围必须进索引 —— 别的实例才知道这个资产是哪个项目特有的."""
+    e = mc.asset_to_index_entry(_FakeAsset(project="6100"))
+    assert e["project"] == "6100"
+    # 通用资产 = 空串 (不是 None, 免得前端判空踩坑)
+    assert mc.asset_to_index_entry(_FakeAsset(project=""))["project"] == ""
+
+
+def test_build_manifest_carries_project():
+    """manifest 是权威 —— 适用范围要写进去."""
+    m = mc.build_manifest(
+        code="dml-demo", kind="skill", name="演示", version="1.0.0",
+        summary="摘要", project="6100",
+    )
+    assert m["project"] == "6100"
+    # 默认 = 通用
+    m2 = mc.build_manifest(
+        code="dml-demo2", kind="skill", name="演示", version="1.0.0", summary="摘要",
+    )
+    assert m2["project"] == ""

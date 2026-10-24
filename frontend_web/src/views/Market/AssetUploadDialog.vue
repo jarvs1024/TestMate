@@ -166,16 +166,31 @@
             </el-form-item>
           </div>
 
-          <!-- 分类: 抽屉里唯一的下拉 —— 其它选项都是固定的 -->
-          <el-form-item label="分类" required>
-            <el-select v-model="form.category" style="width:100%" filterable
-                       @change="onCategoryChange">
-              <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
-                <span>{{ c.name }}</span>
-                <span class="cat-desc">{{ c.desc }}</span>
-              </el-option>
-            </el-select>
-          </el-form-item>
+          <div class="row-2">
+            <!-- 分类 (必填) 在前, 适用范围在后 ——
+                 抽屉里第一个下拉是分类, 前端 e2e 靠这个顺序定位 -->
+            <el-form-item label="分类" required>
+              <el-select v-model="form.category" style="width:100%" filterable
+                         @change="onCategoryChange">
+                <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
+                  <span>{{ c.name }}</span>
+                  <span class="cat-desc">{{ c.desc }}</span>
+                </el-option>
+              </el-select>
+            </el-form-item>
+            <!-- 适用范围: 通用 (所有项目) 或某个项目特有 -->
+            <el-form-item label="适用范围">
+              <el-select v-model="form.project" style="width:100%">
+                <el-option value="" label="通用 —— 所有项目都能用" />
+                <el-option v-for="p in projectOptions" :key="p" :value="p"
+                           :label="`${p} 项目 —— 只有 ${p} 项目用得上`" />
+              </el-select>
+              <p class="hint">
+                资产是团队共有的, 但项目各有各的机台和流程 ——
+                通用资产所有人都能用; 项目特有的会在卡片上标出来。
+              </p>
+            </el-form-item>
+          </div>
         </section>
 
         <!-- ============ ③ 进阶信息 (默认收起) ============ -->
@@ -275,7 +290,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
-import { getAsset, getJob, listAssets, listCategories, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
+import { getAsset, getJob, listAssets, listCategories, listProjects, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
 import {
   CODE_EXAMPLE, CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
   checkCodeSync, codeFromPackageName, pickIcon, validateCode, validatePackageName,
@@ -318,10 +333,14 @@ const usedIcons = ref<Set<string>>(new Set());
 const iconTouched = ref(false);
 /** 分类表 (后端下发) —— 上传/更新时只能从里面选 */
 const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
+/** 项目列表 (后端下发, 设置项里可改) —— 适用范围的下拉选项 */
+const projectOptions = ref<string[]>([]);
 
 const form = reactive({
   code: CODE_PREFIX, kind: 'skill' as MarketKind, name: '', version: '1.0.0',
   summary: '', description: '', use_when: '', not_for: '', category: '', icon: '🧩',
+  // 适用范围: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有
+  project: '',
   featured: false, tags: [] as string[], files: [] as File[],
   install_steps: [] as string[],
 });
@@ -471,6 +490,21 @@ async function loadCategories() {
   }
 }
 
+/** 拉项目列表 (设置项 marketplace.projects) —— 适用范围的下拉选项 */
+async function loadProjects() {
+  if (projectOptions.value.length) return;
+  try {
+    const r = await listProjects();
+    projectOptions.value = (r?.items || [])
+      // ⚠️ 过滤掉「通用」(is_general) —— 它是默认选项, 不是某个项目
+      .filter((i: { is_general?: boolean }) => !i.is_general)
+      .map((i: { code: string }) => (i.code || '').trim())
+      .filter(Boolean);
+  } catch {
+    /* 拿不到就退回空列表 —— 只剩「通用」可选, 不影响上架 */
+  }
+}
+
 /** 拉现有资产的图标 —— 自动分配时避开重复 */
 async function loadUsedIcons() {
   try {
@@ -508,6 +542,7 @@ function chooseIcon(ic: string) {
 watch(() => props.modelValue, (open) => {
   if (!open) return;
   loadCategories();
+  loadProjects();
   loadUsedIcons();
   job.value = null;
   submitting.value = false;
@@ -526,6 +561,7 @@ watch(() => props.modelValue, (open) => {
     form.summary = a.summary; form.description = a.description;
     form.use_when = a.use_when; form.not_for = a.not_for;
     form.category = a.category; form.icon = a.icon; form.featured = a.featured;
+    form.project = a.project || '';   // 适用范围: 带出原值 (可改)
     // 连接器: 带出老配置 (发布新版本 = 只改这段配置)
     mcpConfigText.value = a.mcp_config ? JSON.stringify(a.mcp_config, null, 2) : '';
     form.tags = [...a.tags]; form.install_steps = [...a.install_steps];
@@ -540,6 +576,7 @@ watch(() => props.modelValue, (open) => {
     Object.assign(form, {
       code: CODE_PREFIX, kind: k, name: '', version: '1.0.0', summary: '',
       description: '', use_when: '', not_for: '', category: '', icon: '🧩',
+      project: '',        // 新建默认通用
       featured: false, tags: [], files: [], install_steps: [],
     });
     step.value = props.initialKind ? 'form' : 'pick';
@@ -644,6 +681,8 @@ async function submit() {
     use_when: form.use_when,
     not_for: props.mode === 'update' ? (props.asset?.not_for || '') : form.not_for,
     category: form.category,
+    // 适用范围: 空 = 通用; 不在项目列表里的后端会归一成通用
+    project: form.project || '',
     icon: form.icon || '🧩',
     tags: splitList(tagsText.value),
     keywords: splitList(keywordsText.value),

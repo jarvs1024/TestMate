@@ -13,6 +13,12 @@ import AssetUploadDialog from '../AssetUploadDialog.vue';
 vi.mock('@/api/assets', () => ({
   listAssets: vi.fn(async () => ({ items: [] })),
   listCategories: vi.fn(async () => ({ items: [] })),
+  listProjects: vi.fn(async () => ({
+    items: [
+      { code: 'general', name: '通用', total: 0 },
+      { code: '6100', name: '6100', total: 0 },
+    ],
+  })),
   getAsset: vi.fn(async () => ({})),
   getJob: vi.fn(async () => ({})),
   previewPackage: vi.fn(async () => ({})),
@@ -31,7 +37,10 @@ const stubs = {
   },
   'el-input': { template: '<input class="el-input"/>' },
   'el-select': { template: '<select class="el-select"><slot/></select>' },
-  'el-option': { template: '<option/>' },
+  'el-option': {
+    props: ['label'],
+    template: '<option>{{ label }}<slot/></option>',
+  },
   'el-button': { template: '<button><slot/></button>' },
   'el-checkbox': { template: '<label><slot/></label>' },
 };
@@ -102,8 +111,20 @@ describe('上传抽屉: 类型头与换类型', () => {
 
   it('表单里不再有「类型」下拉 —— 形态在第 ① 步就定了', async () => {
     const w = await open({ initialKind: 'skill' });
-    // 抽屉里唯一的下拉是「分类」
-    expect(w.findAll('.el-select').length).toBe(1);
+    const labels = w.findAll('.el-form-item').map((f) => f.text());
+    // 有分类 + 适用范围两个下拉, 但没有「类型」
+    expect(labels.some((t) => t.includes('分类'))).toBe(true);
+    expect(labels.some((t) => t.includes('适用范围'))).toBe(true);
+    expect(labels.some((t) => t.includes('类型'))).toBe(false);
+    expect(w.findAll('.el-select').length).toBe(2);
+  });
+
+  it('适用范围默认是通用, 且项目选项来自后端配置', async () => {
+    const w = await open({ initialKind: 'skill' });
+    const scope = w.findAll('.el-select').find((s) => s.text().includes('通用'));
+    expect(scope).toBeTruthy();
+    // 项目列表是配置 (设置项 marketplace.projects) —— 下拉里要有它
+    expect(scope!.text()).toContain('6100');
   });
 
   it('更新版本时类型不可改 —— 没有「更换类型」按钮', async () => {

@@ -455,7 +455,9 @@ async function codeByName(page, name) {
     check('H0-3 选「连接器」直接进 MCP 配置页', mcpState.mcp === true, `typeBar=${mcpState.typeBar}`);
     check('H0-4 连接器没有安装包区', mcpState.pkg === false, `typeBar=${mcpState.typeBar}`);
     check('H0-5 类型头显示「连接器」', /连接器/.test(mcpState.typeBar || ''), mcpState.typeBar);
-    check('H0-6 表单里没有类型下拉了 (只剩分类)', mcpState.selects === 1, `el-select=${mcpState.selects}`);
+    // 下拉有两个: 分类 + 适用范围 (类型在第 ① 步就定了, 表单里不再有)
+    check('H0-6 表单里没有类型下拉 (只剩分类 + 适用范围)', mcpState.selects === 2,
+      `el-select=${mcpState.selects}`);
 
     // MCP 配置里的连接器名必须是 dml- 开头 ——
     // 详情页会**原样展示**这份配置, 用户照着加进自己的 MCP 配置里。
@@ -507,11 +509,16 @@ async function codeByName(page, name) {
     const formState = await page.evaluate(() => {
       const drawer = document.querySelector('.up-drawer');
       const txt = (sel) => (drawer.querySelector(sel)?.textContent || '').replace(/\s+/g, ' ').trim();
+      const scopeSel = [...drawer.querySelectorAll('.el-select')]
+        .find((s) => (s.textContent || '').includes('通用'));
       return {
         guide: txt('.guide'),
         pkgReq: txt('.pkg-req'),
         adv: txt('.adv-body'),
         advTitle: txt('.sec-toggle'),
+        labels: [...drawer.querySelectorAll('.el-form-item label')]
+          .map((l) => l.textContent.trim()).join(' / '),
+        scopeOptions: scopeSel ? scopeSel.textContent.replace(/\s+/g, ' ').trim() : '',
       };
     });
     check('H1-1 基础信息只留一条按形态的提示',
@@ -523,6 +530,17 @@ async function codeByName(page, name) {
       && !/详细说明|不适用|安装步骤|设为精选|权限声明/.test(formState.adv),
       formState.adv.slice(0, 70));
     check('H1-4 进阶信息标题写明「可展开」', /可展开/.test(formState.advTitle), formState.advTitle.slice(0, 40));
+    check('H1-8 上传表单有「适用范围」下拉', /适用范围/.test(formState.labels),
+      formState.labels.slice(0, 70));
+    // 项目列表来自后端配置 (设置项 marketplace.projects)
+    const projCodes = await page.evaluate(async () => {
+      const tk = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/assets/projects', { headers: { Authorization: 'Bearer ' + tk } });
+      const d = await r.json();
+      return (d.items || []).map((i) => i.code);
+    });
+    check('H1-9 项目列表可用 (通用 + 各项目)',
+      projCodes.includes('general') && projCodes.includes('6100'), projCodes.join(' '));
 
     // 图标面板: 只列**没被用过**的, 而且要够多 (资产多了也有的选)
     await page.evaluate(() => {

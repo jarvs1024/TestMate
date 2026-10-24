@@ -62,6 +62,16 @@
 
       <p class="ad-summary">{{ item.description || item.summary }}</p>
 
+      <!-- 适用范围: 项目特有 / 通用 -->
+      <div class="ad-scope" :class="{ proj: !!item.project }">
+        <span class="sc-ic">📁</span>
+        <span class="sc-txt">
+          <b>{{ item.project ? `${item.project} 项目专属` : '通用资产' }}</b>
+          <span v-if="item.project">只对 {{ item.project }} 项目有意义 —— 其他项目用不上</span>
+          <span v-else>所有项目都能用</span>
+        </span>
+      </div>
+
       <div class="ad-block">
         <div class="ad-block-h ok">✓ 适用场景</div>
         <div class="ad-block-b">{{ item.use_when || '—' }}</div>
@@ -546,6 +556,20 @@ async function doSubmit() {
 .ad-summary {
   margin: 0 0 14px; font-size: 13px; color: var(--ink-700); line-height: 1.65; white-space: pre-wrap;
 }
+
+/* 适用范围 (通用 / 项目专属) */
+.ad-scope {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 9px 12px; margin-bottom: 14px;
+  background: var(--surface-sunken); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.ad-scope.proj { border-color: rgba(20, 184, 166, 0.35); }
+.ad-scope .sc-ic { font-size: 15px; line-height: 1.3; }
+.ad-scope .sc-txt { display: flex; flex-direction: column; gap: 2px; }
+.ad-scope .sc-txt b { font-size: 12.5px; color: var(--ink-900); }
+.ad-scope .sc-txt span { font-size: 11.5px; color: var(--ink-500); }
+.ad-scope.proj .sc-txt b { color: var(--primary-2); }
 
 .ad-block { margin-bottom: 14px; }
 .ad-block-h {

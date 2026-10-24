@@ -546,3 +546,67 @@ async def test_doc_bundle_and_files(client, auth, ws,  # noqa: ARG001
     r3 = await client.get(f"{API}/read-demo/bundle", headers=auth)
     assert r3.status_code == 200
     assert r3.json()["total"] >= 1
+
+# ---------- 适用范围 (项目) ----------
+
+async def test_upload_keeps_project_and_lists_projects(client, auth, ws,
+                                                       restore_git_config,  # noqa: ARG001
+                                                       publisher_user):
+    """上传时选的项目要落到资产上, 并且出现在项目列表里."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("marketplace.projects", "6100,3361")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+
+    r = await _upload(client, pauth, code="proj-demo", project="6100")
+    assert r.status_code == 202, r.text
+
+    got = await client.get(f"{API}/proj-demo", headers=auth)
+    assert got.json()["project"] == "6100"
+
+    pl = await client.get(f"{API}/projects", headers=auth)
+    assert pl.status_code == 200
+    items = {i["code"]: i for i in pl.json()["items"]}
+    assert "6100" in items and items["6100"]["total"] >= 1
+    assert "general" in items          # 通用也在列表里 (它是默认选项)
+
+
+async def test_upload_normalizes_unknown_project_to_general(client, auth, ws,
+                                                            restore_git_config,  # noqa: ARG001
+                                                            publisher_user):
+    """填了列表里没有的项目 → 归成通用 (脏值不进 manifest)."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("marketplace.projects", "6100")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+
+    r = await _upload(client, pauth, code="proj-bad", project="9999")
+    assert r.status_code == 202, r.text
+    got = await client.get(f"{API}/proj-bad", headers=auth)
+    assert got.json()["project"] == ""
+
+
+async def test_list_filters_by_project(client, auth, ws, restore_git_config,
+                                       publisher_user):  # noqa: ARG001
+    """按项目筛: 选某项目 = 该项目特有 + 通用; 选 __general = 只看通用."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("marketplace.projects", "6100")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+
+    await _upload(client, pauth, code="p-6100", project="6100")
+    await _upload(client, pauth, code="p-general", project="")
+
+    r = await client.get(f"{API}?project=6100&limit=100", headers=auth)
+    codes = {i["code"] for i in r.json()["items"]}
+    assert "p-6100" in codes and "p-general" in codes
+
+    r2 = await client.get(f"{API}?project=__general&limit=100", headers=auth)
+    codes2 = {i["code"] for i in r2.json()["items"]}
+    assert "p-general" in codes2 and "p-6100" not in codes2

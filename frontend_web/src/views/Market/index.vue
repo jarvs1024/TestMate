@@ -93,6 +93,23 @@
           {{ c.name }}<span v-if="c.total" class="count">{{ c.total }}</span>
         </button>
       </div>
+      <!-- ===== 项目筛选 =====
+           选某个项目 = 该项目特有 **+ 通用** (通用资产在该项目同样适用);
+           选「通用」= 只看通用的. -->
+      <div v-if="projects.length" class="proj-chips">
+        <span class="pc-label">项目</span>
+        <button class="chip" :class="{ active: projectFilter === '' }"
+                @click="projectFilter = ''; load()">全部</button>
+        <button v-for="p in projects" :key="p.code" class="chip"
+                :class="{ active: projectFilter === p.code }"
+                :title="p.code === 'general'
+                  ? '只看通用资产 (所有项目都能用的)'
+                  : `只看 ${p.code} 项目特有 + 通用资产`"
+                @click="projectFilter = p.code; load()">
+          {{ p.name }}<span v-if="p.total" class="count">{{ p.total }}</span>
+        </button>
+      </div>
+
       <select v-model="sortBy" class="sort" @change="load">
         <option value="hot">热门</option>
         <option value="new">最新</option>
@@ -151,7 +168,7 @@ import { useUserStore } from '@/stores/user';
 import { MARKET_KINDS } from './marketCatalog';
 import { KIND_META } from './kindMeta';
 import {
-  listAssets, listCategories, listJobs, getSyncStatus, retryJob, syncFromGit,
+  listAssets, listCategories, listJobs, listProjects, getSyncStatus, retryJob, syncFromGit,
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
 } from '@/api/assets';
 
@@ -240,6 +257,18 @@ const syncSubHint = computed(() => {
 /* 分类表 (后端下发的完整分类 + 各分类资产数) —— chip 动态渲染, 不再硬编码.
    ⚠️ 以前用硬编码的 MARKET_CATEGORIES: 用户自建的分类**没有 chip** → 筛不出来. */
 const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
+/** 项目列表 (通用 + 各项目) —— 筛选 chip 用 */
+const projects = ref<{ code: string; name: string; total: number }[]>([]);
+/** 项目筛选: '' = 全部, 'general' = 只看通用, '6100' = 该项目特有 + 通用 */
+const projectFilter = ref('');
+async function loadProjects() {
+  try {
+    const r = await listProjects();
+    projects.value = (r?.items || []) as typeof projects.value;
+  } catch {
+    /* 拿不到就不过滤 —— 不影响浏览 */
+  }
+}
 async function loadCategories() {
   try {
     const r = await listCategories();
@@ -275,6 +304,8 @@ async function load() {
       // 「只看这些」时不按类型卡 —— 我提交的待审资产可能是任意类型
       kind: onlyMine.value ? undefined : kind.value,
       category: category.value === '__featured' ? undefined : (category.value || undefined),
+      // 项目筛选: 留空 = 不过滤; 'general' = 只看通用; '6100' = 该项目特有 + 通用
+      project: projectFilter.value || undefined,
       q: keyword.value.trim() || undefined,
       sort: sortBy.value,
       limit: 500,
@@ -413,6 +444,7 @@ function resetFilters() {
   keyword.value = '';
   onlyMine.value = false;
   sortBy.value = 'hot';
+  projectFilter.value = '';
   load();
 }
 
@@ -422,7 +454,7 @@ watch(kind, () => load());
 
 let timer: number | null = null;
 onMounted(async () => {
-  await Promise.all([load(), loadKindCounts(), loadSyncStatus(), loadCategories()]);
+  await Promise.all([load(), loadKindCounts(), loadSyncStatus(), loadCategories(), loadProjects()]);
   timer = window.setInterval(pollJobs, 5000);
 });
 onUnmounted(() => {
@@ -584,6 +616,13 @@ onUnmounted(() => {
 .chip:hover { background: var(--surface-sunken); color: var(--ink-900); }
 .chip.active { background: var(--primary-grad); border-color: transparent; color: #fff; font-weight: 600; }
 .chip.active .count { background: rgba(255, 255, 255, 0.25); color: #fff; }
+
+/* ===== 项目筛选 ===== */
+.proj-chips {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding-left: 12px; border-left: 1px dashed var(--border);
+}
+.pc-label { font-size: 11.5px; color: var(--ink-500); }
 
 .sort {
   background: var(--surface); border: 1px solid var(--border);

@@ -206,6 +206,20 @@ z.close()
       opt && opt.click();
     });
     await sleep(700);
+    // 适用范围: 选 6100 项目 (抽屉里第二个下拉 = 分类之后的「适用范围」)
+    // ⚠️ 必须用**真实点击** (elementHandle.click) —— DOM 的 el.click() 不会触发
+    //    element-plus 的下拉开关 (它绑在 wrapper 的指针事件上)
+    const scopeSel = await pub.page.$('.up-drawer .el-select:nth-of-type(2)');
+    const scopeHandles = await pub.page.$$('.up-drawer .el-select');
+    const scope = scopeHandles[1] || scopeSel;
+    if (scope) await scope.click();
+    await sleep(900);
+    await pub.page.evaluate(() => {
+      const opt = [...document.querySelectorAll('.el-select-dropdown__item')]
+        .find((o) => (o.textContent || '').includes('6100 项目'));
+      opt && opt.click();
+    });
+    await sleep(900);
     await pub.page.evaluate(() => {
       const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => x.textContent.includes('上架'));
       b && b.click();
@@ -227,6 +241,9 @@ z.close()
 
     const st = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
     check('③ 资产状态为待审核', st.json && st.json.publish_status === 'pending', st.json && st.json.publish_status);
+    // 适用范围: 上传时选了 6100 → 资产上要带着
+    check('③c 资产带上了适用范围 (6100 项目)',
+      st.json && st.json.project === '6100', `project=${st.json && st.json.project}`);
 
 
     // ===== ③b 复验: 同步器不能把待审资产改成已上架 =====
@@ -359,6 +376,52 @@ z.close()
     const visibleToInstaller = await ins.page.evaluate((name) =>
       [...document.querySelectorAll('.asset-card')].some((x) => x.textContent.includes(name)), '场景验证技能');
     check('⑬ 上架后小李能看到', visibleToInstaller);
+
+    // ===== ④b 适用范围: 卡片标注 + 按项目筛选 =====
+    await ins.page.reload({ waitUntil: 'domcontentloaded' });
+    await ins.page.waitForSelector('.asset-card', { timeout: 15000 });
+    await sleep(1500);
+    await ins.page.evaluate(() => {
+      const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
+      t && t.click();
+    });
+    await sleep(1500);
+    const projBadge = await ins.page.evaluate((name) => {
+      const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(name));
+      return c ? (c.querySelector('.ac-badge.proj')?.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    }, '场景验证技能');
+    check('⑬b 卡片上标出「6100 项目」', /6100/.test(projBadge), projBadge || '(无徽标)');
+
+    // 按项目筛选: 选 6100 → 该项目特有 + 通用 都在
+    const chipTexts = await ins.page.evaluate(() =>
+      [...document.querySelectorAll('.proj-chips .chip')].map((c) => c.textContent.replace(/\s+/g, ' ').trim()));
+    check('⑬c 市场页有项目筛选 chip', chipTexts.length >= 2, chipTexts.join(' | '));
+    await ins.page.evaluate(() => {
+      const chip = [...document.querySelectorAll('.proj-chips .chip')]
+        .find((x) => x.textContent.includes('6100'));
+      chip && chip.click();
+    });
+    await sleep(1800);
+    const afterFilter = await ins.page.evaluate((name) =>
+      [...document.querySelectorAll('.asset-card')].some((x) => x.textContent.includes(name)), '场景验证技能');
+    check('⑬d 按 6100 筛选能筛出该资产', afterFilter);
+    // 选「通用」→ 6100 特有的不该出现
+    await ins.page.evaluate(() => {
+      const chip = [...document.querySelectorAll('.proj-chips .chip')]
+        .find((x) => x.textContent.includes('通用'));
+      chip && chip.click();
+    });
+    await sleep(1800);
+    const generalOnly = await ins.page.evaluate((name) =>
+      [...document.querySelectorAll('.asset-card')].some((x) => x.textContent.includes(name)), '场景验证技能');
+    check('⑬e 选「通用」时项目特有的被筛掉', !generalOnly);
+    // ⚠️ 恢复筛选 —— 后续用例还要在这个列表里找资产
+    await ins.page.evaluate(() => {
+      const chip = [...document.querySelectorAll('.proj-chips .chip')]
+        .find((x) => x.textContent.trim() === '全部');
+      chip && chip.click();
+    });
+    await sleep(1600);
 
     // 通过安装向导装上
     await ins.page.evaluate((name) => {

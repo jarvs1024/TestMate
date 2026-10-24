@@ -16,6 +16,8 @@ class AssetOut(BaseModel):
     use_when: str = ""
     not_for: str = ""
     category: str = ""
+    # 适用范围: 空 = 通用; "6100" = 6100 项目特有
+    project: str = ""
     tags: list[str] = []
     keywords: list[str] = []
     author: str = ""
@@ -217,6 +219,8 @@ class UploadAssetIn(BaseModel):
     use_when: str = ""
     not_for: str = ""
     category: str = ""
+    # 适用范围: 空 = 通用; "6100" = 6100 项目特有 (列表见设置项 marketplace.projects)
+    project: str = ""
     icon: str = "🧩"
     tags: list[str] = []
     keywords: list[str] = []

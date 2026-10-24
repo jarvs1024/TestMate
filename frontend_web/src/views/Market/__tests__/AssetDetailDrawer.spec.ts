@@ -31,7 +31,7 @@ function item(over: Partial<AssetItem> = {}): AssetItem {
   return {
     code: 'demo', name: '演示资产', icon: '🧩', kind: 'skill', version: '1.0.0',
     summary: '摘要', description: '说明', use_when: '何时', not_for: '何时不',
-    category: 'misc', tags: [], keywords: [], author: 'jarvs', featured: false,
+    category: 'misc', project: '', tags: [], keywords: [], author: 'jarvs', featured: false,
     homepage: null, permissions: {}, install_steps: [], bindings: {},
     git_path: 'assets/skills/misc/demo', git_commit_sha: '', git_web_url: '',
     download_count: 0, updated_at: null,
