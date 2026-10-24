@@ -253,6 +253,108 @@ async function openUpload(page, kindLabel) {
   });
   await sleep(1500);
 
+  // ================= ④b 更新**存量无前缀**资产 (回归: 曾被前端误判, 永远更新不了) =================
+  //   存量资产的 code 不带 dml- 前缀 (如 ssd-log-doctor), 它的"包名必须 dml- 开头"
+  //   这条规则只在**新建**时适用 —— 更新时若还要求前缀, 那批资产就永远更新不了.
+  const legacyCode = 'legacy-demo';
+  const LEGACY_NAME = '存量无前缀资产';
+  const legacyZip = path.join(OUT_DIR, `${legacyCode}.zip`);
+  makeZip(legacyZip, [['SKILL.md', '---\nname: legacy\ndescription: d\n---\n\n# legacy\n']]);
+  {
+    // ⚠️ 先清一次 —— 上次跑崩了会留下同名资产, 这次上传就 409 了 (用例要幂等)
+    await api(`/api/v1/assets/${legacyCode}`, {
+      method: 'DELETE', headers: { Authorization: 'Bearer ' + tk },
+    });
+    const fd = new FormData();
+    fd.append('code', legacyCode);
+    fd.append('kind', 'skill');
+    fd.append('name', LEGACY_NAME);
+    fd.append('summary', '回归用: code 不带 dml- 前缀的存量资产');
+    fd.append('version', '1.0.0');
+    fd.append('category', '其他');
+    fd.append('icon', '🧩');
+    fd.append('tags', '[]');
+    fd.append('keywords', '[]');
+    fd.append('permissions', '{}');
+    fd.append('install_steps', '[]');
+    fd.append('bindings', '{}');
+    fd.append('package', new Blob([fs.readFileSync(legacyZip)]), `${legacyCode}.zip`);
+    const up = await api('/api/v1/assets/upload', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd,
+    });
+    check('E17 造一个无前缀的存量资产', up.status === 202, `status=${up.status}`);
+  }
+  // 等它落库并推上 GitLab
+  for (let i = 0; i < 20; i++) {
+    await sleep(700);
+    const st = await api(`/api/v1/assets/${legacyCode}`, { headers: { Authorization: 'Bearer ' + tk } });
+    if (st.status === 200) break;
+  }
+
+  // 在市场页找到它 → 发布新版本
+  // ⚠️ 必须**刷新** —— 资产是刚上传的, 页面上的列表还是旧的
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('.asset-card', { timeout: 15000 });
+  await sleep(1500);
+  await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
+    t && t.click();
+  });
+  await sleep(1600);
+  const opened = await page.evaluate((name) => {
+    // ⚠️ 卡片上显示的是**名称**, 不是 code —— 按 code 找永远找不到
+    const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(name));
+    if (!c) return false;
+    c.click();
+    return true;
+  }, LEGACY_NAME);
+  check('E18 市场页能找到这个存量资产', opened);
+  await page.waitForSelector('.el-drawer', { timeout: 10000 });
+  await sleep(1200);
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.ad-actions .el-button')]
+      .find((x) => x.textContent.includes('发布新版本'));
+    b && b.click();
+  });
+  await sleep(1800);
+  const inUpdate = await page.evaluate(() => {
+    const d = document.querySelector('.up-drawer');
+    if (!d) return { open: false, title: '' };
+    const title = (document.querySelector('.el-drawer__title')?.textContent || '').trim();
+    return { open: true, title };
+  });
+  check('E19 能进入「发布新版本」的抽屉',
+    inUpdate.open && /更新资产/.test(inUpdate.title || ''),
+    `title=${inUpdate.title || '(无)'}`);
+
+  // 上传同名包 → **不该**报"包名必须以 dml- 开头"
+  const legacyInput = await page.$('.up-drawer .file-input');
+  if (!legacyInput) {
+    check('E20 更新存量资产: 同名包不被误判为"缺 dml- 前缀"', false, '找不到包选择框 (抽屉没打开)');
+  } else {
+    await legacyInput.uploadFile(legacyZip);
+    await sleep(2500);
+    const legacyState = await drawerState(page);
+    check('E20 更新存量资产: 同名包不被误判为"缺 dml- 前缀"',
+      !/dml-/.test(legacyState.pkgErr || ''), legacyState.pkgErr || '(无包名错误)');
+    check('E21 更新存量资产: 缺项清单里没有「安装包名」',
+      !/安装包名/.test(legacyState.foot || ''), legacyState.foot.slice(0, 90));
+  }
+  await page.screenshot({ path: path.join(OUT_DIR, 'edge-03-legacy-update.png') });
+
+  // 收尾: 关抽屉 + 删掉这个临时资产
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => x.textContent.includes('取消'));
+    b && b.click();
+  });
+  await sleep(800);
+  {
+    const del = await api(`/api/v1/assets/${legacyCode}`, {
+      method: 'DELETE', headers: { Authorization: 'Bearer ' + tk },
+    });
+    check('E22 清理临时存量资产', del.status === 200, `status=${del.status}`);
+  }
+
   // ================= ⑤ 分类 chip 计数与实际条数对得上 =================
   await page.evaluate(() => {
     const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));

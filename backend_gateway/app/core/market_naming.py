@@ -11,10 +11,10 @@
 """
 from __future__ import annotations
 
-import re
-
-# code 的**格式** (宽松版: 不要求 dml- 前缀, 存量资产要能继续更新)
-CODE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
+# ⚠️ code 的**格式**规则不在这里 —— 唯一真源是 market_catalog.CODE_RE
+#    (与前端 assetForm.CODE_PATTERN / SEGMENT_PATTERN 同一套分段规则).
+#    这里以前自己留了一份**宽松的旧正则** —— 没人引用, 还跟权威版本不一致
+#    (它收 "dml--x", 权威版本拒) → 已删, 免得两处规则各说各话.
 
 # 安装包允许的扩展名 (前端 assetForm.ts 同款)
 PACKAGE_SUFFIXES: tuple[str, ...] = (".zip", ".tar.gz", ".tgz")
