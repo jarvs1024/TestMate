@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import ValidationError
 from fastapi import Response
 from sqlalchemy import Text, cast, select, or_, update
 
@@ -1863,6 +1864,15 @@ async def upload_asset(
         )
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=422, detail=f"JSON 字段解析失败: {e}") from e
+    except ValidationError as e:
+        # ⚠️ 表单字段不合法 (超长/为空) 是**用户填错**, 不是服务器故障 ——
+        #    不接住的话 pydantic 的异常会变成 500, 用户只看到"服务器错误".
+        first = e.errors()[0] if e.errors() else {}
+        field = ".".join(str(x) for x in first.get("loc", ()) if x != "body")
+        raise HTTPException(
+            status_code=422,
+            detail=f"字段不合法{f' ({field})' if field else ''}: {first.get('msg', '取值不合法')}",
+        ) from e
 
     if kind == "mcp":
         # 连接器没有安装包 —— 有包反而说明搞混了形态
@@ -1953,6 +1963,15 @@ async def update_asset(
         )
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=422, detail=f"JSON 字段解析失败: {e}") from e
+    except ValidationError as e:
+        # ⚠️ 表单字段不合法 (超长/为空) 是**用户填错**, 不是服务器故障 ——
+        #    不接住的话 pydantic 的异常会变成 500, 用户只看到"服务器错误".
+        first = e.errors()[0] if e.errors() else {}
+        field = ".".join(str(x) for x in first.get("loc", ()) if x != "body")
+        raise HTTPException(
+            status_code=422,
+            detail=f"字段不合法{f' ({field})' if field else ''}: {first.get('msg', '取值不合法')}",
+        ) from e
 
     if kind == "mcp":
         if package is not None or files:

@@ -9,8 +9,17 @@
 /** 资产 code 的统一前缀 */
 export const CODE_PREFIX = 'dml-';
 
-/** 资产 code 的合法格式: dml- 开头 + 小写字母/数字/连字符分段 */
+/**
+ * 资产 code 的合法格式 (新建时): dml- 开头 + 小写字母/数字/连字符分段.
+ *
+ * ⚠️ 与「不带前缀的分段规则」是两回事:
+ *   更新**存量**资产时, 它的 code 可能就没有 dml- 前缀 (存量 14 个资产),
+ *   那时不能拿这条正则去卡包名 —— 否则那批资产永远更新不了.
+ */
 export const CODE_PATTERN = /^dml-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** 不要求前缀的"分段"规则 (存量资产的 code / 包名) */
+export const SEGMENT_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** 示例 code (表单 placeholder / 报错提示用) */
 export const CODE_EXAMPLE = 'dml-ssd-log-doctor';
@@ -40,11 +49,19 @@ export function validatePackageName(
     return '安装包只支持 .zip / .tar.gz / .tgz';
   }
   const base = name.replace(PACKAGE_EXT_RE, '');
-  if (requirePrefix && !base.startsWith(CODE_PREFIX)) {
-    return `安装包名必须以 "${CODE_PREFIX}" 开头 (如 ${CODE_EXAMPLE}.zip)`;
-  }
-  if (!CODE_PATTERN.test(base)) {
+  if (requirePrefix) {
+    if (!base.startsWith(CODE_PREFIX)) {
+      return `安装包名必须以 "${CODE_PREFIX}" 开头 (如 ${CODE_EXAMPLE}.zip)`;
+    }
+    if (!CODE_PATTERN.test(base)) {
+      return `安装包名只能用小写字母/数字/连字符, 如 ${CODE_EXAMPLE}.zip`;
+    }
+  } else if (!SEGMENT_PATTERN.test(base)) {
+    // ⚠️ 不要求前缀时, 也要守住"分段 + 字符集" —— 只是不强制 dml- 开头
     return `安装包名只能用小写字母/数字/连字符, 如 ${CODE_EXAMPLE}.zip`;
+  }
+  if (base.length < 3 || base.length > 64) {
+    return `安装包名长度要在 3-64 个字符之间 (现在 ${base.length} 个)`;
   }
   return '';
 }
@@ -67,6 +84,10 @@ export function validateCode(code: string): string {
   }
   if (!CODE_PATTERN.test(c)) {
     return '只能用小写字母/数字/连字符, 如 ' + CODE_EXAMPLE;
+  }
+  // ⚠️ 长度与后端一致 (3-64) —— 前端不拦的话, 后端会 422, 用户只看到一句没头没尾的报错
+  if (c.length < 3 || c.length > 64) {
+    return `资产 code 长度要在 3-64 个字符之间 (现在 ${c.length} 个)`;
   }
   return '';
 }

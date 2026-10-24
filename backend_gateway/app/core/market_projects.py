@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+import re
+
 # 通用资产的 project 值 —— 空串 (不是 "general" 之类的哨兵值)
 GENERAL = ""
 
@@ -36,7 +38,10 @@ def parse(raw: str | None) -> list[str]:
         return []
     out: list[str] = []
     seen: set[str] = set()
-    for chunk in raw.replace("，", ",").replace("、", ",").replace("\n", ",").split(","):
+    # ⚠️ 分隔符认全: 逗号 / 顿号 / 分号 / 换行 / **空格** ——
+    #    项目号之间用空格隔开是很自然的写法 ("8560 9560"), 不认的话
+    #    会被当成一个叫 "8560 9560" 的项目, 下拉里就会出现怪名字。
+    for chunk in re.split(r"[,;、，\s]+", raw or ""):
         name = chunk.strip()
         if not name or name in seen:
             continue

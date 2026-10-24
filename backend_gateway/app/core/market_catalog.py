@@ -36,7 +36,11 @@ from app.core.market_categories import (  # noqa: E402
     slug_of as _category_slug_of,
 )
 
-CODE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
+# code 的格式 —— **与前端 assetForm.CODE_PATTERN 同一套分段规则**
+#   (前后端各写一份正则, 改一处就会漂移: 以前后端收 "dml--x", 前端拒)
+# ⚠️ 后端**不要求 dml- 前缀** —— 存量 14 个资产的 code 没有前缀, 强制会锁死它们的更新.
+#    前端只在**新建**时要求前缀 (那是团队命名约定, 不是技术限制).
+CODE_RE = re.compile(r"^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 MAX_FILES = 200
 MAX_TOTAL_BYTES = 2 * 1024 * 1024
@@ -71,7 +75,8 @@ def validate_code(code: str) -> str:
     code = (code or "").strip().lower()
     if not CODE_RE.match(code):
         raise ManifestError(
-            "code 只能用小写字母/数字/连字符, 长度 3-64, 且不能以连字符开头或结尾"
+            "code 只能用小写字母/数字/连字符分段 (如 dml-my-tool), 长度 3-64, "
+            "不能有连续连字符"
         )
     return code
 
