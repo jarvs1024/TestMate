@@ -76,6 +76,11 @@ class Asset(Base):
     # 不知道人家到底解压没有, 那个是猜不出来的)
     download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # ⚠️ 只有**连接器 (mcp)** 有这个字段: MCP 配置 (mcpServers).
+    #    连接器是配置型资产 —— 没有安装包也没有 README, 就这一段配置.
+    #    技能/插件一律为 None.
+    mcp_config: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

@@ -48,6 +48,8 @@ export interface AssetItem {
   /** 同步状态: staged(待同步) / pushed(已同步) / failed(失败) */
   sync_status: 'staged' | 'pushed' | 'failed' | string;
   last_error: string;
+  /** 连接器 (mcp) 的 MCP 配置 —— 非连接器为 null */
+  mcp_config?: Record<string, any> | null;
   /** 生命周期: published(在架) / pending(待审核) / rejected(已驳回) /
    *  unpublished(已下架) / unpublish_pending(申请下架, 等管理员确认) */
   publish_status: 'published' | 'pending' | 'rejected' | 'unpublished' | 'unpublish_pending' | string;
@@ -201,6 +203,8 @@ export interface UploadForm {
   tags: string[];
   /** 搜索关键词 (同义词) —— 搜不到时靠它 */
   keywords?: string[];
+  /** 连接器 (mcp) 的 MCP 配置 (JSON 文本) —— 非连接器留空 */
+  mcp_config?: string;
   permissions: MarketPermissions;
   install_steps: string[];
   featured: boolean;
@@ -390,6 +394,7 @@ function toFormData(f: UploadForm, includeCode: boolean): FormData {
   fd.append('icon', f.icon);
   fd.append('tags', JSON.stringify(f.tags));
   fd.append('keywords', JSON.stringify(f.keywords || []));
+  fd.append('mcp_config', f.mcp_config || '');
   fd.append('featured', String(f.featured));
   fd.append('permissions', JSON.stringify(f.permissions));
   fd.append('install_steps', JSON.stringify(f.install_steps));

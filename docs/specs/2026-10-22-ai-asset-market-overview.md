@@ -8,6 +8,7 @@
 | 机制 | 说明 |
 |---|---|
 | **真相源** | GitLab 仓库。每个资产一个目录（`assets/{kind}/{分类slug}/{code}/`），含 `manifest.json`（权威）+ `files/`（内容）+ `package/`（原始包）。本地工作区只是 working copy |
+| **两种资产形态** | 技能/插件 = **包型**（有安装包 + files/ + README.md）；连接器 (mcp) = **配置型**（只有一段 MCP 配置，目录里只有 manifest.json，没有包也没有 README） |
 | **分类表** | 业务分类是**固定枚举**（见下表），一张表是唯一真源：后端校验 / 目录 slug / 前端 chip 都从它来。slug **冻结** —— 分类改名不搬家，Git 历史不断 |
 | **双层串行化** | `asyncio.Lock`（进程内）+ `flock`（跨进程/跨实例）。git 的 `index.lock` 是仓库级的，并发 commit 必有一个失败 |
 | **落盘即提交** | 上传 → 解包落盘 → 建 job(staged) → 后台 commit+push → job(pushed)。用户立刻看到资产，状态显示"待同步" |

@@ -23,6 +23,8 @@ class AssetOut(BaseModel):
     homepage: str | None = None
     permissions: dict[str, Any] = {}
     install_steps: list[str] = []
+    # ⚠️ 只有连接器 (mcp) 有值 —— MCP 配置 (mcpServers), 非 mcp 恒为 None
+    mcp_config: dict[str, Any] | None = None
     bindings: dict[str, Any] = {}
     git_path: str = ""
     git_commit_sha: str = ""
@@ -224,6 +226,9 @@ class UploadAssetIn(BaseModel):
     permissions: dict[str, Any] = {}
     install_steps: list[str] = []
     bindings: dict[str, Any] = {}
+    # ⚠️ 连接器 (mcp) 的 MCP 配置 —— **只有连接器才有**.
+    #    (漏了这个字段, pydantic 会**静默丢掉**它, 连接器就变成"没有配置")
+    mcp_config: dict[str, Any] | None = None
 
 
 class SyncStatusOut(BaseModel):

@@ -20,6 +20,7 @@ from sqlalchemy import select
 
 from app.core import git_sync
 from app.core import market_categories
+from app.core.mcp_config import validate_mcp_config
 from app.models.asset import Asset
 
 INDEX_PATH = "index.json"
@@ -138,6 +139,7 @@ def build_manifest(
     permissions: dict | None = None,
     install_steps: list[str] | None = None,
     bindings: dict | None = None,
+    mcp_config: dict | None = None,
 ) -> dict[str, Any]:
     code = validate_code(code)
     if kind not in VALID_KINDS:
@@ -150,6 +152,15 @@ def build_manifest(
     # ⚠️ 分类归一: 不在分类表里的一律归「其它」——
     #    自定义分类不该在 GitLab 里开新目录, 也不该在前端留一个筛不出来的孤儿分类.
     category = market_categories.normalize(category)
+
+    # ⚠️ 连接器 (mcp) 是**配置型**资产: 只有一段 MCP 配置, 没有安装包也没有 README.
+    #    非 mcp 的资产不许带 mcp_config (免得两边语义混了).
+    if kind == "mcp":
+        if not mcp_config:
+            raise ManifestError("连接器必须提供 MCP 配置 (mcpServers)")
+        validate_mcp_config(mcp_config)
+    elif mcp_config:
+        raise ManifestError("只有连接器 (mcp) 才能配 MCP 配置")
 
     path = asset_git_path(kind, category, code)
     return {
@@ -173,6 +184,8 @@ def build_manifest(
         "install_steps": install_steps or [],
         "bindings": bindings or {},
         "git_path": path,
+        # 连接器专有: MCP 配置 (非 mcp 为空)
+        "mcp_config": mcp_config if kind == "mcp" else None,
         "updated_at": "",
     }
 
@@ -201,6 +214,8 @@ def asset_to_index_entry(a: Asset) -> dict[str, Any]:
         "download_count": a.download_count,
         # 生命周期状态也在索引里 —— 上下架必须能被别的实例看到
         "publish_status": a.publish_status or "published",
+        # 连接器专有: MCP 配置 (非 mcp 为 null)
+        "mcp_config": a.mcp_config if (a.kind or "") == "mcp" else None,
         "updated_at": a.updated_at.isoformat() if a.updated_at else "",
     }
 
@@ -313,6 +328,7 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         a.git_path = e.get("git_path") or ""
         # 上下架状态: 索引里没有这一项的旧数据按 published 处理
         a.publish_status = e.get("publish_status") or "published"
+        a.mcp_config = e.get("mcp_config") if (a.kind or "") == "mcp" else None
         if e.get("download_count") is not None:
             a.download_count = int(e["download_count"])
         if e.get("updated_at"):

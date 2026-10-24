@@ -196,7 +196,8 @@ ASSETS: list[dict] = [
     # ---------------- 连接器 ----------------
     {
         "code": "review-agent-board", "kind": "mcp", "name": "ReviewAgent 评审看板",
-        "icon": "🧬", "version": "v0.2.0", "category": "流程管控",
+        "icon": "🧬", "version": "v0.2.0", "mcp_server": {"url": "http://host.docker.internal:3000/mcp"},
+        "category": "流程管控",
         "summary": "代码检视数据看板: MR 生命周期、建议采纳率、规则命中与作者分布",
         "description": "连接 ReviewAgent 的 telemetry API, 提供 MR / 建议 / 规则三个维度的聚合数据。",
         "use_when": "想看团队代码检视的整体采纳情况, 或排查某个 MR 的评审历史",
@@ -207,7 +208,8 @@ ASSETS: list[dict] = [
     },
     {
         "code": "pr-agent-review", "kind": "mcp", "name": "pr-agent 代码检视",
-        "icon": "🔍", "version": "v1.6.2", "category": "流程管控",
+        "icon": "🔍", "version": "v1.6.2", "mcp_server": {"url": "http://host.docker.internal:5050/mcp"},
+        "category": "流程管控",
         "summary": "pr-agent 检视数据查询, 与 ReviewAgent 数据可比",
         "description": "提供 pr-agent 侧的 runs / suggestions / stats 查询, 历史上用于与 ReviewAgent 做数据对照。",
         "use_when": "需要与 ReviewAgent 做数据比对, 或排查历史检视记录",
@@ -218,7 +220,8 @@ ASSETS: list[dict] = [
     },
     {
         "code": "testmate-machine-ops", "kind": "mcp", "name": "TestMate 机台运维",
-        "icon": "🛠", "version": "v0.3.0", "category": "环境运维",
+        "icon": "🛠", "version": "v0.3.0", "mcp_server": {"command": "npx", "args": ["-y", "testmate-machine-ops"]},
+        "category": "环境运维",
         "summary": "查询测试机状态 / 温箱与通道占用 / 触发常用运维动作",
         "description": "经 TestMate 网关访问机台字典与 SSH 通道, 提供机台状态查询与受限的运维动作。",
         "use_when": "测试过程中要快速查机台状态、看通道占用、拉日志或复位",
@@ -240,7 +243,8 @@ ASSETS: list[dict] = [
     },
     {
         "code": "dingtalk-notify", "kind": "mcp", "name": "钉钉通知推送",
-        "icon": "📮", "version": "v0.4.2", "category": "环境运维",
+        "icon": "📮", "version": "v0.4.2", "mcp_server": {"command": "npx", "args": ["-y", "dingtalk-notify"]},
+        "category": "环境运维",
         "summary": "向指定钉钉群推送 Markdown 卡片, 支持加签",
         "description": "经 TestMate 网关转发钉钉机器人 webhook, 统一管理加签与重试。",
         "use_when": "需要把测试结果 / 告警推送到团队群",
@@ -335,7 +339,13 @@ def main() -> int:
             "install_steps": json.dumps(a.get("install_steps", []), ensure_ascii=False),
             "bindings": "{}",
         }
-        pkg_files = _package_files(a)
+        # ⚠️ 连接器 (mcp) 是**配置型**资产: 只传一段 MCP 配置, 不打包
+        pkg_files = {} if a["kind"] == "mcp" else _package_files(a)
+        if a["kind"] == "mcp":
+            fields["mcp_config"] = json.dumps(
+                {"mcpServers": {a["code"]: a.get("mcp_server", {"url": "http://host.docker.internal:5050/mcp"})}},
+                ensure_ascii=False,
+            )
         if a["code"] in known:
             raw, ct = _multipart({k: v for k, v in fields.items() if k != "code"}, pkg_files)
             st, data = _req(f"{base}/api/v1/assets/{a['code']}", raw=raw,

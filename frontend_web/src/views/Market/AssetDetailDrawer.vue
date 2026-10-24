@@ -49,10 +49,13 @@
           <p class="ins-tip">解压到宿主的这个目录, 重启 Agent 会话后即可使用</p>
         </template>
         <template v-else>
-          <div class="ins-h"><span class="ins-t">🔌 连接器</span></div>
+          <div class="ins-h">
+            <span class="ins-t">⚙️ 连接器配置</span>
+            <button type="button" class="mini-link" @click="copyMcpConfig">复制 JSON</button>
+          </div>
           <p class="ins-tip">
-            连接器不打包下载 —— 请在宿主的 MCP 配置里手动添加
-            (<code>{{ item.code }}</code>), 配置说明见下面的 README。
+            连接器没有安装包 —— 它就是一段 MCP 配置.
+            复制下面的 JSON, 按里面的 server 声明加到宿主的 MCP 配置里即可.
           </p>
         </template>
       </div>
@@ -65,8 +68,17 @@
       </div>
       <!-- ⚠️ 「不适用」去掉了 (2026-10-24): README 里已经写了, 页面再列一遍是重复. -->
 
+      <!-- 连接器: 只有一段 MCP 配置 (没有 README) -->
+      <div v-if="item.kind === 'mcp'" class="ad-block">
+        <div class="ad-block-h">
+          ⚙️ MCP 配置
+          <button type="button" class="mini-link" @click="copyMcpConfig">复制</button>
+        </div>
+        <pre class="mcp-view mono">{{ mcpConfigText }}</pre>
+      </div>
+
       <!-- 文档正文: SKILL.md (skill) / README.md (plugin) -->
-      <div class="ad-block">
+      <div v-else class="ad-block">
         <div class="ad-block-h">
           📄 {{ doc?.filename || (item.kind === 'skill' ? 'SKILL.md' : 'README.md') }}
           <span v-if="docLoading" class="ad-loading">加载中…</span>
@@ -203,6 +215,29 @@ const docError = ref('');
 const busy = ref(false);
 /** 技术信息 (GitLab 路径/commit/同步状态) 默认收起 —— 普通用户用不上 */
 const techOpen = ref(false);
+/** 连接器的 MCP 配置 (格式化后展示) */
+const mcpConfigText = computed(() => {
+  const cfg = props.item?.mcp_config;
+  if (!cfg) return '';
+  try {
+    return JSON.stringify(cfg, null, 2);
+  } catch {
+    return String(cfg);
+  }
+});
+async function copyMcpConfig() {
+  const text = mcpConfigText.value;
+  if (!text) {
+    ElMessage.warning('这个连接器没有 MCP 配置');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    ElMessage.success('MCP 配置已复制');
+  } catch {
+    ElMessage.error('复制失败, 请手动选中复制');
+  }
+}
 
 const userStore = useUserStore();
 /** 审核人是管理员 */
@@ -243,6 +278,13 @@ const syncLabel = computed(() => {
 
 
 async function loadDoc(code: string) {
+  // ⚠️ 连接器没有文档 (只有一段 MCP 配置) —— 别去请求, 否则 404 会弹红条
+  if (props.item?.kind === 'mcp') {
+    doc.value = null;
+    docError.value = '';
+    docLoading.value = false;
+    return;
+  }
   docLoading.value = true;
   docError.value = '';
   doc.value = null;
@@ -549,6 +591,13 @@ async function doSubmit() {
 .ad-doc-empty {
   font-size: 12px; color: var(--ink-500); font-style: italic;
   background: var(--surface-sunken); padding: 10px 12px; border-radius: var(--radius-sm);
+}
+.mcp-view {
+  margin: 0; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--surface-sunken); border: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.65;
+  color: var(--ink-800); white-space: pre-wrap; word-break: break-all;
+  max-height: 320px; overflow: auto;
 }
 
 .ad-perm {

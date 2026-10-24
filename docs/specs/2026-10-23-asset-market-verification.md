@@ -418,6 +418,39 @@ published ──申请下架(打 code 确认)──▶ unpublish_pending ──�
    → GitLab 里留一份副本 (index.json 指向新的, 老的那份还在仓库里躺着)。
    现在更新流程会带上老路径一起提交 ✓。
 
+## 9.8 连接器 (MCP) 改成「配置型」资产 (2026-10-24)
+
+需求: MCP 跟插件/技能**根本不一样** —— 它没有安装包, 就是一个 JSON 配置, 也没有 README.
+所以上架流程要区分: **只填 JSON 内容 + 校验合法性**; 详情页用 JSON 配置替代 README;
+发布新版本也只是更新这段配置, 不涉及包的上传.
+
+### 前后对比
+
+| | 技能 / 插件 | **连接器 (mcp)** |
+|---|---|---|
+| 上传填什么 | 安装包 (zip) 或多文件 | **一段 MCP 配置 (JSON)** |
+| 仓库里长什么样 | manifest.json + files/ + package/ + README.md | **只有 manifest.json**（配置写在 manifest.mcp_config 里） |
+| 详情页展示 | README.md 正文 | **⚙️ MCP 配置**（格式化 + 一键复制） |
+| 发布新版本 | 传新包 | **只改那段 JSON** |
+| 下载安装包 | 有 | 没有（明确 400 拒绝，说明照配置手动加） |
+
+### 实现要点
+
+1. **配置格式与校验**（`app/core/mcp_config.py`）:
+   ```json
+   { "mcpServers": { "名字": { "command": "npx", "args": ["-y", "xxx"] } } }
+   { "mcpServers": { "名字": { "url": "http://host:5050/mcp" } } }
+   ```
+   校验：必须是 JSON 对象 / 必须有非空 mcpServers / 每个连接器要么 `command`（进程型）
+   要么 `url`（远程型，http/https）/ args 必须是数组 / env、headers 必须是对象。
+   **前后端规则一致**（前端 `mcpConfig.ts` 抄的是后端那套）—— 不一致就会出现
+   "前端说行、后端说不行"。
+2. **落盘分支**：mcp 只写 manifest.json，顺手清掉老的 files/ package/ README.md。
+3. **存量 4 个连接器已迁移**（`scripts/migrate_mcp_assets.py`）：把 files/.mcp.json
+   的内容搬进 manifest.mcp_config，删掉老的三样，index.json 重渲染后提交推送。
+4. **踩过的坑**：`UploadAssetIn` 没加 `mcp_config` 字段时，pydantic **静默丢掉**它 →
+   连接器永远"没有配置"。同理 `build_manifest(...)` 少传一个参数也是静默失效。
+
 ## 10. 已知未覆盖
 
 - **mcp 类型的上传链路** —— 后端明确不支持一键安装, 安装端点返回 409 已有单测覆盖,

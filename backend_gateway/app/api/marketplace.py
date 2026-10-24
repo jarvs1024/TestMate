@@ -638,6 +638,13 @@ async def get_asset_doc(code: str, _user: User = Depends(get_current_user)) -> A
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
 
+    if a.kind == "mcp":
+        # 连接器没有 README —— 它只有一段 MCP 配置 (在 manifest 里, 详情页直接展示)
+        raise HTTPException(
+            status_code=404,
+            detail="连接器没有文档, 只有 MCP 配置 (见资产详情的「MCP 配置」)",
+        )
+
     root = pkg.files_root(git_sync.WORKSPACE / a.git_path)
     wanted = "SKILL.md" if a.kind == "skill" else "README.md"
     target = root / wanted
@@ -751,6 +758,13 @@ async def download_package(
         ).scalar_one_or_none()
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+
+    if a.kind == "mcp":
+        # ⚠️ 连接器没有安装包 —— 它是一段 MCP 配置, 不是一堆文件
+        raise HTTPException(
+            status_code=400,
+            detail="连接器没有安装包, 请照资产详情里的「MCP 配置」手动添加到宿主",
+        )
 
     base = git_sync.WORKSPACE / a.git_path
     stored = _find_stored_package(base, version)
@@ -1366,6 +1380,23 @@ async def delete_asset(
 
 # ---------- 上传 ----------
 
+def _parse_mcp_form(mcp_config: str, kind: str) -> dict | None:
+    """把表单里的 MCP 配置文本解析成对象 (非连接器一律返回 None)."""
+    if kind != "mcp":
+        if (mcp_config or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail="只有连接器 (mcp) 才能填 MCP 配置",
+            )
+        return None
+    from app.core.mcp_config import McpConfigError, parse_mcp_config
+
+    try:
+        return parse_mcp_config(mcp_config)
+    except McpConfigError as e:
+        raise HTTPException(status_code=422, detail=f"MCP 配置不合法: {e}") from e
+
+
 async def _parse_uploads(files: list[UploadFile] | None) -> dict[str, str]:
     if not files:
         return {}
@@ -1450,6 +1481,8 @@ async def _stage_asset_locked(
             permissions=payload_in.permissions,
             install_steps=payload_in.install_steps,
             bindings=payload_in.bindings,
+            # 连接器专有: MCP 配置 (非 mcp 为 None)
+            mcp_config=payload_in.mcp_config,
         )
     except ManifestError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
@@ -1492,7 +1525,22 @@ async def _stage_asset_locked(
 
     # ---- 1. 落盘 ----
     try:
-        if package is not None:
+        if manifest["kind"] == "mcp":
+            # ⚠️ 连接器是**配置型**资产: 目录里只有 manifest.json (含 MCP 配置),
+            #    没有 files/、没有 README.md、没有 package/ —— 配置就写在 manifest 里.
+            #    (老目录里的残留一并清掉, 免得仓库里躺着两份配置)
+            shutil.rmtree(files_dir, ignore_errors=True)
+            shutil.rmtree(git_sync.WORKSPACE / base / "package", ignore_errors=True)
+            git_sync.remove_path(f"{base}/README.md")
+            manifest["package_sha256"] = ""
+            manifest["package_name"] = ""
+            manifest["files"] = []
+            manifest["doc_file"] = ""
+            git_sync.write_text(
+                f"{base}/manifest.json",
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+            )
+        elif package is not None:
             max_mb = int(await _setting("marketplace.max_package_mb", "50") or 50)
             extracted = pkg.extract_package(
                 package, package_name, files_dir,
@@ -1532,12 +1580,13 @@ async def _stage_asset_locked(
                 )
             manifest["doc_file"] = doc_name
 
-        git_sync.write_text(
-            f"{base}/manifest.json",
-            json.dumps(manifest, ensure_ascii=False, indent=2),
-        )
-        if manifest.get("description"):
-            git_sync.write_text(f"{base}/README.md", manifest["description"])
+        if manifest["kind"] != "mcp":
+            git_sync.write_text(
+                f"{base}/manifest.json",
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+            )
+            if manifest.get("description"):
+                git_sync.write_text(f"{base}/README.md", manifest["description"])
     except pkg.PackageError as e:
         raise HTTPException(status_code=422, detail=f"安装包不合规: {e}") from e
     except git_sync.SyncError as e:
@@ -1568,6 +1617,8 @@ async def _stage_asset_locked(
         a.use_when = manifest.get("use_when") or ""
         a.not_for = manifest.get("not_for") or ""
         a.category = manifest.get("category") or ""
+        # 连接器专有: MCP 配置 (非 mcp 恒为 None)
+        a.mcp_config = manifest.get("mcp_config") if (a.kind or "") == "mcp" else None
         a.tags = list(manifest.get("tags") or [])
         a.keywords = list(manifest.get("keywords") or [])
         a.author = manifest.get("author") or ""
@@ -1686,11 +1737,18 @@ async def upload_asset(
     permissions: str = Form("{}"),
     install_steps: str = Form("[]"),
     bindings: str = Form("{}"),
+    mcp_config: str = Form("", description="连接器 (mcp) 的 MCP 配置 JSON; 其他类型留空"),
     files: list[UploadFile] | None = File(None),
     package: UploadFile | None = File(None),
     user: User = Depends(require_publisher),
 ) -> AssetJobOut:
-    """上架新资产: 安装包(压缩) 或 多文件文本. 立即返回 job, 后台 push 到 GitLab."""
+    """上架新资产.
+
+    ⚠️ 两种形态 (2026-10-24):
+        技能 / 插件 —— 安装包(压缩) 或 多文件文本
+        连接器 (mcp) —— **只要一段 MCP 配置**, 不需要包 (也没有 README)
+    """
+    cfg = _parse_mcp_form(mcp_config, kind)
     try:
         payload = UploadAssetIn(
             code=code, kind=kind, name=name, summary=summary, version=version,
@@ -1701,9 +1759,22 @@ async def upload_asset(
             permissions=json.loads(permissions or "{}"),
             install_steps=json.loads(install_steps or "[]"),
             bindings=json.loads(bindings or "{}"),
+            mcp_config=cfg,
         )
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=422, detail=f"JSON 字段解析失败: {e}") from e
+
+    if kind == "mcp":
+        # 连接器没有安装包 —— 有包反而说明搞混了形态
+        if package is not None or files:
+            raise HTTPException(
+                status_code=422,
+                detail="连接器不需要安装包, 只需填 MCP 配置",
+            )
+        return await _stage_asset(
+            action="create", payload_in=payload, files={},
+            package=None, package_name="", user=user,
+        )
 
     if package is not None and files:
         raise HTTPException(status_code=422, detail="package 与 files 只能二选一")
@@ -1716,6 +1787,11 @@ async def upload_asset(
         pkg_name = package.filename or "package.zip"
     else:
         file_map = await _parse_uploads(files)
+        if not file_map:
+            raise HTTPException(
+                status_code=422,
+                detail="请上传安装包 (zip / tar.gz)",
+            )
 
     return await _stage_asset(
         action="create", payload_in=payload, files=file_map,
@@ -1741,6 +1817,7 @@ async def update_asset(
     permissions: str = Form("{}"),
     install_steps: str = Form("[]"),
     bindings: str = Form("{}"),
+    mcp_config: str = Form("", description="连接器 (mcp) 的 MCP 配置 JSON; 其他类型留空"),
     files: list[UploadFile] | None = File(None),
     package: UploadFile | None = File(None),
     user: User = Depends(require_publisher),
@@ -1749,8 +1826,12 @@ async def update_asset(
 
     ⚠️ 只能更新**自己上传的**资产 (管理员例外) —— 否则任何白名单用户都能
     改别人的资产, 覆盖掉别人精心写的内容.
+
+    ⚠️ 连接器 (mcp) 的"新版本" = **只改那段 MCP 配置**, 不涉及包的上传.
     """
     await _assert_can_modify(code, user)
+
+    cfg = _parse_mcp_form(mcp_config, kind)
 
     # 发布新版本 (覆盖同名文件, git 历史保留旧版)
     try:
@@ -1763,9 +1844,21 @@ async def update_asset(
             permissions=json.loads(permissions or "{}"),
             install_steps=json.loads(install_steps or "[]"),
             bindings=json.loads(bindings or "{}"),
+            mcp_config=cfg,
         )
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=422, detail=f"JSON 字段解析失败: {e}") from e
+
+    if kind == "mcp":
+        if package is not None or files:
+            raise HTTPException(
+                status_code=422,
+                detail="连接器不需要安装包, 只需更新 MCP 配置",
+            )
+        return await _stage_asset(
+            action="update", payload_in=payload, files={},
+            package=None, package_name="", user=user,
+        )
 
     if package is not None and files:
         raise HTTPException(status_code=422, detail="package 与 files 只能二选一")
@@ -1778,6 +1871,8 @@ async def update_asset(
         pkg_name = package.filename or "package.zip"
     else:
         file_map = await _parse_uploads(files)
+        if not file_map:
+            raise HTTPException(status_code=422, detail="请上传安装包 (zip / tar.gz)")
 
     return await _stage_asset(
         action="update", payload_in=payload, files=file_map,

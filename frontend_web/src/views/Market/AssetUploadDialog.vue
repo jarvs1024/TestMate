@@ -5,8 +5,29 @@
              class="up-drawer" @update:model-value="emit('update:modelValue', $event)">
     <template v-if="!job">
       <el-form label-position="top" class="up-form">
-        <!-- ============ ① 安装包 (放最前: 选完立刻知道合不合格) ============ -->
-        <section class="up-sec">
+        <!-- ============ ① 连接器配置 / 安装包 (放最前) ============ -->
+        <!-- 连接器是**配置型**资产: 只有一段 MCP 配置, 没有安装包也没有 README -->
+        <section v-if="isMcp" class="up-sec">
+          <div class="sec-h"><span class="sec-no">1</span>MCP 配置<span class="sec-tip">必填</span></div>
+          <el-form-item label="" :error="mcpConfigError">
+            <el-input v-model="mcpConfigText" type="textarea" :rows="11" class="mcp-json"
+                      :placeholder="MCP_TEMPLATE" />
+          </el-form-item>
+          <div class="mcp-bar">
+            <button type="button" class="mini-btn" @click="formatMcp">格式化</button>
+            <button type="button" class="mini-btn" @click="useMcpTemplate">用模板</button>
+            <span class="mcp-msg" :class="{ bad: !!mcpConfigError }">
+              {{ mcpConfigError || '✓ 配置合法' }}
+            </span>
+          </div>
+          <p class="hint">
+            连接器没有安装包 —— 宿主按这段配置来连 (mcpServers → 每个连接器给
+            <code>command</code>+<code>args</code> 或 <code>url</code>)。
+            详情页会原样展示这份配置, 用户照着加到自己的 MCP 配置里。
+          </p>
+        </section>
+
+        <section v-else class="up-sec">
           <div class="sec-h"><span class="sec-no">1</span>安装包<span class="sec-tip">必填</span></div>
           <div class="row-2">
             <el-form-item label="" :error="pkgError || pkgNameError">
@@ -57,9 +78,16 @@
         <section class="up-sec">
           <div class="sec-h"><span class="sec-no">2</span>基础信息</div>
           <p class="guide">
-            <b>三条约定</b>: ① 资产 code = 安装包名 = 插件名 (英文, <code>dml-</code> 开头);
-            ② 类型决定校验规则 (技能要 SKILL.md, 插件要 README.md + plugin.json);
-            ③ 图标会自动分配, 且不跟现有资产重复 —— 都可以手动改。
+            <template v-if="isMcp">
+              <b>三条约定</b>: ① 资产 code = 连接器名 (英文, <code>dml-</code> 开头);
+              ② 连接器**只有这段 MCP 配置** —— 没有安装包, 也没有 README;
+              ③ 图标会自动分配, 且不跟现有资产重复 —— 都可以手动改。
+            </template>
+            <template v-else>
+              <b>三条约定</b>: ① 资产 code = 安装包名 = 插件名 (英文, <code>dml-</code> 开头);
+              ② 类型决定校验规则 (技能要 SKILL.md, 插件要 README.md + plugin.json);
+              ③ 图标会自动分配, 且不跟现有资产重复 —— 都可以手动改。
+            </template>
           </p>
           <div class="row-2">
             <el-form-item label="名称" required>
@@ -89,7 +117,7 @@
           <div class="row-2">
             <el-form-item label="资产 code" required :error="codeError">
               <el-input v-model="form.code" :disabled="mode === 'update'"
-                        :placeholder="`${CODE_EXAMPLE} — 英文, dml- 开头 (选包后自动带出)`"
+                        :placeholder="`${CODE_EXAMPLE} — 英文, dml- 开头`"
                         @blur="codeTouched = true" />
               <p v-if="codePkgMismatch" class="hint warn-hint">
                 ⚠ 与安装包名不一致 (包名是 {{ pkgBaseName }}) —— 建议保持一致, 免得装出来对不上
@@ -118,7 +146,7 @@
               <el-select v-model="form.kind" style="width:100%" :disabled="mode === 'update'">
                 <el-option value="skill" label="技能 skill（默认）" />
                 <el-option value="plugin" label="插件 plugin" />
-                <el-option value="mcp" label="连接器 mcp（只读不装）" />
+                <el-option value="mcp" label="连接器 mcp（配置型, 无安装包）" />
               </el-select>
             </el-form-item>
           </div>
@@ -238,6 +266,7 @@ import {
   CODE_EXAMPLE, CODE_PREFIX, GENERAL_ICONS, ICON_POOLS,
   codeFromPackageName, pickIcon, validateCode, validatePackageName,
 } from './assetForm';
+import { MCP_TEMPLATE, formatMcpConfig, parseMcpConfig } from './mcpConfig';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -278,8 +307,25 @@ const form = reactive({
   install_steps: [] as string[],
 });
 const tagsText = ref('');
+/** 连接器 (mcp) 的 MCP 配置 (JSON 文本) */
+const mcpConfigText = ref('');
 const keywordsText = ref('');
 const stepsText = ref('');
+
+/** 连接器形态: 只有一段 MCP 配置, 没有安装包也没有 README */
+const isMcp = computed(() => form.kind === 'mcp');
+/** MCP 配置的实时校验 (规则与后端一致) */
+const mcpParsed = computed(() => parseMcpConfig(mcpConfigText.value));
+const mcpConfigError = computed(() => {
+  if (!isMcp.value) return '';
+  return mcpParsed.value.ok ? '' : mcpParsed.value.error;
+});
+function formatMcp() {
+  mcpConfigText.value = formatMcpConfig(mcpConfigText.value);
+}
+function useMcpTemplate() {
+  mcpConfigText.value = MCP_TEMPLATE;
+}
 
 /** 体检结论: 包装不上 (解包失败 **或** 有问题项 —— 比如缺 SKILL.md) */
 const previewBad = computed(() => {
@@ -324,7 +370,12 @@ const iconError = computed(() => '');
 /** 缺什么 —— 一次说清, 别让人点一次报一个 */
 const missing = computed(() => {
   const out: string[] = [];
-  if (!pkgFile.value) out.push('安装包');
+  if (isMcp.value) {
+    // 连接器: 要配置, 不要包
+    if (mcpConfigError.value) out.push('MCP 配置');
+  } else if (!pkgFile.value) {
+    out.push('安装包');
+  }
   if (!form.name.trim()) out.push('名称');
   if (!form.summary.trim()) out.push('一句话简介');
   if (props.mode === 'create') {
@@ -337,7 +388,8 @@ const missing = computed(() => {
   return out;
 });
 const canSubmit = computed(() =>
-  missing.value.length === 0 && !previewBad.value && !pkgNameError.value);
+  missing.value.length === 0
+  && (isMcp.value || (!previewBad.value && !pkgNameError.value)));
 
 async function loadCategories() {
   if (categories.value.length) return;
@@ -401,6 +453,8 @@ watch(() => props.modelValue, (open) => {
     form.summary = a.summary; form.description = a.description;
     form.use_when = a.use_when; form.not_for = a.not_for;
     form.category = a.category; form.icon = a.icon; form.featured = a.featured;
+    // 连接器: 带出老配置 (发布新版本 = 只改这段配置)
+    mcpConfigText.value = a.mcp_config ? JSON.stringify(a.mcp_config, null, 2) : '';
     form.tags = [...a.tags]; form.install_steps = [...a.install_steps];
     form.files = [];
     tagsText.value = (a.tags || []).join(', ');
@@ -413,6 +467,7 @@ watch(() => props.modelValue, (open) => {
       featured: false, tags: [], files: [], install_steps: [],
     });
     tagsText.value = ''; keywordsText.value = ''; stepsText.value = '';
+    mcpConfigText.value = '';
   }
 });
 
@@ -493,7 +548,9 @@ async function submit() {
     // ⚠️ 权限声明不再由表单填 (2026-10-24) —— 固定空, 审核直接看包里的内容
     permissions: {},
     featured: form.featured,
-    package: pkgFile.value,
+    // 连接器: 只传 MCP 配置, 不传包
+    mcp_config: isMcp.value ? mcpConfigText.value : '',
+    package: isMcp.value ? null : pkgFile.value,
     files: [] as File[],
   };
   try {
@@ -623,6 +680,19 @@ function close() {
 .icon-cell.on { background: rgba(59, 130, 246, 0.16); }
 
 .hint { margin: 2px 0 0; font-size: 11.5px; color: var(--ink-500); }
+/* ===== MCP 配置编辑器 ===== */
+.mcp-json :deep(textarea) {
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+}
+.mcp-bar { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; }
+.mcp-bar button {
+  background: var(--surface-sunken); border: 1px solid var(--border);
+  color: var(--ink-700); border-radius: var(--radius-pill);
+  padding: 3px 12px; font-size: 11.5px; cursor: pointer; font-family: inherit;
+}
+.mcp-bar button:hover { border-color: var(--primary); color: var(--primary); }
+.mcp-msg { font-size: 11.5px; color: var(--ok); }
+.mcp-msg.bad { color: var(--err); }
 .warn-hint { color: var(--warn); }
 .guide {
   margin: 0 0 12px; padding: 8px 10px; font-size: 11.5px; line-height: 1.7;
