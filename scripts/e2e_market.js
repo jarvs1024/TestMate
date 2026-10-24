@@ -88,8 +88,8 @@ async function fillRequiredFields(page) {
       setter.call(el, v);
       el.dispatchEvent(new Event('input', { bubbles: true }));
     };
-    const byPh = (ph) => document.querySelector(`.el-drawer input[placeholder="${ph}"]`);
-    const byPhTa = (ph) => document.querySelector(`.el-drawer textarea[placeholder="${ph}"]`);
+    const byPh = (ph) => document.querySelector(`.el-drawer input[placeholder*="${ph}"]`);
+    const byPhTa = (ph) => document.querySelector(`.el-drawer textarea[placeholder*="${ph}"]`);
     const name = byPh('SSD 日志医生'); if (name) set(name, 'E2E 体检探针');
     const sum = byPhTa('贴日志即可定位 assert 与超时点'); if (sum) setter2(sum, 'e2e 体检探针');
     const code = byPh('dml-ssd-log-doctor'); if (code) set(code, 'dml-e2e-probe');
@@ -417,8 +417,8 @@ async function codeByName(page, name) {
     await page.screenshot({ path: path.join(OUT_DIR, '05-final.png'), fullPage: true });
 
     // ---------- H. 上传前包体检 ----------
-    const goodZip = path.join(OUT_DIR, 'e2e-good.zip');
-    const badZip = path.join(OUT_DIR, 'e2e-bad.zip');
+    const goodZip = path.join(OUT_DIR, 'dml-e2e-probe.zip');
+    const badZip = path.join(OUT_DIR, 'dml-e2e-bad.zip');
     makeZip(goodZip, { 'SKILL.md': '---\nname: e2e-probe\ndescription: 体检探针\n---\n\n# 体检探针\n' });
     makeZip(badZip, { 'README.md': '# 缺 SKILL.md 的包\n' });
 

@@ -10,9 +10,39 @@ import {
   CODE_PREFIX,
   GENERAL_ICONS,
   ICON_POOLS,
+  codeFromPackageName,
   pickIcon,
   validateCode,
+  validatePackageName,
 } from '../assetForm';
+
+describe('安装包名规则', () => {
+  it('必须是 dml- 开头', () => {
+    expect(validatePackageName('dml-ssd-log-doctor.zip')).toBe('');
+    expect(validatePackageName('ssd-log-doctor.zip')).toContain('dml-');
+  });
+
+  it('扩展名只支持 zip / tar.gz / tgz', () => {
+    expect(validatePackageName('dml-x.rar')).toContain('.zip');
+    expect(validatePackageName('dml-x.tar.gz')).toBe('');
+    expect(validatePackageName('dml-x.tgz')).toBe('');
+  });
+
+  it('名字里不能有空格/中文', () => {
+    expect(validatePackageName('dml-我的包.zip')).toContain('小写字母');
+    expect(validatePackageName('dml-my package.zip')).toContain('小写字母');
+  });
+
+  it('空文件名有提示', () => {
+    expect(validatePackageName('')).toContain('请选择');
+  });
+
+  it('包名能推导出资产 code', () => {
+    expect(codeFromPackageName('dml-ssd-log-doctor.zip')).toBe('dml-ssd-log-doctor');
+    expect(codeFromPackageName('dml-ssd-log-doctor.tar.gz')).toBe('dml-ssd-log-doctor');
+    expect(codeFromPackageName('')).toBe('');
+  });
+});
 
 describe('资产 code 命名约定', () => {
   it('必须以 dml- 开头', () => {

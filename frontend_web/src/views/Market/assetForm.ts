@@ -15,6 +15,38 @@ export const CODE_PATTERN = /^dml-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /** 示例 code (表单 placeholder / 报错提示用) */
 export const CODE_EXAMPLE = 'dml-ssd-log-doctor';
 
+/** 安装包允许的扩展名 */
+export const PACKAGE_EXT_RE = /\.(zip|tar\.gz|tgz)$/i;
+
+/**
+ * 校验**安装包文件名**, 返回空串 = 通过, 否则是给用户看的原因.
+ *
+ * 约定: 包名 = 资产 code = 插件名 —— 统一 dml- 开头 + 英文.
+ * (包名会进 GitLab 目录和安装路径, 空格/中文会到处出问题)
+ */
+export function validatePackageName(filename: string): string {
+  const name = (filename || '').trim();
+  if (!name) return '请选择安装包';
+  if (!PACKAGE_EXT_RE.test(name)) {
+    return '安装包只支持 .zip / .tar.gz / .tgz';
+  }
+  const base = name.replace(PACKAGE_EXT_RE, '');
+  if (!base.startsWith(CODE_PREFIX)) {
+    return `安装包名必须以 "${CODE_PREFIX}" 开头 (如 ${CODE_EXAMPLE}.zip)`;
+  }
+  if (!CODE_PATTERN.test(base)) {
+    return `安装包名只能用小写字母/数字/连字符, 如 ${CODE_EXAMPLE}.zip`;
+  }
+  return '';
+}
+
+/** 从安装包文件名推导出资产 code (包名 = code) */
+export function codeFromPackageName(filename: string): string {
+  const name = (filename || '').trim();
+  if (!name) return '';
+  return name.replace(PACKAGE_EXT_RE, '');
+}
+
 /**
  * 校验资产 code, 返回空串 = 通过, 否则是给用户看的原因.
  */

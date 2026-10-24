@@ -156,7 +156,7 @@ async function openPage(browser, token, user) {
   });
   await pub.page.waitForSelector('.file-input', { timeout: 10000 });
   await sleep(600);
-  const pkgPath = path.join(OUT_DIR, 'e2e-review.zip');
+  const pkgPath = path.join(OUT_DIR, 'dml-e2e-review-probe.zip');
   execFileSync('python3', ['-c', [
     'import zipfile',
     `z=zipfile.ZipFile(${JSON.stringify(pkgPath)},'w')`,

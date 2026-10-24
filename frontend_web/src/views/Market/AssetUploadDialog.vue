@@ -9,7 +9,7 @@
         <section class="up-sec">
           <div class="sec-h"><span class="sec-no">1</span>安装包<span class="sec-tip">必填</span></div>
           <div class="row-2">
-            <el-form-item label="" :error="pkgError">
+            <el-form-item label="" :error="pkgError || pkgNameError">
               <input ref="fileInput" type="file" class="file-input"
                      accept=".zip,.tar.gz,.tgz" @change="onPickPackage" />
               <div v-if="pkgFile" class="file-list">
@@ -56,9 +56,15 @@
         <!-- ============ ② 基础信息 ============ -->
         <section class="up-sec">
           <div class="sec-h"><span class="sec-no">2</span>基础信息</div>
+          <p class="guide">
+            <b>三条约定</b>: ① 资产 code = 安装包名 = 插件名 (英文, <code>dml-</code> 开头);
+            ② 类型决定校验规则 (技能要 SKILL.md, 插件要 README.md + plugin.json);
+            ③ 图标会自动分配, 且不跟现有资产重复 —— 都可以手动改。
+          </p>
           <div class="row-2">
             <el-form-item label="名称" required>
-              <el-input v-model="form.name" placeholder="SSD 日志医生" />
+              <el-input v-model="form.name" maxlength="60" show-word-limit
+                        placeholder="展示名, 中文即可 (卡片上的标题), 如 SSD 日志医生" />
             </el-form-item>
             <el-form-item label="图标" :error="iconError">
               <div class="icon-pick">
@@ -76,17 +82,21 @@
           </div>
 
           <el-form-item label="一句话简介" required>
-            <el-input v-model="form.summary" type="textarea" :rows="2"
-                      placeholder="贴日志即可定位 assert 与超时点" />
+            <el-input v-model="form.summary" type="textarea" :rows="2" maxlength="200" show-word-limit
+                      placeholder="一句话说清它干什么 (卡片副标题 + 搜索都用这句), 如 贴日志即可定位 assert 与超时点" />
           </el-form-item>
 
           <div class="row-2">
             <el-form-item label="资产 code" required :error="codeError">
               <el-input v-model="form.code" :disabled="mode === 'update'"
-                        :placeholder="CODE_EXAMPLE" @blur="codeTouched = true" />
+                        :placeholder="`${CODE_EXAMPLE} — 英文, dml- 开头 (选包后自动带出)`"
+                        @blur="codeTouched = true" />
+              <p v-if="codePkgMismatch" class="hint warn-hint">
+                ⚠ 与安装包名不一致 (包名是 {{ pkgBaseName }}) —— 建议保持一致, 免得装出来对不上
+              </p>
             </el-form-item>
             <el-form-item label="版本 (semver)" :error="versionError">
-              <el-input v-model="form.version" placeholder="1.0.0" />
+              <el-input v-model="form.version" placeholder="语义化版本, 如 1.0.0" />
               <p v-if="mode === 'update'" class="hint">发新版本建议 +1 (如 1.0.0 → 1.1.0)</p>
             </el-form-item>
           </div>
@@ -106,8 +116,8 @@
             </el-form-item>
             <el-form-item label="类型" required>
               <el-select v-model="form.kind" style="width:100%" :disabled="mode === 'update'">
+                <el-option value="skill" label="技能 skill（默认）" />
                 <el-option value="plugin" label="插件 plugin" />
-                <el-option value="skill" label="技能 skill" />
                 <el-option value="mcp" label="连接器 mcp（只读不装）" />
               </el-select>
             </el-form-item>
@@ -123,27 +133,29 @@
           <div v-show="advOpen" class="adv-body">
             <el-form-item label="详细说明">
               <el-input v-model="form.description" type="textarea" :rows="3"
-                        placeholder="会存到 GitLab 的 README.md" />
+                        placeholder="会存到 GitLab 的 README.md —— 写清怎么用、前置条件、示例" />
             </el-form-item>
             <div class="row-2">
               <el-form-item label="适用场景">
-                <el-input v-model="form.use_when" type="textarea" :rows="2" />
+                <el-input v-model="form.use_when" type="textarea" :rows="2"
+                          placeholder="什么时候该用它 (如: 拿到一段 dmesg 需要快速判断问题域)" />
               </el-form-item>
               <el-form-item label="不适用">
-                <el-input v-model="form.not_for" type="textarea" :rows="2" />
+                <el-input v-model="form.not_for" type="textarea" :rows="2"
+                          placeholder="什么时候**别**用它 (如: 需要逐行精确解析完整 trace)" />
               </el-form-item>
             </div>
             <div class="row-2">
               <el-form-item label="标签 (逗号分隔)">
-                <el-input v-model="tagsText" placeholder="日志, 诊断, 速查" />
+                <el-input v-model="tagsText" placeholder="逗号分隔, 如 日志, 诊断, 速查 (卡片上显示)" />
               </el-form-item>
               <el-form-item label="搜索关键词 (逗号分隔)">
-                <el-input v-model="keywordsText" placeholder="ssd, nvme, dmesg (同义词, 搜不到就靠它)" />
+                <el-input v-model="keywordsText" placeholder="同义词/技术词, 逗号分隔, 如 ssd, nvme, dmesg (搜不到时靠它)" />
               </el-form-item>
             </div>
             <el-form-item label="安装步骤 (每行一步)">
               <el-input v-model="stepsText" type="textarea" :rows="2"
-                        placeholder="将 xxx 复制到宿主 skills 目录&#10;重启 Agent 会话" />
+                        placeholder="每行一步, 如:&#10;将 xxx 复制到宿主 skills 目录&#10;重启 Agent 会话" />
               <p class="hint">包里一般已有 SKILL.md / README.md, 一般不用填。</p>
             </el-form-item>
             <el-form-item label="">
@@ -222,7 +234,10 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
 import { getAsset, getJob, listAssets, listCategories, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
-import { CODE_EXAMPLE, CODE_PREFIX, GENERAL_ICONS, ICON_POOLS, pickIcon, validateCode } from './assetForm';
+import {
+  CODE_EXAMPLE, CODE_PREFIX, GENERAL_ICONS, ICON_POOLS,
+  codeFromPackageName, pickIcon, validateCode, validatePackageName,
+} from './assetForm';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -293,6 +308,17 @@ const versionError = computed(() => {
   return '';
 });
 const pkgError = computed(() => (pkgFile.value ? '' : '请选择安装包'));
+/** 安装包名 (去掉扩展名) —— 跟 code 应该一致 */
+const pkgBaseName = computed(() => codeFromPackageName(pkgFile.value?.name || ''));
+/** code 跟包名不一致 (软提示, 不拦提交) */
+const codePkgMismatch = computed(() => {
+  if (props.mode === 'update') return false;
+  if (!pkgBaseName.value || !form.code.trim()) return false;
+  return form.code.trim() !== pkgBaseName.value;
+});
+/** 安装包名本身的合法性 (dml- 开头 + 英文 + 合法扩展名) */
+const pkgNameError = computed(() =>
+  pkgFile.value ? validatePackageName(pkgFile.value.name) : '');
 const iconError = computed(() => '');
 
 /** 缺什么 —— 一次说清, 别让人点一次报一个 */
@@ -307,9 +333,11 @@ const missing = computed(() => {
   }
   if (!form.category) out.push('分类');
   if (versionError.value) out.push('版本');
+  if (pkgNameError.value) out.push('安装包名');
   return out;
 });
-const canSubmit = computed(() => missing.value.length === 0 && !previewBad.value);
+const canSubmit = computed(() =>
+  missing.value.length === 0 && !previewBad.value && !pkgNameError.value);
 
 async function loadCategories() {
   if (categories.value.length) return;
@@ -391,6 +419,11 @@ watch(() => props.modelValue, (open) => {
 async function onPickPackage(e: Event) {
   const input = e.target as HTMLInputElement;
   pkgFile.value = input.files?.[0] ?? null;
+  // ⚠️ 包名 = 资产 code = 插件名 → 选完包就把 code 带出来 (省得再手打一遍)
+  const derived = codeFromPackageName(pkgFile.value?.name || '');
+  if (derived && props.mode === 'create' && !codeTouched.value) {
+    form.code = derived;
+  }
   await runPreview();
 }
 
@@ -590,6 +623,15 @@ function close() {
 .icon-cell.on { background: rgba(59, 130, 246, 0.16); }
 
 .hint { margin: 2px 0 0; font-size: 11.5px; color: var(--ink-500); }
+.warn-hint { color: var(--warn); }
+.guide {
+  margin: 0 0 12px; padding: 8px 10px; font-size: 11.5px; line-height: 1.7;
+  color: var(--ink-700); background: var(--surface-sunken); border-radius: var(--radius-sm);
+}
+.guide code {
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--surface); padding: 1px 5px; border-radius: 4px;
+}
 .perm-note { margin: 0 0 10px; padding: 7px 9px; background: var(--surface-sunken);
   border-radius: var(--radius-sm); line-height: 1.6; }
 .file-input { display: block; margin-bottom: 8px; font-size: 12.5px; }

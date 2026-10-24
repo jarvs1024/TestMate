@@ -33,7 +33,7 @@ const OUT_DIR = process.env.E2E_OUT_DIR || path.join(__dirname, '..', '.e2e-out'
 const PUBLISHER = { username: 'e2e_scenario_pub', password: 'Scen@12345' };
 const INSTALLER = { username: 'e2e_scenario_ins', password: 'Scen@12345' };
 const ASSET = 'dml-scenario-ssd-skill';
-const PKG = path.join(OUT_DIR, 'scenario-skill.zip');
+const PKG = path.join(OUT_DIR, 'dml-scenario-ssd-skill.zip');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
