@@ -82,6 +82,67 @@ function check(name, ok, detail) {
   check('S2 通知区渲染出钉钉配置项', hasRows.includes('dingtalk.market_webhook'), hasRows.join(', '));
   check('S3 关键词配置项已就位', hasRows.includes('dingtalk.market_keyword'), hasRows.join(', '));
 
+  // ---------- 通知开关默认是「关」 ----------
+  // 需求: 钉钉市场通知**默认不通知** —— 开关默认关, 要发自己去打开.
+  const SWITCHES = [
+    'dingtalk.notify_on_publish', 'dingtalk.notify_on_update',
+    'dingtalk.notify_on_unpublish', 'dingtalk.notify_on_delete',
+    'dingtalk.notify_on_review', 'dingtalk.notify_on_reject',
+  ];
+  const switchState = await page.evaluate(async (keys) => {
+    const tk = localStorage.getItem('testmate:token');
+    const r = await fetch('/api/v1/settings/schema', { headers: { Authorization: 'Bearer ' + tk } });
+    const d = await r.json();
+    const out = {};
+    for (const g of d.groups || []) {
+      for (const it of g.items || []) {
+        if (keys.includes(it.key)) out[it.key] = { value: it.value, is_default: it.is_default };
+      }
+    }
+    return out;
+  }, SWITCHES);
+  const onKeys = SWITCHES.filter((k) => switchState[k] && switchState[k].value === true);
+  check('S15 六个通知开关默认全是「关」', onKeys.length === 0,
+    onKeys.length ? `还开着: ${onKeys.join(', ')}` : 'publish/update/unpublish/delete/review/reject 全关');
+  check('S16 开关值是真布尔 (不是 "false" 字符串)',
+    SWITCHES.every((k) => switchState[k] && typeof switchState[k].value === 'boolean'),
+    JSON.stringify(SWITCHES.map((k) => [k, switchState[k] && switchState[k].value])));
+
+  // 页面上开关也得显示成 OFF (前端 `!!"false"` 会翻车)
+  const uiSwitches = await page.evaluate(() =>
+    [...document.querySelectorAll('#sec-notification .row')].map((r) => ({
+      key: (r.querySelector('code') || {}).textContent,
+      stxt: (r.querySelector('.stxt') || {}).textContent,
+    })).filter((x) => (x.key || '').startsWith('dingtalk.notify_on_')));
+  const uiOn = uiSwitches.filter((x) => (x.stxt || '').trim() === 'ON');
+  check('S17 页面上六个开关都显示 OFF', uiSwitches.length === 6 && uiOn.length === 0,
+    uiSwitches.map((x) => `${x.key}=${(x.stxt || '').trim()}`).join(' '));
+
+  // ---------- 开关关着时, 真上架/下架**不能**产生通知回执 ----------
+  // 这是"默认不通知"最直接的验证: 走真实上架链路, 看回执数有没有涨.
+  const quiet = await page.evaluate(async () => {
+    const tk = localStorage.getItem('testmate:token');
+    const H = { Authorization: 'Bearer ' + tk };
+    const count = async () => {
+      const r = await fetch('/api/v1/assets/notifications?limit=1', { headers: H });
+      const d = await r.json();
+      return d.total ?? (d.items || []).length;
+    };
+    const before = await count();
+    const post = async (path) => {
+      const fd = new FormData(); fd.append('comment', '默认不通知验证');
+      return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
+    };
+    const un = await post('/api/v1/assets/ssd-log-doctor/unpublish');
+    await new Promise((r) => setTimeout(r, 2000));
+    const pu = await post('/api/v1/assets/ssd-log-doctor/publish');
+    await new Promise((r) => setTimeout(r, 2000));
+    const after = await count();
+    return { before, after, un, pu };
+  });
+  check('S18 开关关着时上下架不产生任何通知回执', quiet.after === quiet.before,
+    `回执 ${quiet.before} → ${quiet.after} (unpublish=${quiet.un} publish=${quiet.pu})`);
+
   // 在 UI 里填 webhook (按 key 定位到那一行)
   if (WEBHOOK) {
     const filled = await page.evaluate((key, value) => {
@@ -176,30 +237,67 @@ function check(name, ok, detail) {
 
   // ---------- 市场通知真链路: 上下架 → 钉钉送达 → 回执 sent ----------
   // (市场脚本 e2e_market.js 测试期间会静音通知, 所以这条专门在这里验)
-  const marketNotify = await page.evaluate(async () => {
-    const tk = localStorage.getItem('testmate:token');
-    const H = { Authorization: 'Bearer ' + tk };
-    const post = async (path) => {
-      const fd = new FormData(); fd.append('comment', '钉钉通知链路验证');
-      return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
-    };
-    const un = await post('/api/v1/assets/ssd-log-doctor/unpublish');
-    await new Promise((r) => setTimeout(r, 2500));
-    const pu = await post('/api/v1/assets/ssd-log-doctor/publish');
-    await new Promise((r) => setTimeout(r, 2500));
-    const r = await fetch('/api/v1/assets/notifications?limit=5', { headers: H });
-    const d = await r.json();
-    const latest = (d.items || []).slice(0, 2);
-    return {
-      un, pu,
-      receipts: latest.map((n) => ({ event: n.event, code: n.code, status: n.status, attempts: n.attempts, err: n.error })),
-    };
-  });
-  check('S12 上下架接口都成功', marketNotify.un === 200 && marketNotify.pu === 200,
-    `unpublish=${marketNotify.un} publish=${marketNotify.pu}`);
-  const allSent = marketNotify.receipts.length >= 2 && marketNotify.receipts.every((r) => r.status === 'sent');
-  check('S13 市场通知回执全部「已送达」', allSent,
-    marketNotify.receipts.map((r) => `${r.event}:${r.status}(${r.attempts})`).join(' '));
+  //
+  // ⚠️ 通知开关现在**默认是关的** —— 要验这条链路必须自己把开关打开,
+  //    验完**必须还原** (改生产设置一定要在 try/finally 里).
+  const savedSwitches = {};
+  for (const k of SWITCHES) savedSwitches[k] = switchState[k] ? switchState[k].value : false;
+  const restoreSwitches = async () => {
+    await page.evaluate(async (saved) => {
+      const tk = localStorage.getItem('testmate:token');
+      for (const [k, v] of Object.entries(saved || {})) {
+        await fetch('/api/v1/settings/' + k, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
+          body: JSON.stringify({ value: v }),
+        });
+      }
+    }, savedSwitches);
+  };
+  let marketNotify;
+  try {
+    // 只开上架/下架两个 —— 这条链路只用到这两个事件
+    await page.evaluate(async (keys) => {
+      const tk = localStorage.getItem('testmate:token');
+      for (const k of keys) {
+        await fetch('/api/v1/settings/' + k, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
+          body: JSON.stringify({ value: true }),
+        });
+      }
+    }, ['dingtalk.notify_on_publish', 'dingtalk.notify_on_unpublish']);
+    await sleep(800);
+
+    marketNotify = await page.evaluate(async () => {
+      const tk = localStorage.getItem('testmate:token');
+      const H = { Authorization: 'Bearer ' + tk };
+      const post = async (path) => {
+        const fd = new FormData(); fd.append('comment', '钉钉通知链路验证');
+        return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
+      };
+      const un = await post('/api/v1/assets/ssd-log-doctor/unpublish');
+      await new Promise((r) => setTimeout(r, 2500));
+      const pu = await post('/api/v1/assets/ssd-log-doctor/publish');
+      await new Promise((r) => setTimeout(r, 2500));
+      const r = await fetch('/api/v1/assets/notifications?limit=5', { headers: H });
+      const d = await r.json();
+      const latest = (d.items || []).slice(0, 2);
+      return {
+        un, pu,
+        receipts: latest.map((n) => ({ event: n.event, code: n.code, status: n.status, attempts: n.attempts, err: n.error })),
+      };
+    });
+    check('S12 上下架接口都成功', marketNotify.un === 200 && marketNotify.pu === 200,
+      `unpublish=${marketNotify.un} publish=${marketNotify.pu}`);
+    const allSent = marketNotify.receipts.length >= 2 && marketNotify.receipts.every((r) => r.status === 'sent');
+    check('S13 市场通知回执全部「已送达」', allSent,
+      marketNotify.receipts.map((r) => `${r.event}:${r.status}(${r.attempts})`).join(' '));
+  } finally {
+    // 还原开关 —— 不然真实环境就变成"一直发通知"了
+    await restoreSwitches();
+    await sleep(500);
+  }
 
   // 恢复后页面上的回执应能看到这两条
   await page.evaluate(() => {

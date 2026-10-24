@@ -30,7 +30,7 @@ from typing import Any
 import httpx
 from sqlalchemy import select
 
-from app.core.settings_store import get
+from app.core.settings_store import get, to_bool
 from app.db.session import AsyncSessionLocal
 from app.models.asset import AssetNotification
 
@@ -141,8 +141,11 @@ async def notify_market(
         webhook = (await get("dingtalk.market_webhook", "")) or ""
         secret = (await get("dingtalk.market_secret", "")) or ""
         keyword = ((await get("dingtalk.market_keyword", "")) or "").strip()
-        enabled = (await get(_SWITCH_KEY[event], "true")) or "true"
-        if str(enabled).lower() not in ("true", "1", "yes", "on"):
+        # ⚠️ 默认**不通知** —— 开关默认关, 要发自己去设置里打开.
+        #    (值可能是 JSON 布尔 / "true" 字符串 / 1, 统一用 to_bool 判)
+        enabled = to_bool(await get(_SWITCH_KEY[event], False))
+        if not enabled:
+            logger.info("dingtalk 通知开关已关闭, 跳过 (%s)", event)
             return False
         if not webhook:
             logger.info("dingtalk 未配置 market_webhook, 跳过通知 (%s)", event)
@@ -329,12 +332,31 @@ async def retry_failed_notifications() -> int:
         return 0
 
     n = 0
+    skipped = 0
     for r in due:
+        # ⚠️ 开关关了就不再发 —— 否则管理员把开关关掉, 之前排队的通知还在继续刷屏
+        if not to_bool(await get(_SWITCH_KEY.get(r.event, ""), False)):
+            await _mark_skipped(r)
+            skipped += 1
+            continue
         if await _attempt(r, webhook, secret):
             n += 1
+    if skipped:
+        logger.info("dingtalk 开关已关闭, 跳过 %d 条待发通知", skipped)
     if n:
         logger.info("dingtalk 重试成功 %s 条", n)
     return n
+
+
+async def _mark_skipped(row: AssetNotification) -> None:
+    """开关关了 → 这条通知标记成"未发送", 不要再重试."""
+    async with AsyncSessionLocal() as session:
+        cur = await session.get(AssetNotification, row.id)
+        if cur is not None:
+            cur.status = "skipped"
+            cur.error = "通知开关已关闭, 未发送"
+            cur.next_retry_at = None
+            await session.commit()
 
 
 async def _retry_loop() -> None:

@@ -163,7 +163,8 @@ async def test_notification_failure_does_not_break_publish(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", boom)
     monkeypatch.setattr(
         dingtalk, "get",
-        _fake_get({"dingtalk.market_webhook": "http://x/hook"}),
+        # 开关得打开 —— 不然压根不会走到"发不出去"这一步, 就测不到降级了
+        _fake_get({"dingtalk.market_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
     )
     # notify_market 内部已经吞掉了异常 → 返回 False 而不是抛出
     assert await dingtalk.notify_market("publish", name="x", code="y") is False

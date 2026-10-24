@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.auth import get_current_user
-from app.core.settings_store import SETTING_SCHEMA, get, get_all
+from app.core.settings_store import SETTING_SCHEMA, get, get_all, to_bool
 from app.db.session import AsyncSessionLocal
 from app.models.system_setting import SystemSetting
 from app.models.user import User
@@ -47,20 +47,31 @@ def _mask(v: Any, is_secret: bool) -> Any:
     return s[:4] + "•" * max(4, len(s) - 8) + s[-4:]
 
 
+def _is_default(value: Any, default: Any, value_type: str) -> bool:
+    """当前值是不是就是默认值 (决定 UI 上的「已定制」标记)."""
+    if value_type == "bool":
+        return to_bool(value) == to_bool(default)
+    return value == default
+
+
 @router.get("/schema")
 async def get_schema(_user: User = Depends(get_current_user)) -> dict:
     """返回所有 setting 的 schema + 当前 DB 值 (secret 掩码)."""
     values = await get_all()
     by_cat: dict[str, list[dict]] = {}
     for s in SETTING_SCHEMA:
+        raw = values.get(s["key"], s["default"])
+        if s["value_type"] == "bool":
+            raw = to_bool(raw, to_bool(s["default"]))
         item = {
             "key": s["key"],
             "category": s["category"],
-            "value": _mask(values.get(s["key"], s["default"]), s["is_secret"]),
+            "value": _mask(raw, s["is_secret"]),
             "value_type": s["value_type"],
             "description": s["description"],
             "is_secret": s["is_secret"],
-            "is_default": values.get(s["key"]) == s["default"],
+            # "已定制" = 当前值跟默认值不一样 (bool 要按语义比, 不能拿 False == "false")
+            "is_default": _is_default(raw, s["default"], s["value_type"]),
         }
         by_cat.setdefault(s["category"], []).append(item)
     groups = [
@@ -86,12 +97,14 @@ async def update_setting(
         async with AsyncSessionLocal() as session:
             row = await session.get(SystemSetting, key)
             return SettingOut.model_validate(row) if row else _empty_out(key, schema)
+    # bool 开关统一存成真正的布尔 —— 字符串 "false" 读的时候会被当成真
+    value = to_bool(payload.value) if schema["value_type"] == "bool" else payload.value
     async with AsyncSessionLocal() as session:
         row = await session.get(SystemSetting, key)
         if row is None:
             row = SystemSetting(
                 key=key,
-                value={"v": payload.value},
+                value={"v": value},
                 category=schema["category"],
                 description=schema["description"],
                 is_secret=schema["is_secret"],
@@ -99,7 +112,7 @@ async def update_setting(
             )
             session.add(row)
         else:
-            row.value = {"v": payload.value}
+            row.value = {"v": value}
             row.updated_by = user.id
         await session.commit()
         await session.refresh(row)
@@ -162,7 +175,7 @@ async def test_dify(_user: User = Depends(get_current_user)) -> SettingTestOut:
     raw_url = (await get("dify.base_url", "")) or ""
     base_url = _rewrite_loopback(raw_url).rstrip("/")
     api_key = await get("dify.api_key", "") or ""
-    mock = bool(await get("dify.mock_mode", False))
+    mock = to_bool(await get("dify.mock_mode", False))
     if mock:
         return SettingTestOut(ok=True, status="ok", message="mock 模式开启 · 不连外部 Dify", detail={"mode": "mock"})
     if not base_url or "xxxxx" in api_key or "mock" in api_key:
@@ -279,8 +292,8 @@ async def build_embed_url(
     pr = urlparse(raw)
     q = parse_qs(pr.query, keep_blank_values=True)
 
-    append_user = bool(await get(f"{prefix}.append_user_id", True))
-    append_theme = bool(await get(f"{prefix}.append_theme", True))
+    append_user = to_bool(await get(f"{prefix}.append_user_id", True), True)
+    append_theme = to_bool(await get(f"{prefix}.append_theme", True), True)
 
     if append_user and user and user.username and "userId" not in q:
         # userId 只在不存在时拼, 避免覆盖手动配置的固定值

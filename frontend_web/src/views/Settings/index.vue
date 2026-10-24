@@ -215,7 +215,8 @@
           </h2>
           <div class="hint">
             💡 资产市场在<strong>上架 / 下架 / 更新</strong>时会往钉钉群发通知。
-            配好 webhook 后点「测试发送」——群里立刻收到一条自检消息, 配不对会直接告诉你原因。
+            <strong>通知开关默认全部关闭</strong>——要发的话自己打开对应的开关,
+            再配好 webhook 点「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
           </div>
 
           <SettingRow v-for="(it, idx) in notificationItems" :key="it.key"
@@ -245,7 +246,7 @@
                 <span class="nl-act">{{ NOTIFY_EVENTS[n.event] || n.event }}</span>
                 <code v-if="n.code" class="nl-code">{{ n.code }}</code>
                 <span class="nl-chip" :class="n.status">
-                  {{ n.status === 'sent' ? '已送达' : n.status === 'failed' ? '失败' : '待发' }}
+                  {{ n.status === 'sent' ? '已送达' : n.status === 'failed' ? '失败' : n.status === 'skipped' ? '未发送' : '待发' }}
                 </span>
                 <span class="nl-time mono">{{ fmtTime(n.last_attempt_at || n.created_at) }}</span>
                 <span v-if="n.error" class="nl-err" :title="n.error">{{ n.error }}</span>
@@ -437,13 +438,25 @@ function onPickSub(topId: string, subId: string) {
 }
 
 // ===== 加载 / 渲染 =====
+/** bool 开关统一成真正的布尔 —— 后端可能回 "false" 字符串, !!"false" 是 true, 界面会骗人 */
+function toBool(v: any, def = false): boolean {
+  if (typeof v === 'boolean') return v;
+  if (v === null || v === undefined || v === '') return def;
+  if (typeof v === 'number') return v !== 0;
+  const s = String(v).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(s)) return true;
+  if (['false', '0', 'no', 'off'].includes(s)) return false;
+  return def;
+}
+
 async function load() {
   const resp = await getSchema();
   groups.value = resp.groups;
   for (const g of resp.groups) {
     for (const it of g.items) {
-      drafts[it.key] = it.value;
-      originals[it.key] = it.value;
+      const v = it.value_type === 'bool' ? toBool(it.value) : it.value;
+      drafts[it.key] = v;
+      originals[it.key] = v;
     }
   }
 }
@@ -929,6 +942,7 @@ onMounted(load);
 .notif-list li.sent { border-left-color: var(--ok); }
 .notif-list li.failed { border-left-color: var(--err); background: rgba(239, 68, 68, 0.06); }
 .notif-list li.pending { border-left-color: var(--warn); }
+.notif-list li.skipped { border-left-color: var(--ink-500); opacity: 0.7; }
 .nl-act { font-weight: 600; color: var(--ink-900); }
 .nl-code { font-family: var(--font-mono); font-size: 11px; color: var(--ink-700); }
 .nl-chip {
@@ -937,6 +951,7 @@ onMounted(load);
 .nl-chip.sent { background: rgba(16, 185, 129, 0.14); color: var(--ok); }
 .nl-chip.failed { background: rgba(239, 68, 68, 0.14); color: var(--err); }
 .nl-chip.pending { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
+.nl-chip.skipped { background: rgba(100, 116, 139, 0.16); color: var(--ink-600); }
 .nl-time { font-size: 11px; color: var(--ink-500); margin-left: auto; }
 .nl-err {
   width: 100%; font-size: 11px; color: var(--err); opacity: 0.85;

@@ -223,6 +223,21 @@ async def _assert_can_modify(code: str, user: User) -> Asset:
     return a
 
 
+async def _setting_bool(key: str, default: bool = False) -> bool:
+    """读一个布尔开关.
+
+    ⚠️ 不能用 ``_setting``: 它是 ``(await get(k, d)) or d`` —— DB 里存的是 JSON
+    ``false`` 时会被当成"空"换回默认值 (开关关了却当成开着), 存 JSON ``true`` 时
+    返回的是布尔, 再调 ``.lower()`` 直接 AttributeError → 500.
+    """
+    try:
+        from app.core.settings_store import get, to_bool
+
+        return to_bool(await get(key, default), default)
+    except Exception:  # noqa: BLE001
+        return default
+
+
 async def _review_required(user: User) -> bool:
     """这次上传要不要走审核.
 
@@ -230,13 +245,11 @@ async def _review_required(user: User) -> bool:
     - 管理员自己上传 → 默认免审 (不然没人能审自己)
     - 其余发布者 → 一律待审核
     """
-    enabled = (await _setting("marketplace.review.enabled", "true")).lower()
-    if enabled not in ("true", "1", "yes", "on"):
+    if not await _setting_bool("marketplace.review.enabled", True):
         return False
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
     if role == "admin":
-        self_approve = (await _setting("marketplace.review.admin_self_approve", "true")).lower()
-        return self_approve not in ("true", "1", "yes", "on")
+        return not await _setting_bool("marketplace.review.admin_self_approve", True)
     return True
 
 

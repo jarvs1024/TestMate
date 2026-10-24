@@ -224,10 +224,10 @@ async def health_services() -> dict:
     RAGFlow / Dify 探针都走 30s 缓存(见 _probe),不会真打外网 30 次/秒。
     """
     from app.core.ragflow_client import probe as rf_probe
-    from app.core.settings_store import get
+    from app.core.settings_store import get, to_bool
     rf_status, _ = await rf_probe()
 
-    dify_mock = bool(await get("dify.mock_mode", False))
+    dify_mock = to_bool(await get("dify.mock_mode", False))
     if dify_mock:
         dify = "ok"
     else:

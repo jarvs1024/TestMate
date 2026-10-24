@@ -30,6 +30,34 @@ def _rewrite_loopback(base: str) -> str:
 logger = logging.getLogger(__name__)
 
 
+# ===== 布尔值归一 =====
+# DB 里同一个"开关"可能有三种存法: JSON 布尔 (true/false)、字符串 ("true"/"false")、
+# 还有 1/0 —— 谁存的全看历史. 读的时候必须统一成真正的 bool, 否则:
+#   - 前端 `!!"false"` → true → 开关显示成"开", 但后端当"关" (界面骗人)
+#   - 后端 `bool("false")` → true → 以为功能开着, 其实早就关了
+_TRUE_STRINGS = {"true", "1", "yes", "on"}
+_FALSE_STRINGS = {"false", "0", "no", "off", ""}
+
+
+def to_bool(value: Any, default: bool = False) -> bool:
+    """把设置值统一成真正的 bool.
+
+    ``default`` 只在**认不出**时用 (比如值是 "maybe"); 明确的 false 不会被当成空.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in _TRUE_STRINGS:
+        return True
+    if s in _FALSE_STRINGS:
+        return False
+    return default
+
+
 # ===== 静态注册表 (P0 阶段用, 后期改成查 DB schema) =====
 # value_type 告诉前端怎么渲染: string / secret / bool / int / url
 SETTING_SCHEMA: list[dict] = [
@@ -356,48 +384,48 @@ SETTING_SCHEMA: list[dict] = [
         "key": "dingtalk.notify_on_publish",
         "category": "notification",
         "value_type": "bool",
-        "default": "true",
-        "description": "上架时通知钉钉群",
+        "default": False,
+        "description": "上架时通知钉钉群 (默认关闭 —— 要发自己去打开)",
         "is_secret": False,
     },
     {
         "key": "dingtalk.notify_on_update",
         "category": "notification",
         "value_type": "bool",
-        "default": "true",
-        "description": "版本更新时通知钉钉群",
+        "default": False,
+        "description": "版本更新时通知钉钉群 (默认关闭 —— 要发自己去打开)",
         "is_secret": False,
     },
     {
         "key": "dingtalk.notify_on_unpublish",
         "category": "notification",
         "value_type": "bool",
-        "default": "true",
-        "description": "下架时通知钉钉群",
+        "default": False,
+        "description": "下架时通知钉钉群 (默认关闭 —— 要发自己去打开)",
         "is_secret": False,
     },
     {
         "key": "dingtalk.notify_on_delete",
         "category": "notification",
         "value_type": "bool",
-        "default": "true",
-        "description": "删除资产时通知钉钉群",
+        "default": False,
+        "description": "删除资产时通知钉钉群 (默认关闭 —— 要发自己去打开)",
         "is_secret": False,
     },
     {
         "key": "dingtalk.notify_on_review",
         "category": "notification",
         "value_type": "bool",
-        "default": "true",
-        "description": "有资产待审核时通知钉钉群 (提醒管理员去审)",
+        "default": False,
+        "description": "有资产待审核时通知钉钉群 (提醒管理员去审; 默认关闭)",
         "is_secret": False,
     },
     {
         "key": "dingtalk.notify_on_reject",
         "category": "notification",
         "value_type": "bool",
-        "default": "true",
-        "description": "资产审核被驳回时通知钉钉群",
+        "default": False,
+        "description": "资产审核被驳回时通知钉钉群 (默认关闭 —— 要发自己去打开)",
         "is_secret": False,
     },
     {
@@ -423,6 +451,32 @@ DEPRECATED_KEYS = (
     "marketplace.install.enabled",
 )
 
+# 默认值改版 —— DB 里还留着**旧默认值**的行, 启动时跟着改成新默认值.
+#
+# 为什么需要: seed_defaults 只在 DB 里**没有**这一行时才写默认值, 已经存在的行
+# 永远不会被改回 —— 改了 SCHEMA 里的 default, 老环境还是老行为.
+# 所以改默认值必须在这里登记一条, 启动时做一次性迁移.
+#
+# 规则: 只有 DB 值**等于旧默认值**时才改 (说明用户没自己动过); 用户手动改过的
+# 值一律不动 —— 动了就说明那是用户的决定, 不能被默认值覆盖.
+DEFAULT_CHANGES: dict[str, tuple[Any, Any]] = {
+    # 钉钉市场通知: 从"默认发"改成"默认不发" (2026-10-24)
+    # 不想被群里刷屏, 默认就应该是关的, 要发自己去打开.
+    "dingtalk.notify_on_publish": ("true", False),
+    "dingtalk.notify_on_update": ("true", False),
+    "dingtalk.notify_on_unpublish": ("true", False),
+    "dingtalk.notify_on_delete": ("true", False),
+    "dingtalk.notify_on_review": ("true", False),
+    "dingtalk.notify_on_reject": ("true", False),
+}
+
+
+def _same_value(cur: Any, target: Any) -> bool:
+    """DB 里的值跟目标默认值是否等价 (bool 认 "true"/True/1 都一样)."""
+    if isinstance(target, bool) or isinstance(cur, bool):
+        return to_bool(cur) == to_bool(target)
+    return str(cur).strip() == str(target).strip()
+
 
 def get_schema() -> list[dict]:
     return SETTING_SCHEMA
@@ -435,6 +489,7 @@ async def seed_defaults() -> None:
     1) 把 SCHEMA 里有但 DB 里没有的, 用 .env default 落库
     2) 修正 DB 里 category 跟 SCHEMA 不一致的 (旧版本 category='knowledge' 现在拆成 'knowledge-source')
     3) 清掉已废弃的 key (从 SCHEMA 移除后, DB 里的残留行一并删掉)
+    4) 把还留着**旧默认值**的行迁移到新默认值 (见 DEFAULT_CHANGES)
     """
     from app.db.session import AsyncSessionLocal
     from app.models.system_setting import SystemSetting
@@ -445,17 +500,34 @@ async def seed_defaults() -> None:
     async with AsyncSessionLocal() as session:
         for s in SETTING_SCHEMA:
             existing = await session.get(SystemSetting, s["key"])
+            is_bool = s["value_type"] == "bool"
             if existing:
                 # category 漂移修复: 跟 SCHEMA 对齐
                 if existing.category != s["category"]:
                     logger.info("settings: fix category %s: %s -> %s", s["key"], existing.category, s["category"])
                     existing.category = s["category"]
+                cur_v = existing.value.get("v") if isinstance(existing.value, dict) else existing.value
+                # 默认值改版迁移 —— DB 值还等于旧默认值 → 换成新默认值
+                change = DEFAULT_CHANGES.get(s["key"])
+                if change is not None:
+                    old_v, new_v = change
+                    if _same_value(cur_v, old_v):
+                        logger.info(
+                            "settings: 默认值已变更, 同步旧值 %s: %r -> %r", s["key"], cur_v, new_v
+                        )
+                        existing.value = {"v": new_v}
+                        cur_v = new_v
                 # .env 后填的非空值同步到 DB (DB 是空时, 用户后续改了 UI 不会被覆盖)
                 env_v = s["default"]
-                cur_v = existing.value.get("v") if isinstance(existing.value, dict) else existing.value
                 if (cur_v in (None, "", [])) and env_v not in (None, "", []):
                     logger.info("settings: sync empty DB value from env: %s", s["key"])
                     existing.value = {"v": env_v} if not isinstance(env_v, (dict, list)) else env_v
+                # bool 开关统一存成真正的 JSON 布尔 —— 字符串 "false" 会让前端开关显示成"开"
+                if is_bool and isinstance(existing.value, dict) and "v" in existing.value:
+                    norm = to_bool(existing.value.get("v"))
+                    if existing.value.get("v") != norm:
+                        logger.info("settings: 归一 bool 值 %s: %r -> %r", s["key"], existing.value.get("v"), norm)
+                        existing.value = {"v": norm}
                 continue
             row = SystemSetting(
                 key=s["key"],
@@ -464,6 +536,8 @@ async def seed_defaults() -> None:
                 description=s["description"],
                 is_secret=s["is_secret"],
             )
+            if is_bool:
+                row.value = {"v": to_bool(s["default"])}
             session.add(row)
 
         # 废弃 key 清理 —— 只删**明确列出来的**, 不会误伤用户自定义的设置
@@ -491,7 +565,11 @@ async def get(key: str, default: Any = None) -> Any:
 
 
 async def get_all() -> dict[str, Any]:
-    """批量读所有 setting (DB 优先, 缺则用 schema default)."""
+    """批量读所有 setting (DB 优先, 缺则用 schema default).
+
+    bool 类型的设置统一返回**真正的布尔** —— 前端开关是 `!!value` 判定的,
+    字符串 "false" 会被当成真, 界面显示成"开"但后端其实当"关"在跑.
+    """
     from app.db.session import AsyncSessionLocal
     from app.models.system_setting import SystemSetting
     from sqlalchemy import select
@@ -503,8 +581,11 @@ async def get_all() -> dict[str, Any]:
     for s in SETTING_SCHEMA:
         v = rows.get(s["key"])
         if v is None:
-            out[s["key"]] = s["default"]
+            raw = s["default"]
         else:
-            raw = v.value
-            out[s["key"]] = raw.get("v", s["default"]) if isinstance(raw, dict) else raw
+            stored = v.value
+            raw = stored.get("v", s["default"]) if isinstance(stored, dict) else stored
+        if s["value_type"] == "bool":
+            raw = to_bool(raw, to_bool(s["default"]))
+        out[s["key"]] = raw
     return out

@@ -72,7 +72,7 @@
 | `marketplace.marketplace_name` | 对外 `marketplace.json` 的 name（决定 Qoder 缓存目录名） |
 | `marketplace.public_base_url` | 对外可达基地址 |
 | `dingtalk.market_webhook` / `.market_secret` / `.market_keyword` | 钉钉机器人地址 / 加签密钥 / **关键词**（机器人默认开启关键词校验，消息里必须含该词） |
-| `dingtalk.notify_on_publish` / `.update` / `.unpublish` / `.delete` / `.review` / `.reject` | 六种事件的通知开关 |
+| `dingtalk.notify_on_publish` / `.update` / `.unpublish` / `.delete` / `.review` / `.reject` | 六种事件的通知开关 —— **默认全部关闭（默认不通知）**，要发自己在设置页打开 |
 
 ## 四、前端（`frontend_web/src/views/Market/`）
 

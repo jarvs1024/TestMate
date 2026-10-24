@@ -521,4 +521,4 @@ P2 完成需满足：
 | `marketplace.scan_strict` | `true` | 扫描命中即自动驳回 |
 | `dingtalk.market_webhook` | 空 | 上架通知机器人 |
 | `dingtalk.secret` | 空 | 加签密钥 |
-| `dingtalk.notify_on_publish` | `true` | 上架通知开关 |
+| `dingtalk.notify_on_publish` | `false` | 上架通知开关（默认不通知） |

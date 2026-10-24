@@ -71,7 +71,10 @@ async def test_notify_market_records_receipt_on_success(monkeypatch):
         return {"errcode": 0, "errmsg": "ok"}
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
-    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.market_webhook": "http://x/hook"}))
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({"dingtalk.market_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
+    )
 
     ok = await dingtalk.notify_market(
         "publish", name="演示资产", version="1.0.0", actor="admin",
@@ -100,7 +103,10 @@ async def test_notify_market_records_failure(monkeypatch):
         raise RuntimeError("HTTP 500: boom")
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
-    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.market_webhook": "http://x/hook"}))
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({"dingtalk.market_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
+    )
 
     ok = await dingtalk.notify_market("publish", name="失败用例", code="bad")
     assert ok is False
@@ -129,7 +135,11 @@ async def test_notify_market_prepends_keyword(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(
         dingtalk, "get",
-        _fake_get({"dingtalk.market_webhook": "http://x/hook", "dingtalk.market_keyword": "测试组"}),
+        _fake_get({
+            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.market_keyword": "测试组",
+            "dingtalk.notify_on_publish": "true",
+        }),
     )
 
     await dingtalk.notify_market("publish", name="带关键词", code="kw")
@@ -144,7 +154,11 @@ async def test_notify_market_skips_when_not_configured(monkeypatch):
         raise AssertionError("不该发消息")
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
-    monkeypatch.setattr(dingtalk, "get", _fake_get({}))
+    # 开关是开的, 但 webhook 没配 → 依然跳过
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({"dingtalk.notify_on_publish": "true"}),
+    )
 
     assert await dingtalk.notify_market("publish", name="没配", code="x") is False
 
@@ -155,6 +169,66 @@ async def test_notify_market_skips_when_not_configured(monkeypatch):
     async with AsyncSessionLocal() as s:
         rows = (await s.execute(select(AssetNotification))).scalars().all()
     assert not rows
+
+
+async def test_notify_market_default_is_off(monkeypatch):
+    """⚠️ 默认**不通知** —— 开关没配 (老环境/新装) 时绝不能发消息.
+
+    这条是"默认不通知"这条需求的护栏: 以前 switch 缺省是 true,
+    老环境没这一行就会照发, 群里被刷屏.
+    """
+    async def fake_send(*a, **kw):  # pragma: no cover - 不该被调用
+        raise AssertionError("默认不该发消息")
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    # 只配了 webhook, 没配任何通知开关
+    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.market_webhook": "http://x/hook"}))
+
+    assert await dingtalk.notify_market("publish", name="默认关", code="x") is False
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(select(AssetNotification))).scalars().all()
+    assert not rows, "开关默认关 → 不该有回执"
+
+
+async def test_notify_switches_accept_bool_and_string(monkeypatch):
+    """开关存成 JSON 布尔 / "true" 字符串 / 1, 都要认成"开"."""
+    sent: list[str] = []
+
+    async def fake_send(webhook, title, text, **kw):
+        sent.append(title)
+        return {"errcode": 0}
+
+    for raw in (True, "true", "True", "1", "on", 1):
+        sent.clear()
+        monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+        monkeypatch.setattr(
+            dingtalk, "get",
+            _fake_get({
+                "dingtalk.market_webhook": "http://x/hook",
+                "dingtalk.notify_on_publish": raw,
+            }),
+        )
+        ok = await dingtalk.notify_market("publish", name="开", code="x")
+        assert ok is True, f"{raw!r} 应认成开"
+        assert sent, f"{raw!r} 应真的发出去了"
+
+    for raw in (False, "false", "False", "0", "off", 0):
+        sent.clear()
+        monkeypatch.setattr(
+            dingtalk, "get",
+            _fake_get({
+                "dingtalk.market_webhook": "http://x/hook",
+                "dingtalk.notify_on_publish": raw,
+            }),
+        )
+        ok = await dingtalk.notify_market("publish", name="关", code="x")
+        assert ok is False, f"{raw!r} 应认成关"
+        assert not sent, f"{raw!r} 不该发出去"
 
 
 async def test_notify_market_respects_switch(monkeypatch):
@@ -212,7 +286,10 @@ async def test_retry_failed_notifications(monkeypatch):
         return {"errcode": 0}
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
-    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.market_webhook": "http://x/hook"}))
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({"dingtalk.market_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
+    )
 
     n = await dingtalk.retry_failed_notifications()
     assert n == 1
@@ -224,6 +301,44 @@ async def test_retry_failed_notifications(monkeypatch):
         row = (await s.execute(select(AssetNotification))).scalar_one()
     assert row.status == "sent"
     assert row.attempts == 2
+    assert row.next_retry_at is None
+
+
+async def test_retry_skipped_when_switch_off(monkeypatch):
+    """⚠️ 开关关了 → 之前排队的通知**不能再发** (否则关了还在刷屏).
+
+    回执标成 skipped, 不再重试.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+
+    async with AsyncSessionLocal() as s:
+        s.add(AssetNotification(
+            event="publish", code="skip-me", asset_name="开关关了",
+            status="failed", attempts=1, error="boom",
+            title="t", text="x", next_retry_at=None,
+        ))
+        await s.commit()
+
+    attempts: list[str] = []
+
+    async def fake_send(webhook, title, text, **kw):  # pragma: no cover - 不该被调用
+        attempts.append(text)
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    # 开关是关的 (默认)
+    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.market_webhook": "http://x/hook"}))
+
+    n = await dingtalk.retry_failed_notifications()
+    assert n == 0
+    assert not attempts, "开关关了不该再发"
+
+    async with AsyncSessionLocal() as s:
+        from sqlalchemy import select
+
+        row = (await s.execute(select(AssetNotification))).scalar_one()
+    assert row.status == "skipped"
     assert row.next_retry_at is None
 
 
