@@ -316,7 +316,7 @@ async function doApplyUnpublish() {
   try {
     await ElMessageBox.prompt(
       `申请下架「${name}」?\n`
-      + `下架是**不可逆**的: 管理员确认后资产会被彻底删除 —— `
+      + `下架是「不可逆」的: 管理员确认后资产会被彻底删除 —— `
       + `GitLab 上的文件、索引与记录都会消失。\n`
       + `请输入资产 code「${code}」以确认。`,
       '申请下架',
@@ -354,7 +354,7 @@ async function doReviewUnpublish(decision: 'approve' | 'reject') {
     try {
       await ElMessageBox.confirm(
         `确认通过「${name}」的下架申请?\n`
-        + `通过后资产会被**彻底删除**: GitLab 上的文件、索引与记录都会消失, 不可恢复。\n`
+        + `通过后资产会被「彻底删除」: GitLab 上的文件、索引与记录都会消失, 不可恢复。\n`
         + `已下载到用户本机的安装包不会被清理。`,
         '通过下架申请',
         { type: 'error', confirmButtonText: '确认删除', cancelButtonText: '取消' },
