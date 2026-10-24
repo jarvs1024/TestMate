@@ -60,13 +60,14 @@ class Asset(Base):
     last_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # 生命周期状态: published(在架) / unpublished(已下架)
     # 与 sync_status 解耦 —— sync_status 说的是"推没推上去", 这里说的是"要不要上架"
-    # 二期加入审核流后扩展为四态:
-    #   pending     已提交, 等管理员审核 (不对普通用户可见)
-    #   published   在架
-    #   rejected    审核未通过 (发布者可改了重新提交)
-    #   unpublished 审核通过后又下架 (文件保留, 在用用户仍可见并看到「已下架」)
+    # 五态:
+    #   pending           已提交, 等管理员审核 (不对普通用户可见)
+    #   published         在架
+    #   rejected          审核未通过 (发布者可改了重新提交)
+    #   unpublished       审核通过后又下架 (文件保留, 在用用户仍可见并看到「已下架」)
+    #   unpublish_pending 申请下架, 等管理员确认 (确认后资产会被**彻底删除**)
     publish_status: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="published", index=True
+        String(24), nullable=False, default="published", index=True
     )
     # 最近一次审核意见 (驳回理由 / 审核备注) —— 审核动作也记在 asset_audits 里
     review_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -92,7 +93,10 @@ class AssetJob(Base):
     __tablename__ = "asset_jobs"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    action: Mapped[str] = mapped_column(String(16), nullable=False)  # create/update
+    # action: create / update / publish / unpublish / unpublish_request /
+    #         unpublish_approve / unpublish_reject / unpublish_cancel /
+    #         approve / reject / submit
+    action: Mapped[str] = mapped_column(String(24), nullable=False)  # create/update
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
     # pending → running → succeeded | failed
 

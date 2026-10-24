@@ -241,6 +241,10 @@ class SyncStatusOut(BaseModel):
     my_review_count: int = 0
     # 我自己提交的、还在等审核的资产数
     my_pending_count: int = 0
+    # 下架审核: 申请下架、等人确认的资产数 (确认后资产会被彻底删除)
+    unpublish_pending_count: int = 0
+    # 我自己申请下架、还在等管理员确认的资产数
+    my_unpublish_count: int = 0
     last_sync_at: datetime | None = None
 
 

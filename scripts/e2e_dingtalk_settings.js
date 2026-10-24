@@ -123,25 +123,29 @@ function check(name, ok, detail) {
   const quiet = await page.evaluate(async () => {
     const tk = localStorage.getItem('testmate:token');
     const H = { Authorization: 'Bearer ' + tk };
+    const code = 'ssd-log-doctor';
     const count = async () => {
       const r = await fetch('/api/v1/assets/notifications?limit=1', { headers: H });
       const d = await r.json();
       return d.total ?? (d.items || []).length;
     };
-    const before = await count();
-    const post = async (path) => {
-      const fd = new FormData(); fd.append('comment', '默认不通知验证');
+    const post = async (path, fields) => {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(fields || {})) fd.append(k, v);
       return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
     };
-    const un = await post('/api/v1/assets/ssd-log-doctor/unpublish');
+    const before = await count();
+    const un = await post(`/api/v1/assets/${code}/unpublish`,
+      { confirm_code: code, comment: '默认不通知验证' });
     await new Promise((r) => setTimeout(r, 2000));
-    const pu = await post('/api/v1/assets/ssd-log-doctor/publish');
+    const cancel = await post(`/api/v1/assets/${code}/unpublish-cancel`,
+      { comment: '默认不通知验证结束' });
     await new Promise((r) => setTimeout(r, 2000));
     const after = await count();
-    return { before, after, un, pu };
+    return { before, after, un, cancel };
   });
   check('S18 开关关着时上下架不产生任何通知回执', quiet.after === quiet.before,
-    `回执 ${quiet.before} → ${quiet.after} (unpublish=${quiet.un} publish=${quiet.pu})`);
+    `回执 ${quiet.before} → ${quiet.after} (unpublish=${quiet.un} cancel=${quiet.cancel})`);
 
   // 在 UI 里填 webhook (按 key 定位到那一行)
   if (WEBHOOK) {
@@ -272,24 +276,30 @@ function check(name, ok, detail) {
     marketNotify = await page.evaluate(async () => {
       const tk = localStorage.getItem('testmate:token');
       const H = { Authorization: 'Bearer ' + tk };
-      const post = async (path) => {
-        const fd = new FormData(); fd.append('comment', '钉钉通知链路验证');
+      const code = 'ssd-log-doctor';
+      const post = async (path, fields) => {
+        const fd = new FormData();
+        for (const [k, v] of Object.entries(fields || {})) fd.append(k, v);
         return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
       };
-      const un = await post('/api/v1/assets/ssd-log-doctor/unpublish');
+      // ⚠️ 下架现在是**申请制**: 要带 confirm_code, 而且提交后进「待下架审核」,
+      //    这时候不能直接 publish (会 409) —— 得先撤销申请.
+      const un = await post(`/api/v1/assets/${code}/unpublish`,
+        { confirm_code: code, comment: '钉钉通知链路验证' });
       await new Promise((r) => setTimeout(r, 2500));
-      const pu = await post('/api/v1/assets/ssd-log-doctor/publish');
+      const cancel = await post(`/api/v1/assets/${code}/unpublish-cancel`,
+        { comment: '钉钉通知链路验证结束' });
       await new Promise((r) => setTimeout(r, 2500));
       const r = await fetch('/api/v1/assets/notifications?limit=5', { headers: H });
       const d = await r.json();
       const latest = (d.items || []).slice(0, 2);
       return {
-        un, pu,
+        un, cancel,
         receipts: latest.map((n) => ({ event: n.event, code: n.code, status: n.status, attempts: n.attempts, err: n.error })),
       };
     });
-    check('S12 上下架接口都成功', marketNotify.un === 200 && marketNotify.pu === 200,
-      `unpublish=${marketNotify.un} publish=${marketNotify.pu}`);
+    check('S12 申请下架 + 撤销都成功', marketNotify.un === 200 && marketNotify.cancel === 200,
+      `unpublish=${marketNotify.un} cancel=${marketNotify.cancel}`);
     const allSent = marketNotify.receipts.length >= 2 && marketNotify.receipts.every((r) => r.status === 'sent');
     check('S13 市场通知回执全部「已送达」', allSent,
       marketNotify.receipts.map((r) => `${r.event}:${r.status}(${r.attempts})`).join(' '));

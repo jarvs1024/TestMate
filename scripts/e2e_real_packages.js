@@ -432,31 +432,44 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     `status=${dl.status} ${dlBuf.length} 字节 sha=${dlSha.slice(0, 12)} ` +
     `(原包 ${origSha.slice(0, 12)})`);
 
-  // ㉗ 下架 → 已安装的仍可见
-  const unpub = await api(`${A}/unpublish`, {
+  // ㉗ 申请下架 → 待下架审核 (资产**仍在架**, 确认后才会被彻底删除)
+  //    ⚠️ 下架现在是申请制 (2026-10-24): 要带 confirm_code, 提交后进「待下架审核」.
+  //    而且更新版本后资产会回到「待审核」, 得先审过才能申请下架.
+  const appr2 = await api(`${A}/review`, {
     method: 'POST', token, form: (() => {
-      const f = new FormData(); f.append('comment', '端到端验证下架'); return f;
+      const f = new FormData();
+      f.append('decision', 'approve');
+      f.append('comment', '新版本通过');
+      return f;
     })(),
   });
-  check(`${tag} ㉗ 下架成功`, unpub.status === 200, `status=${unpub.status}`);
-  // ㉗ 下架 → 已安装的仍可见.
-  //    ⚠️ 列表的"我已安装"是按 **client_id** 判定的 ——
-  //    安装用的是 client_id=e2e-real, 查询不带上就认为"我没装过", 下架后自然看不见.
+  check(`${tag} ㉗a 新版本审核通过`, appr2.status === 200, `status=${appr2.status}`);
+
+  const unpub = await api(`${A}/unpublish`, {
+    method: 'POST', token, form: (() => {
+      const f = new FormData();
+      f.append('confirm_code', pkg.code);
+      f.append('comment', '端到端验证下架');
+      return f;
+    })(),
+  });
+  check(`${tag} ㉗ 申请下架成功`, unpub.status === 200, `status=${unpub.status}`);
+  // 申请后资产**仍在市场可见** —— 管理员确认前它还在被用 (只是挂个待审徽标).
   const listAfter = await api(
     `/api/v1/assets?kind=${pkg.kind}&limit=100&client_id=e2e-real`, { token: pubToken },
   );
   const still = (listAfter.json.items || []).find((i) => i.code === pkg.code);
-  check(`${tag} ㉘ 已安装的用户下架后仍能看到`,
-    !!still && still.publish_status === 'unpublished',
+  check(`${tag} ㉘ 待下架审核期间资产仍在市场可见`,
+    !!still && still.publish_status === 'unpublish_pending',
     still ? `${still.publish_status} installed=${still.installed}` : '消失了');
 
-  // ㉙ 重新上架
-  const re = await api(`${A}/publish`, {
+  // ㉙ 撤销下架申请 → 回到在架
+  const re = await api(`${A}/unpublish-cancel`, {
     method: 'POST', token, form: (() => {
-      const f = new FormData(); f.append('comment', '端到端验证重上架'); return f;
+      const f = new FormData(); f.append('comment', '端到端验证撤销下架'); return f;
     })(),
   });
-  check(`${tag} ㉙ 重新上架成功`, re.status === 200, `status=${re.status}`);
+  check(`${tag} ㉙ 撤销下架申请成功`, re.status === 200, `status=${re.status}`);
 
   // ㉛ 文件包下载 (选目录安装靠它拿明文文件写盘)
   const bundle = await api(`${A}/bundle`, { token });

@@ -23,6 +23,10 @@
                 :closable="false" show-icon class="ad-alert"
                 :title="'审核未通过: ' + (item.review_note || '未说明原因, 请修改后重新提交')" />
 
+      <!-- 下架申请: 等管理员确认, 确认后资产会被彻底删除 -->
+      <el-alert v-if="item.publish_status === 'unpublish_pending'" type="warning"
+                :closable="false" show-icon class="ad-alert"
+                :title="unpublishPendingText" />
       <!-- 下架提示: 本地还装着, 但远端已下架 -->
       <el-alert v-if="item.publish_status === 'unpublished'" type="warning"
                 :closable="false" show-icon class="ad-alert"
@@ -115,6 +119,22 @@
           重新提交审核
         </el-button>
 
+        <!-- ===== 下架审核 (仅管理员) =====
+             通过 = 资产被彻底删除 (不可恢复), 所以只有管理员能拍板. -->
+        <el-button v-if="isAdmin && item.publish_status === 'unpublish_pending'"
+                   type="danger" class="ad-btn" :loading="busy" @click="doReviewUnpublish('approve')">
+          通过下架并删除
+        </el-button>
+        <el-button v-if="isAdmin && item.publish_status === 'unpublish_pending'"
+                   type="warning" plain class="ad-btn" :loading="busy" @click="doReviewUnpublish('reject')">
+          驳回下架
+        </el-button>
+        <!-- ===== 撤销下架申请 (作者本人) ===== -->
+        <el-button v-if="canEdit && item.publish_status === 'unpublish_pending'"
+                   class="ad-btn" :loading="busy" @click="doCancelUnpublish">
+          撤销下架申请
+        </el-button>
+
         <!-- 安装 = 下载安装包, 自己解压.
              不做「装到本地 / 重新安装 / 卸载」那一套 —— 服务器不该替用户管磁盘. -->
         <el-button
@@ -124,13 +144,18 @@
         >下载</el-button>
         <el-button v-else disabled class="ad-btn">连接器不支持下载</el-button>
         <el-button v-if="canEdit" class="ad-btn" @click="emit('edit', item)">更新版本</el-button>
-        <el-button v-if="canEdit" class="ad-btn" :type="unpub ? 'primary' : 'warning'"
-                   plain @click="togglePublish">
-          {{ unpub ? '重新上架' : '下架' }}
+        <el-button v-if="canEdit && item.publish_status === 'published'"
+                   class="ad-btn" type="warning" plain @click="doApplyUnpublish">
+          申请下架
         </el-button>
-        <el-button v-if="canEdit" class="ad-btn danger" @click="doDelete">
-          彻底删除
+        <el-button v-if="canEdit && item.publish_status === 'unpublished'"
+                   class="ad-btn" type="primary" plain @click="doRepublish">
+          重新上架
         </el-button>
+        <!--
+          ⚠️ 这里**没有**「彻底删除」按钮 (2026-10-24 起) ——
+             删除是不可逆的动作, 必须走「申请下架 → 管理员确认」, 有人拍板.
+        -->
       </div>
 
       <div class="ad-proto-note">
@@ -144,8 +169,8 @@
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  deleteAsset, downloadAssetPackage, getAssetDoc, publishAsset,
-  reviewAsset, submitForReview,
+  cancelUnpublish, downloadAssetPackage, getAssetDoc, publishAsset,
+  reviewAsset, reviewUnpublish, submitForReview,
   unpublishAsset,
   type AssetDoc, type AssetItem,
 } from '@/api/assets';
@@ -171,8 +196,6 @@ const docLoading = ref(false);
 const docError = ref('');
 const busy = ref(false);
 
-const unpub = computed(() => props.item?.publish_status === 'unpublished');
-
 const userStore = useUserStore();
 /** 审核人是管理员 */
 const isAdmin = computed(() => userStore.user?.role === 'admin');
@@ -189,6 +212,17 @@ const canSubmit = computed(() => {
 });
 
 const docHtml = computed(() => renderMarkdown(doc.value?.content || ''));
+
+/** 待下架审核时的提示 —— 管理员看到的是"等你拍板", 作者看到的是"等管理员确认" */
+const unpublishPendingText = computed(() => {
+  const it = props.item;
+  if (!it) return '';
+  const who = it.author || '发布者';
+  if (isAdmin.value) {
+    return `「${who}」申请下架这个资产 —— 通过后资产会被彻底删除 (不可恢复)`;
+  }
+  return '已申请下架, 等管理员确认 —— 确认后资产会被彻底删除';
+});
 
 const syncLabel = computed(() => {
   switch (props.item?.sync_status) {
@@ -266,29 +300,135 @@ async function doDownload() {
   }
 }
 
-async function togglePublish() {
-  if (!props.item) return;
-  const code = props.item.code;
-  const name = props.item.name;
-  if (!unpub.value) {
+/**
+ * **申请下架** —— 不可逆的动作, 所以:
+ *   1. 要手打资产 code 确认 (跟"彻底删除"一样的门槛)
+ *   2. 提交后不是立刻删, 而是进「待下架审核」, 等管理员拍板
+ *
+ * 为什么不是点了就删: 市场是**共享**的 —— 资产下架了别人第二天就装不上,
+ * 得有人确认 (管理员通过后资产会被彻底删除).
+ */
+async function doApplyUnpublish() {
+  const it = props.item;
+  if (!it) return;
+  const code = it.code;
+  const name = it.name;
+  try {
+    await ElMessageBox.prompt(
+      `申请下架「${name}」?\n`
+      + `下架是**不可逆**的: 管理员确认后资产会被彻底删除 —— `
+      + `GitLab 上的文件、索引与记录都会消失。\n`
+      + `请输入资产 code「${code}」以确认。`,
+      '申请下架',
+      {
+        type: 'warning',
+        confirmButtonText: '提交下架申请',
+        cancelButtonText: '取消',
+        inputPlaceholder: code,
+        inputValidator: (v: string) => (v || '').trim() === code || '输入与 code 不一致',
+      },
+    );
+  } catch {
+    return;  // 用户取消
+  }
+  busy.value = true;
+  try {
+    await unpublishAsset(code, code, '申请下架');
+    ElMessage.success('下架申请已提交, 等管理员确认');
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error('申请失败: ' + (e?.response?.data?.detail || e?.message));
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** 管理员审核下架申请: 通过 = 彻底删除 / 驳回 = 恢复在架 */
+async function doReviewUnpublish(decision: 'approve' | 'reject') {
+  const it = props.item;
+  if (!it) return;
+  const code = it.code;
+  const name = it.name;
+  let comment = '';
+  if (decision === 'approve') {
     try {
       await ElMessageBox.confirm(
-        `下架 ${name}? 下架后其他人的列表里将不再显示, 但已安装的用户会看到"已下架"提示。`,
-        '下架资产', { type: 'warning', confirmButtonText: '下架', cancelButtonText: '取消' },
+        `确认通过「${name}」的下架申请?\n`
+        + `通过后资产会被**彻底删除**: GitLab 上的文件、索引与记录都会消失, 不可恢复。\n`
+        + `已下载到用户本机的安装包不会被清理。`,
+        '通过下架申请',
+        { type: 'error', confirmButtonText: '确认删除', cancelButtonText: '取消' },
       );
+    } catch {
+      return;
+    }
+  } else {
+    try {
+      const r = await ElMessageBox.prompt(
+        `驳回「${name}」的下架申请需要给发布者一个理由 (会显示在资产详情里)`,
+        '驳回下架申请',
+        {
+          type: 'warning', confirmButtonText: '驳回', cancelButtonText: '取消',
+          inputPlaceholder: '例如: 还有人在用, 先别删',
+          inputValidator: (v: string) => (v || '').trim() ? true : '请填写驳回理由',
+        },
+      );
+      comment = r.value || '';
     } catch {
       return;
     }
   }
   busy.value = true;
   try {
-    if (unpub.value) {
-      await publishAsset(code);
-      ElMessage.success('已重新上架');
+    await reviewUnpublish(code, decision, comment);
+    if (decision === 'approve') {
+      ElMessage.success('已通过下架申请, 资产已删除');
+      emit('update:modelValue', false);
+      emit('deleted');
     } else {
-      await unpublishAsset(code);
-      ElMessage.success('已下架');
+      ElMessage.success('已驳回, 资产保持上架');
     }
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error('审核失败: ' + (e?.response?.data?.detail || e?.message));
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** 作者撤销自己的下架申请 */
+async function doCancelUnpublish() {
+  const it = props.item;
+  if (!it) return;
+  try {
+    await ElMessageBox.confirm(
+      `撤销「${it.name}」的下架申请? 撤销后资产保持上架, 不用等管理员处理。`,
+      '撤销下架申请',
+      { type: 'info', confirmButtonText: '撤销申请', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;
+  }
+  busy.value = true;
+  try {
+    await cancelUnpublish(it.code, '作者撤销下架申请');
+    ElMessage.success('已撤销, 资产保持上架');
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error('撤销失败: ' + (e?.response?.data?.detail || e?.message));
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** 重新上架 (已下架的资产恢复在架) */
+async function doRepublish() {
+  const it = props.item;
+  if (!it) return;
+  busy.value = true;
+  try {
+    await publishAsset(it.code);
+    ElMessage.success('已重新上架');
     emit('changed');
   } catch (e: any) {
     ElMessage.error('操作失败: ' + (e?.response?.data?.detail || e?.message));
@@ -356,40 +496,13 @@ async function doSubmit() {
   }
 }
 
-/** 彻底删除 —— 不可恢复, 要求手打 code 确认 */
-async function doDelete() {
-  if (!props.item) return;
-  const code = props.item.code;
-  const name = props.item.name;
-  try {
-    await ElMessageBox.prompt(
-      `删除「${name}」不可恢复: GitLab 上的文件、索引与安装记录都会一并消失。\n`
-      + `已安装的用户本机文件不会被清理。\n请输入资产 code「${code}」以确认。`,
-      '彻底删除资产',
-      {
-        type: 'error',
-        confirmButtonText: '确认删除',
-        cancelButtonText: '取消',
-        inputPlaceholder: code,
-        inputValidator: (v: string) => (v || '').trim() === code || '输入与 code 不一致',
-      },
-    );
-  } catch {
-    return;  // 用户取消
-  }
-  busy.value = true;
-  try {
-    await deleteAsset(code, '用户从市场页删除');
-    ElMessage.success('已删除');
-    emit('update:modelValue', false);
-    emit('deleted');
-    emit('changed');
-  } catch (e: any) {
-    ElMessage.error('删除失败: ' + (e?.response?.data?.detail || e?.message));
-  } finally {
-    busy.value = false;
-  }
-}
+/*
+ * ⚠️ 这里**没有**「彻底删除」函数了 (2026-10-24 起).
+ *    删除是不可逆的动作, 必须走「申请下架 → 管理员确认」, 有人拍板:
+ *      作者: 申请下架 (打 code 确认) → 资产进「待下架审核」
+ *      管理员: 通过 → 资产被彻底删除 / 驳回 → 恢复在架
+ *    后端的 DELETE /{code} 还在, 但**只允许管理员**用 (运维清理), 前端不暴露.
+ */
 </script>
 
 <style scoped>

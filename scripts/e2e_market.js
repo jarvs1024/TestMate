@@ -154,7 +154,21 @@ async function codeByName(page, name) {
   await page.setCacheEnabled(false);
   page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
   page.on('console', (m) => {
-    if (m.type() === 'error' && !expectHttpError) errors.push('[console.error] ' + m.text());
+    if (m.type() !== 'error') return;
+    // HTTP 状态码错误交给下面的 response 钩子记 —— 它带 URL, 好定位.
+    // (console 里只有一句 "Failed to load resource", 看不到是哪个请求)
+    if (/Failed to load resource/.test(m.text())) return;
+    if (!expectHttpError) errors.push('[console.error] ' + m.text());
+  });
+  // 预期内的 404 URL —— 比如"刚被删掉的资产, 再查一次确认没了".
+  // ⚠️ 不能只靠时间窗口抑制: 删除会推 GitLab, 期间后端是忙的,
+  //    响应可能晚好几秒才回来, 落在窗口外就被当成缺陷了.
+  const expect404 = [];
+  page.on('response', (r) => {
+    if (r.status() === 404 && expect404.some((p) => r.url().includes(p))) return;
+    if (r.status() >= 400 && !expectHttpError) {
+      errors.push(`[http${r.status()}] ${r.url()}`);
+    }
   });
   page.on('requestfailed', (r) => {
     if (!expectHttpError) errors.push('[reqfail] ' + r.url() + ' :: ' + (r.failure() || {}).errorText);
@@ -300,18 +314,34 @@ async function codeByName(page, name) {
       s.adBtnLabels.join(' | '));
     await page.screenshot({ path: path.join(OUT_DIR, '02-install.png') });
 
-    // ---------- F. 下架 / 重新上架 ----------
+    // ---------- F. 申请下架 → 待下架审核 → 撤销 ----------
     // 装相关的检查已下线 (安装只是下载) —— 这里直接用列表里的第一张卡
     s = await snap(page);
     const firstCard = s.cards[0] || {};
     await clickByText(page, '.asset-card', firstCard.name || '');
     await page.waitForSelector('.el-drawer', { timeout: 10000 });
     await sleep(1500);
-    await clickByText(page, '.ad-actions .el-button', '下架');
+    // ⚠️ 下架是**申请制** (2026-10-24): 要打 code 确认, 提交后等管理员拍板
+    s = await snap(page);
+    check('F0 抽屉里没有「彻底删除」按钮',
+      !s.adBtnLabels.some((b) => /彻底删除/.test(b)), s.adBtnLabels.join(' | '));
+    check('F0b 抽屉里有「申请下架」',
+      s.adBtnLabels.some((b) => /申请下架/.test(b)), s.adBtnLabels.join(' | '));
+    await clickByText(page, '.ad-actions .el-button', '申请下架');
     await sleep(700);
     s = await snap(page);
     check('F1 下架有二次确认', /下架/.test(s.msgBox || ''), s.msgBox);
-    await clickByText(page, '.el-message-box__btns .el-button', '下架');
+    // 弹窗要求**手打资产 code** —— 后端也会校验, 绕不过去
+    const typed = await page.evaluate((c) => {
+      const inp = document.querySelector('.el-message-box__input input');
+      if (!inp) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(inp, c);
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }, code);
+    check('F1b 弹窗要求输入资产 code', typed, `code=${code}`);
+    await clickByText(page, '.el-message-box__btns .el-button', '提交下架申请');
     await sleep(2000);
     const unpub = await page.evaluate(async (c) => {
       const tk = localStorage.getItem('testmate:token');
@@ -319,14 +349,14 @@ async function codeByName(page, name) {
       const d = await r.json();
       return (d.items || []).find((i) => i.code === c)?.publish_status || '';
     }, code);
-    check('F2 下架后 publish_status=unpublished', unpub === 'unpublished', unpub);
+    check('F2 申请下架后 publish_status=unpublish_pending', unpub === 'unpublish_pending', unpub);
     await page.screenshot({ path: path.join(OUT_DIR, '04-unpublished.png') });
 
-    // 重新上架 (走 API, 不依赖 UI 弹窗)
+    // 撤销申请 (走 API, 不依赖 UI 弹窗) → 恢复在架
     await page.evaluate(async (c) => {
       const tk = localStorage.getItem('testmate:token');
-      const fd = new FormData(); fd.append('comment', 'e2e 恢复上架');
-      await fetch(`/api/v1/assets/${c}/publish`, { method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd });
+      const fd = new FormData(); fd.append('comment', 'e2e 撤销下架申请');
+      await fetch(`/api/v1/assets/${c}/unpublish-cancel`, { method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd });
     }, code);
     await sleep(1500);
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -339,7 +369,7 @@ async function codeByName(page, name) {
       const d = await r.json();
       return (d.items || []).find((i) => i.code === c)?.publish_status || 'missing';
     }, code);
-    check('F3 重新上架后资产状态回到 published', back === 'published', `publish_status=${back}, 列表 ${s.cards.length} 张`);
+    check('F3 撤销申请后资产状态回到 published', back === 'published', `publish_status=${back}, 列表 ${s.cards.length} 张`);
 
     // ---------- G. 同步 ----------
     await page.evaluate(() => {
@@ -411,8 +441,20 @@ async function codeByName(page, name) {
     });
     await sleep(800);
 
-    // ---------- K. 彻底删除 (走 UI, 输入 code 确认) ----------
+    // ---------- K. 申请下架 → 管理员确认 → 彻底删除 (走 UI) ----------
+    //    ⚠️ 2026-10-24 起前端**没有**「彻底删除」按钮了:
+    //    作者点「申请下架」(打 code 确认) → 管理员点「通过下架并删除」→ 资产没了.
     const tmpCode = 'e2e-tmp-delete';
+    // 这个临时资产被删掉是**预期**的 —— 预清理时它可能压根不存在 (404),
+    // 删完之后我们也会再查一次确认它没了 (还是 404). 都算预期, 不算缺陷.
+    expect404.push(tmpCode);
+    // 预清理: 上一轮崩了会留下同名资产 (上传会 409, 后面全乱)
+    await page.evaluate(async (c) => {
+      const tk = localStorage.getItem('testmate:token');
+      await fetch('/api/v1/assets/' + c, {
+        method: 'DELETE', headers: { Authorization: 'Bearer ' + tk },
+      });
+    }, tmpCode);
     await page.evaluate(async (c) => {
       const tk = localStorage.getItem('testmate:token');
       const fd = new FormData();
@@ -434,15 +476,38 @@ async function codeByName(page, name) {
     await clickByText(page, '.asset-card', 'E2E 临时资产');
     await page.waitForSelector('.el-drawer', { timeout: 10000 });
     await sleep(1200);
-    await clickByText(page, '.ad-actions .el-button', '彻底删除');
+    s = await snap(page);
+    check('K0 抽屉里**没有**「彻底删除」按钮',
+      !s.adBtnLabels.some((b) => /彻底删除/.test(b)), s.adBtnLabels.join(' | '));
+
+    // 申请下架 (打 code 确认)
+    await clickByText(page, '.ad-actions .el-button', '申请下架');
     await sleep(900);
     s = await snap(page);
-    check('K1 删除要求输入 code 确认', /code/.test(s.msgBox || ''), (s.msgBox || '').slice(0, 60));
+    check('K1 申请下架要求输入 code 确认', /code/.test(s.msgBox || ''), (s.msgBox || '').slice(0, 60));
     const promptInput = await page.$('.el-message-box__input input, .el-message-box input');
     if (promptInput) {
       await promptInput.type(tmpCode);
-      await clickByText(page, '.el-message-box__btns .el-button', '确认删除');
+      await clickByText(page, '.el-message-box__btns .el-button', '提交下架申请');
     }
+    await sleep(3000);
+    const stPending = await page.evaluate(async (c) => {
+      const tk = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/assets/' + c, { headers: { Authorization: 'Bearer ' + tk } });
+      const d = await r.json();
+      return d.publish_status || '';
+    }, tmpCode);
+    check('K2 申请后状态是 unpublish_pending', stPending === 'unpublish_pending', stPending);
+
+    // 管理员通过下架申请 → 资产被彻底删除
+    //    ⚠️ 走**真实 UI 路径**: 抽屉里点「通过下架并删除」→ 确认.
+    //    (别用 API 硬删 —— 页面还开着抽屉, 定时刷新会打到已删的资产上,
+    //     浏览器控制台报 404, 看着像故障)
+    await clickByText(page, '.ad-actions .el-button', '通过下架并删除');
+    await sleep(900);
+    s = await snap(page);
+    check('K2b 通过下架要二次确认', /彻底删除|不可恢复/.test(s.msgBox || ''), (s.msgBox || '').slice(0, 60));
+    await clickByText(page, '.el-message-box__btns .el-button', '确认删除');
     await sleep(4000);
     expectHttpError = true;   // 下面这个 404 是"资产确实被删掉了"的证据, 不是缺陷
     const gone = await page.evaluate(async (c) => {
@@ -453,7 +518,7 @@ async function codeByName(page, name) {
     // 浏览器的 console 消息比 fetch resolve 晚一点到 —— 多留 1.5s 再解除抑制
     await sleep(1500);
     expectHttpError = false;
-    check('K2 删除后资产不存在', gone === 404, `HTTP ${gone}`);
+    check('K3 审核通过后资产不存在', gone === 404, `HTTP ${gone}`);
 
     // ---------- 汇总 ----------
     check('Z1 全程无 JS 错误 / 请求失败', errors.length === 0, errors.slice(0, 5).join(' ; '));

@@ -50,6 +50,18 @@
       </button>
     </div>
 
+    <!-- ===== 下架申请: 作者等确认 / 管理员等拍板 ===== -->
+    <div v-if="sync.my_unpublish_count > 0" class="my-review-bar">
+      <span>🗑 你的 <b>{{ sync.my_unpublish_count }}</b> 个资产在等下架确认 —— 管理员通过后会被彻底删除</span>
+      <button class="mrb-btn" @click="toggleOnlyMine">
+        {{ onlyMine ? '显示全部' : '只看这些' }}
+      </button>
+    </div>
+    <div v-if="isAdmin && othersUnpublishCount > 0" class="my-review-bar admin">
+      <span>🗑 有 <b>{{ othersUnpublishCount }}</b> 个资产在等下架确认 —— 通过后会被彻底删除</span>
+      <button class="mrb-btn" @click="load">刷新</button>
+    </div>
+
     <!-- ===== 分类 + 排序 (状态不在这层过滤 —— 每张卡片自己标着) ===== -->
     <div class="mk-filters">
       <div class="cat-chips">
@@ -121,7 +133,7 @@ import AssetAuditDrawer from './AssetAuditDrawer.vue';
 import { useUserStore } from '@/stores/user';
 import { MARKET_CATEGORIES, MARKET_KINDS } from './marketCatalog';
 import {
-  getAsset, listAssets, listJobs, getSyncStatus, retryJob, syncFromGit,
+  listAssets, listJobs, getSyncStatus, retryJob, syncFromGit,
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
 } from '@/api/assets';
 
@@ -144,6 +156,11 @@ function toggleOnlyMine() {
 const rawItems = ref<AssetItem[]>([]);
 
 const userStore = useUserStore();
+/** 管理员 —— 能拍板下架申请 (通过 = 资产被彻底删除) */
+const isAdmin = computed(() => userStore.user?.role === 'admin');
+/** 别人申请下架、还在等确认的资产数 (管理员视角) */
+const othersUnpublishCount = computed(() =>
+  Math.max(0, sync.value.unpublish_pending_count - sync.value.my_unpublish_count));
 
 /** 能不能改这个资产 (更新版本 / 下架 / 彻底删除) —— **作者本人或管理员**.
  *  ⚠️ 之前是硬编码 true —— 任何登录用户打开别人的资产都能看到并操作这些按钮,
@@ -178,6 +195,7 @@ const sync = ref<SyncStatus>({
   has_remote_updates: false, conflict_count: 0, pending_count: 0,
   failed_count: 0, unpublished_count: 0,
   awaiting_review_count: 0, rejected_count: 0, my_review_count: 0, my_pending_count: 0,
+  unpublish_pending_count: 0, my_unpublish_count: 0,
   last_sync_at: null,
 });
 
@@ -314,11 +332,16 @@ function openDetail(item: AssetItem) {
 async function onAssetChanged() {
   await load();
   if (!current.value) return;
-  try {
-    current.value = await getAsset(current.value.code);
-  } catch {
-    /* 资产可能已被删除, 列表刷新后自然消失 */
+  // 列表里已经有**最新**的那份了 —— 直接用它, 不用再单独 GET 一次:
+  //   ① 少一个请求  ② 资产刚被彻底删除时不会打到 404 (浏览器控制台会报错)
+  const fresh = rawItems.value.find((i) => i.code === current.value!.code);
+  if (!fresh) {
+    // 资产没了 (下架审核通过 = 彻底删除) —— 关掉抽屉
+    current.value = null;
+    drawerOpen.value = false;
+    return;
   }
+  current.value = fresh;
 }
 
 function openCreate() {
@@ -432,6 +455,8 @@ onUnmounted(() => {
   font-size: 12.5px; color: var(--ink-700);
 }
 .my-review-bar b { color: var(--primary); }
+.my-review-bar.admin { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.3); }
+.my-review-bar.admin b { color: var(--warn); }
 .mrb-btn {
   background: transparent; border: 1px solid var(--primary); color: var(--primary);
   padding: 3px 12px; border-radius: var(--radius-pill);

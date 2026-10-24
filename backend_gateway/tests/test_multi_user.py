@@ -38,7 +38,8 @@ async def test_publisher_cannot_unpublish_others_asset(
                       f"{publisher_user['username']},{stranger_user['username']}")
     sauth = {"Authorization": f"Bearer {stranger_user['token']}"}
 
-    r = await client.post(f"{API}/own-demo/unpublish", data={"comment": "乱下架"},
+    r = await client.post(f"{API}/own-demo/unpublish",
+                          data={"confirm_code": "own-demo", "comment": "乱下架"},
                           headers=sauth)
     assert r.status_code == 403, r.text
     assert "自己上传" in r.json()["detail"], r.text
@@ -95,10 +96,14 @@ async def test_publisher_cannot_update_others_asset(
     assert d.json()["version"] == "1.0.0", d.text
 
 
-async def test_author_can_unpublish_own_asset(
+async def test_author_can_request_unpublish_own_asset(
     client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
 ):
-    """作者本人当然能下架自己的资产."""
+    """作者本人当然能**申请**下架自己的资产 (要打 code 确认).
+
+    注意: 现在下架是**申请制** —— 申请后资产进入「待下架审核」,
+    管理员确认后才会被彻底删除. 详见 test_unpublish_flow.py.
+    """
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
@@ -106,11 +111,38 @@ async def test_author_can_unpublish_own_asset(
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "own-ok")
 
-    r = await client.post(f"{API}/own-ok/unpublish", data={"comment": "自己下架"},
+    r = await client.post(f"{API}/own-ok/unpublish",
+                          data={"confirm_code": "own-ok", "comment": "自己下架"},
                           headers=pauth)
     assert r.status_code == 200, r.text
     d = await client.get(f"{API}/own-ok", headers=auth)
-    assert d.json()["publish_status"] == "unpublished", d.text
+    assert d.json()["publish_status"] == "unpublish_pending", d.text
+
+
+async def test_unpublish_requires_confirm_code(
+    client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
+):
+    """⚠️ 申请下架必须带**对的** confirm_code —— 前端弹窗拦不住, 后端自己也要拦."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _publish_asset(client, auth, pauth, "own-confirm")
+
+    r = await client.post(f"{API}/own-confirm/unpublish",
+                          data={"confirm_code": "打错的码", "comment": "x"},
+                          headers=pauth)
+    assert r.status_code == 400, r.text
+    assert "确认码不匹配" in r.json()["detail"], r.text
+
+    # 缺 confirm_code 也不行 (它是必填表单字段)
+    r2 = await client.post(f"{API}/own-confirm/unpublish", data={"comment": "x"},
+                           headers=pauth)
+    assert r2.status_code == 422, r2.text
+
+    d = await client.get(f"{API}/own-confirm", headers=auth)
+    assert d.json()["publish_status"] == "published", d.text
 
 
 async def test_admin_can_delete_others_asset(

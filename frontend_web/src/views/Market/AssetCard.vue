@@ -18,6 +18,8 @@
               :title="item.review_note || '审核未通过'">❌ 已驳回</span>
         <span v-else-if="item.publish_status === 'unpublished'" class="ac-badge off"
               title="已从市场下架, 文件仍保留">⚠️ 已下架</span>
+        <span v-else-if="item.publish_status === 'unpublish_pending'" class="ac-badge unp"
+              title="已申请下架, 等管理员确认; 确认后资产会被彻底删除">⏳ 待下架审核</span>
         <span v-if="item.sync_status === 'staged'" class="ac-badge staged"
               title="已保存到本地工作区, 正在同步到 GitLab">🕐 待同步</span>
         <span v-else-if="item.sync_status === 'failed'" class="ac-badge failed"
@@ -130,6 +132,7 @@ const permTitle = computed(() => {
 .ac-badge.pending { background: rgba(59, 130, 246, 0.14); color: var(--primary); }
 .ac-badge.rejected { background: rgba(239, 68, 68, 0.12); color: var(--err); }
 .ac-badge.off { background: rgba(107, 114, 128, 0.14); color: var(--ink-600, #6b7280); }
+.ac-badge.unp { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
 
 .ac-summary {
   margin: 0;

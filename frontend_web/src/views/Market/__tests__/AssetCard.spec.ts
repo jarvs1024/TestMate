@@ -55,6 +55,11 @@ describe('AssetCard 状态徽标', () => {
     expect(badges(w)).toContain('⚠️ 已下架');
   });
 
+  it('待下架审核 → ⏳ 待下架审核 (2026-10-24 申请制)', () => {
+    const w = mount(AssetCard, { props: { item: item({ publish_status: 'unpublish_pending' }) } });
+    expect(badges(w)).toContain('⏳ 待下架审核');
+  });
+
   it('待同步 → 🕐 待同步', () => {
     const w = mount(AssetCard, { props: { item: item({ sync_status: 'staged' }) } });
     expect(badges(w)).toContain('🕐 待同步');

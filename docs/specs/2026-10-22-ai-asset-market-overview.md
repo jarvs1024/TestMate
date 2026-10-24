@@ -11,9 +11,10 @@
 | **双层串行化** | `asyncio.Lock`（进程内）+ `flock`（跨进程/跨实例）。git 的 `index.lock` 是仓库级的，并发 commit 必有一个失败 |
 | **落盘即提交** | 上传 → 解包落盘 → 建 job(staged) → 后台 commit+push → job(pushed)。用户立刻看到资产，状态显示"待同步" |
 | **单消费者队列** | 所有 git 操作串行，避免把 `index.lock` 错误暴露给用户；失败按指数退避重试 |
-| **审核状态机** | `pending`(待审核) → `published`(在架) / `rejected`(已驳回)；`published` → `unpublished`(已下架)。状态写进 `manifest.json` + `index.json`，别的实例立刻看到 |
+| **审核状态机** | `pending`(待审核) → `published`(在架) / `rejected`(已驳回)；`published` → `unpublish_pending`(申请下架，等管理员) → **彻底删除**（通过）/ 恢复在架（驳回或作者撤销）。状态写进 `manifest.json` + `index.json`，别的实例立刻看到 |
+| **下架是申请制** | 下架不可逆（确认后资产连文件带索引带记录一起没），市场又是共享的 —— 所以拆两步：作者申请（要手打 code 确认）→ 管理员拍板。**审核下架只有管理员能做**（通过就等于删了别人的资产） |
 | **高 semver 胜** | 远端与本地同版本时比提交时间；不同版本比 semver |
-| **可见性规则** | 列表默认显示：**在架的 ∪ 我已安装的 ∪ 我提交的**。管理员可见全部（他是市场运营者，状态由卡片徽标说明） |
+| **可见性规则** | 列表默认显示：**在架的 ∪ 待下架审核的（还在架）∪ 我提交的**。管理员可见全部（他是市场运营者，状态由卡片徽标说明） |
 | **送达回执** | 每次钉钉通知落一行回执（状态/重试次数/错误原因），失败自动退避重试 |
 
 ## 二、HTTP 接口（31 个）
@@ -47,11 +48,13 @@
 | `PUT /assets/{code}` | 更新版本 |
 | `POST /assets/{code}/install` | 安装（server 写盘 / frontend 浏览器写盘） |
 | `DELETE /assets/{code}/install` | 卸载 |
-| `POST /assets/{code}/unpublish` | 下架（文件保留） |
-| `POST /assets/{code}/publish` | 重新上架 |
+| `POST /assets/{code}/unpublish` | **申请下架**（必须带 `confirm_code`=资产 code；提交后进「待下架审核」，资产仍在架） |
+| `POST /assets/{code}/unpublish-review` | **管理员审核下架申请**（approve = 彻底删除 / reject = 恢复在架；仅管理员） |
+| `POST /assets/{code}/unpublish-cancel` | 作者撤销下架申请（恢复在架，不用等管理员） |
+| `POST /assets/{code}/publish` | 重新上架（已下架的软下架资产） |
 | `POST /assets/{code}/review` | **管理员审核**（approve / reject，驳回必须填理由） |
 | `POST /assets/{code}/submit` | 作者重新提交审核 |
-| `DELETE /assets/{code}` | **彻底删除**（文件+索引+安装记录，审计留痕） |
+| `DELETE /assets/{code}` | **彻底删除**（文件+索引+DB 记录，审计留痕）—— ⚠️ **仅管理员**，前端不暴露 |
 | `POST /assets/sync` | 手动从 GitLab 拉取对齐 |
 | `POST /assets/jobs/{id}/retry` | 失败任务重试 |
 
@@ -79,8 +82,8 @@
 | 组件 | 职责 |
 |---|---|
 | `index.vue` | 市场页：类型 Tab、分类筛选、搜索、状态徽标、返回广场、同步状态条、未过审提示条 |
-| `AssetCard.vue` | 资产卡：图标/名称/版本/摘要/标签/权限角标 + **状态徽标**（待审核/已驳回/已下架/可更新/已安装/待同步） |
-| `AssetDetailDrawer.vue` | 详情：文档正文（消毒后渲染）、权限声明、安装步骤、GitLab 链接、审核/上下架/删除操作 |
+| `AssetCard.vue` | 资产卡：图标/名称/版本/摘要/标签/权限角标 + **状态徽标**（待审核/已驳回/待下架审核/已下架/待同步） |
+| `AssetDetailDrawer.vue` | 详情：文档正文（消毒后渲染）、权限声明、安装步骤、GitLab 链接、审核/申请下架/撤销申请/下架审核操作（**没有「彻底删除」按钮**） |
 | `AssetUploadDialog.vue` | 上传：选包即体检、压缩包、权限声明、安装步骤 |
 | `AssetInstallDialog.vue` | 安装向导：双通道（服务端 / 浏览器写盘）、可装性预判、复制安装命令 |
 | `AssetAuditDrawer.vue` | 操作记录：操作审计（含同步冲突）+ 通知回执两个页签 |

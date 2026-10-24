@@ -188,13 +188,17 @@ async def require_reviewer(user: User = Depends(get_current_user)) -> User:
 
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
-    """管理员 —— 上架审核人."""
+    """管理员 —— 上架审核人 / 下架审核人 / 直接删资产.
+
+    ⚠️ 下架审核**只限管理员**: 通过就等于删了别人的资产,
+    被授权的审核人 (marketplace.review.reviewer_usernames) 只能做上架审核.
+    """
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
     if role == "admin":
         return user
     if role == "anonymous":
         raise HTTPException(status_code=401, detail="未登录")
-    raise HTTPException(status_code=403, detail="只有管理员可以审核上架")
+    raise HTTPException(status_code=403, detail="只有管理员可以审核 (下架审核 = 删除, 只限管理员)")
 
 
 async def _assert_can_modify(code: str, user: User) -> Asset:
@@ -313,7 +317,7 @@ async def list_assets(
     include_unpublished: bool = Query(False),
     status: str = Query(
         # 默认空串 = 走默认可见性规则 (⚠️ pattern 必须允许空串: FastAPI 会拿默认值去过校验)
-        "", pattern="^(|published|pending|rejected|unpublished|mine|all)$",
+        "", pattern="^(|published|pending|rejected|unpublished|unpublish_pending|mine|all)$",
         description="按上架状态过滤; 留空 = 默认可见性规则",
     ),
     limit: int = Query(100, ge=1, le=500),
@@ -349,7 +353,7 @@ async def list_assets(
 
         if status == "mine":
             stmt = stmt.where(Asset.author == username)
-        elif status in ("pending", "rejected", "unpublished", "published"):
+        elif status in ("pending", "rejected", "unpublished", "unpublish_pending", "published"):
             stmt = stmt.where(Asset.publish_status == status)
             if not (is_admin or is_reviewer) and status != "published":
                 # 别人只能看自己的未发布资产 —— 别人的待审/被驳回内容不该被列出来.
@@ -361,7 +365,7 @@ async def list_assets(
             if not (is_admin or is_reviewer):
                 stmt = stmt.where(
                     or_(
-                        Asset.publish_status == "published",
+                        Asset.publish_status.in_(("published", "unpublish_pending")),
                         Asset.author == username,
                     )
                 )
@@ -373,9 +377,11 @@ async def list_assets(
             # 默认可见性: 在架 ∪ 我提交的
             # (以前还有「我已安装的」—— 现在安装只是下载, 后端不知道用户装没装,
             #  拿下载记录当"已安装"是虚假语义, 去掉更干净)
+            # ⚠️ unpublish_pending (申请下架, 等管理员确认) **仍在架** ——
+            #    管理员确认前它还在被用, 不能从列表里消失 (只是标个待审徽标).
             stmt = stmt.where(
                 or_(
-                    Asset.publish_status == "published",
+                    Asset.publish_status.in_(("published", "unpublish_pending")),
                     Asset.author == username,
                 )
             )
@@ -502,6 +508,7 @@ async def sync_status(
     async with AsyncSessionLocal() as session:
         pending = failed = unpublished = 0
         awaiting_review = rejected = my_review = my_pending = 0
+        unpublish_pending = my_unpublish = 0
         rows = (await session.execute(select(Asset))).scalars().all()
         for a in rows:
             if a.sync_status == "staged":
@@ -514,12 +521,16 @@ async def sync_status(
                 awaiting_review += 1
             elif a.publish_status == "rejected":
                 rejected += 1
+            elif a.publish_status == "unpublish_pending":
+                unpublish_pending += 1
             if mine and (a.author or "") == mine:
                 if a.publish_status == "pending":
                     my_pending += 1
                     my_review += 1      # 需要处理 = 在等审核 + 被驳回
                 elif a.publish_status == "rejected":
                     my_review += 1
+                elif a.publish_status == "unpublish_pending":
+                    my_unpublish += 1
 
     puller = get_puller()
     return SyncStatusOut(
@@ -532,6 +543,8 @@ async def sync_status(
         rejected_count=rejected,
         my_review_count=my_review,
         my_pending_count=my_pending,
+        unpublish_pending_count=unpublish_pending,
+        my_unpublish_count=my_unpublish,
         last_sync_at=puller.last_sync_at,
     )
 
@@ -839,6 +852,20 @@ def _install_block_reason(kind: str, files: list[str]) -> str:
 
 # ---------- 上架 / 下架 ----------
 
+# 动作名 → git commit 里的中文描述 (下架申请制之后动作多了好几个)
+_ACTION_COMMIT_TEXT = {
+    "publish": "上架",
+    "unpublish": "下架",
+    "unpublish_request": "申请下架",
+    "unpublish_approve": "通过下架",
+    "unpublish_reject": "驳回下架",
+    "unpublish_cancel": "撤销下架",
+    "approve": "通过审核, 上架",
+    "reject": "驳回审核",
+    "submit": "提交审核",
+}
+
+
 async def _set_publish_state(
     *,
     code: str,
@@ -910,7 +937,7 @@ async def _set_publish_state(
             payload={
                 "author": list(_author_of(user)),
                 "commit_message": (
-                    f"chore(market): {'下架' if action == 'unpublish' else '上架'}资产 "
+                    f"chore(market): {_ACTION_COMMIT_TEXT.get(action, '更新')}资产 "
                     f"{a.name} {a.version}"
                 ),
             },
@@ -933,22 +960,142 @@ async def _set_publish_state(
 @router.post("/{code}/unpublish")
 async def unpublish_asset(
     code: str,
+    confirm_code: str = Form(..., description="必须与资产 code 一致 (防误操作)"),
+    comment: str = Form("", description="下架理由 (给管理员看)"),
+    user: User = Depends(require_publisher),
+) -> dict[str, Any]:
+    """**申请下架** —— 提交后等管理员确认, 确认通过资产会被**彻底删除**.
+
+    为什么不是"点了就下架":
+      · 下架是**不可逆的终态** —— 确认后资产连文件带索引带 DB 记录一起没
+      · 市场是**共享**的 —— 资产下架了, 别人第二天就装不上, 得有人拍板
+
+    所以拆两步: 作者申请 (必须手打 code 确认) → 管理员确认 → 自动删除.
+
+    ⚠️ confirm_code 必须等于 code —— 光靠前端弹窗拦不住, 直接调 API 就绕过了.
+    """
+    if (confirm_code or "").strip() != code:
+        raise HTTPException(
+            status_code=400,
+            detail=f"确认码不匹配: 请输入资产 code「{code}」以确认下架",
+        )
+    await _assert_can_modify(code, user)
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        if a.publish_status == "unpublish_pending":
+            raise HTTPException(status_code=409, detail="下架申请已提交, 等管理员确认")
+        if a.publish_status != "published":
+            raise HTTPException(
+                status_code=409, detail=f"当前状态是「{a.publish_status}」, 不能申请下架"
+            )
+
+    out = await _set_publish_state(
+        code=code, publish_status="unpublish_pending", action="unpublish_request",
+        comment=comment or "申请下架", user=user, review_note=comment or "",
+    )
+    if out.get("changed"):
+        await notify_market(
+            "unpublish", name=out["name"], version=out["version"], actor=user.username,
+            detail=comment or "有人申请下架, 等管理员确认", link="", code=code,
+        )
+    return {
+        "ok": True, "code": code, "publish_status": "unpublish_pending",
+        "changed": out.get("changed", False),
+    }
+
+
+@router.post("/{code}/unpublish-review")
+async def review_unpublish_asset(
+    code: str,
+    decision: str = Form(..., description="approve | reject"),
+    comment: str = Form("", description="审核意见 (驳回时给发布者看)"),
+    user: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """管理员审核**下架申请**.
+
+    approve → 资产被**彻底删除** (GitLab 文件 + 索引 + DB 记录一起没)
+    reject  → 资产恢复在架, 驳回理由给发布者
+
+    ⚠️ 只有**管理员**能审 —— 通过就等于删了别人的资产.
+    被授权的审核人 (marketplace.review.reviewer_usernames) 只能做**上架**审核,
+    边界跟之前定的一致: "能审" ≠ "能改别人上传的资产".
+    """
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="decision 只能是 approve 或 reject")
+
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        if a.publish_status != "unpublish_pending":
+            raise HTTPException(
+                status_code=409,
+                detail=f"该资产当前状态是「{a.publish_status}」, 没有待审的下架申请",
+            )
+
+    if decision == "approve":
+        out = await _hard_delete_asset(
+            code=code, user=user,
+            comment=comment or "管理员通过下架申请, 资产已删除",
+            audit_action="unpublish_approve",
+        )
+        return {
+            "ok": True, "code": code, "decision": "approve",
+            "deleted": True, "commit_sha": out.commit_sha,
+        }
+
+    note = comment or "下架申请未通过, 资产保持上架"
+    out = await _set_publish_state(
+        code=code, publish_status="published", action="unpublish_reject",
+        comment=note, user=user, review_note=note,
+    )
+    if out.get("changed"):
+        await notify_market(
+            "reject", name=out["name"], version=out["version"], actor=user.username,
+            detail=note, link="", code=code,
+        )
+    return {"ok": True, "code": code, "decision": "reject", "publish_status": "published"}
+
+
+@router.post("/{code}/unpublish-cancel")
+async def cancel_unpublish_request(
+    code: str,
     comment: str = Form(""),
     user: User = Depends(require_publisher),
 ) -> dict[str, Any]:
-    """下架: 标记 + 从索引里移除, 但**保留文件** (在用用户要能看到"已下架")."""
+    """作者**撤销**下架申请 —— 资产恢复在架, 不用等管理员驳回."""
     await _assert_can_modify(code, user)
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        if a.publish_status != "unpublish_pending":
+            raise HTTPException(
+                status_code=409, detail="该资产没有待审的下架申请, 撤销失败"
+            )
+
     out = await _set_publish_state(
-        code=code, publish_status="unpublished", action="unpublish",
-        comment=comment, user=user,
+        code=code, publish_status="published", action="unpublish_cancel",
+        comment=comment or "作者撤销下架申请", user=user, review_note="",
     )
-    if not out.get("changed"):
-        return out
-    await notify_market(
-        "unpublish", name=out["name"], version=out["version"], actor=user.username,
-        detail=comment or "已从市场下架", link="", code=code,
-    )
-    return {"ok": True, "code": code, "publish_status": "unpublished"}
+    if out.get("changed"):
+        # 资产回到在架 —— 跟「重新上架」一样, 通知一声 (谁还在用, 得知道它没被删)
+        await notify_market(
+            "publish", name=out["name"], version=out["version"], actor=user.username,
+            detail=comment or "作者撤销下架申请, 资产保持上架", link="", code=code,
+        )
+    return {
+        "ok": True, "code": code, "publish_status": "published",
+        "changed": out.get("changed", False),
+    }
 
 
 # ---------- 上架审核 ----------
@@ -1036,8 +1183,19 @@ async def publish_asset(
     comment: str = Form(""),
     user: User = Depends(require_publisher),
 ) -> dict[str, Any]:
-    """重新上架."""
+    """重新上架 (已下架的资产恢复在架)."""
     await _assert_can_modify(code, user)
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        if a.publish_status == "unpublish_pending":
+            # 有待审的下架申请 —— 走「撤销申请」那条路, 别让两条路打架
+            raise HTTPException(
+                status_code=409, detail="该资产有待审的下架申请, 请先撤销申请再重新上架"
+            )
     out = await _set_publish_state(
         code=code, publish_status="published", action="publish",
         comment=comment, user=user,
@@ -1053,28 +1211,26 @@ async def publish_asset(
 
 # ---------- 硬删 ----------
 
-@router.delete("/{code}", response_model=AssetDeleteOut)
-async def delete_asset(
+async def _hard_delete_asset(
+    *,
     code: str,
-    comment: str = Query("", description="删除原因 (记入审计)"),
-    _user: User = Depends(require_publisher),
+    user: User,
+    comment: str,
+    audit_action: str = "delete",
 ) -> AssetDeleteOut:
-    """彻底删除一个资产 (不只是下架).
+    """彻底删除一个资产 (GitLab 文件 + 索引 + DB 记录一起没).
 
-    ⚠️ 只能删**自己上传的**资产 (管理员例外) —— 白名单只是"能发布"的意思.
-
-    与「下架」的区别:
-      下架 —— 标记 + 从索引移除, **文件保留**; 已装的用户还能继续用, 看到「已下架」提示
-      删除 —— 连文件带索引带 DB 记录一起没, 不可恢复
+    两条路径共用它:
+      · 管理员直接删 (DELETE /{code})
+      · 管理员**通过下架申请** (POST /{code}/unpublish-review → approve)
 
     顺序很关键 (**先推 GitLab, 后动 DB**):
       1. index.json 剔除该资产 (DB 行还在, 用 exclude 参数)
       2. 删掉工作区里的资产目录
       3. commit + push 到 GitLab —— 失败就把工作区从 HEAD 恢复, DB 一个字节都不动
-      4. 推送成功 → 删 DB 行 + 安装记录, 记审计, 发通知
+      4. 推送成功 → 删 DB 行, 记审计, 发通知
     反过来做的话, push 失败会导致"DB 没了但 GitLab 还在" → 拉取同步器会把资产复活.
     """
-    await _assert_can_modify(code, _user)
     async with AsyncSessionLocal() as session:
         a = (
             await session.execute(select(Asset).where(Asset.code == code))
@@ -1106,7 +1262,7 @@ async def delete_asset(
             result = await git_sync.sync_paths(
                 paths=paths,
                 message=f"chore(market): 删除资产 {asset_name} {version}",
-                author=_author_of(_user),
+                author=_author_of(user),
             )
         except git_sync.SyncError as e:
             # 回滚工作区: 目录与 index.json 都从最后一次提交恢复
@@ -1123,8 +1279,8 @@ async def delete_asset(
             if a is not None:
                 await session.delete(a)
             await _audit(
-                session, code=code, action="delete", actor=_user, asset_id=asset_id,
-                comment=comment or "管理员删除",
+                session, code=code, action=audit_action, actor=user, asset_id=asset_id,
+                comment=comment or "资产已删除",
                 detail={"git_path": git_path},
             )
             await session.commit()
@@ -1132,13 +1288,36 @@ async def delete_asset(
         #    (服务端写盘通道已下线)
 
     await notify_market(
-        "delete", name=asset_name, version=version, actor=_user.username,
+        "delete", name=asset_name, version=version, actor=user.username,
         detail=comment or "资产已从市场删除", link="", code=code,
     )
-    logger.info("delete 资产 code=%s", code)
+    logger.info("delete 资产 code=%s action=%s", code, audit_action)
     return AssetDeleteOut(
         ok=True, code=code,
         commit_sha=result.commit_sha,
+    )
+
+
+@router.delete("/{code}", response_model=AssetDeleteOut)
+async def delete_asset(
+    code: str,
+    comment: str = Query("", description="删除原因 (记入审计)"),
+    _user: User = Depends(require_admin),
+) -> AssetDeleteOut:
+    """彻底删除一个资产 (不只是下架) —— **管理员专用**.
+
+    ⚠️ 前端**不再暴露**这个按钮 (2026-10-24 起): 用户想删资产走
+    「申请下架 → 管理员确认 → 自动删除」, 删除这个不可逆的动作必须有人拍板.
+    这个端点留着是给管理员做运维清理的 (比如有人直接往仓库里塞了垃圾资产).
+
+    与「下架申请」的区别:
+      申请下架 —— 作者发起, 管理员确认后才真删 (走审核)
+      直接删   —— 管理员当场删, 不走审核 (运维口子)
+    """
+    return await _hard_delete_asset(
+        code=code, user=_user,
+        comment=comment or "管理员删除",
+        audit_action="delete",
     )
 
 

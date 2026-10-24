@@ -361,15 +361,30 @@ z.close()
     check('⑭ 抽屉里有「下载」按钮', insBtns.includes('下载'), insBtns.join(' | '));
     check('⑮ 没有装到本地/重新安装/卸载',
       !insBtns.some((b) => /安装到本地|重新安装|卸载/.test(b)), insBtns.join(' | '));
-    // ===== ⑤ 管理员下架 → 别人看不到, 但**作者**仍看得到 (标「已下架」) =====
-    //    可见性规则: 在架 ∪ 我提交的.
-    //    (以前还有「我已安装的」—— 安装只是下载, 后端不知道用户装没装, 那条规则也去掉了)
-    await api(`/api/v1/assets/${ASSET}/unpublish`, {
-      method: 'POST', token: adminToken, body: { comment: '临时下架' },
+    // ===== ⑤ 申请下架 → 待下架审核 (资产**仍在架**) → 撤销 → 恢复 =====
+    //    新流程 (2026-10-24): 下架是**申请制** —— 管理员确认后资产才会被彻底删除.
+    //    待确认期间资产**仍在市场可见** (管理员没点头之前它还在被用), 只挂个徽标.
+    const applyRes = await api(`/api/v1/assets/${ASSET}/unpublish`, {
+      method: 'POST', token: adminToken,
+      // ⚠️ 这些端点的字段是 **Form**, 必须发 FormData —— 发 JSON 的话
+      //    confirm_code 这种必填字段收不到 (后端直接 422).
+      form: (() => {
+        const f = new FormData();
+        f.append('confirm_code', ASSET);
+        f.append('comment', '临时下架');
+        return f;
+      })(),
     });
+    check('⑱ 申请下架成功', applyRes.status === 200,
+      `status=${applyRes.status} ${(applyRes.text || '').slice(0, 80)}`);
     await sleep(2500);
 
-    // 别人 (小李) 看不到
+    const stUnp = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    check('⑲ 状态是 unpublish_pending',
+      stUnp.json && stUnp.json.publish_status === 'unpublish_pending',
+      stUnp.json && stUnp.json.publish_status);
+
+    // 别人 (小李) **仍然看得到** —— 待确认期间资产还在架
     await ins.page.reload({ waitUntil: 'domcontentloaded' });
     await ins.page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1500);
@@ -381,9 +396,9 @@ z.close()
     const insSees = await ins.page.evaluate((name) =>
       [...document.querySelectorAll('.asset-card')].some((x) => x.textContent.includes(name)),
     '场景验证技能');
-    check('⑱ 下架后别人看不到', !insSees, `小李仍能看到=${insSees}`);
+    check('⑳ 待下架审核期间资产仍在市场可见', insSees, `小李看不到=${!insSees}`);
 
-    // 作者 (小王) 看得到, 且标「已下架」
+    // 作者 (小王) 看得到, 且标「⏳ 待下架审核」
     await pub.page.reload({ waitUntil: 'domcontentloaded' });
     await pub.page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1500);
@@ -397,45 +412,71 @@ z.close()
       const c = [...document.querySelectorAll('.asset-card')].find((x) => x.textContent.includes(name));
       return c ? [...c.querySelectorAll('.ac-badge')].map((x) => x.textContent.trim()) : null;
     }, '场景验证技能');
-    check('⑲ 作者看得到且标「已下架」',
-      !!(pubBadges && pubBadges.includes('⚠️ 已下架')), JSON.stringify(pubBadges));
+    check('㉑ 卡片标「待下架审核」',
+      !!(pubBadges && pubBadges.includes('⏳ 待下架审核')), JSON.stringify(pubBadges));
 
-    // 重新上架
-    await api(`/api/v1/assets/${ASSET}/publish`, {
-      method: 'POST', token: adminToken, body: { comment: '恢复' },
+    // 撤销申请 → 恢复在架
+    const cancelRes = await api(`/api/v1/assets/${ASSET}/unpublish-cancel`, {
+      method: 'POST', token: adminToken,
+      form: (() => {
+        const f = new FormData();
+        f.append('comment', '恢复');
+        return f;
+      })(),
     });
     await sleep(2500);
     const st5 = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
-    check('⑳ 重新上架成功', st5.json && st5.json.publish_status === 'published', st5.json && st5.json.publish_status);
+    check('㉒ 撤销申请后恢复 published',
+      cancelRes.status === 200 && st5.json && st5.json.publish_status === 'published',
+      `cancel=${cancelRes.status} publish_status=${st5.json && st5.json.publish_status}`);
 
     // ===== ⑥ 审计 / 回执 / 状态统计 =====
     const audits = await api(`/api/v1/assets/audits?code=${ASSET}`, { token: adminToken });
     const actions = (audits.json.items || []).map((a) => a.action);
-    check('㉑ 审计留痕完整',
-      ['create', 'reject', 'submit', 'approve', 'unpublish', 'publish'].every((a) => actions.includes(a)),
+    check('㉓ 审计留痕完整',
+      ['create', 'reject', 'submit', 'approve', 'unpublish_request', 'unpublish_cancel']
+        .every((a) => actions.includes(a)),
       actions.join(','));
 
     const notif = await api('/api/v1/assets/notifications?limit=50', { token: adminToken });
     const evs = (notif.json.items || []).filter((n) => n.code === ASSET).map((n) => n.event);
-    check('㉒ 通知事件齐全 (待审/驳回/上架)',
+    check('㉔ 通知事件齐全 (待审/驳回/上架)',
       ['review', 'reject', 'publish'].every((e) => evs.includes(e)), evs.join(','));
 
     const sync = await api('/api/v1/assets/sync-status?client_id=scn', { token: adminToken });
-    check('㉓ 同步状态可读', sync.status === 200 && sync.json.pending_count >= 0,
+    check('㉕ 同步状态可读', sync.status === 200 && sync.json.pending_count >= 0,
       `pending=${sync.json.pending_count} failed=${sync.json.failed_count}`);
 
-    // ===== ⑦ 彻底删除 =====
-    const del = await api(`/api/v1/assets/${ASSET}?comment=场景结束清理`, {
-      method: 'DELETE', token: adminToken,
+    // ===== ⑦ 申请下架 → 管理员通过 → 彻底删除 (新流程) =====
+    const apply2 = await api(`/api/v1/assets/${ASSET}/unpublish`, {
+      method: 'POST', token: adminToken,
+      form: (() => {
+        const f = new FormData();
+        f.append('confirm_code', ASSET);
+        f.append('comment', '场景结束清理');
+        return f;
+      })(),
     });
-    check('㉔ 删除成功', del.status === 200, `status=${del.status} ${del.text.slice(0, 80)}`);
+    await sleep(1500);
+    const del = await api(`/api/v1/assets/${ASSET}/unpublish-review`, {
+      method: 'POST', token: adminToken,
+      form: (() => {
+        const f = new FormData();
+        f.append('decision', 'approve');
+        f.append('comment', '场景结束清理');
+        return f;
+      })(),
+    });
+    check('㉖ 下架审核通过 → 资产被删除',
+      apply2.status === 200 && del.status === 200,
+      `apply=${apply2.status} approve=${del.status} ${(del.text || '').slice(0, 80)}`);
     const gone = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
-    check('㉕ 删除后资产不可查', gone.status === 404, `status=${gone.status}`);
+    check('㉗ 删除后资产不可查', gone.status === 404, `status=${gone.status}`);
     const listAfter = await api('/api/v1/assets?limit=200&client_id=scn', { token: adminToken });
-    check('㉖ 删除后不在任何列表里',
+    check('㉘ 删除后不在任何列表里',
       !(listAfter.json.items || []).some((i) => i.code === ASSET));
 
-    check('㉗ 全程无 JS 错误',
+    check('㉙ 全程无 JS 错误',
       pub.errors.length === 0 && adm.errors.length === 0 && ins.errors.length === 0,
       [...pub.errors, ...adm.errors, ...ins.errors].slice(0, 2).join(' ; '));
   } finally {

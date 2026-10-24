@@ -48,8 +48,9 @@ export interface AssetItem {
   /** 同步状态: staged(待同步) / pushed(已同步) / failed(失败) */
   sync_status: 'staged' | 'pushed' | 'failed' | string;
   last_error: string;
-  /** 生命周期: published(在架) / pending(待审核) / rejected(已驳回) / unpublished(已下架) */
-  publish_status: 'published' | 'pending' | 'rejected' | 'unpublished' | string;
+  /** 生命周期: published(在架) / pending(待审核) / rejected(已驳回) /
+   *  unpublished(已下架) / unpublish_pending(申请下架, 等管理员确认) */
+  publish_status: 'published' | 'pending' | 'rejected' | 'unpublished' | 'unpublish_pending' | string;
   /** 最近一次审核意见 (驳回理由) */
   review_note: string;
   /** 当前用户能不能审这个资产 (管理员或被授权的审核人) */
@@ -167,6 +168,10 @@ export interface SyncStatus {
   my_review_count: number;
   /** 我自己提交的、还在等审核的资产数 */
   my_pending_count: number;
+  /** 申请下架、等管理员确认的资产数 (确认后资产会被彻底删除) */
+  unpublish_pending_count: number;
+  /** 我自己申请下架、还在等确认的资产数 */
+  my_unpublish_count: number;
   last_sync_at: string | null;
 }
 
@@ -299,11 +304,51 @@ export async function submitForReview(
   };
 }
 
-/** 彻底删除资产 (不只是下架) */
+/** 彻底删除资产 (不只是下架) —— ⚠️ **管理员专用**, 用户删除请走「申请下架」 */
 export async function deleteAsset(code: string, comment = ''): Promise<{
   ok: boolean; code: string; commit_sha: string;
 }> {
   return apiDelete('/assets/' + encodeURIComponent(code), { comment });
+}
+
+/**
+ * **申请下架** —— 提交后等管理员确认, 确认通过资产会被彻底删除.
+ *
+ * ⚠️ confirmCode 必须与资产 code 一致 —— 后端会校验, 绕不过去.
+ *    (前端弹窗只是提醒, 不是防线)
+ */
+export async function unpublishAsset(
+  code: string, confirmCode: string, comment = '',
+): Promise<{ ok: boolean; code: string; publish_status: string; changed: boolean }> {
+  const fd = new FormData();
+  fd.append('confirm_code', confirmCode);
+  fd.append('comment', comment);
+  return (await request.post(`/assets/${encodeURIComponent(code)}/unpublish`, fd)) as unknown as {
+    ok: boolean; code: string; publish_status: string; changed: boolean;
+  };
+}
+
+/** 管理员审核下架申请: approve = 通过并**彻底删除**, reject = 驳回并恢复在架 */
+export async function reviewUnpublish(
+  code: string, decision: 'approve' | 'reject', comment = '',
+): Promise<{ ok: boolean; code: string; decision: string; deleted?: boolean; publish_status?: string }> {
+  const fd = new FormData();
+  fd.append('decision', decision);
+  fd.append('comment', comment);
+  return (await request.post(`/assets/${encodeURIComponent(code)}/unpublish-review`, fd)) as unknown as {
+    ok: boolean; code: string; decision: string; deleted?: boolean; publish_status?: string;
+  };
+}
+
+/** 作者撤销自己的下架申请 —— 资产恢复在架, 不用等管理员驳回 */
+export async function cancelUnpublish(
+  code: string, comment = '',
+): Promise<{ ok: boolean; code: string; publish_status: string; changed: boolean }> {
+  const fd = new FormData();
+  fd.append('comment', comment);
+  return (await request.post(`/assets/${encodeURIComponent(code)}/unpublish-cancel`, fd)) as unknown as {
+    ok: boolean; code: string; publish_status: string; changed: boolean;
+  };
 }
 
 export async function getJob(id: number): Promise<AssetJob> {
@@ -367,12 +412,6 @@ export async function downloadAssetPackage(code: string, version: string): Promi
     { responseType: 'blob' },
   );
   return resp as unknown as Blob;
-}
-
-export async function unpublishAsset(code: string, comment = ''): Promise<void> {
-  const fd = new FormData();
-  fd.append('comment', comment);
-  await request.post(`/assets/${encodeURIComponent(code)}/unpublish`, fd);
 }
 
 export async function publishAsset(code: string, comment = ''): Promise<void> {

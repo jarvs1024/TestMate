@@ -99,7 +99,7 @@ async def send_markdown(
 _EVENT_TEXT = {
     "publish": "🎉 新资产上架",
     "update": "📦 资产版本更新",
-    "unpublish": "⚠️ 资产已下架",
+    "unpublish": "🗑 申请下架, 待确认",
     "delete": "🗑 资产已删除",
     "review": "📋 新资产待审核",
     "reject": "❌ 资产审核未通过",

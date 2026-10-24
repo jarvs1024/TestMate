@@ -164,11 +164,14 @@ async def test_visibility_unpublished_hidden_from_others(client, auth, ws,
                                                           restore_git_config,  # noqa: ARG001
                                                           publisher_user,
                                                           stranger_user):
-    """下架的资产: **别人看不到, 作者自己看得到**.
+    """已下架 (unpublished) 的资产: **别人看不到, 作者自己看得到**.
 
     以前还有第三条规则「我已安装的也能看到」—— 现在安装只是下载,
     后端根本不知道用户装没装, 拿下载记录当"已安装"是虚假语义, 那条规则也去掉了.
     可见性因此简化成: 在架 ∪ 我提交的.
+
+    ⚠️ 「已下架」这个状态现在**只能由管理员手动置** (用户下架走申请制,
+    确认后直接删除), 所以这里直接改 DB 造这个状态来验可见性规则.
     """
     from tests.conftest import set_setting
 
@@ -177,7 +180,15 @@ async def test_visibility_unpublished_hidden_from_others(client, auth, ws,
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="unpub-demo")
 
-    await client.post(f"{API}/unpub-demo/unpublish", data={"comment": "下架"}, headers=auth)
+    # 管理员手动置成「已下架」(历史数据 / 运维场景)
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(select(Asset).where(Asset.code == "unpub-demo"))).scalar_one()
+        a.publish_status = "unpublished"
+        await s.commit()
 
     # 作者自己看得到 (我提交的)
     r_own = await client.get(f"{API}?limit=100&client_id=c-own", headers=pauth)
@@ -399,6 +410,11 @@ async def test_preview_package_rejects_garbage(client, auth, publisher_user):
 
 async def test_unpublish_and_publish(client, auth, ws, restore_git_config,  # noqa: ARG001
                                      publisher_user):
+    """申请下架 → 撤销申请 → 恢复在架.
+
+    (下架现在是**申请制**: 提交后等管理员确认, 确认通过就彻底删除 ——
+     完整流程见 test_unpublish_flow.py. 这里只验"能不能撤销回架".)
+    """
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
@@ -406,12 +422,13 @@ async def test_unpublish_and_publish(client, auth, ws, restore_git_config,  # no
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="updown-demo")
 
-    r = await client.post(f"{API}/updown-demo/unpublish", data={"comment": "下架"},
-                           headers=auth)
+    r = await client.post(f"{API}/updown-demo/unpublish",
+                          data={"confirm_code": "updown-demo", "comment": "下架"},
+                          headers=auth)
     assert r.status_code == 200
-    assert r.json()["publish_status"] == "unpublished"
+    assert r.json()["publish_status"] == "unpublish_pending"
 
-    r2 = await client.post(f"{API}/updown-demo/publish", data={"comment": "回架"},
+    r2 = await client.post(f"{API}/updown-demo/unpublish-cancel", data={"comment": "回架"},
                            headers=auth)
     assert r2.status_code == 200
     assert r2.json()["publish_status"] == "published"

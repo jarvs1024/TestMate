@@ -77,6 +77,10 @@ const ACTIONS = [
   { value: 'conflict_resolved', label: '同步冲突' },
   { value: 'publish', label: '上架' },
   { value: 'unpublish', label: '下架' },
+  { value: 'unpublish_request', label: '申请下架' },
+  { value: 'unpublish_approve', label: '下架通过' },
+  { value: 'unpublish_reject', label: '下架驳回' },
+  { value: 'unpublish_cancel', label: '撤销下架' },
   { value: 'delete', label: '删除' },
 ];
 
