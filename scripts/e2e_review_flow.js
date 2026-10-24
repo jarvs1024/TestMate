@@ -214,7 +214,8 @@ async function openPage(browser, token, user) {
   await sleep(500);
   // 分类是必填 (新表单: 缺一项提交按钮就是禁用的) —— 选第一个
   await pub.page.evaluate(() => {
-    const s = document.querySelector('.el-drawer .el-select');
+    // 按稳定类名定位分类下拉 (不靠顺序)
+    const s = document.querySelector('.up-drawer .sel-category');
     s && s.click();
   });
   await sleep(700);

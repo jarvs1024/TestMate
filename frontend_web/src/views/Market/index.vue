@@ -61,16 +61,16 @@
     <!-- ===== 我提交但还没过审的资产: 给个显眼入口, 免得被埋在列表里 ===== -->
     <div v-if="sync.my_review_count > 0" class="my-review-bar">
       <span>📋 你有 <b>{{ sync.my_review_count }}</b> 个资产需要处理 (在等审核或被驳回)</span>
-      <button class="mrb-btn" @click="toggleOnlyMine">
-        {{ onlyMine ? '显示全部' : '只看这些' }}
+      <button class="mrb-btn" @click="toggleOnlyMine('review')">
+        {{ onlyMine === 'review' ? '显示全部' : '只看这些' }}
       </button>
     </div>
 
     <!-- ===== 下架申请: 作者等确认 / 管理员等拍板 ===== -->
     <div v-if="sync.my_unpublish_count > 0" class="my-review-bar">
       <span>🗑 你的 <b>{{ sync.my_unpublish_count }}</b> 个资产在等下架确认 —— 管理员通过后会被彻底删除</span>
-      <button class="mrb-btn" @click="toggleOnlyMine">
-        {{ onlyMine ? '显示全部' : '只看这些' }}
+      <button class="mrb-btn" @click="toggleOnlyMine('unpublish')">
+        {{ onlyMine === 'unpublish' ? '显示全部' : '只看这些' }}
       </button>
     </div>
     <div v-if="isAdmin && othersUnpublishCount > 0" class="my-review-bar admin">
@@ -90,7 +90,7 @@
         <button v-for="c in categories" :key="c.name" class="chip"
                 :class="{ active: category === c.name }" :title="c.desc"
                 @click="category = c.name; load()">
-          {{ c.name }}<span v-if="c.total" class="count">{{ c.total }}</span>
+          {{ c.name }}<span v-if="catCount(c)" class="count">{{ catCount(c) }}</span>
         </button>
       </div>
       <!-- ===== 项目筛选 =====
@@ -180,11 +180,18 @@ const kind = ref<MarketKind>('plugin');
 const category = ref('');
 const keyword = ref('');
 const sortBy = ref<'hot' | 'new' | 'name'>('hot');
-/** 只看我自己的"待处理"资产 (提示条里的即时过滤, 不做成常驻筛选) */
-const onlyMine = ref(false);
+/**
+ * 「只看这些」的模式 —— 两条提示条要分开:
+ *   review    → 我提交的、还等审核或被驳回的
+ *   unpublish → 我申请下架、等管理员确认的
+ *
+ * ⚠️ 以前两个提示条共用一个开关, 但过滤条件只有 pending/rejected ——
+ *    点「🗑 你的 N 个资产在等下架确认」→ 一条都显示不出来 (它们是 unpublish_pending)。
+ */
+const onlyMine = ref<'review' | 'unpublish' | ''>('');
 
-function toggleOnlyMine() {
-  onlyMine.value = !onlyMine.value;
+function toggleOnlyMine(mode: 'review' | 'unpublish') {
+  onlyMine.value = onlyMine.value === mode ? '' : mode;
   load();
 }
 /** 未过滤的结果 (分类 chip 上的「全部 N」用) */
@@ -292,6 +299,19 @@ async function loadKindCounts() {
   }
 }
 
+/**
+ * 分类 chip 上的计数 —— **按当前类型 tab 算**.
+ *
+ * ⚠️ 以前用的是后端给的 total (全部形态的总数) → 切到「技能」tab 时数字
+ *    比实际能看到的多, 点进去发现是空的, 像是分类坏了.
+ */
+function catCount(c: { by_kind?: Record<string, number>; total?: number }): number {
+  if (!onlyMine.value && c.by_kind && c.by_kind[kind.value] !== undefined) {
+    return c.by_kind[kind.value] || 0;
+  }
+  return c.total || 0;
+}
+
 async function load() {
   loading.value = true;
   loadError.value = '';
@@ -300,30 +320,37 @@ async function load() {
     if (loading.value) loadError.value = '加载超时, 请检查后端服务后点「重试」';
   }, LOAD_TIMEOUT_MS);
   try {
+    // ⚠️ 「只看这些」时**只按状态过滤**, 别的筛选一律让路 ——
+    //    否则我提交的待审资产因为落在别的分类/项目下, 就一条都显示不出来。
+    const mine = !!onlyMine.value;
     const r = await listAssets({
       // 「只看这些」时不按类型卡 —— 我提交的待审资产可能是任意类型
-      kind: onlyMine.value ? undefined : kind.value,
-      category: category.value === '__featured' ? undefined : (category.value || undefined),
+      kind: mine ? undefined : kind.value,
+      category: mine || category.value === '__featured'
+        ? undefined : (category.value || undefined),
       // 项目筛选: 留空 = 不过滤; 'general' = 只看通用; '6100' = 该项目特有 + 通用
-      project: projectFilter.value || undefined,
+      project: mine ? undefined : (projectFilter.value || undefined),
       q: keyword.value.trim() || undefined,
       sort: sortBy.value,
       limit: 500,
     });
     const rows = r?.items ?? [];
     rawItems.value = rows;
-    items.value = category.value === '__featured'
+    items.value = (!mine && category.value === '__featured')
       ? rows.filter((i) => i.featured)
       : rows;
     if (onlyMine.value) {
-      // 提示条的"只看这些": 我自己提交的、还没过审的
+      // 提示条的"只看这些": 我自己提交的, 按提示条的种类过滤
       const me = (userStore.user?.username || '').trim();
+      const want = onlyMine.value === 'unpublish'
+        ? ['unpublish_pending']
+        : ['pending', 'rejected'];
       items.value = items.value.filter(
-        (i) => (i.author || '').trim() === me
-          && (i.publish_status === 'pending' || i.publish_status === 'rejected'),
+        (i) => (i.author || '').trim() === me && want.includes(i.publish_status),
       );
     }
-    total.value = r?.total ?? rows.length;
+    // ⚠️ 客户端过滤之后, 条数就是过滤后的条数 —— 别再显示后端的总数 (虚高)
+    total.value = items.value.length;
   } catch (e: any) {
     loadError.value = e?.response?.data?.detail || e?.message || '未知错误';
     items.value = [];
@@ -440,9 +467,10 @@ onMounted(() => document.addEventListener('click', onDocClick));
 onUnmounted(() => document.removeEventListener('click', onDocClick));
 
 function resetFilters() {
+  kind.value = 'plugin';
   category.value = '';
   keyword.value = '';
-  onlyMine.value = false;
+  onlyMine.value = '';
   sortBy.value = 'hot';
   projectFilter.value = '';
   load();

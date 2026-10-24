@@ -97,9 +97,9 @@ async function fillRequiredFields(page) {
     const code = byPh('dml-ssd-log-doctor'); if (code) set(code, 'dml-e2e-probe');
   });
   await sleep(400);
-  // 分类是 el-select —— 打开下拉选第一个
+  // 分类下拉 —— 按**稳定类名**定位 (不靠"第一个 el-select"这种顺序假设)
   await page.evaluate(() => {
-    const s = document.querySelector('.el-drawer .el-select');
+    const s = document.querySelector('.up-drawer .sel-category');
     s && s.querySelector('input')?.focus();
     s && s.click();
   });
@@ -509,8 +509,7 @@ async function codeByName(page, name) {
     const formState = await page.evaluate(() => {
       const drawer = document.querySelector('.up-drawer');
       const txt = (sel) => (drawer.querySelector(sel)?.textContent || '').replace(/\s+/g, ' ').trim();
-      const scopeSel = [...drawer.querySelectorAll('.el-select')]
-        .find((s) => (s.textContent || '').includes('通用'));
+      const scopeSel = drawer.querySelector('.sel-project');
       return {
         guide: txt('.guide'),
         pkgReq: txt('.pkg-req'),
@@ -525,8 +524,8 @@ async function codeByName(page, name) {
       /怎么填/.test(formState.guide) && !/三条约定/.test(formState.guide), formState.guide.slice(0, 70));
     check('H1-2 安装包要求写在上传区下方',
       /技能包要求/.test(formState.pkgReq) && /SKILL\.md/.test(formState.pkgReq), formState.pkgReq.slice(0, 90));
-    check('H1-3 进阶信息只留适用场景/标签/关键词',
-      /适用场景/.test(formState.adv)
+    check('H1-3 进阶信息只留标签/关键词 (适用场景已上提)',
+      /标签/.test(formState.adv) && /搜索关键词/.test(formState.adv)
       && !/详细说明|不适用|安装步骤|设为精选|权限声明/.test(formState.adv),
       formState.adv.slice(0, 70));
     check('H1-4 进阶信息标题写明「可展开」', /可展开/.test(formState.advTitle), formState.advTitle.slice(0, 40));

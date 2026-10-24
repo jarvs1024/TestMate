@@ -15,17 +15,21 @@ import zipfile
 from tests.conftest import set_setting
 
 
-def _zip_bytes(files: dict[str, str]) -> tuple[str, bytes, str]:
+def _zip_bytes(files: dict[str, str], filename: str = "pkg.zip") -> tuple[str, bytes, str]:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for name, content in files.items():
             z.writestr(name, content)
-    return ("pkg.zip", buf.getvalue(), "application/zip")
+    return (filename, buf.getvalue(), "application/zip")
 
 
 async def _upload(client, auth, code="wl-demo"):
     """上传一个资产 (走 require_publisher)."""
-    pkg = _zip_bytes({"SKILL.md": f"---\nname: {code}\ndescription: d\n---\n\n# {code}\n"})
+    # ⚠️ 包名必须与 code 一致 (命名契约)
+    pkg = _zip_bytes(
+        {"SKILL.md": f"---\nname: {code}\ndescription: d\n---\n\n# {code}\n"},
+        filename=f"{code}.zip",
+    )
     data = {
         "code": code, "kind": "skill", "name": f"资产-{code}", "version": "1.0.0",
         "summary": "摘要", "description": "说明", "use_when": "何时", "not_for": "何时不",
@@ -46,7 +50,7 @@ def _auth(user):
 # ---------- _split_list: 纯函数 ----------
 
 def test_split_list_empty():
-    from app.api.marketplace import _split_list
+    from app.core.market_policy import split_list as _split_list
 
     assert _split_list("") == []
     assert _split_list("   ") == []
@@ -54,25 +58,25 @@ def test_split_list_empty():
 
 
 def test_split_list_comma_separated():
-    from app.api.marketplace import _split_list
+    from app.core.market_policy import split_list as _split_list
 
     assert _split_list("zhangsan,lisi") == ["zhangsan", "lisi"]
 
 
 def test_split_list_json_array():
-    from app.api.marketplace import _split_list
+    from app.core.market_policy import split_list as _split_list
 
     assert _split_list('["zhangsan","lisi"]') == ["zhangsan", "lisi"]
 
 
 def test_split_list_json_array_with_spaces():
-    from app.api.marketplace import _split_list
+    from app.core.market_policy import split_list as _split_list
 
     assert _split_list('["zhangsan", "lisi"]') == ["zhangsan", "lisi"]
 
 
 def test_split_list_chinese_and_semicolon_separators():
-    from app.api.marketplace import _split_list
+    from app.core.market_policy import split_list as _split_list
 
     assert _split_list("zhangsan、lisi") == ["zhangsan", "lisi"]
     assert _split_list("zhangsan，lisi") == ["zhangsan", "lisi"]
@@ -81,28 +85,28 @@ def test_split_list_chinese_and_semicolon_separators():
 
 def test_split_list_broken_json_array_falls_back_to_delimiters():
     """坏 JSON (少个 ]) 不能整个丢掉 —— 退化成按分隔符切."""
-    from app.api.marketplace import _split_list
+    from app.core.market_policy import split_list as _split_list
 
     assert _split_list('["zhangsan","lisi"') == ["zhangsan", "lisi"]
     assert _split_list('["zhangsan", "lisi"') == ["zhangsan", "lisi"]
 
 
 def test_split_list_strips_stray_quotes():
-    from app.api.marketplace import _split_list
+    from app.core.market_policy import split_list as _split_list
 
     assert _split_list('"zhangsan","lisi"') == ["zhangsan", "lisi"]
     assert _split_list("['zhangsan','lisi']") == ["zhangsan", "lisi"]
 
 
 def test_split_list_keeps_numeric_ids():
-    from app.api.marketplace import _split_list
+    from app.core.market_policy import split_list as _split_list
 
     assert _split_list("[1,2]") == ["1", "2"]
     assert _split_list("1,2") == ["1", "2"]
 
 
 def test_split_list_json_array_of_non_strings():
-    from app.api.marketplace import _split_list
+    from app.core.market_policy import split_list as _split_list
 
     # 数字正常转字符串; 布尔跳过 —— str(True) 会变成 "True" 这种鬼名字
     assert _split_list("[1,true]") == ["1"]
@@ -112,28 +116,28 @@ def test_split_list_json_array_of_non_strings():
 
 async def test_publisher_names_accepts_json_array_format():
     """用户名口径写成 JSON 数组 (照抄隔壁那项) 也要认."""
-    from app.api.marketplace import _publisher_names
+    from app.core.market_policy import publisher_names as _publisher_names
 
     await set_setting("marketplace.publisher_usernames", '["ZhangSan","LiSi"]')
     assert await _publisher_names() == {"zhangsan", "lisi"}
 
 
 async def test_publisher_names_accepts_comma_format():
-    from app.api.marketplace import _publisher_names
+    from app.core.market_policy import publisher_names as _publisher_names
 
     await set_setting("marketplace.publisher_usernames", "ZhangSan,LiSi")
     assert await _publisher_names() == {"zhangsan", "lisi"}
 
 
 async def test_publisher_names_empty_gives_empty_set():
-    from app.api.marketplace import _publisher_names
+    from app.core.market_policy import publisher_names as _publisher_names
 
     await set_setting("marketplace.publisher_usernames", "")
     assert await _publisher_names() == set()
 
 
 async def test_publisher_ids_accepts_json_array_format():
-    from app.api.marketplace import _publisher_ids
+    from app.core.market_policy import publisher_ids as _publisher_ids
 
     await set_setting("marketplace.publisher_ids", "[1,2]")
     assert await _publisher_ids() == {1, 2}
@@ -141,14 +145,14 @@ async def test_publisher_ids_accepts_json_array_format():
 
 async def test_publisher_ids_accepts_comma_format():
     """ID 口径写成逗号分隔 (照抄隔壁那项) 也要认."""
-    from app.api.marketplace import _publisher_ids
+    from app.core.market_policy import publisher_ids as _publisher_ids
 
     await set_setting("marketplace.publisher_ids", "1,2")
     assert await _publisher_ids() == {1, 2}
 
 
 async def test_publisher_ids_ignores_non_numeric():
-    from app.api.marketplace import _publisher_ids
+    from app.core.market_policy import publisher_ids as _publisher_ids
 
     await set_setting("marketplace.publisher_ids", "[1,abc]")
     assert await _publisher_ids() == {1}

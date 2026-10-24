@@ -25,14 +25,21 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi import Response
-from sqlalchemy import select, or_, update
+from sqlalchemy import Text, cast, select, or_, update
 
 from app.api.auth import get_current_user
 from app.core import git_sync, pkg
 from app.core.asset_jobs import enqueue, retry_job, start_worker
 from app.core.asset_locks import code_lock
 from app.core.dingtalk import list_notifications, notify_market
-from app.core import market_projects
+from app.core import (
+    market_notify,
+    market_naming,
+    market_policy,
+    market_projects,
+    market_state,
+)
+from app.core.market_visibility import assert_visible, apply_visibility
 from app.core.market_catalog import (
     CATEGORY_SLUGS,
     INDEX_PATH,
@@ -89,87 +96,22 @@ async def _setting(key: str, default: str = "") -> str:
         return default
 
 
-def _split_list(raw: str) -> list[str]:
-    """把设置项里的列表值拆成元素列表.
-
-    ⚠️ 容错是刚需: 设置页里「允许发布的用户 ID (JSON 数组)」和
-    「允许发布的用户名 (逗号分隔)」两个框紧挨着, 用户照抄彼此格式
-    太常见了. 而格式写错**没有任何报错** —— 只是白名单解析成空集,
-    结果是"配了白名单, 但除 admin 外所有人都发不了布", 极难排查.
-    所以两种格式都要认:
-        "zhangsan,lisi"      → ["zhangsan", "lisi"]
-        '["zhangsan","lisi"]' → ["zhangsan", "lisi"]
-        "zhangsan、lisi"      → ["zhangsan", "lisi"]   (中文/顿号分隔)
-    """
-    s = (raw or "").strip()
-    if not s:
-        return []
-    if s.startswith("["):
-        try:
-            data = json.loads(s)
-        except json.JSONDecodeError:
-            data = None
-        if isinstance(data, list):
-            out: list[str] = []
-            for x in data:
-                # 布尔在白名单里没有意义, 跳过 (str(True) 会变成 "True" 这种鬼名字)
-                if isinstance(x, bool):
-                    continue
-                t = str(x).strip().strip("\"'")
-                if t:
-                    out.append(t)
-            return out
-    # 不是合法 JSON 数组 → 退化成分隔符切分 (顺手剥掉方括号/引号)
-    s = s.strip().strip("[]").strip()
-    parts = re.split(r"[,;、，\s]+", s)
-    return [p.strip().strip("\"'") for p in parts if p.strip().strip("\"'")]
-
-
-async def _publisher_ids() -> set[int]:
-    raw = await _setting("marketplace.publisher_ids", "[]")
-    return {int(x) for x in _split_list(raw) if str(x).isdigit()}
-
-
-async def _publisher_names() -> set[str]:
-    """允许发布的**用户名**集合 (比填用户 ID 友好)."""
-    raw = await _setting("marketplace.publisher_usernames", "")
-    return {x.lower() for x in _split_list(raw)}
-
-
 async def require_publisher(user: User = Depends(get_current_user)) -> User:
     """发布者白名单 + admin 恒可发布.
 
     白名单两个口径任一命中即可: 用户 ID (JSON 数组) 或 用户名 (逗号分隔).
+    判定逻辑在 app/core/market_policy.py (纯逻辑, 可单测).
     """
-    role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    if role == "admin":
-        return user
-    if role == "anonymous":
-        raise HTTPException(status_code=401, detail="未登录")
-    if user.id in await _publisher_ids():
-        return user
-    names = await _publisher_names()
-    if names and (user.username or "").strip().lower() in names:
-        return user
-    raise HTTPException(status_code=403, detail="不在发布者白名单内, 联系管理员开通")
-
-
-async def _reviewer_names() -> set[str]:
-    """被授权的审核人 (管理员永远有审核权)."""
-    raw = await _setting("marketplace.review.reviewer_usernames", "")
-    return {
-        x.strip().lower()
-        for x in raw.replace("，", ",").replace(";", ",").split(",")
-        if x.strip()
-    }
+    if not await market_policy.can_publish(user):
+        if market_policy.role_of(user) == "anonymous":
+            raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=403, detail="不在发布者白名单内, 联系管理员开通")
+    return user
 
 
 async def _is_reviewer(user: User) -> bool:
-    role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    if role == "admin":
-        return True
-    names = await _reviewer_names()
-    return bool(names) and (user.username or "").strip().lower() in names
+    """能不能审核 (管理员永远可以) —— 判定在 market_policy."""
+    return await market_policy.is_reviewer(user)
 
 
 async def require_reviewer(user: User = Depends(get_current_user)) -> User:
@@ -217,15 +159,53 @@ async def _assert_can_modify(code: str, user: User) -> Asset:
         ).scalar_one_or_none()
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-    role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    if role == "admin":
-        return a
-    if (a.author or "").strip().lower() != (user.username or "").strip().lower():
+    if not market_policy.can_modify(a, user):
         raise HTTPException(
             status_code=403,
             detail="只能操作自己上传的资产 (管理员可操作任意资产)",
         )
     return a
+
+
+def _assert_naming(
+    code: str,
+    kind: str,
+    mcp_cfg: dict | None,
+    package: UploadFile | None,
+) -> None:
+    """命名契约: 资产 code 必须与「包名 / MCP 连接器名」一致.
+
+    前端已经管了 (选包自动同步 code, 不一致就报错不让上架), 这里是**兜底** ——
+    绕过前端直接调 API 时, 也能拦住"资产号与包名对不上"的资产.
+    """
+    if kind == "mcp":
+        msg = market_naming.check_mcp_code_consistency(mcp_cfg, code)
+    elif package is not None and (package.filename or "").strip():
+        msg = market_naming.check_package_consistency(package.filename, code)
+    else:
+        # 多文件文本上传 —— 没有"包名"这回事
+        return
+    if msg:
+        raise HTTPException(status_code=422, detail=msg)
+
+
+async def _resolve_project(code: str, raw: str, *, action: str) -> str:
+    """把表单里的项目名归一成正式项目 —— **更新时不丢老归属**.
+
+    项目可能已经从设置项里删掉了 (团队不再跑这个项目), 但资产上的归属是
+    **历史事实** —— 归一时把它清成"通用"就等于悄悄改了语义.
+    所以: 归一后为空且资产本来有归属 → 保留原值.
+    """
+    proj = market_projects.normalize(raw, await _project_list())
+    if action != "update" or proj:
+        return proj
+    async with AsyncSessionLocal() as session:
+        old = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+    if old is not None and (old.project or "").strip():
+        return old.project
+    return proj
 
 
 async def _project_list() -> list[str]:
@@ -414,12 +394,17 @@ async def list_assets(
             )
         if q:
             like = f"%{q.strip()}%"
+            # ⚠️ tags / keywords 也参与检索 —— 上传表单里那个「搜索关键词」
+            #    字段的承诺是"搜不到时靠它", 后端不搜就等于白填.
+            #    (JSON 列没法直接 like, 只能 CAST 成文本; 走不了索引, 但资产量不大)
             stmt = stmt.where(
                 or_(
                     Asset.name.like(like),
                     Asset.summary.like(like),
                     Asset.description.like(like),
                     Asset.author.like(like),
+                    cast(Asset.tags, Text).like(like),
+                    cast(Asset.keywords, Text).like(like),
                 )
             )
         rows = list((await session.execute(stmt)).scalars().all())
@@ -685,13 +670,18 @@ async def get_asset(
         ).scalar_one_or_none()
         if a is None:
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-        out = [_to_out(a, can_review=await _is_reviewer(user))]
+        is_reviewer = await _is_reviewer(user)
+        # ⚠️ 待审核 / 被驳回 / 已下架的资产**不能**让无关的人看到
+        #    (连接器的 MCP 配置里还有 env/headers, 可能是令牌)
+        assert_visible(a, username=user.username or "", is_reviewer=is_reviewer,
+                       is_admin=market_policy.is_admin(user))
+        out = [_to_out(a, can_review=is_reviewer)]
         await _apply_git_web_url(out)
         return out[0]
 
 
 @router.get("/{code}/doc", response_model=AssetDocOut)
-async def get_asset_doc(code: str, _user: User = Depends(get_current_user)) -> AssetDocOut:
+async def get_asset_doc(code: str, user: User = Depends(get_current_user)) -> AssetDocOut:
     """详情页展示的文档正文: skill→SKILL.md, plugin→README.md."""
     async with AsyncSessionLocal() as session:
         a = (
@@ -699,6 +689,8 @@ async def get_asset_doc(code: str, _user: User = Depends(get_current_user)) -> A
         ).scalar_one_or_none()
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+    assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
+                   is_admin=market_policy.is_admin(user))
 
     if a.kind == "mcp":
         # 连接器没有 README —— 它只有一段 MCP 配置 (在 manifest 里, 详情页直接展示)
@@ -730,7 +722,7 @@ async def get_asset_doc(code: str, _user: User = Depends(get_current_user)) -> A
 
 
 @router.get("/{code}/files", response_model=AssetFilesOut)
-async def get_asset_files(code: str, _user: User = Depends(get_current_user)) -> AssetFilesOut:
+async def get_asset_files(code: str, user: User = Depends(get_current_user)) -> AssetFilesOut:
     """本地工作区里该资产的文件树 (证明数据真实落盘)."""
     async with AsyncSessionLocal() as session:
         a = (
@@ -738,6 +730,8 @@ async def get_asset_files(code: str, _user: User = Depends(get_current_user)) ->
         ).scalar_one_or_none()
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+    assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
+                   is_admin=market_policy.is_admin(user))
 
     root = pkg.files_root(git_sync.WORKSPACE / a.git_path)
     nodes: list[AssetFileNode] = []
@@ -761,7 +755,7 @@ async def get_asset_files(code: str, _user: User = Depends(get_current_user)) ->
 
 @router.get("/{code}/bundle", response_model=AssetFileBundleOut)
 async def get_asset_bundle(
-    code: str, _user: User = Depends(get_current_user)
+    code: str, user: User = Depends(get_current_user)
 ) -> AssetFileBundleOut:
     """前端通道安装用: 已解压的明文文件清单 + 内容 (前端只写文件, 不解压)."""
     async with AsyncSessionLocal() as session:
@@ -770,6 +764,8 @@ async def get_asset_bundle(
         ).scalar_one_or_none()
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+    assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
+                   is_admin=market_policy.is_admin(user))
 
     base = git_sync.WORKSPACE / a.git_path
     root = pkg.files_root(base)
@@ -811,7 +807,7 @@ def _find_stored_package(base: Path, version: str) -> Path | None:
 
 @router.get("/{code}/versions/{version}/download")
 async def download_package(
-    code: str, version: str, _user: User = Depends(get_current_user)
+    code: str, version: str, user: User = Depends(get_current_user)
 ) -> Response:
     """下载安装包 (原始 zip; 老资产没有存包则即时确定性打包)."""
     async with AsyncSessionLocal() as session:
@@ -820,6 +816,8 @@ async def download_package(
         ).scalar_one_or_none()
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+    assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
+                   is_admin=market_policy.is_admin(user))
 
     if a.kind == "mcp":
         # ⚠️ 连接器没有安装包 —— 它是一段 MCP 配置, 不是一堆文件
@@ -990,71 +988,89 @@ async def _set_publish_state(
     """
     # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他) / 适用范围
     kind = category = author = project = ""
-    async with AsyncSessionLocal() as session:
-        a = (
-            await session.execute(select(Asset).where(Asset.code == code))
-        ).scalar_one_or_none()
-        if a is None:
-            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-        if a.publish_status == publish_status and (
-            review_note is None or a.review_note == review_note
-        ):
-            return {
-                "ok": True, "code": code, "publish_status": publish_status,
-                "changed": False,
-            }
+    # ⚠️ 状态流转必须**加锁** —— manifest 是读-改-写:
+    #    上传 v2 与审核通过并发时, 谁后写谁覆盖谁 → GitLab 上的权威 manifest 丢更新
+    #    (DB 显示新版本、远端是旧版本).
+    async with code_lock(code):
+        async with AsyncSessionLocal() as session:
+            a = (
+                await session.execute(select(Asset).where(Asset.code == code))
+            ).scalar_one_or_none()
+            if a is None:
+                raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
 
-        a.publish_status = publish_status
-        if review_note is not None:
-            a.review_note = review_note
-        await session.commit()
+            # ⚠️ 状态机: 「这个动作在这个状态下、这个人身份下」允许吗?
+            #    以前每个端点各自 if 判断, 于是作者能自助上架绕过审核、
+            #    审核人能驳回在架资产 —— 现在统一由 market_state 裁决.
+            try:
+                market_state.assert_transition(
+                    action, a.publish_status or market_state.PUBLISHED,
+                    is_author=market_policy.can_modify(a, user),
+                    is_reviewer=await _is_reviewer(user),
+                    is_admin=market_policy.is_admin(user),
+                )
+            except market_state.TransitionError as e:
+                raise HTTPException(status_code=409, detail=str(e)) from e
 
-        # 权威是单资产 manifest.json —— 生命周期状态也写进去
-        manifest_path = f"{a.git_path}/manifest.json"
-        raw = git_sync.read_text(manifest_path)
-        try:
-            manifest = json.loads(raw) if raw else {}
-        except json.JSONDecodeError:
-            manifest = {}
-        if not isinstance(manifest, dict):
-            manifest = {}
-        manifest["publish_status"] = publish_status
-        if review_note is not None:
-            manifest["review_note"] = review_note
-        git_sync.write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2))
+            if a.publish_status == publish_status and (
+                review_note is None or a.review_note == review_note
+            ):
+                return {
+                    "ok": True, "code": code, "publish_status": publish_status,
+                    "changed": False,
+                }
 
-        # index.json 是派生物, 从 DB 重新渲染 (现在它带 publish_status)
-        await stage_index(session, asset_to_index_entry(a))
+            a.publish_status = publish_status
+            if review_note is not None:
+                a.review_note = review_note
+            await session.commit()
 
-        await _audit(session, code=code, action=action, actor=user,
-                     asset_id=a.id, comment=comment,
-                     detail={"publish_status": publish_status, "version": a.version,
-                             "review_note": a.review_note})
-        await session.commit()
+            # 权威是单资产 manifest.json —— 生命周期状态也写进去
+            manifest_path = f"{a.git_path}/manifest.json"
+            raw = git_sync.read_text(manifest_path)
+            try:
+                manifest = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                manifest = {}
+            if not isinstance(manifest, dict):
+                manifest = {}
+            manifest["publish_status"] = publish_status
+            if review_note is not None:
+                manifest["review_note"] = review_note
+            git_sync.write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2))
 
-        job = AssetJob(
-            action=action,
-            status="staged",
-            code=a.code,
-            asset_name=a.name,
-            kind=a.kind,
-            payload={
-                "author": list(_author_of(user)),
-                "commit_message": (
-                    f"chore(market): {_ACTION_COMMIT_TEXT.get(action, '更新')}资产 "
-                    f"{a.name} {a.version}"
-                ),
-            },
-            git_path=a.git_path,
-            created_by=user.id,
-        )
-        session.add(job)
-        await session.commit()
-        await session.refresh(job)
-        job_id = job.id
-        name, version = a.name, a.version
-        kind, category, author = a.kind, a.category, a.author
-        project = a.project or ""
+            # index.json 是派生物, 从 DB 重新渲染 (现在它带 publish_status)
+            await stage_index(session, asset_to_index_entry(a))
+
+            await _audit(session, code=code, action=action, actor=user,
+                         asset_id=a.id, comment=comment,
+                         detail={"publish_status": publish_status, "version": a.version,
+                                 "review_note": a.review_note})
+            await session.commit()
+
+            job = AssetJob(
+                action=action,
+                status="staged",
+                code=a.code,
+                asset_name=a.name,
+                kind=a.kind,
+                payload={
+                    "author": list(_author_of(user)),
+                    "commit_message": (
+                        f"chore(market): {_ACTION_COMMIT_TEXT.get(action, '更新')}资产 "
+                        f"{a.name} {a.version}"
+                    ),
+                },
+                git_path=a.git_path,
+                created_by=user.id,
+            )
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+            job_id = job.id
+            name, version = a.name, a.version
+            kind, category, author = a.kind, a.category, a.author
+            project = a.project or ""
 
     enqueue(job_id)
     return {
@@ -1108,13 +1124,10 @@ async def unpublish_asset(
     # 申请下架 → 通知**审核群** (提醒管理员去确认).
     # ⚠️ 注意跟"彻底下架"的通知分开: 申请阶段资产还在架, 别在市场群说这件事.
     if out.get("changed"):
-        await notify_market(
-            "unpublish_request", name=out["name"], version=out["version"],
+        await market_notify.notify_asset(
+            "unpublish_request", out,
             actor=user.username,
             detail=comment or "有人申请下架, 等管理员确认",
-            link="", code=code,
-            kind=out.get("kind", ""), category=out.get("category", ""),
-            project=out.get("project", ""),
         )
     return {
         "ok": True, "code": code, "publish_status": "unpublish_pending",
@@ -1234,11 +1247,9 @@ async def review_asset(
             comment=comment or "审核通过", user=_user, review_note=comment or "",
         )
         if out.get("changed"):
-            await notify_market(
-                "publish", name=out["name"], version=out["version"], actor=_user.username,
-                detail=comment or "审核通过, 已上架", link="", code=code,
-                kind=out.get("kind", ""), category=out.get("category", ""),
-            project=out.get("project", ""),
+            await market_notify.notify_asset(
+                "publish", out, actor=_user.username,
+                detail=comment or "审核通过, 已上架",
             )
         return out
 
@@ -1248,12 +1259,8 @@ async def review_asset(
         comment=note, user=_user, review_note=note,
     )
     if out.get("changed"):
-        await notify_market(
-            "reject", name=out["name"], version=out["version"], actor=_user.username,
-            detail=note, link="", code=code,
-            kind=out.get("kind", ""), category=out.get("category", ""),
-            project=out.get("project", ""),
-            author=out.get("author", ""),
+        await market_notify.notify_asset(
+            "reject", out, actor=_user.username, detail=note,
         )
     return out
 
@@ -1286,11 +1293,9 @@ async def submit_for_review(
         comment=comment or "重新提交审核", user=_user, review_note="",
     )
     if out.get("changed"):
-        await notify_market(
-            "review", name=out["name"], version=out["version"], actor=_user.username,
-            detail=comment or "提交审核", link="", code=code,
-            kind=out.get("kind", ""), category=out.get("category", ""),
-            project=out.get("project", ""),
+        await market_notify.notify_asset(
+            "review", out, actor=_user.username,
+            detail=comment or "提交审核",
         )
     return out
 
@@ -1320,11 +1325,9 @@ async def publish_asset(
     )
     if not out.get("changed"):
         return out
-    await notify_market(
-        "publish", name=out["name"], version=out["version"], actor=user.username,
-        detail=comment or "重新上架", link="", code=code,
-        kind=out.get("kind", ""), category=out.get("category", ""),
-            project=out.get("project", ""),
+    await market_notify.notify_asset(
+        "publish", out, actor=user.username,
+        detail=comment or "重新上架",
     )
     return {"ok": True, "code": code, "publish_status": "published"}
 
@@ -1391,7 +1394,26 @@ async def _hard_delete_asset(
             )
         except git_sync.SyncError as e:
             # 回滚工作区: 目录与 index.json 都从最后一次提交恢复
-            git_sync.checkout_from_ref("HEAD", [git_path, INDEX_PATH])
+            # ⚠️ 回滚**必须检查结果** —— 之前返回值被丢掉, 回滚失败也没人知道:
+            #    工作区会残留"已删"状态, 下一个任意 job 就把删除推上 GitLab,
+            #    而 DB 里这个资产还在 (远端没了本地有 → 资产变成幽灵)。
+            rolled = False
+            try:
+                rolled = bool(git_sync.checkout_from_ref("HEAD", [git_path, INDEX_PATH]))
+            except Exception as re_:  # noqa: BLE001
+                logger.error("delete 回滚失败 code=%s err=%s", code, re_)
+            if not rolled:
+                logger.error(
+                    "delete 推送失败且回滚未确认 —— 工作区可能残留半删状态, "
+                    "需要人工检查 code=%s err=%s", code, e,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"删除未生效: 推送到 GitLab 失败 ({e}). "
+                        "工作区回滚也没成功, 请联系管理员检查仓库状态"
+                    ),
+                ) from e
             logger.error("delete 推送失败, 工作区已回滚 code=%s err=%s", code, e)
             raise HTTPException(
                 status_code=502,
@@ -1412,10 +1434,12 @@ async def _hard_delete_asset(
         # ⚠️ 用户本机的安装目录不动 —— 后端够不着, 也不该替用户删文件.
         #    (服务端写盘通道已下线)
 
-    await notify_market(
-        event, name=asset_name, version=version, actor=user.username,
-        detail=comment or "资产已从市场删除", link="", code=code,
-        kind=kind, category=category, project=project,
+    await market_notify.notify_asset(
+        event,
+        {"name": asset_name, "version": version, "code": code,
+         "kind": kind, "category": category, "project": project},
+        actor=user.username,
+        detail=comment or "资产已从市场删除",
     )
     logger.info("delete 资产 code=%s action=%s event=%s", code, audit_action, event)
     return AssetDeleteOut(
@@ -1644,6 +1668,10 @@ async def _stage_asset_locked(
             manifest["files"] = sorted(files.keys())
             doc_name = pkg.find_doc_file(manifest["files"], manifest["kind"])
             if not doc_name:
+                # ⚠️ 文件已经写进工作区了 —— 不清掉的话会留半截内容,
+                #    而 sync_puller 的安全闸会因为"工作区脏"整轮跳过 → 反向同步卡死.
+                #    (包上传那条路径有清理, 多文件这条漏了)
+                shutil.rmtree(files_dir, ignore_errors=True)
                 raise HTTPException(
                     status_code=422,
                     detail="缺少 SKILL.md / README.md",
@@ -1770,25 +1798,17 @@ async def _stage_asset_locked(
     enqueue(out.id)
     # 通知: 待审核的资产通知"有人提交了, 请审核"; 直接上架的才通知"已上架"
     if a.publish_status == "pending":
-        await notify_market(
-            "review",
-            name=manifest.get("name", ""), version=manifest.get("version", ""),
+        await market_notify.notify_asset(
+            "review", manifest,
             actor=user.username,
             detail=manifest.get("summary", "") or "新资产待审核",
-            link="", code=manifest.get("code", ""),
-            kind=manifest.get("kind", ""), category=manifest.get("category", ""),
-            project=manifest.get("project", ""),
             author=manifest.get("author", "") or user.username,
         )
     else:
-        await notify_market(
-            "publish" if action == "create" else "update",
-            name=manifest.get("name", ""), version=manifest.get("version", ""),
+        await market_notify.notify_asset(
+            "publish" if action == "create" else "update", manifest,
             actor=user.username,
-            detail=manifest.get("summary", ""), link="",
-            code=manifest.get("code", ""),
-            kind=manifest.get("kind", ""), category=manifest.get("category", ""),
-            project=manifest.get("project", ""),
+            detail=manifest.get("summary", ""),
         )
     return out
 
@@ -1824,13 +1844,16 @@ async def upload_asset(
         连接器 (mcp) —— **只要一段 MCP 配置**, 不需要包 (也没有 README)
     """
     cfg = _parse_mcp_form(mcp_config, kind)
+    # ⚠️ 命名契约 (前端也管, 这里是**防绕过前端直接调 API**):
+    #    包名 / MCP 连接器名 必须与资产 code 一致 —— 否则装出来/抄下来都对不上.
+    _assert_naming(code, kind, cfg, package)
     try:
         payload = UploadAssetIn(
             code=code, kind=kind, name=name, summary=summary, version=version,
             description=description, use_when=use_when, not_for=not_for,
             category=category, icon=icon,
             # 适用范围: 不在项目列表里的一律归**通用** (脏值不进 manifest)
-            project=market_projects.normalize(project, await _project_list()),
+            project=await _resolve_project(code, project, action="create"),
             tags=json.loads(tags or "[]"), keywords=json.loads(keywords or "[]"),
             author=user.username, featured=featured,
             permissions=json.loads(permissions or "{}"),
@@ -1910,6 +1933,8 @@ async def update_asset(
     await _assert_can_modify(code, user)
 
     cfg = _parse_mcp_form(mcp_config, kind)
+    # ⚠️ 命名契约 (见 upload 端点的说明)
+    _assert_naming(code, kind, cfg, package)
 
     # 发布新版本 (覆盖同名文件, git 历史保留旧版)
     try:
@@ -1917,8 +1942,8 @@ async def update_asset(
             code=code, kind=kind, name=name, summary=summary, version=version,
             description=description, use_when=use_when, not_for=not_for,
             category=category, icon=icon,
-            # 适用范围: 不在项目列表里的一律归**通用** (脏值不进 manifest)
-            project=market_projects.normalize(project, await _project_list()),
+            # 适用范围: 更新时保留老归属 (项目从设置里删掉也不该丢)
+            project=await _resolve_project(code, project, action="update"),
             tags=json.loads(tags or "[]"), keywords=json.loads(keywords or "[]"),
             author=user.username, featured=featured,
             permissions=json.loads(permissions or "{}"),

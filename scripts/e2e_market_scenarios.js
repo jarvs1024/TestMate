@@ -197,7 +197,8 @@ z.close()
     await sleep(400);
     // 分类是必填 (新表单: 缺一项提交按钮就是禁用的) —— 选第一个
     await pub.page.evaluate(() => {
-      const s = document.querySelector('.el-drawer .el-select');
+      // 按稳定类名定位分类下拉 (不靠顺序)
+      const s = document.querySelector('.up-drawer .sel-category');
       s && s.click();
     });
     await sleep(700);
@@ -209,9 +210,7 @@ z.close()
     // 适用范围: 选 6100 项目 (抽屉里第二个下拉 = 分类之后的「适用范围」)
     // ⚠️ 必须用**真实点击** (elementHandle.click) —— DOM 的 el.click() 不会触发
     //    element-plus 的下拉开关 (它绑在 wrapper 的指针事件上)
-    const scopeSel = await pub.page.$('.up-drawer .el-select:nth-of-type(2)');
-    const scopeHandles = await pub.page.$$('.up-drawer .el-select');
-    const scope = scopeHandles[1] || scopeSel;
+    const scope = await pub.page.$('.up-drawer .sel-project');
     if (scope) await scope.click();
     await sleep(900);
     await pub.page.evaluate(() => {

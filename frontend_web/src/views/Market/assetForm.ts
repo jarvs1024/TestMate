@@ -23,15 +23,24 @@ export const PACKAGE_EXT_RE = /\.(zip|tar\.gz|tgz)$/i;
  *
  * 约定: 包名 = 资产 code = 插件名 —— 统一 dml- 开头 + 英文.
  * (包名会进 GitLab 目录和安装路径, 空格/中文会到处出问题)
+ *
+ * ⚠️ `requirePrefix` 只是**团队命名约定** (dml- 开头), 不是技术限制:
+ *   新建资产要遵守 (requirePrefix=true, 默认);
+ *   更新**存量**资产时不能强制 —— 存量的 code 本身就没有 dml- 前缀,
+ *   强制的话那些资产永远更新不了 (后端也是这么分的, 见 market_naming)。
  */
-export function validatePackageName(filename: string): string {
+export function validatePackageName(
+  filename: string,
+  opts: { requirePrefix?: boolean } = {},
+): string {
+  const requirePrefix = opts.requirePrefix !== false;
   const name = (filename || '').trim();
   if (!name) return '请选择安装包';
   if (!PACKAGE_EXT_RE.test(name)) {
     return '安装包只支持 .zip / .tar.gz / .tgz';
   }
   const base = name.replace(PACKAGE_EXT_RE, '');
-  if (!base.startsWith(CODE_PREFIX)) {
+  if (requirePrefix && !base.startsWith(CODE_PREFIX)) {
     return `安装包名必须以 "${CODE_PREFIX}" 开头 (如 ${CODE_EXAMPLE}.zip)`;
   }
   if (!CODE_PATTERN.test(base)) {

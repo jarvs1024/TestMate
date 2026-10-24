@@ -17,18 +17,23 @@ from tests.conftest import make_plugin_zip, make_skill_zip
 API = "/api/v1/assets"
 
 
-def _zip_bytes(files: dict[str, str]) -> tuple[str, bytes, str]:
+def _zip_bytes(files: dict[str, str], filename: str = "pkg.zip") -> tuple[str, bytes, str]:
+    """造一个 zip. ⚠️ 文件名默认跟**资产 code** 一致 (命名契约: 包名必须 == code)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for name, content in files.items():
             z.writestr(name, content)
-    return ("pkg.zip", buf.getvalue(), "application/zip")
+    return (filename, buf.getvalue(), "application/zip")
 
 
 async def _upload(client, auth, code="demo", kind="skill", pkg_bytes=None, **over):
     """上传一个资产, 返回响应."""
     if pkg_bytes is None:
-        pkg_bytes = _zip_bytes({"SKILL.md": f"---\nname: {code}\ndescription: d\n---\n\n# {code}\n"})
+        # ⚠️ 包名必须与 code 一致 (命名契约) —— 这里直接用 code 派生
+        pkg_bytes = _zip_bytes(
+            {"SKILL.md": f"---\nname: {code}\ndescription: d\n---\n\n# {code}\n"},
+            filename=f"{code}.zip",
+        )
     data = {
         "code": code, "kind": kind, "name": f"资产-{code}", "version": "1.0.0",
         "summary": "摘要", "description": "说明", "use_when": "何时", "not_for": "何时不",
@@ -110,7 +115,8 @@ async def test_upload_rejects_missing_doc_file(client, auth, ws,  # noqa: ARG001
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     r = await _upload(client, pauth, code="nodoc-demo",
-                      pkg_bytes=_zip_bytes({"README.md": "# 没有 SKILL.md\n"}))
+                      pkg_bytes=_zip_bytes({"README.md": "# 没有 SKILL.md\n"},
+                                           filename="nodoc-demo.zip"))
     assert r.status_code == 422
     assert "SKILL.md" in r.json()["detail"]
 
@@ -610,3 +616,151 @@ async def test_list_filters_by_project(client, auth, ws, restore_git_config,
     r2 = await client.get(f"{API}?project=__general&limit=100", headers=auth)
     codes2 = {i["code"] for i in r2.json()["items"]}
     assert "p-general" in codes2 and "p-6100" not in codes2
+
+
+# ---------- 可见性 / 状态机 / 命名契约 (2026-10-25 整改) ----------
+
+async def test_pending_asset_detail_hidden_from_others(client, auth, ws,
+                                                      restore_git_config,  # noqa: ARG001
+                                                      publisher_user, stranger_user):
+    """待审核的资产**详情**也不能让无关的人看到 (以前只有列表做了过滤)."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "true")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    r = await _upload(client, pauth, code="hidden-demo")
+    assert r.status_code == 202, r.text
+
+    # 作者自己看得到
+    assert (await client.get(f"{API}/hidden-demo", headers=pauth)).status_code == 200
+    # 管理员看得到 (要审它)
+    assert (await client.get(f"{API}/hidden-demo", headers=auth)).status_code == 200
+    # 别的普通用户看不到 —— 404 (不泄露这个 code 存不存在)
+    oheaders = {"Authorization": f"Bearer {stranger_user['token']}"}
+    assert (await client.get(f"{API}/hidden-demo", headers=oheaders)).status_code == 404
+    # 文件树 / bundle 同样挡住
+    assert (await client.get(f"{API}/hidden-demo/files", headers=oheaders)).status_code == 404
+    assert (await client.get(f"{API}/hidden-demo/bundle", headers=oheaders)).status_code == 404
+
+
+async def test_author_cannot_self_publish_pending_asset(client, auth, ws,
+                                                        restore_git_config,  # noqa: ARG001
+                                                        publisher_user):
+    """作者对**待审核**的资产自助上架 = 绕过审核 —— 必须被拒."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "true")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="selfpublish-demo")
+
+    r = await client.post(f"{API}/selfpublish-demo/publish", data={}, headers=pauth)
+    assert r.status_code == 409, r.text
+    st = await client.get(f"{API}/selfpublish-demo", headers=pauth)
+    assert st.json()["publish_status"] == "pending"
+
+
+async def test_reviewer_cannot_reject_published_asset(client, auth, ws,
+                                                     restore_git_config,  # noqa: ARG001
+                                                     publisher_user):
+    """在架资产不能被"驳回" —— 审核只接受 pending."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="reject-published-demo")
+
+    r = await client.post(
+        f"{API}/reject-published-demo/review",
+        data={"decision": "reject", "comment": "不该能驳回"},
+        headers=auth,
+    )
+    assert r.status_code == 409, r.text
+    st = await client.get(f"{API}/reject-published-demo", headers=auth)
+    assert st.json()["publish_status"] == "published"
+
+
+async def test_upload_rejects_package_name_not_matching_code(client, auth, ws,
+                                                              restore_git_config,  # noqa: ARG001
+                                                              publisher_user):
+    """包名必须与资产 code 一致 —— 这条以前只有前端管, 能被绕过."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    pkg = _zip_bytes(
+        {"SKILL.md": "---\nname: x\ndescription: d\n---\n\n# x\n"},
+        filename="dml-naming-demo.zip",
+    )
+    r = await client.post(
+        f"{API}/upload",
+        data={"code": "dml-mismatch-demo", "kind": "skill", "name": "x", "summary": "s"},
+        files={"package": ("other-name.zip", pkg[1], pkg[2])},
+        headers=pauth,
+    )
+    assert r.status_code == 422, r.text
+    assert "一致" in r.json()["detail"]
+
+
+async def test_upload_rejects_mcp_code_not_matching_server_name(client, auth, ws,
+                                                                 restore_git_config,  # noqa: ARG001
+                                                                 publisher_user):
+    """连接器: 资产 code 必须是 MCP 配置里的某个连接器名."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    r = await client.post(
+        f"{API}/upload",
+        data={
+            "code": "dml-mcp-mismatch", "kind": "mcp", "name": "x", "summary": "s",
+            "mcp_config": '{"mcpServers": {"dml-real-name": {"url": "http://h/mcp"}}}',
+        },
+        headers=pauth,
+    )
+    assert r.status_code == 422, r.text
+    assert "一致" in r.json()["detail"]
+
+
+async def test_search_matches_tags_and_keywords(client, auth, ws, restore_git_config,
+                                                 publisher_user):  # noqa: ARG001
+    """「搜索关键词」字段是给搜索用的 —— 后端不搜它就等于白填."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="search-demo", tags='["日志诊断"]',
+                  keywords='["dmesg","nvme"]')
+
+    r = await client.get(f"{API}?q=dmesg&limit=50", headers=auth)
+    codes = [i["code"] for i in r.json()["items"]]
+    assert "search-demo" in codes, codes
+
+    r2 = await client.get(f"{API}?q=日志诊断&limit=50", headers=auth)
+    codes2 = [i["code"] for i in r2.json()["items"]]
+    assert "search-demo" in codes2, codes2
+
+
+async def test_update_keeps_project_when_removed_from_settings(client, auth, ws,
+                                                                 restore_git_config,  # noqa: ARG001
+                                                                 publisher_user):
+    """项目从设置项里删掉后, 资产的归属**不能**被悄悄清成通用."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("marketplace.projects", "6100")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="projkeep-demo", project="6100")
+
+    # 项目从设置里删掉
+    await set_setting("marketplace.projects", "3361")
+    await _upload(client, pauth, code="projkeep-demo", project="6100")
+
+    st = await client.get(f"{API}/projkeep-demo", headers=auth)
+    assert st.json()["project"] == "6100", st.json().get("project")

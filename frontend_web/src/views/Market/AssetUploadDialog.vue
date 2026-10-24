@@ -46,7 +46,8 @@
         <!-- 连接器是**配置型**资产: 只有一段 MCP 配置, 没有安装包也没有 README -->
         <section v-if="isMcp" class="up-sec">
           <div class="sec-h"><span class="sec-no">1</span>MCP 配置<span class="sec-tip">必填</span></div>
-          <el-form-item label="" :error="mcpConfigError">
+          <!-- ⚠️ 错误只在下面的 mcp-bar 里显示一处 (以前 form-item 和 mcp-bar 各显示一遍) -->
+          <el-form-item label="">
             <el-input v-model="mcpConfigText" type="textarea" :rows="11" class="mcp-json"
                       :placeholder="MCP_TEMPLATE" />
           </el-form-item>
@@ -62,6 +63,14 @@
             <code>command</code>+<code>args</code> 或 <code>url</code>)。
             详情页会原样展示这份配置, 用户照着加到自己的 MCP 配置里。
           </p>
+
+          <!-- 资产 code: 跟 MCP 配置里的连接器名保持一致 -->
+          <el-form-item label="资产 code" required :error="codeFieldError" class="code-item">
+            <el-input v-model="form.code" :disabled="mode === 'update'"
+                      :placeholder="`${CODE_EXAMPLE} — 英文, dml- 开头`"
+                      @blur="codeTouched = true" />
+            <p class="hint">自动跟 MCP 配置里的连接器名保持一致</p>
+          </el-form-item>
         </section>
 
         <section v-else class="up-sec">
@@ -85,6 +94,15 @@
               <template v-if="kind.pkgNeed">{{ kind.pkgNeed }}。</template>
             </span>
           </div>
+
+          <!-- 资产 code: 它是**包名派生的** —— 跟着 ① 走, 别孤零零放 ② -->
+          <el-form-item label="资产 code" required :error="codeFieldError" class="code-item">
+            <el-input v-model="form.code" :disabled="mode === 'update'"
+                      :placeholder="`${CODE_EXAMPLE} — 英文, dml- 开头`"
+                      @blur="codeTouched = true" />
+            <p class="hint">选好安装包后自动跟包名保持一致</p>
+          </el-form-item>
+
           <p class="hint">
             压缩包会在服务端解压后推送到 GitLab, 仓库里存的是解压后的文件。
           </p>
@@ -126,7 +144,7 @@
               <el-input v-model="form.name" maxlength="60" show-word-limit
                         placeholder="展示名, 中文即可 (卡片上的标题), 如 SSD 日志医生" />
             </el-form-item>
-            <el-form-item label="图标" :error="iconError">
+            <el-form-item label="图标">
               <div class="icon-pick">
                 <button type="button" class="icon-btn" @click="iconPanel = !iconPanel">
                   <span class="icon-cur">{{ form.icon || '🧩' }}</span>
@@ -151,26 +169,22 @@
           </el-form-item>
 
           <div class="row-2">
-            <el-form-item label="资产 code" required :error="codeFieldError">
-              <el-input v-model="form.code" :disabled="mode === 'update'"
-                        :placeholder="`${CODE_EXAMPLE} — 英文, dml- 开头`"
-                        @blur="codeTouched = true" />
-              <p class="hint">
-                <template v-if="isMcp">自动跟 MCP 配置里的连接器名保持一致</template>
-                <template v-else>选好安装包后自动跟包名保持一致</template>
-              </p>
-            </el-form-item>
             <el-form-item label="版本 (semver)" :error="versionError">
               <el-input v-model="form.version" placeholder="语义化版本, 如 1.0.0" />
               <p v-if="mode === 'update'" class="hint">发新版本建议 +1 (如 1.0.0 → 1.1.0)</p>
             </el-form-item>
           </div>
 
+          <!-- 适用场景: 详情页首屏就有这一块 → 别藏在进阶信息里 -->
+          <el-form-item label="适用场景">
+            <el-input v-model="form.use_when" type="textarea" :rows="2"
+                      placeholder="什么时候该用它 (如: 拿到一段 dmesg 需要快速判断问题域)" />
+          </el-form-item>
+
           <div class="row-2">
-            <!-- 分类 (必填) 在前, 适用范围在后 ——
-                 抽屉里第一个下拉是分类, 前端 e2e 靠这个顺序定位 -->
+            <!-- 分类 (必填) 与适用范围 (选填) 并排; 各有稳定类名, e2e 不靠顺序定位 -->
             <el-form-item label="分类" required>
-              <el-select v-model="form.category" style="width:100%" filterable
+              <el-select v-model="form.category" class="sel-category" style="width:100%" filterable
                          @change="onCategoryChange">
                 <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
                   <span>{{ c.name }}</span>
@@ -179,8 +193,8 @@
               </el-select>
             </el-form-item>
             <!-- 适用范围: 通用 (所有项目) 或某个项目特有 -->
-            <el-form-item label="适用范围">
-              <el-select v-model="form.project" style="width:100%">
+            <el-form-item label="适用范围 (选填)">
+              <el-select v-model="form.project" class="sel-project" style="width:100%">
                 <el-option value="" label="通用 —— 所有项目都能用" />
                 <el-option v-for="p in projectOptions" :key="p" :value="p"
                            :label="`${p} 项目 —— 只有 ${p} 项目用得上`" />
@@ -202,10 +216,6 @@
           </button>
           <div v-show="advOpen" class="adv-body">
             <div class="row-2">
-              <el-form-item label="适用场景">
-                <el-input v-model="form.use_when" type="textarea" :rows="2"
-                          placeholder="什么时候该用它 (如: 拿到一段 dmesg 需要快速判断问题域)" />
-              </el-form-item>
               <el-form-item label="标签 (逗号分隔)">
                 <el-input v-model="tagsText" placeholder="逗号分隔, 如 日志, 诊断, 速查 (卡片上显示)" />
               </el-form-item>
@@ -287,16 +297,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
-import { getAsset, getJob, listAssets, listCategories, listProjects, previewPackage, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind, type PackagePreview } from '@/api/assets';
-import {
-  CODE_EXAMPLE, CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
-  checkCodeSync, codeFromPackageName, pickIcon, validateCode, validatePackageName,
-} from './assetForm';
-import { KIND_META, kindMeta } from './kindMeta';
-import { MCP_TEMPLATE, formatMcpConfig, parseMcpConfig } from './mcpConfig';
+import { getAsset, getJob, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind } from '@/api/assets';
+import { KIND_META } from './kindMeta';
+import { MCP_TEMPLATE } from './mcpConfig';
+import { CODE_EXAMPLE, useAssetUploadForm } from './useAssetUploadForm';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -317,345 +324,41 @@ const visible = computed({
 
 const submitting = ref(false);
 const job = ref<AssetJob | null>(null);
-const fileInput = ref<HTMLInputElement | null>(null);
-const pkgFile = ref<File | null>(null);
-const preview = ref<PackagePreview | null>(null);
-const previewing = ref(false);
 /** 上架要走审核 —— 提交完不是"已上架", 而是"已提交待审核" */
 const pendingReview = ref(false);
 /** 进阶信息默认收起 (大部分人只填基础信息) */
 const advOpen = ref(false);
-/** 图标选择面板 */
-const iconPanel = ref(false);
-/** 现有资产用过的图标 —— 自动分配时避开, 免得卡片上图标重复 */
-const usedIcons = ref<Set<string>>(new Set());
-/** 用户手选过图标 → 后面名字/分类变了也别乱改 */
-const iconTouched = ref(false);
-/** 分类表 (后端下发) —— 上传/更新时只能从里面选 */
-const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
-/** 项目列表 (后端下发, 设置项里可改) —— 适用范围的下拉选项 */
-const projectOptions = ref<string[]>([]);
-
-const form = reactive({
-  code: CODE_PREFIX, kind: 'skill' as MarketKind, name: '', version: '1.0.0',
-  summary: '', description: '', use_when: '', not_for: '', category: '', icon: '🧩',
-  // 适用范围: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有
-  project: '',
-  featured: false, tags: [] as string[], files: [] as File[],
-  install_steps: [] as string[],
-});
-const tagsText = ref('');
-/** 连接器 (mcp) 的 MCP 配置 (JSON 文本) */
-const mcpConfigText = ref('');
-const keywordsText = ref('');
-const stepsText = ref('');
-
-/** 连接器形态: 只有一段 MCP 配置, 没有安装包也没有 README */
-const isMcp = computed(() => form.kind === 'mcp');
-/** 当前形态的元信息 (图标 / 需要准备什么) */
-const kind = computed(() => kindMeta(form.kind));
-/** 抽屉里的第几步: pick = 选形态, form = 填配置 */
-const step = ref<'pick' | 'form'>('form');
-/** MCP 配置的实时校验 (规则与后端一致) */
-const mcpParsed = computed(() => parseMcpConfig(mcpConfigText.value));
-const mcpConfigError = computed(() => {
-  if (!isMcp.value) return '';
-  return mcpParsed.value.ok ? '' : mcpParsed.value.error;
-});
-function formatMcp() {
-  mcpConfigText.value = formatMcpConfig(mcpConfigText.value);
-}
-function useMcpTemplate() {
-  mcpConfigText.value = MCP_TEMPLATE;
-}
 
 /**
- * 体检结论: 包装不上.
+ * 表单状态、校验与同步逻辑 —— 全在 composable 里.
  *
- * ⚠️ 包名不合规 (没 dml- 开头) 也要算装不上 ——
- *    否则用户看到「体检通过」, 却又提交不了, 前后自相矛盾。
+ * 为什么抽出去 (2026-10-25): 这些是最容易出 bug 的部分 (code 与包名同步 /
+ * 缺项清单 / 图标不重复), 埋在组件里时**没法单测**, 只能靠 e2e 兜.
  */
-const previewBad = computed(() => {
-  const p = preview.value;
-  if (!p) return false;
-  if (pkgNameError.value) return true;
-  return !p.ok || p.issues.length > 0;
+const {
+  form, tagsText, keywordsText, mcpConfigText, step, codeTouched,
+  fileInput, pkgFile, preview, previewing, iconPanel, usedIcons,
+  categories, projectOptions,
+  isMcp, kind, mcpConfigError, codeFieldError,
+  versionError, pkgError, pkgNameError,
+  previewBad, previewIssues, iconChoices, missing, canSubmit,
+  formatMcp, useMcpTemplate,
+  onCategoryChange, chooseIcon, clearPackage, onPickPackage,
+  chooseKind, reset,
+} = useAssetUploadForm({
+  mode: () => props.mode,
+  asset: () => props.asset,
+  initialKind: () => props.initialKind || '',
+  open: () => props.modelValue,
 });
-/** 体检问题清单: 服务端解包问题 + 本地包名问题 */
-const previewIssues = computed(() => {
-  const p = preview.value;
-  const out: string[] = [...(p?.issues || [])];
-  if (pkgNameError.value) out.push(pkgNameError.value);
-  return out;
-});
-
-/**
- * 图标可选范围: 分类池 + 通用池 + 兜底池, **并且排除已被别的资产用掉的**.
- *
- * 两条要求同时成立:
- *  ① 不重复 —— 重复图标在卡片上根本分不清谁是谁;
- *  ② 够多   —— 资产多了也得有的选, 所以三个池子都拉进来 (上百个)。
- */
-const iconChoices = computed(() => {
-  const pool = ICON_POOLS[form.category] || [];
-  const all = Array.from(new Set([...pool, ...GENERAL_ICONS, ...FALLBACK_ICONS]));
-  return all.filter((ic) => !usedIcons.value.has(ic));
-});
-
-// ---------- 校验 ----------
-/** code 动过才提示 —— 刚打开时预填的 "dml-" 还没填完, 立刻标红只会碍眼 */
-const codeTouched = ref(false);
-const codeError = computed(() => {
-  if (props.mode === 'update' || !codeTouched.value) return '';
-  return validateCode(form.code);
-});
-const versionError = computed(() => {
-  const v = (form.version || '').trim();
-  if (!v) return '版本必填';
-  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(v)) return '版本格式应为 1.0.0';
-  return '';
-});
-const pkgError = computed(() => (pkgFile.value ? '' : '请选择安装包'));
-/** 安装包名 (去掉扩展名) —— 跟 code 应该一致 */
-const pkgBaseName = computed(() => codeFromPackageName(pkgFile.value?.name || ''));
-/**
- * code 与「包名 / MCP 连接器名」是否一致.
- *
- * 约定 (2026-10-24): **code 就是那个名字本身** ——
- *   技能/插件 → code = 安装包名 (去扩展名)
- *   连接器     → code = MCP 配置里的连接器名
- * 不一致 → 报错 + 不让上架 (免得装出来/抄下来对不上)。
- *
- * ⚠️ 只在**新建**时校验: 更新版本时 code 不可改, 比对没有意义
- *    (存量资产的 code 还不带 dml- 前缀, 不能因此不让更新)。
- */
-/**
- * code 与「包名 / MCP 连接器名」不一致时的报错 (空串 = 一致 / 还不用管).
- *
- * 规则见 assetForm.checkCodeSync:
- *   技能/插件 → code = 安装包名; 连接器 → code = 配置里的某一个连接器名。
- *
- * ⚠️ 只在**新建**时校验: 更新版本时 code 不可改, 比对没有意义
- *    (存量资产的 code 还不带 dml- 前缀, 不能因此不让更新)。
- */
-const codeSyncError = computed(() => {
-  if (props.mode === 'update') return '';
-  if (isMcp.value) {
-    const p = mcpParsed.value;
-    const names = p.ok ? Object.keys((p.config as any)?.mcpServers || {}) : [];
-    return checkCodeSync(form.code, { isMcp: true, mcpNames: names });
-  }
-  return checkCodeSync(form.code, { pkgBase: pkgBaseName.value });
-});/** code 字段上要显示的错误 (格式 + 一致性, 一起说清) */
-const codeFieldError = computed(() =>
-  [codeError.value, codeSyncError.value].filter(Boolean).join('; '));
-/** 安装包名本身的合法性 (dml- 开头 + 英文 + 合法扩展名) */
-const pkgNameError = computed(() =>
-  pkgFile.value ? validatePackageName(pkgFile.value.name) : '');
-const iconError = computed(() => '');
-
-/** 缺什么 —— 一次说清, 别让人点一次报一个 */
-const missing = computed(() => {
-  const out: string[] = [];
-  if (isMcp.value) {
-    // 连接器: 要配置, 不要包
-    if (mcpConfigError.value) out.push('MCP 配置');
-  } else if (!pkgFile.value) {
-    out.push('安装包');
-  }
-  if (!form.name.trim()) out.push('名称');
-  if (!form.summary.trim()) out.push('一句话简介');
-  if (props.mode === 'create') {
-    const c = validateCode(form.code);
-    if (c) out.push('资产 code');
-    // code 必须跟包名 / MCP 连接器名一致 —— 不一致不让上架
-    if (codeSyncError.value) out.push('code 与名称一致');
-  }
-  if (!form.category) out.push('分类');
-  if (versionError.value) out.push('版本');
-  if (pkgNameError.value) out.push('安装包名');
-  return out;
-});
-const canSubmit = computed(() =>
-  missing.value.length === 0
-  && (isMcp.value || (!previewBad.value && !pkgNameError.value)));
-
-async function loadCategories() {
-  if (categories.value.length) return;
-  try {
-    const r = await listCategories();
-    categories.value = (r?.items || []) as typeof categories.value;
-  } catch {
-    /* 拿不到就退回空列表 —— 后端还会再归一成「其他」 */
-  }
-}
-
-/** 拉项目列表 (设置项 marketplace.projects) —— 适用范围的下拉选项 */
-async function loadProjects() {
-  if (projectOptions.value.length) return;
-  try {
-    const r = await listProjects();
-    projectOptions.value = (r?.items || [])
-      // ⚠️ 过滤掉「通用」(is_general) —— 它是默认选项, 不是某个项目
-      .filter((i: { is_general?: boolean }) => !i.is_general)
-      .map((i: { code: string }) => (i.code || '').trim())
-      .filter(Boolean);
-  } catch {
-    /* 拿不到就退回空列表 —— 只剩「通用」可选, 不影响上架 */
-  }
-}
-
-/** 拉现有资产的图标 —— 自动分配时避开重复 */
-async function loadUsedIcons() {
-  try {
-    const r = await listAssets({ limit: 500 });
-    usedIcons.value = new Set(
-      (r?.items || []).map((i: AssetItem) => (i.icon || '').trim()).filter(Boolean),
-    );
-  } catch {
-    usedIcons.value = new Set();
-  }
-  // ⚠️ 清单拿到**之后**再分配一次 —— 否则自动分配的图标可能正好撞上别人的
-  if (!iconTouched.value) autoIcon();
-}
-
-/** 自动分配图标 (避开已被用掉的) */
-function autoIcon() {
-  form.icon = pickIcon({
-    category: form.category,
-    name: form.name,
-    summary: form.summary,
-    used: usedIcons.value,
-  });
-}
-
-function onCategoryChange() {
-  autoIcon();
-}
-
-function chooseIcon(ic: string) {
-  form.icon = ic;
-  iconTouched.value = true;   // 用户手选过 → 后面名字/分类变了也别乱改
-  iconPanel.value = false;
-}
 
 watch(() => props.modelValue, (open) => {
   if (!open) return;
-  loadCategories();
-  loadProjects();
-  loadUsedIcons();
+  reset();                 // 表单状态/校验/分类/项目/图标 全部重置
   job.value = null;
   submitting.value = false;
-  pkgFile.value = null;
-  preview.value = null;
-  previewing.value = false;
   pendingReview.value = false;
   advOpen.value = false;
-  iconPanel.value = false;
-  codeTouched.value = false;
-  if (fileInput.value) fileInput.value.value = '';
-  const a = props.asset;
-  if (props.mode === 'update' && a) {
-    step.value = 'form';          // 更新版本: 直接进表单, 不选形态 (类型不可改)
-    form.code = a.code; form.kind = a.kind; form.name = a.name; form.version = a.version;
-    form.summary = a.summary; form.description = a.description;
-    form.use_when = a.use_when; form.not_for = a.not_for;
-    form.category = a.category; form.icon = a.icon; form.featured = a.featured;
-    form.project = a.project || '';   // 适用范围: 带出原值 (可改)
-    // 连接器: 带出老配置 (发布新版本 = 只改这段配置)
-    mcpConfigText.value = a.mcp_config ? JSON.stringify(a.mcp_config, null, 2) : '';
-    form.tags = [...a.tags]; form.install_steps = [...a.install_steps];
-    form.files = [];
-    tagsText.value = (a.tags || []).join(', ');
-    keywordsText.value = (a.keywords || []).join(', ');
-    stepsText.value = (a.install_steps || []).join('\n');
-  } else {
-    // 新建: 形态在入口就选好了 (initialKind) —— 直接进对应表单;
-    // 没带形态 (别处打开) 就先走第 ① 步让人选, 别再默认「技能」。
-    const k = (props.initialKind || 'skill') as MarketKind;
-    Object.assign(form, {
-      code: CODE_PREFIX, kind: k, name: '', version: '1.0.0', summary: '',
-      description: '', use_when: '', not_for: '', category: '', icon: '🧩',
-      project: '',        // 新建默认通用
-      featured: false, tags: [], files: [], install_steps: [],
-    });
-    step.value = props.initialKind ? 'form' : 'pick';
-    tagsText.value = ''; keywordsText.value = ''; stepsText.value = '';
-    mcpConfigText.value = '';
-  }
-});
-
-/** 第 ① 步: 选定形态 → 直接进对应表单 */
-function chooseKind(k: MarketKind) {
-  form.kind = k;
-  step.value = 'form';
-}
-
-async function onPickPackage(e: Event) {
-  const input = e.target as HTMLInputElement;
-  pkgFile.value = input.files?.[0] ?? null;
-  // ⚠️ code **自动跟包名保持一致** —— 选完包就把 code 带出来。
-  //    之后用户再改 code 就会不一致 → 报错 + 不让上架 (见 codeSyncError)。
-  const derived = codeFromPackageName(pkgFile.value?.name || '');
-  if (derived && props.mode === 'create') {
-    form.code = derived;
-    codeTouched.value = false;   // 这是同步过来的, 不算用户手改
-  }
-  await runPreview();
-}
-
-function clearPackage() {
-  pkgFile.value = null;
-  preview.value = null;
-  if (fileInput.value) fileInput.value.value = '';
-}
-
-/** 体检: 走服务端与真实上传完全相同的解包路径, 结论就是提交后的结论 */
-async function runPreview() {
-  if (!pkgFile.value) return;
-  previewing.value = true;
-  preview.value = null;
-  try {
-    preview.value = await previewPackage(pkgFile.value, form.kind);
-  } catch (e: any) {
-    preview.value = {
-      ok: false, filename: pkgFile.value.name, size_bytes: pkgFile.value.size,
-      kind: form.kind, total_files: 0, files: [], doc_file: '',
-      has_skill_md: false, has_plugin_manifest: false, has_mcp_config: false,
-      installable: false, block_reason: '',
-      issues: ['体检失败: ' + (e?.response?.data?.detail || e?.message)],
-      warnings: [],
-    };
-  } finally {
-    previewing.value = false;
-  }
-}
-
-// 类型变了, 体检结论也得重算 (skill 要 SKILL.md, plugin 要 plugin.json)
-watch(() => form.kind, () => {
-  if (pkgFile.value) runPreview();
-});
-
-/**
- * 连接器: MCP 配置里第一个连接器的名字 → 资产 code (省得手打一遍).
- *
- * 只在用户**没自己动过** code 时才填 —— 填了就别再覆盖人家的输入。
- * 名字不合法 (中文/特殊字符) 就跳过, 让用户自己填。
- */
-watch(() => mcpConfigText.value, () => {
-  if (props.mode !== 'create' || codeTouched.value || !isMcp.value) return;
-  const p = mcpParsed.value;
-  if (!p.ok) return;
-  const names = Object.keys((p.config as any)?.mcpServers || {});
-  const slug = (names[0] || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  if (!slug) return;
-  // 连接器名本身就得 dml- 开头 (配置校验会拦) —— 这里原样带成 code, 不另做加工
-  form.code = slug;
-});
-
-// 名字/简介/分类变了 → 图标跟着重新猜 (但用户手选过就别乱动)
-watch(() => [form.name, form.summary], () => {
-  if (!iconTouched.value) autoIcon();
 });
 
 function splitList(s: string): string[] {
@@ -675,23 +378,21 @@ async function submit() {
     name: form.name.trim(),
     version: form.version.trim() || '1.0.0',
     summary: form.summary.trim(),
-    // ⚠️ 详细说明 / 安装步骤 / 精选 / 不适用 已经不在表单里填了 ——
-    //    更新版本时**保留原值**, 别让"没填"把老资产的这些字段清空。
-    description: props.mode === 'update' ? (props.asset?.description || '') : form.description,
+    // ⚠️ 详细说明 / 不适用 / 安装步骤 / 设为精选 已经不在表单里填了 ——
+    //    更新版本时**保留原值** (从 asset 取), 别让"没填"把老资产的字段清空。
+    description: props.mode === 'update' ? (props.asset?.description || '') : '',
     use_when: form.use_when,
-    not_for: props.mode === 'update' ? (props.asset?.not_for || '') : form.not_for,
+    not_for: props.mode === 'update' ? (props.asset?.not_for || '') : '',
     category: form.category,
     // 适用范围: 空 = 通用; 不在项目列表里的后端会归一成通用
     project: form.project || '',
     icon: form.icon || '🧩',
     tags: splitList(tagsText.value),
     keywords: splitList(keywordsText.value),
-    install_steps: props.mode === 'update'
-      ? [...(props.asset?.install_steps || [])]
-      : splitList(stepsText.value),
+    install_steps: props.mode === 'update' ? [...(props.asset?.install_steps || [])] : [],
     // ⚠️ 权限声明不再由表单填 (2026-10-24) —— 固定空, 审核直接看包里的内容
     permissions: {},
-    featured: props.mode === 'update' ? !!props.asset?.featured : form.featured,
+    featured: props.mode === 'update' ? !!props.asset?.featured : false,
     // 连接器: 只传 MCP 配置, 不传包
     mcp_config: isMcp.value ? mcpConfigText.value : '',
     package: isMcp.value ? null : pkgFile.value,

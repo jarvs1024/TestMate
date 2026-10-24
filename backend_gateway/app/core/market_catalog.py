@@ -224,6 +224,9 @@ def asset_to_index_entry(a: Asset) -> dict[str, Any]:
         "download_count": a.download_count,
         # 生命周期状态也在索引里 —— 上下架必须能被别的实例看到
         "publish_status": a.publish_status or "published",
+        # 审核意见也要进索引 —— 否则跨实例同步后, 发布者看到「已驳回」却不知道为什么
+        #    (getattr 兜底: 测试替身/老对象可能没这字段)
+        "review_note": getattr(a, "review_note", "") or "",
         # 连接器专有: MCP 配置 (非 mcp 为 null)
         "mcp_config": a.mcp_config if (a.kind or "") == "mcp" else None,
         "updated_at": a.updated_at.isoformat() if a.updated_at else "",
@@ -340,6 +343,8 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         a.git_path = e.get("git_path") or ""
         # 上下架状态: 索引里没有这一项的旧数据按 published 处理
         a.publish_status = e.get("publish_status") or "published"
+        # 审核意见 (索引里没有这一项的旧数据 = 没有意见)
+        a.review_note = e.get("review_note") or ""
         a.mcp_config = e.get("mcp_config") if (a.kind or "") == "mcp" else None
         if e.get("download_count") is not None:
             a.download_count = int(e["download_count"])

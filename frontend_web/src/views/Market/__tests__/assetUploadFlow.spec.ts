@@ -146,18 +146,27 @@ describe('上传抽屉: 类型头与换类型', () => {
 });
 
 describe('上传抽屉: 表单内容', () => {
-  it('进阶信息只留适用场景 / 标签 / 关键词', async () => {
+  it('进阶信息只留标签 / 关键词 (适用场景上提到基础信息)', async () => {
     const w = await open({ initialKind: 'skill' });
     const adv = w.find('.adv-body').text();
-    expect(adv).toContain('适用场景');
     expect(adv).toContain('标签');
     expect(adv).toContain('搜索关键词');
+    expect(adv).not.toContain('适用场景');       // 已上提到基础信息
     // 这些都不该再出现在表单里
     expect(adv).not.toContain('详细说明');
     expect(adv).not.toContain('不适用');
     expect(adv).not.toContain('安装步骤');
     expect(adv).not.toContain('设为精选');
     expect(adv).not.toContain('权限声明');
+    // 适用场景在基础信息区 (详情页首屏就有它, 别藏在折叠区)
+    expect(w.find('.up-form').text()).toContain('适用场景');
+  });
+
+  it('资产 code 跟包区放一起 (它是包名派生的)', async () => {
+    const w = await open({ initialKind: 'skill' });
+    const codeItem = w.findAll('.el-form-item').find((f) => f.text().includes('资产 code'));
+    expect(codeItem).toBeTruthy();
+    expect(codeItem!.classes()).toContain('code-item');
   });
 
   it('进阶信息标题写明「可展开」', async () => {

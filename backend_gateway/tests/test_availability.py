@@ -38,7 +38,8 @@ async def test_concurrent_upload_same_code_does_not_mix_files(client, auth, ws,
         with zipfile.ZipFile(buf, "w") as z:
             z.writestr("SKILL.md", f"---\nname: conc\ndescription: {marker}\n---\n\nMARKER-{marker}\n")
             z.writestr(f"only-{marker}.md", marker)
-        return ("p.zip", buf.getvalue(), "application/zip")
+        # ⚠️ 包名必须与资产 code 一致 (命名契约) —— code 是 conc-same
+        return ("conc-same.zip", buf.getvalue(), "application/zip")
 
     async def upload(marker: str):
         data = {

@@ -164,11 +164,16 @@ function uploadForm(pkg, over = {}) {
   return form;
 }
 
-async function uploadPackage(token, pkg, over = {}) {
+/**
+ * 上传一个包.
+ * @param filename 覆盖上传时的文件名 —— ⚠️ 包名必须与资产 code 一致 (命名契约),
+ *   改了 code 就要同时给一个同名包 (否则后端 422).
+ */
+async function uploadPackage(token, pkg, over = {}, filename) {
   const buf = fs.readFileSync(pkg.zip);
   const form = new FormData();
   for (const [k, v] of Object.entries(uploadForm(pkg, over))) form.append(k, v);
-  form.append('package', new Blob([buf]), path.basename(pkg.zip));
+  form.append('package', new Blob([buf]), filename || path.basename(pkg.zip));
   const r = await api('/api/v1/assets/upload', { method: 'POST', token, form });
   return r;
 }
@@ -540,7 +545,8 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
     await setSetting(adminToken, 'marketplace.git.remote', BAD);
 
     // 2) 上传 → 提交成功但推送失败
-    const up = await uploadPackage(pubToken, pkg, { code: CODE, version: '1.0.0' });
+    // ⚠️ 包名必须跟 code 一致 (命名契约) —— 这里 code 换了, 包名也得换
+    const up = await uploadPackage(pubToken, pkg, { code: CODE, version: '1.0.0' }, `${CODE}.zip`);
     check('R1 失败场景上传受理', up.status === 202, `status=${up.status}`);
     if (up.status !== 202) return;
     const job = await waitJob(adminToken, up.json.id, 90000);

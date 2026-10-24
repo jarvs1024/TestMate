@@ -577,8 +577,10 @@ def main() -> int:
     out = Path(args.out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
 
-    skill_zip = write_zip(out / "real-skill-ssd-log-triage.zip", SKILL_FILES)
-    plugin_zip = write_zip(out / "real-plugin-qoder-trace-kit.zip", PLUGIN_FILES)
+    # ⚠️ 包名必须与资产 code 一致 (命名契约, 前后端都强制):
+    #    skill → ssd-log-triage, plugin → qoder-trace-kit
+    skill_zip = write_zip(out / "ssd-log-triage.zip", SKILL_FILES)
+    plugin_zip = write_zip(out / "qoder-trace-kit.zip", PLUGIN_FILES)
 
     for label, zp, files in (
         ("skill ", skill_zip, SKILL_FILES),
