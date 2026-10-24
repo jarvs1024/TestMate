@@ -384,24 +384,24 @@ SETTING_SCHEMA: list[dict] = [
         "key": "dingtalk.notify_on_publish",
         "category": "notification",
         "value_type": "bool",
-        "default": False,
-        "description": "上架时通知钉钉群 (默认关闭 —— 要发自己去打开)",
+        "default": True,
+        "description": "上架时通知钉钉群 (默认开启 —— 市场有新东西大家要知道)",
         "is_secret": False,
     },
     {
         "key": "dingtalk.notify_on_update",
         "category": "notification",
         "value_type": "bool",
-        "default": False,
-        "description": "版本更新时通知钉钉群 (默认关闭 —— 要发自己去打开)",
+        "default": True,
+        "description": "版本更新时通知钉钉群 (默认开启)",
         "is_secret": False,
     },
     {
         "key": "dingtalk.notify_on_unpublish",
         "category": "notification",
         "value_type": "bool",
-        "default": False,
-        "description": "有人**申请下架**时通知钉钉群 (提醒管理员确认; 默认关闭)",
+        "default": True,
+        "description": "有人**申请下架**时通知钉钉群 (提醒管理员确认; 默认开启)",
         "is_secret": False,
     },
     {
@@ -409,7 +409,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": False,
-        "description": "资产被**彻底删除**时通知钉钉群 (管理员通过下架申请后; 默认关闭)",
+        "description": "资产被**彻底删除**时通知钉钉群 (默认关闭 —— 要发自己去打开)",
         "is_secret": False,
     },
     {
@@ -460,14 +460,16 @@ DEPRECATED_KEYS = (
 # 规则: 只有 DB 值**等于旧默认值**时才改 (说明用户没自己动过); 用户手动改过的
 # 值一律不动 —— 动了就说明那是用户的决定, 不能被默认值覆盖.
 DEFAULT_CHANGES: dict[str, tuple[Any, Any]] = {
-    # 钉钉市场通知: 从"默认发"改成"默认不发" (2026-10-24)
-    # 不想被群里刷屏, 默认就应该是关的, 要发自己去打开.
-    "dingtalk.notify_on_publish": ("true", False),
-    "dingtalk.notify_on_update": ("true", False),
-    "dingtalk.notify_on_unpublish": ("true", False),
-    "dingtalk.notify_on_delete": ("true", False),
-    "dingtalk.notify_on_review": ("true", False),
-    "dingtalk.notify_on_reject": ("true", False),
+    # 钉钉市场通知的默认值改过一次又调回来 (2026-10-24):
+    #   原始默认 "true" → 一律改成"默认不发" (别刷屏) → 最后只留
+    #   **上架 / 更新 / 下架** 三个市场动作默认打开, 其余 (删除 / 待审核 / 驳回) 关闭.
+    #
+    # 登记的是**当前这一跳**: 旧默认 False → 新默认 True.
+    # DB 里存着 false 的行 (等于旧默认) 迁到 true;
+    # 一直就是 true 的行不动 (值不等于旧默认 = 用户自己设过).
+    "dingtalk.notify_on_publish": (False, True),
+    "dingtalk.notify_on_update": (False, True),
+    "dingtalk.notify_on_unpublish": (False, True),
 }
 
 

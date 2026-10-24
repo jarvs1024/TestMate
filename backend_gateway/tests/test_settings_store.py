@@ -28,6 +28,19 @@ NOTIFY_KEYS = [
     "dingtalk.notify_on_reject",
 ]
 
+# 默认**打开**的三个: 上架 / 更新 / 下架 (市场动作, 大家要知道)
+NOTIFY_ON_BY_DEFAULT = [
+    "dingtalk.notify_on_publish",
+    "dingtalk.notify_on_update",
+    "dingtalk.notify_on_unpublish",
+]
+# 默认**关闭**的三个: 删除 / 待审核 / 驳回
+NOTIFY_OFF_BY_DEFAULT = [
+    "dingtalk.notify_on_delete",
+    "dingtalk.notify_on_review",
+    "dingtalk.notify_on_reject",
+]
+
 
 # ---------- to_bool ----------
 
@@ -54,9 +67,13 @@ def test_to_bool_unrecognized_uses_default():
 
 # ---------- schema 默认值 ----------
 
-def test_notify_switches_default_off_in_schema():
-    """⚠️ 核心需求: 六个通知开关的默认值必须都是"关"."""
-    for key in NOTIFY_KEYS:
+def test_notify_switches_defaults_in_schema():
+    """⚠️ 需求: 上架 / 更新 / 下架 默认**开**; 删除 / 待审核 / 驳回 默认**关**."""
+    for key in NOTIFY_ON_BY_DEFAULT:
+        item = next(s for s in SETTING_SCHEMA if s["key"] == key)
+        assert item["value_type"] == "bool", f"{key} 应该是布尔开关"
+        assert item["default"] is True, f"{key} 默认必须是开的, 实际={item['default']!r}"
+    for key in NOTIFY_OFF_BY_DEFAULT:
         item = next(s for s in SETTING_SCHEMA if s["key"] == key)
         assert item["value_type"] == "bool", f"{key} 应该是布尔开关"
         assert item["default"] is False, f"{key} 默认必须是关的, 实际={item['default']!r}"
@@ -64,42 +81,68 @@ def test_notify_switches_default_off_in_schema():
 
 def test_default_changes_registered():
     """改了默认值就必须登记迁移 —— 否则老环境永远不变."""
-    for key in NOTIFY_KEYS:
+    for key in NOTIFY_ON_BY_DEFAULT:
         assert key in DEFAULT_CHANGES, f"{key} 改了默认值, 得登记 DEFAULT_CHANGES"
         old, new = DEFAULT_CHANGES[key]
-        assert old == "true" and new is False
+        assert old is False and new is True, f"{key} 应登记 False → True, 实际={old!r} → {new!r}"
+    # 默认没动的三个不用登记 (登记了也是空迁移, 还会刷无意义的日志)
+    for key in NOTIFY_OFF_BY_DEFAULT:
+        assert key not in DEFAULT_CHANGES, f"{key} 默认值没改, 不该登记迁移"
 
 
 # ---------- seed_defaults ----------
 
-async def test_seed_defaults_writes_notify_switches_off():
-    """全新的库 → 六个开关都是关的."""
+async def test_seed_defaults_writes_notify_switches_with_new_defaults():
+    """全新的库 → 上架/更新/下架 开, 删除/待审核/驳回 关."""
     await seed_defaults()
     values = await get_all()
-    for key in NOTIFY_KEYS:
+    for key in NOTIFY_ON_BY_DEFAULT:
+        assert values[key] is True, f"{key} 应该是开的, 实际={values[key]!r}"
+    for key in NOTIFY_OFF_BY_DEFAULT:
         assert values[key] is False, f"{key} 应该是关的, 实际={values[key]!r}"
 
 
-async def test_seed_defaults_migrates_legacy_true_rows():
-    """老环境: DB 里留着旧默认值 "true" → 启动时迁移成 false."""
+async def test_seed_defaults_migrates_off_rows_to_on():
+    """老环境: DB 里是上一版默认 (关) → 启动时迁到新默认 (开)."""
     from app.db.session import AsyncSessionLocal
     from app.models.system_setting import SystemSetting
 
     async with AsyncSessionLocal() as s:
-        for key in NOTIFY_KEYS:
-            s.add(SystemSetting(key=key, value={"v": "true"}, category="notification",
+        for key in NOTIFY_ON_BY_DEFAULT:
+            s.add(SystemSetting(key=key, value={"v": False}, category="notification",
+                                description="", is_secret=False))
+        for key in NOTIFY_OFF_BY_DEFAULT:
+            s.add(SystemSetting(key=key, value={"v": False}, category="notification",
                                 description="", is_secret=False))
         await s.commit()
 
     await seed_defaults()
 
     values = await get_all()
-    for key in NOTIFY_KEYS:
-        assert values[key] is False, f"{key} 旧默认值应该被迁移成关, 实际={values[key]!r}"
+    for key in NOTIFY_ON_BY_DEFAULT:
+        assert values[key] is True, f"{key} 应迁到新默认(开), 实际={values[key]!r}"
+    for key in NOTIFY_OFF_BY_DEFAULT:
+        assert values[key] is False, f"{key} 默认没变, 应保持关, 实际={values[key]!r}"
 
 
-async def test_seed_defaults_migrates_json_true_rows():
-    """老环境里存成 JSON 布尔 true 的也一样要迁移."""
+async def test_seed_defaults_migrates_string_false_rows():
+    """老环境里存成字符串 "false" 的也一样要迁移 (布尔存法不统一)."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.system_setting import SystemSetting
+
+    async with AsyncSessionLocal() as s:
+        s.add(SystemSetting(key="dingtalk.notify_on_publish", value={"v": "false"},
+                            category="notification", description="", is_secret=False))
+        await s.commit()
+
+    await seed_defaults()
+
+    values = await get_all()
+    assert values["dingtalk.notify_on_publish"] is True
+
+
+async def test_seed_defaults_keeps_already_on_rows():
+    """本来就是开的行 → 不动它 (值不等于旧默认 = 用户自己设过)."""
     from app.db.session import AsyncSessionLocal
     from app.models.system_setting import SystemSetting
 
@@ -109,26 +152,10 @@ async def test_seed_defaults_migrates_json_true_rows():
         await s.commit()
 
     await seed_defaults()
-
-    values = await get_all()
-    assert values["dingtalk.notify_on_publish"] is False
-
-
-async def test_seed_defaults_keeps_already_off_rows():
-    """已经是关的行 → 不动它 (迁移要幂等)."""
-    from app.db.session import AsyncSessionLocal
-    from app.models.system_setting import SystemSetting
-
-    async with AsyncSessionLocal() as s:
-        s.add(SystemSetting(key="dingtalk.notify_on_publish", value={"v": False},
-                            category="notification", description="", is_secret=False))
-        await s.commit()
-
-    await seed_defaults()
     await seed_defaults()  # 再跑一次也不能改
 
     values = await get_all()
-    assert values["dingtalk.notify_on_publish"] is False
+    assert values["dingtalk.notify_on_publish"] is True
 
 
 async def test_seed_defaults_normalizes_bool_strings():
@@ -164,8 +191,8 @@ async def test_get_all_returns_real_booleans():
     values = await get_all()
     assert values["dingtalk.notify_on_review"] is True
     assert isinstance(values["dingtalk.notify_on_review"], bool)
-    # 没配过的开关也走默认值 (关)
-    assert values["dingtalk.notify_on_publish"] is False
+    # 没配过的开关也走默认值 (上架默认开)
+    assert values["dingtalk.notify_on_publish"] is True
 
 
 # ---------- 端点层: schema 的 is_default ----------
@@ -176,7 +203,11 @@ async def test_settings_schema_reports_bool_defaults_correctly(client, admin_use
     from app.models.system_setting import SystemSetting
 
     async with AsyncSessionLocal() as s:
+        # 上架 (默认开) 被手动关了 → 该标「已定制」
         s.add(SystemSetting(key="dingtalk.notify_on_publish", value={"v": "false"},
+                            category="notification", description="", is_secret=False))
+        # 删除 (默认关), 值跟默认一致 → 不该标「已定制」
+        s.add(SystemSetting(key="dingtalk.notify_on_delete", value={"v": "false"},
                             category="notification", description="", is_secret=False))
         await s.commit()
 
@@ -192,7 +223,13 @@ async def test_settings_schema_reports_bool_defaults_correctly(client, admin_use
     }
     pub = items["dingtalk.notify_on_publish"]
     assert pub["value"] is False, "开关值必须是真布尔 (前端 !!'false' 会翻车)"
-    assert pub["is_default"] is True, "值等于默认值就不该标「已定制」"
+    assert pub["is_default"] is False, "跟默认(开)不一样 → 该标「已定制」"
 
+    dele = items["dingtalk.notify_on_delete"]
+    assert dele["value"] is False
+    assert dele["is_default"] is True, "值等于默认值就不该标「已定制」"
+
+    # 没配过的走默认值: 上架默认开
     upd = items["dingtalk.notify_on_update"]
-    assert upd["value"] is False
+    assert upd["value"] is True
+    assert upd["is_default"] is True

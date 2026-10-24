@@ -82,12 +82,21 @@ function check(name, ok, detail) {
   check('S2 通知区渲染出钉钉配置项', hasRows.includes('dingtalk.market_webhook'), hasRows.join(', '));
   check('S3 关键词配置项已就位', hasRows.includes('dingtalk.market_keyword'), hasRows.join(', '));
 
-  // ---------- 通知开关默认是「关」 ----------
-  // 需求: 钉钉市场通知**默认不通知** —— 开关默认关, 要发自己去打开.
+  // ---------- 通知开关的默认状态 ----------
+  // 需求 (2026-10-24): 上架 / 更新 / 下架 这三个**市场动作默认开**,
+  // 删除 / 待审核 / 驳回 默认**关** (不刷屏).
   const SWITCHES = [
     'dingtalk.notify_on_publish', 'dingtalk.notify_on_update',
     'dingtalk.notify_on_unpublish', 'dingtalk.notify_on_delete',
     'dingtalk.notify_on_review', 'dingtalk.notify_on_reject',
+  ];
+  const SWITCHES_ON_BY_DEFAULT = [
+    'dingtalk.notify_on_publish', 'dingtalk.notify_on_update',
+    'dingtalk.notify_on_unpublish',
+  ];
+  const SWITCHES_OFF_BY_DEFAULT = [
+    'dingtalk.notify_on_delete', 'dingtalk.notify_on_review',
+    'dingtalk.notify_on_reject',
   ];
   const switchState = await page.evaluate(async (keys) => {
     const tk = localStorage.getItem('testmate:token');
@@ -101,51 +110,100 @@ function check(name, ok, detail) {
     }
     return out;
   }, SWITCHES);
-  const onKeys = SWITCHES.filter((k) => switchState[k] && switchState[k].value === true);
-  check('S15 六个通知开关默认全是「关」', onKeys.length === 0,
-    onKeys.length ? `还开着: ${onKeys.join(', ')}` : 'publish/update/unpublish/delete/review/reject 全关');
+  // ---------- 改开关 / 还原 (测试期间要动生产设置, 结束必须还原) ----------
+  const savedSwitches = {};
+  for (const k of SWITCHES) savedSwitches[k] = switchState[k] ? switchState[k].value : false;
+  const setSwitches = async (vals) => {
+    await page.evaluate(async (v) => {
+      const tk = localStorage.getItem('testmate:token');
+      for (const [k, val] of Object.entries(v || {})) {
+        await fetch('/api/v1/settings/' + k, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
+          body: JSON.stringify({ value: val }),
+        });
+      }
+    }, vals || {});
+    await sleep(600);
+  };
+  const restoreSwitches = async () => {
+    await page.evaluate(async (saved) => {
+      const tk = localStorage.getItem('testmate:token');
+      for (const [k, v] of Object.entries(saved || {})) {
+        await fetch('/api/v1/settings/' + k, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
+          body: JSON.stringify({ value: v }),
+        });
+      }
+    }, savedSwitches);
+    await sleep(600);
+  };
+
+  const shouldBeOn = SWITCHES_ON_BY_DEFAULT.filter((k) => switchState[k] && switchState[k].value === true);
+  const shouldBeOff = SWITCHES_OFF_BY_DEFAULT.filter((k) => switchState[k] && switchState[k].value === true);
+  check('S15 上架/更新/下架 三个开关默认是「开」',
+    shouldBeOn.length === SWITCHES_ON_BY_DEFAULT.length,
+    shouldBeOn.length === SWITCHES_ON_BY_DEFAULT.length
+      ? 'publish/update/unpublish 全开'
+      : `没开: ${SWITCHES_ON_BY_DEFAULT.filter((k) => !shouldBeOn.includes(k)).join(', ')}`);
+  check('S15b 删除/待审核/驳回 三个开关默认是「关」', shouldBeOff.length === 0,
+    shouldBeOff.length ? `还开着: ${shouldBeOff.join(', ')}` : 'delete/review/reject 全关');
   check('S16 开关值是真布尔 (不是 "false" 字符串)',
     SWITCHES.every((k) => switchState[k] && typeof switchState[k].value === 'boolean'),
     JSON.stringify(SWITCHES.map((k) => [k, switchState[k] && switchState[k].value])));
 
-  // 页面上开关也得显示成 OFF (前端 `!!"false"` 会翻车)
+  // 页面上开关也得显示对 (前端 `!!"false"` 会翻车)
   const uiSwitches = await page.evaluate(() =>
     [...document.querySelectorAll('#sec-notification .row')].map((r) => ({
       key: (r.querySelector('code') || {}).textContent,
       stxt: (r.querySelector('.stxt') || {}).textContent,
     })).filter((x) => (x.key || '').startsWith('dingtalk.notify_on_')));
-  const uiOn = uiSwitches.filter((x) => (x.stxt || '').trim() === 'ON');
-  check('S17 页面上六个开关都显示 OFF', uiSwitches.length === 6 && uiOn.length === 0,
+  const uiWrong = uiSwitches.filter((x) => {
+    const want = SWITCHES_ON_BY_DEFAULT.includes(x.key) ? 'ON' : 'OFF';
+    return (x.stxt || '').trim() !== want;
+  });
+  check('S17 页面上六个开关显示与默认一致', uiSwitches.length === 6 && uiWrong.length === 0,
     uiSwitches.map((x) => `${x.key}=${(x.stxt || '').trim()}`).join(' '));
 
   // ---------- 开关关着时, 真上架/下架**不能**产生通知回执 ----------
-  // 这是"默认不通知"最直接的验证: 走真实上架链路, 看回执数有没有涨.
-  const quiet = await page.evaluate(async () => {
-    const tk = localStorage.getItem('testmate:token');
-    const H = { Authorization: 'Bearer ' + tk };
-    const code = 'ssd-log-doctor';
-    const count = async () => {
-      const r = await fetch('/api/v1/assets/notifications?limit=1', { headers: H });
-      const d = await r.json();
-      return d.total ?? (d.items || []).length;
-    };
-    const post = async (path, fields) => {
-      const fd = new FormData();
-      for (const [k, v] of Object.entries(fields || {})) fd.append(k, v);
-      return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
-    };
-    const before = await count();
-    const un = await post(`/api/v1/assets/${code}/unpublish`,
-      { confirm_code: code, comment: '默认不通知验证' });
-    await new Promise((r) => setTimeout(r, 2000));
-    const cancel = await post(`/api/v1/assets/${code}/unpublish-cancel`,
-      { comment: '默认不通知验证结束' });
-    await new Promise((r) => setTimeout(r, 2000));
-    const after = await count();
-    return { before, after, un, cancel };
-  });
-  check('S18 开关关着时上下架不产生任何通知回执', quiet.after === quiet.before,
-    `回执 ${quiet.before} → ${quiet.after} (unpublish=${quiet.un} cancel=${quiet.cancel})`);
+  // 这是"通知可以被关掉"最直接的验证: 走真实上架链路, 看回执数有没有涨.
+  // ⚠️ 上架/下架默认是**开**的 —— 所以这里得先显式关掉, 验完再还原.
+  let quiet;
+  try {
+    await setSwitches({
+      'dingtalk.notify_on_publish': false,
+      'dingtalk.notify_on_unpublish': false,
+    });
+    quiet = await page.evaluate(async () => {
+      const tk = localStorage.getItem('testmate:token');
+      const H = { Authorization: 'Bearer ' + tk };
+      const code = 'ssd-log-doctor';
+      const count = async () => {
+        const r = await fetch('/api/v1/assets/notifications?limit=1', { headers: H });
+        const d = await r.json();
+        return d.total ?? (d.items || []).length;
+      };
+      const post = async (path, fields) => {
+        const fd = new FormData();
+        for (const [k, v] of Object.entries(fields || {})) fd.append(k, v);
+        return (await fetch(path, { method: 'POST', headers: H, body: fd })).status;
+      };
+      const before = await count();
+      const un = await post(`/api/v1/assets/${code}/unpublish`,
+        { confirm_code: code, comment: '默认不通知验证' });
+      await new Promise((r) => setTimeout(r, 2000));
+      const cancel = await post(`/api/v1/assets/${code}/unpublish-cancel`,
+        { comment: '默认不通知验证结束' });
+      await new Promise((r) => setTimeout(r, 2000));
+      const after = await count();
+      return { before, after, un, cancel };
+    });
+    check('S18 开关关着时上下架不产生任何通知回执', quiet.after === quiet.before,
+      `回执 ${quiet.before} → ${quiet.after} (unpublish=${quiet.un} cancel=${quiet.cancel})`);
+  } finally {
+    await restoreSwitches();
+  }
 
   // 在 UI 里填 webhook (按 key 定位到那一行)
   if (WEBHOOK) {
@@ -244,34 +302,13 @@ function check(name, ok, detail) {
   //
   // ⚠️ 通知开关现在**默认是关的** —— 要验这条链路必须自己把开关打开,
   //    验完**必须还原** (改生产设置一定要在 try/finally 里).
-  const savedSwitches = {};
-  for (const k of SWITCHES) savedSwitches[k] = switchState[k] ? switchState[k].value : false;
-  const restoreSwitches = async () => {
-    await page.evaluate(async (saved) => {
-      const tk = localStorage.getItem('testmate:token');
-      for (const [k, v] of Object.entries(saved || {})) {
-        await fetch('/api/v1/settings/' + k, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
-          body: JSON.stringify({ value: v }),
-        });
-      }
-    }, savedSwitches);
-  };
   let marketNotify;
   try {
     // 只开上架/下架两个 —— 这条链路只用到这两个事件
-    await page.evaluate(async (keys) => {
-      const tk = localStorage.getItem('testmate:token');
-      for (const k of keys) {
-        await fetch('/api/v1/settings/' + k, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
-          body: JSON.stringify({ value: true }),
-        });
-      }
-    }, ['dingtalk.notify_on_publish', 'dingtalk.notify_on_unpublish']);
-    await sleep(800);
+    await setSwitches({
+      'dingtalk.notify_on_publish': true,
+      'dingtalk.notify_on_unpublish': true,
+    });
 
     marketNotify = await page.evaluate(async () => {
       const tk = localStorage.getItem('testmate:token');

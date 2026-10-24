@@ -214,9 +214,10 @@
             <span class="grp-cnt">{{ notificationItems.length }} 项</span>
           </h2>
           <div class="hint">
-            💡 资产市场在<strong>上架 / 下架 / 更新</strong>时会往钉钉群发通知。
-            <strong>通知开关默认全部关闭</strong>——要发的话自己打开对应的开关,
-            再配好 webhook 点「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
+            💡 资产市场在<strong>上架 / 下架 / 更新</strong>时会往钉钉群发通知
+            —— <strong>这三个开关默认开启</strong>, 不想被打扰可以自己关掉。
+            <strong>删除 / 待审核 / 驳回</strong> 默认关闭, 要发自己去打开。
+            配好 webhook 后点「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
           </div>
 
           <SettingRow v-for="(it, idx) in notificationItems" :key="it.key"
