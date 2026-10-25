@@ -1,4 +1,4 @@
-"""add agents.category enum value 'ssd_kb' (知识库存卡片的域标签)
+"""add agents.category enum value 'ssd_kb' (知识库卡片的域标签)
 
 知识库从侧栏顶级项降级成能力墙上的一张卡 (kind=library), 需要一个自己的
 域标签, 不能挂在 auto-code / ai-market 下面 —— 那两个说的是代码与资产.

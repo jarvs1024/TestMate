@@ -74,7 +74,7 @@ describe('能力角色常量', () => {
 
   it('业务域标签: 已知映射 + 未知回退原值 + 空值兜底', () => {
     expect(categoryLabel('ssd-trace')).toBe('Trace 诊断');
-    expect(categoryLabel('ssd-kb')).toBe('知识库存');
+    expect(categoryLabel('ssd-kb')).toBe('知识库');
     expect(categoryLabel('ai-market')).toBe('AI 资产');
     expect(categoryLabel('what-ever')).toBe('what-ever');
     expect(categoryLabel('')).toBe('—');

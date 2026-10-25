@@ -31,9 +31,9 @@ export const routes: RouteRecordRaw[] = [
         // ===== 底座型: AI 资产市场 =====
         { path: 'market', name: 'market', meta: { title: 'AI 资产市场', lede: '智能体的技能沉淀 —— 插件 / 技能 / 连接器, 挑一个装进你的 Agent' }, component: () => import('@/views/Capability/Catalog/index.vue') },
 
-        // ===== 底座型: 知识库存 =====
+        // ===== 底座型: 知识库 =====
         // 以前知识库是侧栏跟「广场」平级的顶级项, 现在它是能力墙上的一张卡.
-        { path: 'kb-manage', name: 'kb-manage', meta: { title: '知识库存', lede: 'RAG 知识源 —— 数据集 / 文档 / 分段, 检索即用' }, component: () => import('@/views/Capability/Library/index.vue') },
+        { path: 'kb-manage', name: 'kb-manage', meta: { title: '知识库', lede: 'RAG 知识源 —— 数据集 / 文档 / 分段, 检索即用' }, component: () => import('@/views/Capability/Library/index.vue') },
 
         { path: 'settings', name: 'settings', meta: { title: '设置', lede: '平台配置 · RAGFlow / Dify / 用户管理' }, component: () => import('@/views/Settings/index.vue') },
       ],

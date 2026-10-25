@@ -61,7 +61,7 @@ describe('能力卡片', () => {
     const base = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ssd-kb', status: 'stable', cta: '检索语料' }) } });
     expect(base.find('.cc-kind').text()).toContain('底座');
     expect(base.find('.cc-cta').text()).toContain('检索语料');
-    expect(base.find('.cc-cat').text()).toContain('知识库存');
+    expect(base.find('.cc-cat').text()).toContain('知识库');
   });
 
   it('CTA 用卡片自带的 cta (底座里"浏览技能包" vs "检索语料")', () => {

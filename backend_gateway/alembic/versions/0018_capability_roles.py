@@ -69,7 +69,7 @@ def downgrade() -> None:
         "ENUM('tool','board','catalog','library','platform') NOT NULL DEFAULT 'tool'"
     )
     # 1) 先把 platform 拆回 catalog / library —— 靠 category 还原:
-    #    ai_market 是资产市场 (目录), ssd_kb 是知识库存 (知识)
+    #    ai_market 是资产市场 (目录), ssd_kb 是知识库 (知识)
     #    ⚠️ category 也是 Enum 列, MySQL 存的是 enum **name** (下划线), 不是 value.
     op.execute(
         "UPDATE agents SET kind = 'catalog' WHERE kind = 'platform' AND category = 'ai_market'"

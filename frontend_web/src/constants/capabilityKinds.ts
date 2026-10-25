@@ -14,7 +14,7 @@
  *
  * ⚠️ kind 跟 category (业务域标签) **正交**:
  *   kind     = 角色 —— 工具 / 看板 / 底座
- *   category = 业务域 —— Trace 诊断 / FW 比对 / AI 资产 / 知识库存 …
+ *   category = 业务域 —— Trace 诊断 / FW 比对 / AI 资产 / 知识库 …
  *   两者由后端一起下发, 前端只做展示映射, 不要在前端反推.
  */
 
@@ -144,7 +144,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
   'ssd-ops': '机台运维',
   'auto-code': '自动化代码',
   'ai-market': 'AI 资产',
-  'ssd-kb': '知识库存',
+  'ssd-kb': '知识库',
 };
 
 /** 业务域中文名 (未知域回退成原值, 不吞掉信息) */

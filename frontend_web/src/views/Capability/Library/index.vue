@@ -2,13 +2,13 @@
   <div class="kb">
     <!-- ===== 能力详情统一外壳 ===== -->
     <CapabilityShell
-      name="知识库存"
+      name="知识库"
       icon="📚"
       kind="platform"
       status="stable"
       version="v0.1.0"
       category="ssd-kb"
-      summary="团队知识库存 —— 数据集 / 文档 / 检索，已对接 RAGFlow" />
+      summary="团队知识库 —— 数据集 / 文档 / 检索，已对接 RAGFlow" />
 
     <!-- 概览 -->
     <div class="card card-overview">

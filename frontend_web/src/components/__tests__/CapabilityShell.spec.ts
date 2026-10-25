@@ -45,7 +45,7 @@ describe('能力详情外壳', () => {
     tool.unmount();
 
     const lib = mount(CapabilityShell, {
-      props: { name: '知识库存', icon: '📚', kind: 'platform', status: 'draft' },
+      props: { name: '知识库', icon: '📚', kind: 'platform', status: 'draft' },
       global: { plugins: [router] },
     });
     expect(lib.find('.sh-kind').text()).toContain('底座');

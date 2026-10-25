@@ -68,7 +68,7 @@ function cap(over: any = {}) {
 const CAPS = [
   cap({ id: 1, code: 'code-review', name: '代码检视', icon: '🧬', kind: 'board', status: 'stable', category: 'auto-code', route: 'page:code-review' }),
   cap({ id: 2, code: 'agent-market', name: 'AI 资产市场', icon: '🏪', kind: 'platform', status: 'beta', category: 'ai-market', route: 'page:market', cta: '浏览技能包' }),
-  cap({ id: 3, code: 'kb-inventory', name: '知识库存', icon: '📚', kind: 'platform', status: 'stable', category: 'ssd-kb', route: 'page:kb-manage', cta: '检索语料' }),
+  cap({ id: 3, code: 'kb-inventory', name: '知识库', icon: '📚', kind: 'platform', status: 'stable', category: 'ssd-kb', route: 'page:kb-manage', cta: '检索语料' }),
   cap({ id: 4, code: 'log-analysis', name: '日志分析', icon: '📜', kind: 'tool', status: 'beta', category: 'ssd-trace' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', icon: '🧪', kind: 'tool', status: 'draft', category: 'ssd-spec' }),
 ];
@@ -108,7 +108,7 @@ describe('首页 · 能力墙', () => {
     const { w } = await mountHome();
     expect(w.findAllComponents({ name: 'CapabilityCard' }).length).toBe(5);
     expect(w.text()).toContain('代码检视');
-    expect(w.text()).toContain('知识库存');
+    expect(w.text()).toContain('知识库');
     w.unmount();
   });
 
@@ -130,13 +130,13 @@ describe('首页 · 能力墙', () => {
     w.unmount();
   });
 
-  it('底座筛选: 资产市场 + 知识库存同列 (同属供料角色)', async () => {
+  it('底座筛选: 资产市场 + 知识库同列 (同属供料角色)', async () => {
     const { w } = await mountHome();
     const chip = w.findAll('.filter').find((f) => f.text().includes('底座'))!;
     await chip.trigger('click');
     const names = w.findAllComponents({ name: 'CapabilityCard' })
       .map((c) => c.props('capability').name);
-    expect(names.sort()).toEqual(['AI 资产市场', '知识库存']);
+    expect(names.sort()).toEqual(['AI 资产市场', '知识库']);
     w.unmount();
   });
 
@@ -158,7 +158,7 @@ describe('首页 · 能力墙', () => {
     expect(tool.text()).toContain('2');
     const board = w.findAll('.filter').find((f) => f.text().includes('看板'))!;
     expect(board.text()).toContain('1');
-    // 资产市场 + 知识库存同属底座
+    // 资产市场 + 知识库同属底座
     const base = w.findAll('.filter').find((f) => f.text().includes('底座'))!;
     expect(base.text()).toContain('2');
     w.unmount();

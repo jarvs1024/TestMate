@@ -33,7 +33,7 @@ const CAPS = [
   cap({ id: 1, code: 'log-analysis', name: '日志分析', kind: 'tool' }),
   cap({ id: 2, code: 'code-review', name: '代码检视', kind: 'board', icon: '🧬', route: 'page:code-review' }),
   cap({ id: 3, code: 'agent-market', name: 'AI 资产市场', kind: 'platform', icon: '🏪', route: 'page:market' }),
-  cap({ id: 4, code: 'kb-inventory', name: '知识库存', kind: 'platform', icon: '📚', route: 'page:kb-manage' }),
+  cap({ id: 4, code: 'kb-inventory', name: '知识库', kind: 'platform', icon: '📚', route: 'page:kb-manage' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', kind: 'tool', status: 'draft' }),
 ];
 
@@ -80,7 +80,7 @@ describe('侧栏能力导航器', () => {
   it('每项能力都列出来了', () => {
     const { w } = mountNav();
     const labels = w.findAll('.item .i-lb').map((i) => i.text());
-    expect(labels).toEqual(['日志分析', '文本用例生成', '代码检视', 'AI 资产市场', '知识库存']);
+    expect(labels).toEqual(['日志分析', '文本用例生成', '代码检视', 'AI 资产市场', '知识库']);
     w.unmount();
   });
 

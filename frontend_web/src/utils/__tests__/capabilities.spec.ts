@@ -102,7 +102,7 @@ describe('能力工具函数', () => {
     expect(capabilityCta({ kind: 'board' })).toBe('查看看板');
   });
 
-  it('底座取数来源: 资产市场数资产, 知识库存数语料', () => {
+  it('底座取数来源: 资产市场数资产, 知识库数语料', () => {
     expect(PLATFORM_META_SOURCE['agent-market']).toBe('assets');
     expect(PLATFORM_META_SOURCE['kb-inventory']).toBe('kb');
   });

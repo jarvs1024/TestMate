@@ -4,7 +4,7 @@
    ① 每条 SEED 都带 kind, 且只有三种角色 (tool 干活 / board 看数 / platform 供料);
    ② 角色**不许泄漏实现** —— 曾经有 catalog(目录) / library(知识) 两个角色,
       一个说的是目录结构, 一个说的是内容形态, 都被收进 platform(底座);
-   ③ **知识库存从侧栏顶级项变成了一张卡** (kind=platform, route=page:kb-manage);
+   ③ **知识库从侧栏顶级项变成了一张卡** (kind=platform, route=page:kb-manage);
    ④ 每张卡自带 cta —— 同角色的卡动法不同 (浏览技能包 vs 检索语料);
    ⑤ GET /agents **匿名可读** + 能按角色过滤.
 """
@@ -50,9 +50,9 @@ def test_every_seed_card_has_its_own_cta():
 
 
 def test_kb_inventory_seed():
-    """知识库存卡: 名字/图标/域标签/路由都要对, 否则首页点进去跳错页."""
+    """知识库卡: 名字/图标/域标签/路由都要对, 否则首页点进去跳错页."""
     kb = next(c for c in SEED_AGENTS if c["code"] == "kb-inventory")
-    assert kb["name"] == "知识库存"
+    assert kb["name"] == "知识库"
     assert kb["icon"] == "📚"
     assert kb["category"] == "ssd-kb"  # Python 侧的值; MySQL ENUM 存的是 name(ssd_kb)
     assert kb["route"] == "page:kb-manage"
@@ -125,7 +125,7 @@ async def test_list_agents_is_anonymous_readable(client):
     items = r.json()["items"]
     assert len(items) > 0
     codes = {i["code"] for i in items}
-    assert "kb-inventory" in codes, "知识库存必须跟其他能力同列"
+    assert "kb-inventory" in codes, "知识库必须跟其他能力同列"
     for i in items:
         assert i["cta"], f"{i['code']} 缺 cta"
 

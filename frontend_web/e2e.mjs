@@ -39,9 +39,9 @@ try {
   log('   登录后 URL:', page.url());
   await page.screenshot({ path: `${SHOTS}/02-after-login.png`, fullPage: true });
 
-  log('3. 进知识库存页');
-  // 找知识库存链接 (2026-10-25: 知识库从侧栏顶级项降级成能力墙上的一张卡, 文案改成"知识库存")
-  const kbLink = page.locator('a[href*="/kb-manage"], a:has-text("知识库存"), [role=link]:has-text("知识库存")').first();
+  log('3. 进知识库页');
+  // 找知识库链接 (2026-10-25: 知识库从侧栏顶级项降级成能力墙上的一张卡)
+  const kbLink = page.locator('a[href*="/kb-manage"], a:has-text("知识库"), [role=link]:has-text("知识库")').first();
   if (await kbLink.count() > 0) {
     await kbLink.click();
   } else {

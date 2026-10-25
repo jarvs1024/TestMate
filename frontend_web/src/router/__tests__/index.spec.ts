@@ -59,7 +59,7 @@ describe('路由表', () => {
   it('目录型 / 知识型 各就各位', () => {
     expect(router.resolve('/market').name).toBe('market');
     expect(router.resolve('/kb-manage').name).toBe('kb-manage');
-    expect(router.resolve('/kb-manage').meta.title).toBe('知识库存');
+    expect(router.resolve('/kb-manage').meta.title).toBe('知识库');
   });
 
   it('除首页和代码检视外, 其余都要登录', () => {

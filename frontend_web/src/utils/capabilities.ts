@@ -53,7 +53,7 @@ export function capabilityRouteName(c: Capability): string {
  * 卡片动作词 —— **每张卡自带** (后端 cta 字段), 空则回落到角色默认词.
  *
  * 为什么 CTA 不能由角色决定: 底座里两张卡的动法完全不同 ——
- * 资产市场是"浏览技能包", 知识库存是"检索语料". 角色只说"扮演什么", 说不出"点下去干嘛".
+ * 资产市场是"浏览技能包", 知识库是"检索语料". 角色只说"扮演什么", 说不出"点下去干嘛".
  */
 export function capabilityCta(c: { kind: string; cta?: string | null }): string {
   const own = (c.cta || '').trim();
