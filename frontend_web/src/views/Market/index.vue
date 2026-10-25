@@ -20,7 +20,11 @@
                  title="项目号指资产归属的项目 (如 6100); 搜「通用」找通用资产"
                  @input="onSearch" />
         </div>
-        <el-tooltip content="谁在什么时候上架/下架/更新过, 以及钉钉通知送没送到" placement="bottom">
+        <!-- ⚠️ 操作记录 = **运营数据** (谁在什么时候上架/下架/驳回/删了哪个资产,
+             钉钉通知回了什么) —— 只给管理员. 后端也收紧了 (GET /assets/audits
+             改成 admin only), 前端同步隐藏, 免得点了只吃一个 403. -->
+        <el-tooltip v-if="isAdmin"
+                    content="谁在什么时候上架/下架/更新过, 以及钉钉通知送没送到" placement="bottom">
           <button class="mini-btn" @click="auditOpen = true">🕘 操作记录</button>
         </el-tooltip>
         <!-- ===== 上传入口: 先选形态, 再进对应表单 (2026-10-24) =====

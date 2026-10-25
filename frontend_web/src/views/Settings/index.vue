@@ -104,7 +104,9 @@
               :saving="saving === it.key" :secret-display="getInputValue(it)"
               @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
 
-            <div class="test-row">
+            <!-- ⚠️ 测试连接 = **admin only** (后端已收紧) ——
+                 非管理员点了只会吃一个 403, 不如不显示. -->
+            <div v-if="isAdmin" class="test-row">
               <button class="test-btn" :disabled="!!testing" @click="onTest('gitlab')">
                 {{ testing === 'gitlab' ? '测试中…' : '🔌 测试仓库连接' }}
               </button>
@@ -193,7 +195,8 @@
                 :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
                 :saving="saving === it.key" :secret-display="getInputValue(it)"
                 @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
-              <div class="test-row">
+              <!-- ⚠️ 测试连接 = admin only (后端已收紧) -->
+              <div v-if="isAdmin" class="test-row">
                 <button class="test-btn" :disabled="!!testing" @click="onTest(grp.testKey)">
                   {{ testing === grp.testKey ? '测试中…' : '🔌 测试连接' }}
                 </button>
@@ -229,7 +232,8 @@
             :saving="saving === it.key" :secret-display="getInputValue(it)"
             @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
 
-          <div class="test-row">
+          <!-- ⚠️ 测试发送 = admin only (后端已收紧) -->
+          <div v-if="isAdmin" class="test-row">
             <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-market')">
               {{ testing === 'dingtalk-market' ? '发送中…' : '📨 测试市场群' }}
             </button>

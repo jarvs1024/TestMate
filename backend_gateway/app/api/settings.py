@@ -1,6 +1,7 @@
 """/api/v1/settings — DB-backed 配置读写 + 测试连接."""
 from __future__ import annotations
 import logging
+import re
 from urllib.parse import parse_qs, urlencode, urlunparse, urlparse
 from typing import Any
 import httpx
@@ -54,12 +55,34 @@ def _is_default(value: Any, default: Any, value_type: str) -> bool:
     return value == default
 
 
+# ⚠️ **非管理员看不到的条目** —— 里面是"拿到就能直接用"的东西:
+#   · 钉钉 webhook 的 URL 里就带着机器人的 access_token → 拿到就能绕过本系统
+#     直接往公司市场群/审核群发消息 (实测: 以前普通用户读 schema 能拿到完整 URL)
+#   · api_key / api_token / 加签密钥 = 凭据本身
+#   · publisher_ids / publisher_usernames / reviewer_usernames = 权限白名单
+#     (谁能上架/谁能审核 —— 这是管理员的配置, 普通用户该问管理员, 不该自己看)
+#
+# ⚠️ 为什么是**整条不返回**而不是打个码: 掩码后的字符串照样进了 JS,
+#    而且「已设置 / 未设置」本身就是信息.
+_ADMIN_ONLY_SETTING_RE = re.compile(
+    r"(webhook|secret|token|api_key|password|publisher_ids|publisher_usernames|reviewer_usernames)",
+    re.IGNORECASE,
+)
+
+
 @router.get("/schema")
-async def get_schema(_user: User = Depends(get_current_user)) -> dict:
-    """返回所有 setting 的 schema + 当前 DB 值 (secret 掩码)."""
+async def get_schema(user: User = Depends(get_current_user)) -> dict:
+    """返回所有 setting 的 schema + 当前 DB 值 (secret 掩码).
+
+    ⚠️ 非管理员**拿不到凭据类条目** (见 _ADMIN_ONLY_SETTING_RE) ——
+       打码不够, 钉钉 webhook 这种"URL 里带 token"的必须整条不给.
+    """
+    is_admin = user.role.value == "admin"
     values = await get_all()
     by_cat: dict[str, list[dict]] = {}
     for s in SETTING_SCHEMA:
+        if not is_admin and _ADMIN_ONLY_SETTING_RE.search(s["key"]):
+            continue
         raw = values.get(s["key"], s["default"])
         if s["value_type"] == "bool":
             raw = to_bool(raw, to_bool(s["default"]))
@@ -143,8 +166,10 @@ def _empty_out(key: str, schema: dict) -> SettingOut:
 # ===== 测试连接 =====
 
 @router.post("/test/ragflow", response_model=SettingTestOut)
-async def test_ragflow(_user: User = Depends(get_current_user)) -> SettingTestOut:
+async def test_ragflow(user: User = Depends(get_current_user)) -> SettingTestOut:
     """用当前 DB (或 fallback env) 的 ragflow 配置打 datasets 端点."""
+    if user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
     from app.core.settings_store import _rewrite_loopback
     raw_url = (await get("ragflow.base_url", "")) or ""
     base_url = _rewrite_loopback(raw_url).rstrip("/")
@@ -169,8 +194,10 @@ async def test_ragflow(_user: User = Depends(get_current_user)) -> SettingTestOu
 
 
 @router.post("/test/dify", response_model=SettingTestOut)
-async def test_dify(_user: User = Depends(get_current_user)) -> SettingTestOut:
+async def test_dify(user: User = Depends(get_current_user)) -> SettingTestOut:
     """用当前 DB (或 fallback env) 的 dify 配置测 mock 模式 + URL 可达."""
+    if user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
     from app.core.settings_store import _rewrite_loopback
     raw_url = (await get("dify.base_url", "")) or ""
     base_url = _rewrite_loopback(raw_url).rstrip("/")
@@ -207,8 +234,10 @@ class EmbedOut(BaseModel):
 
 
 @router.post("/test/pr_agent", response_model=SettingTestOut)
-async def test_pr_agent(_user: User = Depends(get_current_user)) -> SettingTestOut:
+async def test_pr_agent(user: User = Depends(get_current_user)) -> SettingTestOut:
     """用当前 DB 的 pr_agent 配置打 telemetry /health 端点."""
+    if user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
     from app.core.settings_store import _rewrite_loopback
     raw_url = (await get("pr_agent.base_url", "")) or ""
     base_url = _rewrite_loopback(raw_url).rstrip("/") if raw_url else ""
@@ -267,8 +296,10 @@ async def test_dingtalk(
 
 
 @router.post("/test/review_agent", response_model=SettingTestOut)
-async def test_review_agent(_user: User = Depends(get_current_user)) -> SettingTestOut:
+async def test_review_agent(user: User = Depends(get_current_user)) -> SettingTestOut:
     """用当前 DB 的 review_agent.base_url 测 ReviewAgent HTTP /api/v1/telemetry/health (调 review_agent_client.probe)."""
+    if user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
     from app.core import review_agent_client
     if not await review_agent_client.is_configured():
         return SettingTestOut(ok=False, status="off", message="未配置 db_path 或文件不存在", detail=None)

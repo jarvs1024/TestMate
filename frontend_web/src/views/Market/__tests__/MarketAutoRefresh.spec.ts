@@ -9,6 +9,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
+import { useUserStore } from '@/stores/user';
 
 const { listAssets } = vi.hoisted(() => ({ listAssets: vi.fn() }));
 
@@ -33,9 +34,14 @@ const stubs = {
   'el-tooltip': { template: '<div><slot/></div>' },
 };
 
-async function mountMarket() {
+async function mountMarket(opts: { role?: 'admin' | 'tester' } = {}) {
   const pinia = createPinia();
   setActivePinia(pinia);
+  const store = useUserStore(pinia);
+  store.user = {
+    id: 1, username: 'jarvs',
+    role: opts.role === 'admin' ? 'admin' : 'tester',
+  } as any;
   const Market = (await import('../index.vue')).default;
   const w = mount(Market, { global: { plugins: [pinia], stubs } });
   // 让首次加载的 promise 链跑完 (fake timers 下 flushPromises 用的 setTimeout 不会自己走)
@@ -111,6 +117,22 @@ describe('市场页 · 自动刷新', () => {
     const foot = w.find('.foot-hint').text();
     expect(foot).toContain('本页上次刷新');
     expect(foot).not.toContain('· 最近对齐 ');
+    w.unmount();
+  });
+});
+
+describe('市场页 · 管理员专属入口', () => {
+  it('普通用户看不到「操作记录」(审计 = 运营数据, 后端也收紧了)', async () => {
+    const w = await mountMarket({ role: 'tester' });
+    const labels = w.findAll('.mini-btn').map((b) => b.text()).join(' | ');
+    expect(labels).not.toContain('操作记录');
+    w.unmount();
+  });
+
+  it('管理员看得到「操作记录」', async () => {
+    const w = await mountMarket({ role: 'admin' });
+    const labels = w.findAll('.mini-btn').map((b) => b.text()).join(' | ');
+    expect(labels).toContain('操作记录');
     w.unmount();
   });
 });

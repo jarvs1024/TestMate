@@ -575,8 +575,13 @@ async def retry_failed_job(
 async def list_audits(
     code: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> AssetAuditListOut:
+    """资产的操作审计 (谁在什么时候上架/下架/驳回/删了哪个资产). —— **管理员专用**.
+
+    ⚠️ 这是**运营数据**: 别的同事传了什么、被谁驳回的、哪次下架是谁拍板的 ——
+       普通用户不需要看, 也不该看. (前端「操作记录」按钮同步隐藏)
+    """
     async with AsyncSessionLocal() as session:
         stmt = select(AssetAudit).order_by(AssetAudit.id.desc()).limit(limit)
         if code:
@@ -594,12 +599,19 @@ async def list_audits(
 @router.get("/sync-status", response_model=SyncStatusOut)
 async def sync_status(
     client_id: str = Query("local"),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> SyncStatusOut:
-    """前端顶部状态条: 待同步 / 失败 / 有更新 / 有冲突."""
+    """前端顶部状态条: 待同步 / 失败 / 有更新 / 有冲突.
+
+    ⚠️ **系统级**的计数 (别人几个资产同步失败了 / 有几个冲突 / 全市场几个待审)
+       只给管理员 —— 那是运营数据, 普通用户看了也没用.
+       但**跟我自己有关的** (我的几个待审 / 我申请下架的) 谁都能看 ——
+       前端顶部那两条提示条就是靠这些字段.
+    """
     from app.core.sync_puller import get_puller
 
-    mine = (_user.username or "").strip()
+    is_admin = market_policy.is_admin(user)
+    mine = (user.username or "").strip()
     async with AsyncSessionLocal() as session:
         pending = failed = unpublished = 0
         awaiting_review = rejected = my_review = my_pending = 0
@@ -628,9 +640,12 @@ async def sync_status(
                     my_unpublish += 1
 
     puller = get_puller()
+    if not is_admin:
+        # 系统级计数对非管理员一律归零 (前端的状态条自然就不显示了)
+        pending = failed = unpublished = awaiting_review = rejected = unpublish_pending = 0
     return SyncStatusOut(
-        has_remote_updates=puller.has_remote_updates,
-        conflict_count=puller.conflict_count,
+        has_remote_updates=puller.has_remote_updates if is_admin else False,
+        conflict_count=puller.conflict_count if is_admin else 0,
         pending_count=pending,
         failed_count=failed,
         unpublished_count=unpublished,
@@ -651,9 +666,13 @@ async def sync_status(
 @router.get("/notifications", response_model=AssetNotificationListOut)
 async def list_notification_receipts(
     limit: int = Query(50, ge=1, le=200),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> AssetNotificationListOut:
-    """钉钉通知的送达回执 (最近 N 条)."""
+    """钉钉通知的送达回执 (最近 N 条). —— **管理员专用**.
+
+    ⚠️ 回执里是**真正发到群里去的内容** (标题 + 正文) —— 谁上架了什么、
+       谁被驳回了, 都写在里面. 普通用户不需要看, 也不该看.
+    """
     items, total = await list_notifications(limit)
     return AssetNotificationListOut(items=items, total=total)
 
@@ -661,15 +680,19 @@ async def list_notification_receipts(
 # ---------- 当前生效配置 (只读) ----------
 
 @router.get("/config", response_model=MarketConfigOut)
-async def get_market_config(_user: User = Depends(get_current_user)) -> MarketConfigOut:
+async def get_market_config(user: User = Depends(get_current_user)) -> MarketConfigOut:
     """市场当前生效的配置 —— 设置页用来展示"工作区在哪 / 远端是哪个".
 
     注意是**生效值** (DB 设置 > env 初值), 不是 schema 里的默认值.
+
+    ⚠️ 非管理员拿不到**工作区绝对路径**和 **Git 远端地址** ——
+       那是部署内部信息 (主机名/端口/仓库路径), 对普通用户没意义.
     """
     st = git_sync.workspace_status()
+    is_admin = market_policy.is_admin(user)
     return MarketConfigOut(
-        workspace=str(git_sync.WORKSPACE),
-        remote=git_sync.git_remote(),
+        workspace=str(git_sync.WORKSPACE) if is_admin else "",
+        remote=git_sync.git_remote() if is_admin else "",
         branch=git_sync.git_branch(),
         web_url=((await _setting("marketplace.git.web_url", "")) or "").strip(),
         skill_dir=SKILL_INSTALL_DIR,
