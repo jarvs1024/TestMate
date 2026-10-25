@@ -165,14 +165,44 @@ do_up() {
   compose_cmd up -d
   set -e
 
-  # 4.5/5 老数据卷兼容:alembic upgrade 之前先 stamp head(把已有表标记成已迁移版本,
-  # 避免 alembic upgrade head 因表已存在而失败). 用一个一次性容器跑,不等 backend ready.
-  log "  alembic stamp head(老数据卷兼容,一次性容器)..."
+  # 4.5/5 老数据卷兼容: **仅当版本表为空**时才 stamp head.
+  #
+  # ⚠️ 2026-10-25 修: 原来这里是**无条件** `alembic stamp head` ——
+  #    它把版本直接盖到 head, 新迁移被整段跳过, 结果是"迁移文件写了但 schema 没变"
+  #    (加 agents.kind 那一版就是这么差点翻车的: schema 缺列, 后端报 Unknown column).
+  #    正确做法: 让 backend 自己的 init_db() 跑 upgrade head;
+  #    只有"版本表不存在 / 没记录"(老环境用 create_all 建的) 才 stamp 兜底.
+  #    后端 init_db() 里已经有一模一样的判断, 这里只是提前一步, 避免首启失败.
+  log "  检查 alembic 版本表(老数据卷兼容)..."
   set +e
-  compose_cmd run --rm --no-deps --entrypoint "" backend alembic stamp head >/dev/null 2>&1
-  set -e
+  NEED_STAMP="$(compose_cmd run --rm --no-deps --entrypoint "" backend python -c "
+import asyncio
+from sqlalchemy import text
+from app.db.session import engine
 
-  # 重启 backend 让 init_db() 重新跑(现在 stamp 过了,upgrade head 应该 no-op)
+async def main():
+    async with engine.connect() as c:
+        r = await c.execute(text(\"SHOW TABLES LIKE 'alembic_version'\"))
+        if not r.first():
+            print('YES')
+            return
+        r = await c.execute(text('SELECT version_num FROM alembic_version'))
+        rows = [x[0] for x in r.fetchall()]
+        print('YES' if not rows else 'NO')
+
+asyncio.run(main())
+" 2>/dev/null | tail -1)"
+  set -e
+  if [[ "$NEED_STAMP" == "YES" ]]; then
+    log "  版本表不存在/为空 → stamp head(老数据卷兜底)"
+    set +e
+    compose_cmd run --rm --no-deps --entrypoint "" backend alembic stamp head >/dev/null 2>&1
+    set -e
+  else
+    log "  版本表已有记录 → 跳过 stamp(让 upgrade head 正常跑新迁移)"
+  fi
+
+  # 重启 backend 让 init_db() 重新跑(版本表正常的话 upgrade head 应该 no-op)
   compose_cmd restart backend >/dev/null 2>&1 || true
 
   log "5/5 等待 backend healthy..."
