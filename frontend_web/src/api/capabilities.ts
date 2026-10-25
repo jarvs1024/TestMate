@@ -14,15 +14,17 @@ export interface Capability {
   icon: string;
   /** 业务域标签 (跟 kind 正交) */
   category: string;
-  /** 交互形态: tool / board / catalog / library */
+  /** 能力角色: tool 干活 / board 看数 / platform 供料 */
   kind: CapabilityKind;
+  /** 卡片自己的动作词 (空 = 前端按角色给默认词) */
+  cta?: string | null;
   version: string;
   status: 'draft' | 'alpha' | 'beta' | 'stable' | 'deprecated';
   summary: string;
   use_when: string;
   not_for: string;
   tags: string[];
-  /** 后端执行引擎 —— 只有 tool 形态才有意义 */
+  /** 后端执行引擎 —— 只有 tool 角色才有意义 */
   engine: string;
   engine_config: Record<string, any>;
   input_schema: AgentInputField[];

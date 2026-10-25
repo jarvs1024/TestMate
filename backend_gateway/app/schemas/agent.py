@@ -10,9 +10,11 @@ class AgentOut(BaseModel):
     name: str
     icon: str
     category: str
-    # 能力形态 (2026-10-25): tool / board / catalog / library.
-    # 跟 category 正交 —— category 说"管哪块业务", kind 说"这张卡怎么用".
+    # 能力角色 (2026-10-25): tool 干活 / board 看数 / platform 供料.
+    # 跟 category 正交 —— category 说"管哪块业务", kind 说"扮演什么角色".
     kind: str = "tool"
+    # 卡片自己的动作词 (空 = 前端按角色给默认词)
+    cta: str = ""
     version: str
     status: str
     summary: str
@@ -45,6 +47,7 @@ class AgentCreateIn(BaseModel):
     icon: str = "🩺"
     category: str
     kind: str = "tool"
+    cta: str = ""
     version: str = "v0.1.0"
     status: str = "draft"
     summary: str

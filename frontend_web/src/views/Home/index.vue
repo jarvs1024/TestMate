@@ -14,7 +14,7 @@
       <span class="ts-text">登录后可见你的待办 (资产审核 / 同步失败 / 知识库状态)</span>
     </div>
 
-    <!-- ===== 工具条: 形态筛选 + 状态 + 搜索 ===== -->
+    <!-- ===== 工具条: 角色筛选 + 状态 + 搜索 ===== -->
     <div class="home-toolbar">
       <div class="filters">
         <button v-for="f in kindFilters" :key="f.value"
@@ -54,9 +54,9 @@
  * 首页 —— 能力墙.
  *
  * 2026-10-25 重构: 原来的「智能体广场」假设每张卡都是智能体 (统一显示引擎 /
- * 调用次数 / 最近调用). 实际上卡片有四种形态 (工具 / 看板 / 目录 / 知识),
+ * 调用次数 / 最近调用). 实际上卡片有三种**角色** (工具干活 / 看板看数 / 底座供料),
  * 那些字段对非工具卡是假信息. 现在:
- *   ① 卡片按 kind 渲染形态徽标 + 对应的 meta (真实数字);
+ *   ① 卡片按角色渲染徽标 + 对应的 meta (真实数字);
  *   ② 顶部多一条**待办带** —— 首页先回答"今天该看什么", 再回答"有什么";
  *   ③ 规划中的能力沉底, 不占首屏黄金位.
  */
@@ -66,7 +66,14 @@ import CapabilityCard from './CapabilityCard.vue';
 import { useCapabilityStore } from '@/stores/capabilities';
 import { useUserStore } from '@/stores/user';
 import { CAPABILITY_KINDS, isPlanned, type CapabilityKind } from '@/constants/capabilityKinds';
-import { capabilityRouteName, engineLabel, matchesKeyword, relativeTime, sortCapabilities } from '@/utils/capabilities';
+import {
+  PLATFORM_META_SOURCE,
+  capabilityRouteName,
+  engineLabel,
+  matchesKeyword,
+  relativeTime,
+  sortCapabilities,
+} from '@/utils/capabilities';
 import type { Capability } from '@/api/capabilities';
 import { getOverview } from '@/api/reviewagent';
 import { getSyncStatus, listAssets } from '@/api/assets';
@@ -93,11 +100,12 @@ const keyword = ref('');
 const loading = computed(() => store.loading && !store.loaded);
 const loggedIn = computed(() => userStore.isLoggedIn);
 
-/** 形态筛选条 —— 顺序跟 CAPABILITY_KINDS 一致 */
+/** 角色筛选条 —— 顺序跟 CAPABILITY_KINDS 一致 */
 const kindFilters = computed(() => [
   { value: 'all' as const, label: '全部' },
   ...CAPABILITY_KINDS.map((k) => ({ value: k.value, label: `${k.icon} ${k.label}` })),
 ]);
+
 
 /** 能力列表 (过滤 + 排序) */
 const filtered = computed(() => {
@@ -114,27 +122,31 @@ function countBy(kind: string): number {
   return store.countByKind[kind] ?? 0;
 }
 
-// ===== 卡片 meta: 按形态取真实数据 =====
+// ===== 卡片 meta: 按角色取真实数据 =====
 // 取数失败一律降级 (不阻塞卡片渲染), 免得一个接口挂了就白屏.
 const boardMeta = ref<MetaItem[]>([]);
 const catalogMeta = ref<MetaItem[]>([]);
 const libraryMeta = ref<MetaItem[]>([]);
 
 function metaOf(c: Capability): MetaItem[] {
-  switch (c.kind) {
-    case 'board':
-      return boardMeta.value.length ? boardMeta.value : [{ icon: '📡', text: '评审数据' }];
-    case 'catalog':
-      return catalogMeta.value.length ? catalogMeta.value : [{ icon: '🗂', text: '团队共享资产' }];
-    case 'library':
-      return libraryMeta.value.length ? libraryMeta.value : [{ icon: '📚', text: '团队知识源' }];
-    default: {
-      // 工具型: 引擎 + 最近使用 —— 这两个字段只有工具型才有意义
-      const items: MetaItem[] = [{ icon: '🔧', text: engineLabel(c.engine) }];
-      items.push({ icon: '🕐', text: relativeTime(c.last_called_at) });
-      return items;
+  if (c.kind === 'board') {
+    return boardMeta.value.length ? boardMeta.value : [{ icon: '📡', text: '评审数据' }];
+  }
+  if (c.kind === 'platform') {
+    // 底座: 同属一类, 但取数来源不同 (数资产 / 数语料) —— 按卡片自己的来源分派
+    switch (PLATFORM_META_SOURCE[c.code]) {
+      case 'assets':
+        return catalogMeta.value.length ? catalogMeta.value : [{ icon: '🧩', text: '技能沉淀' }];
+      case 'kb':
+        return libraryMeta.value.length ? libraryMeta.value : [{ icon: '📚', text: 'RAG 语料' }];
+      default:
+        return [{ icon: '🧱', text: '平台底座' }];
     }
   }
+  // 工具: 引擎 + 最近使用 —— 这两个字段只有能跑的卡才有意义
+  const items: MetaItem[] = [{ icon: '🔧', text: engineLabel(c.engine) }];
+  items.push({ icon: '🕐', text: relativeTime(c.last_called_at) });
+  return items;
 }
 
 // ===== 待办带 =====
@@ -197,7 +209,7 @@ async function loadTodos() {
   todos.value = list;
 }
 
-// ===== 形态 meta 取数 =====
+// ===== 角色 meta 取数 =====
 async function loadMetas() {
   // 看板: 评审概览 (匿名可读, 后端走 get_optional_user)
   try {
@@ -212,7 +224,7 @@ async function loadMetas() {
     /* ReviewAgent 没配 / 挂了 → 保持降级文案 */
   }
   if (!loggedIn.value) return;
-  // 目录: 资产数 (接口要鉴权)
+  // 底座 · 资产市场: 资产数 (接口要鉴权)
   try {
     const assets = await listAssets({ limit: 200 }, { silent: true });
     catalogMeta.value = [{ icon: '🗂', text: `${assets.total ?? assets.items?.length ?? 0} 个资产` }];

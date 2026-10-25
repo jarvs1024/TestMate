@@ -1,7 +1,7 @@
 """智能体/工作流注册表 —— 现在叫「能力注册表」。
 
-每个 Agent = 平台上的一项**能力**. 能力有四种形态 (AgentKind):
-工具 / 看板 / 目录 / 知识 —— 只有 tool 形态才是真正的"智能体"(有引擎、有输入 schema).
+每个 Agent = 平台上的一项**能力**. 能力有三种角色 (AgentKind):
+工具 (干活) / 看板 (看数) / 底座 (供料) —— 只有 tool 才是真正的"智能体"(有引擎、有输入 schema).
 
 平台所有能力都挂在这张表上, 新增一项能力 = 首页多一张卡, 不动主框架.
 """
@@ -40,17 +40,24 @@ class AgentCategory(str, enum.Enum):
 
 
 class AgentKind(str, enum.Enum):
-    """能力形态 —— 这张卡**怎么用**, 跟 category (业务域) 正交.
+    """能力**角色** —— 这张卡在平台里扮演什么角色, 不是它长什么样.
 
-    2026-10-25 起前端首页是「能力墙」而不是「智能体广场」:
-    卡片不再都是智能体 —— 代码检视是看板, 资产市场是目录, 知识库存是知识.
-    这四种交互形态必须显式建模, 否则卡片会继续顶着智能体的皮
-    (引擎 / 调用次数 / 最近调用 这些字段对看板和目录全是假信息).
+    2026-10-25 定稿 (第二版): 原来是四种"形态" (tool / board / catalog / library),
+    但那两个名字都在**泄漏实现** —— "目录"说的是目录结构, "知识"说的是内容形态,
+    跟用户脑子里的"这东西能干嘛"对不上. 实际资产市场里三种资产形态的官方说明
+    写得很清楚: "一段可复用的方法与知识, 装进 Agent 后直接照着做" /
+    "让 Agent 连到外部服务" —— 资产本来就是**装进 Agent 的扩展**;
+    知识库则是 RAGFlow 的数据集/分段, 是**检索语料**.
 
-    · tool     填参数 → 出结果 (日志分析 / 用例生成)
-    · board    只读指标看板 (代码检视)
-    · catalog  可浏览的共享资产目录 (AI 资产市场)
-    · library  知识库存 + 检索 (知识库)
+    所以角色只回答三件事: 干活 / 看数 / 供料.
+
+    · tool      干活: 填参数 → 出结果 (日志分析 / 用例生成 / 测试方案生成)
+    · board     看数: 只读指标看板 (代码检视)
+    · platform  供料: 给上面两类提供弹药 ——
+                 技能沉淀 (插件 / 技能 / 连接器) + RAG 语料 (规范 / 缺陷 / 报告)
+
+    ⚠️ 底座里的两类怎么区分? 靠 **category** (业务域): ai-market / ssd-kb.
+       细分信息没丢, 只是不该由角色徽标来背.
 
     ⚠️ 名字与值故意一致 (都无连字符): MySQL ENUM 存的是 enum **name**,
        name 与 value 一致时不会有 0003/0004 踩过的那个坑.
@@ -58,8 +65,7 @@ class AgentKind(str, enum.Enum):
 
     tool = "tool"
     board = "board"
-    catalog = "catalog"
-    library = "library"
+    platform = "platform"
 
 
 class AgentEngine(str, enum.Enum):
@@ -80,10 +86,15 @@ class Agent(Base):
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     icon: Mapped[str] = mapped_column(String(16), nullable=False, default="🩺")
     category: Mapped[AgentCategory] = mapped_column(Enum(AgentCategory), nullable=False)
-    # ===== 能力形态 (2026-10-25) =====
-    # 跟 category 正交: category 说的是"管哪块业务", kind 说的是"这张卡怎么用".
-    # 默认 tool —— 老数据在 seed_agents 启动同步里会被改写成正确的形态.
+    # ===== 能力角色 (2026-10-25) =====
+    # 跟 category 正交: category 说的是"管哪块业务", kind 说的是"扮演什么角色".
+    # 默认 tool —— 老数据在 seed_agents 启动同步里会被改写成正确的角色.
     kind: Mapped[AgentKind] = mapped_column(Enum(AgentKind), nullable=False, default=AgentKind.tool)
+    # ===== 卡片自己的动作词 (2026-10-25) =====
+    # 同一角色下的卡动法不同 (底座里的"浏览技能包" vs "检索语料"),
+    # 所以 CTA 不能由角色决定, 得每张卡自带 —— admin 以后加卡也能自己写按钮词.
+    # 空 = 前端按角色给默认词.
+    cta: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     version: Mapped[str] = mapped_column(String(16), nullable=False, default="v0.1.0")
     status: Mapped[AgentStatus] = mapped_column(
         Enum(AgentStatus), nullable=False, default=AgentStatus.draft

@@ -2,7 +2,7 @@
  * 首页 · 能力墙 (2026-10-25 重构).
  *
  * 盯住四件事:
- *   ① 卡片按**形态**筛选 (不再是"精选/稳定/Beta"那套智能体口径);
+ *   ① 卡片按**角色**筛选 (不再是"精选/稳定/Beta"那套智能体口径);
  *   ② **规划中的能力沉底** —— 不可用的东西不占首屏;
  *   ③ **匿名只读**: 首页看得见, 点进非公开能力要去登录;
  *      代码检视看板保持匿名可看 (跟重构前一致);
@@ -60,15 +60,15 @@ function cap(over: any = {}) {
     category: 'ssd-trace', kind: 'tool', version: 'v0.1.0', status: 'beta',
     summary: '贴日志自动分段', use_when: '', not_for: '', tags: ['日志'],
     engine: 'builtin', engine_config: {}, input_schema: [], data_sources: [], tools: [],
-    call_count: 3, last_called_at: null, is_featured: false, route: null,
+    call_count: 3, last_called_at: null, is_featured: false, route: null, cta: '',
     ...over,
   };
 }
 
 const CAPS = [
   cap({ id: 1, code: 'code-review', name: '代码检视', icon: '🧬', kind: 'board', status: 'stable', category: 'auto-code', route: 'page:code-review' }),
-  cap({ id: 2, code: 'agent-market', name: 'AI 资产市场', icon: '🏪', kind: 'catalog', status: 'beta', category: 'ai-market', route: 'page:market' }),
-  cap({ id: 3, code: 'kb-inventory', name: '知识库存', icon: '📚', kind: 'library', status: 'stable', category: 'ssd-kb', route: 'page:kb-manage' }),
+  cap({ id: 2, code: 'agent-market', name: 'AI 资产市场', icon: '🏪', kind: 'platform', status: 'beta', category: 'ai-market', route: 'page:market', cta: '浏览技能包' }),
+  cap({ id: 3, code: 'kb-inventory', name: '知识库存', icon: '📚', kind: 'platform', status: 'stable', category: 'ssd-kb', route: 'page:kb-manage', cta: '检索语料' }),
   cap({ id: 4, code: 'log-analysis', name: '日志分析', icon: '📜', kind: 'tool', status: 'beta', category: 'ssd-trace' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', icon: '🧪', kind: 'tool', status: 'draft', category: 'ssd-spec' }),
 ];
@@ -120,7 +120,7 @@ describe('首页 · 能力墙', () => {
     w.unmount();
   });
 
-  it('形态筛选: 只留对应形态的卡', async () => {
+  it('角色筛选: 只留对应角色的卡', async () => {
     const { w } = await mountHome();
     const chip = w.findAll('.filter').find((f) => f.text().includes('看板'))!;
     await chip.trigger('click');
@@ -130,14 +130,37 @@ describe('首页 · 能力墙', () => {
     w.unmount();
   });
 
-  it('形态 chips 上带计数', async () => {
+  it('底座筛选: 资产市场 + 知识库存同列 (同属供料角色)', async () => {
+    const { w } = await mountHome();
+    const chip = w.findAll('.filter').find((f) => f.text().includes('底座'))!;
+    await chip.trigger('click');
+    const names = w.findAllComponents({ name: 'CapabilityCard' })
+      .map((c) => c.props('capability').name);
+    expect(names.sort()).toEqual(['AI 资产市场', '知识库存']);
+    w.unmount();
+  });
+
+  it('CTA 由卡片自带: 底座两张卡动法不同', async () => {
+    const { w } = await mountHome();
+    const ctas = w.findAllComponents({ name: 'CapabilityCard' })
+      .map((c) => c.find('.cc-cta').exists() ? c.find('.cc-cta').text() : '')
+      .join(' ');
+    expect(ctas).toContain('浏览技能包');
+    expect(ctas).toContain('检索语料');
+    w.unmount();
+  });
+
+  it('角色 chips 上带计数 (全部 / 工具 / 看板 / 底座)', async () => {
     const { w } = await mountHome();
     const all = w.findAll('.filter').find((f) => f.text().includes('全部'))!;
     expect(all.text()).toContain('5');
     const tool = w.findAll('.filter').find((f) => f.text().includes('工具'))!;
     expect(tool.text()).toContain('2');
-    const lib = w.findAll('.filter').find((f) => f.text().includes('知识'))!;
-    expect(lib.text()).toContain('1');
+    const board = w.findAll('.filter').find((f) => f.text().includes('看板'))!;
+    expect(board.text()).toContain('1');
+    // 资产市场 + 知识库存同属底座
+    const base = w.findAll('.filter').find((f) => f.text().includes('底座'))!;
+    expect(base.text()).toContain('2');
     w.unmount();
   });
 
@@ -216,7 +239,7 @@ describe('首页 · 能力墙', () => {
     anon.w.unmount();
   });
 
-  it('形态 meta 取真实数据: 看板 128 个 MR / 目录 54 个资产 / 知识 46 文档', async () => {
+  it('角色 meta 取真实数据: 看板 128 个 MR / 底座 54 个资产 + 46 文档', async () => {
     const { w } = await mountHome({ loggedIn: true });
     await flushPromises();
     const text = w.text();

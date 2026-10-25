@@ -3,8 +3,8 @@
  *
  * 这个外壳是四个详情页的公共头部 —— 重构前它们各写各的, 长得都不一样.
  * 要盯住:
- *   ① 形态徽标 + 状态徽标都在 (形态说"怎么用", 状态说"能不能用");
- *   ② 状态词按形态换 (看板说"正常", 不说"稳定");
+ *   ① 角色徽标 + 状态徽标都在 (角色说"扮演什么", 状态说"能不能用");
+ *   ② 状态词按角色换 (看板说"正常", 不说"稳定");
  *   ③ 「← 返回工作台」回到首页, 不是回旧的"广场";
  *   ④ actions 插槽给页面放自己的操作区 (看板的时间窗 / 刷新).
  */
@@ -18,7 +18,7 @@ beforeEach(async () => {
 });
 
 describe('能力详情外壳', () => {
-  it('渲染名称 / 图标 / 形态 / 状态 / 摘要', () => {
+  it('渲染名称 / 图标 / 角色 / 状态 / 摘要', () => {
     const w = mount(CapabilityShell, {
       props: {
         name: '代码检视', icon: '🧬', kind: 'board', status: 'stable',
@@ -45,9 +45,10 @@ describe('能力详情外壳', () => {
     tool.unmount();
 
     const lib = mount(CapabilityShell, {
-      props: { name: '知识库存', icon: '📚', kind: 'library', status: 'draft' },
+      props: { name: '知识库存', icon: '📚', kind: 'platform', status: 'draft' },
       global: { plugins: [router] },
     });
+    expect(lib.find('.sh-kind').text()).toContain('底座');
     expect(lib.find('.sh-badge').text()).toContain('未接入');
     lib.unmount();
   });

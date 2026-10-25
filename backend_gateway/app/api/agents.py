@@ -19,8 +19,9 @@ from app.schemas.agent import AgentOut, AgentListOut, AgentCreateIn
 router = APIRouter()
 
 # ===== 平台能力清单 (2026-Q3 路线图) =====
-# 每条 = 一张能力卡. kind 决定这张卡**怎么用** (卡片元信息 / CTA / 详情页形态):
-#   tool 工具 / board 看板 / catalog 目录 / library 知识
+# 每条 = 一张能力卡. kind 决定这张卡在平台里**扮演什么角色**:
+#   tool 工具(干活) / board 看板(看数) / platform 底座(供料)
+# CTA 由每张卡自带 (cta 字段) —— 同一角色下的卡动法不同 (浏览技能包 vs 检索语料)
 # status=draft 的卡照常展示, 但点进去显示"规划中", 真实 workflow 待资源到位后接
 SEED_AGENTS: list[dict] = [
     {
@@ -29,6 +30,7 @@ SEED_AGENTS: list[dict] = [
         "icon": "📜",
         "category": AgentCategory.ssd_trace.value,  # 复用 trace 域 (取 log 来源)
         "kind": AgentKind.tool.value,
+        "cta": "开始使用",
         "version": "v0.1.0-demo",
         "status": AgentStatus.beta.value,
         "summary": "SSD 测试日志分析: 贴 kernel ring buffer / 应用日志, 自动分段 + 异常标注 + 错误分类",
@@ -54,6 +56,7 @@ SEED_AGENTS: list[dict] = [
         "icon": "🛠",
         "category": AgentCategory.ssd_ops.value,  # 机台/环境
         "kind": AgentKind.tool.value,
+        "cta": "开始使用",
         "version": "v0.0.0",
         "status": AgentStatus.draft.value,
         "summary": "环境运维: 查询测试机状态 / 温箱与通道占用 / 环境分析 (温度/功耗/吞吐), 一键执行常用运维命令 (拉日志 / 复位 / 升级 FW)",
@@ -76,6 +79,7 @@ SEED_AGENTS: list[dict] = [
         "icon": "📝",
         "category": AgentCategory.ssd_spec.value,  # 协议 / 知识类
         "kind": AgentKind.tool.value,
+        "cta": "开始使用",
         "version": "v0.0.0",
         "status": AgentStatus.draft.value,
         "summary": "给 Spec / 场景 / 工况描述,自动出一版测试方案 + 步骤 + 风险点",
@@ -98,6 +102,7 @@ SEED_AGENTS: list[dict] = [
         "icon": "🧪",
         "category": AgentCategory.ssd_spec.value,
         "kind": AgentKind.tool.value,
+        "cta": "开始使用",
         "version": "v0.0.0",
         "status": AgentStatus.draft.value,
         "summary": "指定 Spec + 测试方案,自动展开成可执行的 case 列表 + 预期结果",
@@ -124,6 +129,7 @@ SEED_AGENTS: list[dict] = [
         "icon": "🧬",
         "category": AgentCategory.auto_code.value,  # 自动化代码 (代码检视)
         "kind": AgentKind.board.value,
+        "cta": "查看看板",
         "version": "v0.2.0",
         "status": AgentStatus.stable.value,         # 升级 stable: pr-agent 版已下线, 这个是唯一看板
         "summary": "ReviewAgent 评审数据看板: MR 生命周期 / 建议采纳率 / 规则命中 / 作者分布",
@@ -147,13 +153,14 @@ SEED_AGENTS: list[dict] = [
         "name": "AI 资产市场",
         "icon": "🏪",
         "category": AgentCategory.ai_market.value,
-        "kind": AgentKind.catalog.value,
+        "kind": AgentKind.platform.value,
+        "cta": "浏览技能包",
         "version": "v0.1.0",
         "status": AgentStatus.beta.value,
-        "summary": "团队 AI 资产集市: 插件 / 技能 / 连接器统一检索、查看详情与安装说明",
+        "summary": "智能体的技能沉淀: 插件 / 技能 / 连接器, 挑一个装进你的 Agent",
         "use_when": "想找团队里现成的 AI 能力 (技能包 / 连接器 / 插件), 或要把自己沉淀的资产上架共享",
         "not_for": "运行具体的 SSD 测试任务请直接点对应的工具型能力",
-        "tags": ["市场", "插件", "技能", "连接器"],
+        "tags": ["技能包", "插件", "连接器"],
         "engine": AgentEngine.builtin.value,
         "engine_config": {},
         "input_schema": [],
@@ -171,13 +178,14 @@ SEED_AGENTS: list[dict] = [
         "name": "知识库存",
         "icon": "📚",
         "category": AgentCategory.ssd_kb.value,
-        "kind": AgentKind.library.value,
+        "kind": AgentKind.platform.value,
+        "cta": "检索语料",
         "version": "v0.1.0",
         "status": AgentStatus.stable.value,
-        "summary": "团队知识库存: 协议规范 / 历史缺陷 / 测试报告的统一知识源, 已对接 RAGFlow",
-        "use_when": "要查协议条款、翻历史缺陷结论、找之前的测试报告, 或把新资料喂进知识库",
+        "summary": "RAG 知识源: 协议规范 / 历史缺陷 / 测试报告的语料, 检索即用",
+        "use_when": "要查协议条款、翻历史缺陷结论、找之前的测试报告, 或把新资料喂进 RAG 知识库",
         "not_for": "要跑具体的测试动作请点对应的工具型能力",
-        "tags": ["知识", "RAGFlow", "规范"],
+        "tags": ["RAG", "语料", "规范"],
         "engine": AgentEngine.builtin.value,
         "engine_config": {},
         "input_schema": [],
@@ -209,11 +217,11 @@ async def seed_agents() -> None:
         #          data_sources / tools / kind (draft→beta/stable 自动升档;
         #          stable/beta 不降档, 防止误操作把已发布 agent 标记 draft)
         #    不动: call_count / last_called_at / created_by / is_featured / engine / category
-        #    ⚠️ kind 必须同步: 前端首页按 kind 决定卡片的形态徽标 / 元信息 / CTA,
+        #    ⚠️ kind 必须同步: 前端首页按 kind 决定卡片的角色徽标 / 元信息 / CTA,
         #       它是**平台级契约**; 改错了前端整张卡会渲染成别的形态.
         sync_keys = ("name", "summary", "use_when", "not_for", "version", "icon", "tags",
                      "input_schema", "data_sources", "tools", "engine_config", "is_featured",
-                     "kind")
+                     "kind", "cta")
         for cfg in SEED_AGENTS:
             result = await session.execute(
                 select(Agent).where(Agent.code == cfg["code"])
@@ -243,7 +251,7 @@ async def seed_agents() -> None:
 async def list_agents(
     category: str | None = Query(None, description="按域标签过滤"),
     status: str | None = Query(None, description="按状态过滤 (stable/beta/alpha/draft)"),
-    kind: str | None = Query(None, description="按能力形态过滤 (tool/board/catalog/library)"),
+    kind: str | None = Query(None, description="按能力角色过滤 (tool 干活 / board 看数 / platform 供料)"),
     featured_only: bool = Query(False),
     _user: User = Depends(get_optional_user),
 ) -> AgentListOut:
@@ -276,7 +284,7 @@ async def get_agent(
     code: str,
     _user: User = Depends(get_optional_user),
 ) -> AgentOut:
-    """单项能力详情 —— 同样匿名可读 (首页卡片点进去前要先知道它是什么形态)."""
+    """单项能力详情 —— 同样匿名可读 (首页卡片点进去前要先知道它是什么角色)."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Agent).where(Agent.code == code))
         agent = result.scalar_one_or_none()

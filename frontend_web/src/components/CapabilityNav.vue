@@ -10,7 +10,7 @@
 
     <div class="sep"></div>
 
-    <!-- 按形态分组 —— 侧栏 = 能力导航器, 首页 = 能力总览, 同一份数据 -->
+    <!-- 按角色分组 —— 侧栏 = 能力导航器, 首页 = 能力总览, 同一份数据 -->
     <div v-for="g in store.grouped" :key="g.meta.value" class="group">
       <div class="g-hd">
         <span class="g-ic">{{ g.meta.icon }}</span>
@@ -46,6 +46,8 @@
  *   平级摆在一起会让它显得像另一个功能区.
  *   现在侧栏跟首页共用同一份能力数据: 首页是能力总览, 侧栏是能力目录,
  *   不会出现"侧栏有、首页没有"的情况.
+ *
+ * 分组按**角色** (工具 / 看板 / 底座), 不是按实现形态 —— 角色才回答"这卡干嘛"。
  */
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';

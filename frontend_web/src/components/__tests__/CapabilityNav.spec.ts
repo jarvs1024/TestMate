@@ -1,11 +1,11 @@
 /**
  * 侧栏能力导航器.
  *
- * 为什么侧栏要按**形态**分组 (2026-10-25):
+ * 为什么侧栏要按**角色**分组 (2026-10-25):
  *   以前侧栏是「广场 / 知识库」两个平级分区, 用户得先判断"我要去哪个功能区";
  *   现在侧栏跟首页共用同一份能力数据 —— 首页是总览, 侧栏是目录,
  *   不会出现"侧栏有、首页没有"的情况. 所以要盯住:
- *   ① 按形态分组, 组标题带形态图标与计数;
+ *   ① 按角色分组, 组标题带角色图标与计数;
  *   ② 每项都能跳到对应能力的路由 (工具型要带 code);
  *   ③ 当前所在的能力高亮.
  */
@@ -32,8 +32,8 @@ function cap(over: Partial<Capability> = {}): Capability {
 const CAPS = [
   cap({ id: 1, code: 'log-analysis', name: '日志分析', kind: 'tool' }),
   cap({ id: 2, code: 'code-review', name: '代码检视', kind: 'board', icon: '🧬', route: 'page:code-review' }),
-  cap({ id: 3, code: 'agent-market', name: 'AI 资产市场', kind: 'catalog', icon: '🏪', route: 'page:market' }),
-  cap({ id: 4, code: 'kb-inventory', name: '知识库存', kind: 'library', icon: '📚', route: 'page:kb-manage' }),
+  cap({ id: 3, code: 'agent-market', name: 'AI 资产市场', kind: 'platform', icon: '🏪', route: 'page:market' }),
+  cap({ id: 4, code: 'kb-inventory', name: '知识库存', kind: 'platform', icon: '📚', route: 'page:kb-manage' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', kind: 'tool', status: 'draft' }),
 ];
 
@@ -65,14 +65,15 @@ describe('侧栏能力导航器', () => {
     w.unmount();
   });
 
-  it('按形态分组, 组标题带图标与计数', () => {
+  it('按角色分组, 组标题带图标与计数', () => {
     const { w } = mountNav();
     const heads = w.findAll('.g-hd').map((h) => h.text());
-    expect(heads).toHaveLength(4);
+    expect(heads).toHaveLength(3);
     expect(heads[0]).toContain('工具');
     expect(heads[0]).toContain('2');
     expect(heads[1]).toContain('看板');
-    expect(heads[3]).toContain('知识');
+    expect(heads[2]).toContain('底座');
+    expect(heads[2]).toContain('2');
     w.unmount();
   });
 

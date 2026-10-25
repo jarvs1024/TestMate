@@ -2,9 +2,9 @@
  * 能力卡片 (首页能力墙里的一张卡).
  *
  * 这张卡是这次重构的**核心产物** —— 以前它假设每张卡都是智能体,
- * 现在它按形态渲染. 所以要盯住三件事:
- *   ① 形态徽标 + 状态徽标都在 (形态说"怎么用", 状态说"能不能用");
- *   ② CTA 文案按形态变 (点下去会发生什么, 用户必须一眼看出);
+ * 现在它按角色渲染. 所以要盯住三件事:
+ *   ① 角色徽标 + 状态徽标都在 (角色说"扮演什么", 状态说"能不能用");
+ *   ② CTA 文案按角色/卡片变 (点下去会发生什么, 用户必须一眼看出);
  *   ③ 规划中的卡**不可点**且有"规划中"遮罩 (别让用户点进一个空页面).
  */
 import { describe, expect, it } from 'vitest';
@@ -46,25 +46,37 @@ describe('能力卡片', () => {
     expect(w.findAll('.tag').map((t) => t.text())).toEqual(['#日志', '#诊断']);
   });
 
-  it('显示形态徽标 (工具) + 状态徽标', () => {
+  it('显示角色徽标 (工具) + 状态徽标', () => {
     const w = mount(CapabilityCard, { props: { capability: cap() } });
     expect(w.find('.cc-kind').text()).toContain('工具');
     expect(w.find('.cc-badge').text()).toContain('公测');
   });
 
-  it('形态不同 → 徽标与 CTA 都跟着变', () => {
+  it('角色不同 → 徽标与 CTA 都跟着变', () => {
     const board = mount(CapabilityCard, { props: { capability: cap({ kind: 'board', status: 'stable' }) } });
     expect(board.find('.cc-kind').text()).toContain('看板');
     expect(board.find('.cc-badge').text()).toContain('正常');
     expect(board.find('.cc-cta').text()).toContain('查看看板');
 
-    const lib = mount(CapabilityCard, { props: { capability: cap({ kind: 'library', category: 'ssd-kb', status: 'stable' }) } });
-    expect(lib.find('.cc-kind').text()).toContain('知识');
-    expect(lib.find('.cc-cta').text()).toContain('管理知识');
-    expect(lib.find('.cc-cat').text()).toContain('知识库存');
+    const base = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ssd-kb', status: 'stable', cta: '检索语料' }) } });
+    expect(base.find('.cc-kind').text()).toContain('底座');
+    expect(base.find('.cc-cta').text()).toContain('检索语料');
+    expect(base.find('.cc-cat').text()).toContain('知识库存');
   });
 
-  it('meta 行按形态渲染传入的真实指标', () => {
+  it('CTA 用卡片自带的 cta (底座里"浏览技能包" vs "检索语料")', () => {
+    const mkt = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ai-market', cta: '浏览技能包' }) } });
+    expect(mkt.find('.cc-cta').text()).toContain('浏览技能包');
+    const kb = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ssd-kb', cta: '检索语料' }) } });
+    expect(kb.find('.cc-cta').text()).toContain('检索语料');
+  });
+
+  it('卡片没给 cta → 回落角色默认词', () => {
+    const w = mount(CapabilityCard, { props: { capability: cap({ kind: 'tool', cta: '' }) } });
+    expect(w.find('.cc-cta').text()).toContain('开始使用');
+  });
+
+  it('meta 行按角色渲染传入的真实指标', () => {
     const w = mount(CapabilityCard, {
       props: { capability: cap(), meta: [{ icon: '🔧', text: 'Dify' }, { icon: '🕐', text: '3 小时前' }] },
     });

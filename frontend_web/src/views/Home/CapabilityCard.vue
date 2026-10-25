@@ -44,7 +44,7 @@
         <span v-if="metaItems.length === 0" class="meta-item meta-empty">—</span>
       </div>
       <div v-if="!planned" class="cc-cta">
-        {{ kind.cta }}<span class="cta-arrow">›</span>
+        {{ cta }}<span class="cta-arrow">›</span>
       </div>
     </div>
   </div>
@@ -55,26 +55,30 @@
  * 能力卡片 —— 首页能力墙里的一张卡.
  *
  * 关键设计 (2026-10-25):
- *   ① **形态徽标**(🛠 工具 / 📊 看板 / 🗂 目录 / 📚 知识) 跟状态徽标分开:
- *      形态说"这张卡怎么用", 状态说"它现在能不能用".
+ *   ① **角色徽标**(🛠 工具 / 📊 看板 / 🧱 底座) 跟状态徽标分开:
+ *      角色说"这张卡扮演什么", 状态说"它现在能不能用".
  *   ② **meta 行由父级传入** (`meta` prop) —— 卡片自己不取数.
- *      引擎/调用次数对看板和目录是假信息, 真实数字(资产数/数据集数/MR 数)
+ *      引擎/调用次数对看板和底座是假信息, 真实数字(资产数/数据集数/MR 数)
  *      要各自调自己的接口, 所以取数放在 Home, 卡片只负责渲染.
- *   ③ **CTA 必写**: 卡片不全是智能体之后, 用户必须一眼看出点下去会发生什么.
+ *   ③ **CTA 必写**: 卡片不是都是智能体之后, 用户必须一眼看出点下去会发生什么.
+ *      CTA 由**卡片自带** (后端 cta 字段) —— 底座里"浏览技能包"和"检索语料"动法不同.
  */
 import { computed } from 'vue';
 import type { Capability } from '@/api/capabilities';
 import { categoryLabel, isPlanned, kindLabel, kindMeta, statusLabel } from '@/constants/capabilityKinds';
+import { capabilityCta } from '@/utils/capabilities';
 
 const props = defineProps<{
   capability: Capability;
-  /** 形态相关的真实指标 (父级取好数传进来) */
+  /** 角色相关的真实指标 (父级取好数传进来) */
   meta?: { icon: string; text: string }[];
 }>();
 
 const emit = defineEmits<{ (e: 'open', c: Capability): void }>();
 
 const kind = computed(() => kindMeta(props.capability.kind));
+// CTA 由卡片自带 (后端 cta 字段), 空则回落角色默认词
+const cta = computed(() => capabilityCta(props.capability));
 const planned = computed(() => isPlanned(props.capability.status));
 const statusText = computed(() => statusLabel(props.capability.kind, props.capability.status));
 const domainLabel = computed(() => categoryLabel(props.capability.category));
@@ -125,7 +129,7 @@ function onClick() {
   font-family: var(--font-mono);
   display: flex; align-items: center; gap: 5px;
 }
-/* 形态徽标: 比域标签更重要 —— 它决定这张卡怎么用 */
+/* 角色徽标: 比域标签更重要 —— 它决定这张卡扮演什么 */
 .cc-kind { color: var(--primary-2); font-weight: 600; }
 .cc-dot { opacity: 0.5; }
 

@@ -4,7 +4,7 @@
     <CapabilityShell
       name="AI 资产市场"
       icon="🏪"
-      kind="catalog"
+      kind="platform"
       status="beta"
       version="v0.1.0"
       category="ai-market"

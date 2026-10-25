@@ -23,8 +23,8 @@ export const useCapabilityStore = defineStore('capabilities', {
     all: (s) => s.items,
 
     /**
-     * 按形态分组 —— 侧栏导航器直接用.
-     * 顺序跟 CAPABILITY_KINDS 一致, 空形态不占位.
+     * 按角色分组 —— 侧栏导航器直接用.
+     * 顺序跟 CAPABILITY_KINDS 一致, 空角色不占位.
      */
     grouped: (s) => {
       return CAPABILITY_KINDS
@@ -35,7 +35,7 @@ export const useCapabilityStore = defineStore('capabilities', {
         .filter((g) => g.items.length > 0);
     },
 
-    /** 每个形态有几项 (首页筛选 chips 上的计数) */
+    /** 每个角色有几项 (首页筛选 chips 上的计数) */
     countByKind: (s) => {
       const map: Record<string, number> = { all: s.items.length };
       for (const k of CAPABILITY_KINDS) map[k.value] = 0;

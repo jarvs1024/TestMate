@@ -4,7 +4,7 @@
     <CapabilityShell
       name="知识库存"
       icon="📚"
-      kind="library"
+      kind="platform"
       status="stable"
       version="v0.1.0"
       category="ssd-kb"

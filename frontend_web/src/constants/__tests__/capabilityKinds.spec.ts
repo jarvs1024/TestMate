@@ -1,11 +1,13 @@
 /**
- * 能力形态常量 (2026-10-25 能力墙重构).
+ * 能力角色常量 (2026-10-25 能力墙重构 · 第二版).
  *
  * 这个文件看着像"纯展示映射", 但它承载的是**产品规则**, 所以必须有单测锁住:
- *   ① 状态词按形态换 —— 对看板/目录/知识说 "Beta / 稳定" 没有决策价值,
+ *   ① 角色只回答"干活 / 看数 / 供料" —— 徽标**不许**泄漏实现
+ *      (第一版的「目录」「知识」就是泄漏: 一个说目录结构, 一个说内容形态);
+ *   ② 状态词按角色换 —— 对看板和底座说 "Beta / 稳定" 没有决策价值,
  *      但"未接入"是必须说清楚的 (服务没配 = 用不了);
- *   ② 未知 kind 必须兜底成 tool —— 后端加新形态时前端不能白屏;
- *   ③ 规划中 (draft) 的判定 —— 它决定卡片能不能点.
+ *   ③ 未知 kind 必须兜底成 tool —— 后端加新角色时前端不能白屏;
+ *   ④ 规划中 (draft) 的判定 —— 它决定卡片能不能点.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -18,20 +20,22 @@ import {
   statusLabel,
 } from '@/constants/capabilityKinds';
 
-describe('能力形态常量', () => {
-  it('四种形态齐全, 顺序固定 (侧栏分组 / 筛选 chips 靠它)', () => {
-    expect(CAPABILITY_KINDS.map((k) => k.value)).toEqual(['tool', 'board', 'catalog', 'library']);
-    expect(CAPABILITY_KINDS.map((k) => k.label)).toEqual(['工具', '看板', '目录', '知识']);
+describe('能力角色常量', () => {
+  it('三种角色齐全, 顺序固定 (侧栏分组 / 筛选 chips 靠它)', () => {
+    expect(CAPABILITY_KINDS.map((k) => k.value)).toEqual(['tool', 'board', 'platform']);
+    expect(CAPABILITY_KINDS.map((k) => k.label)).toEqual(['工具', '看板', '底座']);
   });
 
-  it('每种形态都有 CTA —— 卡片不全是智能体后, 用户必须知道点下去会发生什么', () => {
-    for (const k of CAPABILITY_KINDS) {
-      expect(k.cta).toBeTruthy();
-    }
+  it('角色名不许泄漏实现 (不能再有「目录」「知识」这种)', () => {
+    const labels = CAPABILITY_KINDS.map((k) => k.label);
+    expect(labels).not.toContain('目录');
+    expect(labels).not.toContain('知识');
+  });
+
+  it('每种角色都有默认 CTA —— 卡片没自带 cta 时兜底用', () => {
     expect(kindMeta('tool').cta).toBe('开始使用');
     expect(kindMeta('board').cta).toBe('查看看板');
-    expect(kindMeta('catalog').cta).toBe('浏览资产');
-    expect(kindMeta('library').cta).toBe('管理知识');
+    expect(kindMeta('platform').cta).toBe('打开');
   });
 
   it('未知 kind 兜底成工具 (不白屏)', () => {
@@ -41,17 +45,16 @@ describe('能力形态常量', () => {
     expect(kindLabel('nope' as any)).toBe('工具');
   });
 
-  it('状态词按形态换: 工具说"规划中/公测", 知识说"未接入/正常"', () => {
+  it('状态词按角色换: 工具说"规划中/公测", 底座说"未接入/正常"', () => {
     expect(statusLabel('tool', 'draft')).toBe('规划中');
     expect(statusLabel('tool', 'beta')).toBe('公测');
     expect(statusLabel('tool', 'stable')).toBe('可用');
-    expect(statusLabel('library', 'draft')).toBe('未接入');
-    expect(statusLabel('library', 'stable')).toBe('正常');
+    expect(statusLabel('platform', 'draft')).toBe('未接入');
+    expect(statusLabel('platform', 'stable')).toBe('正常');
     expect(statusLabel('board', 'beta')).toBe('正常');
-    expect(statusLabel('catalog', 'stable')).toBe('正常');
   });
 
-  it('已下线对所有形态一致', () => {
+  it('已下线对所有角色一致', () => {
     for (const k of CAPABILITY_KINDS) {
       expect(statusLabel(k.value, 'deprecated')).toBe('已下线');
     }

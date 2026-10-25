@@ -7,6 +7,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  PLATFORM_META_SOURCE,
+  capabilityCta,
   capabilityRouteName,
   engineLabel,
   matchesKeyword,
@@ -88,6 +90,21 @@ describe('能力工具函数', () => {
     expect(relativeTime(new Date(Date.now() - 3 * 3600000).toISOString())).toBe('3 小时前');
     expect(relativeTime(new Date(Date.now() - 2 * 86400000).toISOString())).toBe('2 天前');
     expect(relativeTime('not-a-date')).toBe('—');
+  });
+
+  it('CTA 优先用卡片自带的, 空才回落角色默认词', () => {
+    // 底座两张卡动法不同: 浏览技能包 vs 检索语料 —— 所以 CTA 必须来自卡片
+    expect(capabilityCta({ kind: 'platform', cta: '浏览技能包' })).toBe('浏览技能包');
+    expect(capabilityCta({ kind: 'platform', cta: '检索语料' })).toBe('检索语料');
+    expect(capabilityCta({ kind: 'platform', cta: '' })).toBe('打开');
+    expect(capabilityCta({ kind: 'platform' })).toBe('打开');
+    expect(capabilityCta({ kind: 'tool', cta: '开始使用' })).toBe('开始使用');
+    expect(capabilityCta({ kind: 'board' })).toBe('查看看板');
+  });
+
+  it('底座取数来源: 资产市场数资产, 知识库存数语料', () => {
+    expect(PLATFORM_META_SOURCE['agent-market']).toBe('assets');
+    expect(PLATFORM_META_SOURCE['kb-inventory']).toBe('kb');
   });
 
   it('引擎名: 短名可读', () => {
