@@ -14,7 +14,7 @@
       <div class="ac-badges">
         <!-- 适用项目: 项目特有的才标 (通用的不占地方) -->
         <span v-if="item.project" class="ac-badge proj"
-              :title="`这个资产只对 ${item.project} 项目有意义 (通用资产不标)`">📁 {{ item.project }} 项目</span>
+              :title="`只对 ${item.project} 项目有意义`">📁 {{ item.project }} 项目</span>
         <span v-if="item.publish_status === 'pending'" class="ac-badge pending"
               title="已提交, 等待管理员审核; 通过后才在市场里可见">📋 待审核</span>
         <span v-else-if="item.publish_status === 'rejected'" class="ac-badge rejected"
@@ -34,11 +34,13 @@
 
     <div class="ac-tags">
       <span v-for="t in item.tags.slice(0, 3)" :key="t" class="tag">#{{ t }}</span>
-      <span v-if="permBadge" class="tag tag-perm" :title="permTitle">🔐 {{ permBadge }}</span>
+      <!-- ⚠️ 权限角标去掉了 (2026-10-25 用户要求): 卡片是"这资产有什么用"的门面,
+           权限这种"安装前要看的东西"放卡片上只会让人觉得有风险, 详情页/安装说明里说就行.
+           permissions 字段后端仍保留 —— 只是不展示了. -->
     </div>
 
     <div class="ac-meta">
-      <span class="meta-item">⬇ {{ item.download_count }}</span>
+      <span class="meta-item" :title="`已下载 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
       <span class="meta-item">{{ item.author || '未知' }}</span>
       <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
     </div>
@@ -46,76 +48,55 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
 import type { AssetItem } from '@/api/assets';
 
-const props = defineProps<{ item: AssetItem }>();
+defineProps<{ item: AssetItem }>();
 const emit = defineEmits<{ (e: 'open', item: AssetItem): void }>();
 
 function shortDate(iso: string | null): string {
   if (!iso) return '—';
   return iso.slice(0, 10);
 }
-
-/** 权限摘要角标: 有敏感权限才提示, 纯文本技能不显示。
- *  后端 permissions 是自由 dict, 各 key 可能缺失, 一律用 ?? [] 兜底. */
-const permCount = computed(() => {
-  const p = props.item.permissions ?? {};
-  return (
-    (p.filesystem_read?.length ?? 0) + (p.filesystem_write?.length ?? 0) +
-    (p.network?.length ?? 0) + (p.process_exec?.length ?? 0) +
-    (p.secrets?.length ?? 0)
-  );
-});
-const permBadge = computed(() => (permCount.value > 0 ? `${permCount.value} 项权限` : ''));
-const permTitle = computed(() => {
-  const p = props.item.permissions ?? {};
-  const lines: string[] = [];
-  if (p.filesystem_read?.length) lines.push(`读取: ${p.filesystem_read.join(', ')}`);
-  if (p.filesystem_write?.length) lines.push(`写入: ${p.filesystem_write.join(', ')}`);
-  if (p.network?.length) lines.push(`网络: ${p.network.join(', ')}`);
-  if (p.process_exec?.length) lines.push(`执行: ${p.process_exec.join(', ')}`);
-  if (p.secrets?.length) lines.push(`凭据: ${p.secrets.join(', ')}`);
-  return lines.join('\n');
-});
 </script>
 
 <style scoped>
+/* ⚠️ 市场页的卡片是**扁平紧凑列表卡** (4 列) ——
+   跟广场页的"白底浮动大卡片" (3 列, 全局 .card) 拉开密度差, 一眼能分清两个页面. */
 .asset-card {
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
   display: flex;
   flex-direction: column;
-  gap: 11px;
-  min-height: 178px;
+  gap: 9px;
+  min-height: 150px;
 }
 .asset-card:hover {
-  transform: translateY(-2px);
+  /* ⚠️ 刻意**不抬升** (没有 translateY) —— 广场卡片是浮起来的, 这里保持"列表感" */
   border-color: var(--primary);
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.12), 0 0 0 3px var(--primary-soft);
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.10);
 }
 .asset-card:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
-.ac-hd { display: flex; align-items: flex-start; gap: 12px; }
+.ac-hd { display: flex; align-items: flex-start; gap: 10px; }
 .ac-icon {
-  width: 40px; height: 40px;
-  border-radius: 11px;
+  width: 34px; height: 34px;
+  border-radius: 9px;
   background: linear-gradient(135deg, var(--primary), var(--primary-2));
   display: flex; align-items: center; justify-content: center;
-  font-size: 20px;
+  font-size: 17px;
   flex-shrink: 0;
   box-shadow: var(--primary-shadow);
 }
 .ac-title { flex: 1; min-width: 0; }
 .ac-name {
-  font-size: 15px; font-weight: 700; color: var(--ink-900); line-height: 1.25;
+  font-size: 14px; font-weight: 700; color: var(--ink-900); line-height: 1.25;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ac-ver {
-  font-size: 11px; color: var(--ink-500); margin-top: 3px;
+  font-size: 10.5px; color: var(--ink-500); margin-top: 2px;
   font-family: var(--font-mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -141,7 +122,7 @@ const permTitle = computed(() => {
 
 .ac-summary {
   margin: 0;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--ink-700);
   line-height: 1.55;
   flex: 1;
@@ -154,20 +135,19 @@ const permTitle = computed(() => {
 
 .ac-tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .tag {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--ink-500);
   background: var(--surface-sunken);
-  padding: 2px 7px;
+  padding: 2px 6px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
 }
-.tag-perm { color: var(--warn); background: rgba(245, 158, 11, 0.10); }
 
 .ac-meta {
   display: flex; gap: 5px; flex-wrap: wrap;
-  padding-top: 9px;
+  padding-top: 8px;
   border-top: 1px dashed var(--border);
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--ink-500);
   font-family: var(--font-mono);
 }

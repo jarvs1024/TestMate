@@ -106,3 +106,20 @@ describe('适用项目徽标', () => {
     expect(w.find('.ac-badge.proj').exists()).toBe(false);
   });
 });
+
+describe('AssetCard 不显示权限角标', () => {
+  it('有敏感权限也不显示 (2026-10-25 用户要求: 卡片只讲"这资产有什么用")', () => {
+    const w = mount(AssetCard, {
+      props: {
+        item: item({
+          permissions: {
+            filesystem_read: ['/etc'], filesystem_write: ['/data'],
+            network: ['https://x'], process_exec: ['bash'], secrets: [],
+          } as any,
+        }),
+      },
+    });
+    expect(w.text()).not.toContain('项权限');
+    expect(w.find('.tag-perm').exists()).toBe(false);
+  });
+});

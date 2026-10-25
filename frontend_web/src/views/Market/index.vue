@@ -16,9 +16,11 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
           </svg>
-          <input v-model="keyword" placeholder="搜索名称、说明或标签" @input="onSearch" />
+          <input v-model="keyword" placeholder="搜索名称、说明、标签或项目号"
+                 title="项目号指资产归属的项目 (如 6100); 搜「通用」找通用资产"
+                 @input="onSearch" />
         </div>
-        <el-tooltip content="谁在什么时候上架/下架/安装过, 以及钉钉通知送没送到" placement="bottom">
+        <el-tooltip content="谁在什么时候上架/下架/更新过, 以及钉钉通知送没送到" placement="bottom">
           <button class="mini-btn" @click="auditOpen = true">🕘 操作记录</button>
         </el-tooltip>
         <!-- ===== 上传入口: 先选形态, 再进对应表单 (2026-10-24) =====
@@ -78,7 +80,7 @@
       <button class="mrb-btn" @click="load">刷新</button>
     </div>
 
-    <!-- ===== 分类 + 排序 (状态不在这层过滤 —— 每张卡片自己标着) ===== -->
+    <!-- ===== 分类 + 项目/排序筛选 (状态不在这层过滤 —— 每张卡片自己标着) ===== -->
     <div class="mk-filters">
       <div class="cat-chips">
         <button class="chip" :class="{ active: category === '' }" @click="category = ''; load()">
@@ -93,28 +95,18 @@
           {{ c.name }}<span v-if="catCount(c)" class="count">{{ catCount(c) }}</span>
         </button>
       </div>
-      <!-- ===== 项目筛选 =====
-           选某个项目 = 该项目特有 **+ 通用** (通用资产在该项目同样适用);
-           选「通用」= 只看通用的. -->
-      <div v-if="projects.length" class="proj-chips">
-        <span class="pc-label">项目</span>
-        <button class="chip" :class="{ active: projectFilter === '' }"
-                @click="projectFilter = ''; load()">全部</button>
-        <button v-for="p in projects" :key="p.code" class="chip"
-                :class="{ active: projectFilter === p.code }"
-                :title="p.code === 'general'
-                  ? '只看通用资产 (所有项目都能用的)'
-                  : `只看 ${p.code} 项目特有 + 通用资产`"
-                @click="projectFilter = p.code; load()">
-          {{ p.name }}<span v-if="p.total" class="count">{{ p.total }}</span>
-        </button>
-      </div>
 
-      <select v-model="sortBy" class="sort" @change="load">
-        <option value="hot">热门</option>
-        <option value="new">最新</option>
-        <option value="name">名称</option>
-      </select>
+      <!-- ===== 项目 + 排序 (合成一个下拉) =====
+           原来项目是一排 chip, 跟分类 chip 挤在一起换行, 很乱.
+           现在收进一个菜单: 按钮上显示当前选择 (如「6100 · 最新」),
+           面板里分「项目」「排序」两组, 点一下就生效.
+           语义跟原来一致: 选某项目 = 该项目特有 **+ 通用**; 选「通用」= 只看通用. -->
+      <MarketFilterMenu
+        :project="projectFilter"
+        :sort="sortBy"
+        :projects="projects"
+        @update:project="onProjectChange"
+        @update:sort="onSortChange" />
     </div>
 
     <!-- ===== 加载 / 空态 / 错误 ===== -->
@@ -129,7 +121,7 @@
     </div>
     <div v-else-if="list.length === 0" class="state">
       <div style="font-size: 30px; opacity: 0.4">🏪</div>
-      <div>该分类下还没有资产</div>
+      <div>当前筛选下没有资产</div>
       <button class="reset" @click="resetFilters">清空筛选</button>
     </div>
     <div v-else class="grid">
@@ -148,10 +140,19 @@
 
     <p v-if="total > 0" class="foot-hint mono">
       共 {{ total }} 项 · 数据源: GitLab {{ GITLAB_PROJECT }}
-      <button v-if="!syncing" class="link-btn" @click="doSync">重新同步</button>
+      <button v-if="!syncing" class="link-btn" title="重新读一次市场数据 (不拉 GitLab, 快)"
+              @click="manualRefresh">刷新</button>
+      <button v-if="!syncing" class="link-btn" title="从 GitLab 拉取最新资产 (慢一点)"
+              @click="doSync">重新同步</button>
       <span v-else class="muted">同步中…</span>
+      <!-- ⚠️ 两个时间源必须分清:
+           「GitLab 最近对齐」= 后端最后一次从 GitLab 拉取的时间;
+           「本页上次刷新」= 前端最后一次读本地镜像的时间. -->
       <span v-if="sync.last_sync_at" class="muted">
-        · 最近对齐 {{ new Date(sync.last_sync_at).toLocaleTimeString('zh-CN') }}
+        · GitLab 最近对齐 {{ new Date(sync.last_sync_at).toLocaleTimeString('zh-CN') }}
+      </span>
+      <span class="muted" :class="{ 'refresh-fail': !!refreshError }">
+        · 本页上次刷新 {{ lastRefreshText }}
       </span>
     </p>
   </div>
@@ -164,8 +165,9 @@ import AssetCard from './AssetCard.vue';
 import AssetDetailDrawer from './AssetDetailDrawer.vue';
 import AssetUploadDialog from './AssetUploadDialog.vue';
 import AssetAuditDrawer from './AssetAuditDrawer.vue';
+import MarketFilterMenu from './MarketFilterMenu.vue';
 import { useUserStore } from '@/stores/user';
-import { MARKET_KINDS } from './marketCatalog';
+import { MARKET_KINDS, type MarketProjectItem, type MarketSort } from './marketCatalog';
 import { KIND_META } from './kindMeta';
 import {
   listAssets, listCategories, listJobs, listProjects, getSyncStatus, retryJob, syncFromGit,
@@ -179,7 +181,7 @@ const LOAD_TIMEOUT_MS = 15000;
 const kind = ref<MarketKind>('plugin');
 const category = ref('');
 const keyword = ref('');
-const sortBy = ref<'hot' | 'new' | 'name'>('hot');
+const sortBy = ref<MarketSort>('hot');
 /**
  * 「只看这些」的模式 —— 两条提示条要分开:
  *   review    → 我提交的、还等审核或被驳回的
@@ -246,6 +248,24 @@ const sync = ref<SyncStatus>({
   last_sync_at: null,
 });
 
+/**
+ * 自动刷新周期 (2026-10-25 用户要求: 市场首页要能自动更新).
+ *
+ * ⚠️ 为什么是 20s: 后端从 GitLab 拉取的周期是 30s (设置项 marketplace.sync.interval_seconds),
+ *    前端每 20s 读一次**本地镜像** → 端到端延迟 ≈ 30-50s.
+ *    前端这一步只是查一次库, 成本很低.
+ */
+const AUTO_REFRESH_MS = 20000;
+/** 本页最后一次读到镜像的时间 —— 用户得知道屏幕上的数据是新的 */
+const lastRefreshAt = ref<Date | null>(null);
+/** 上次刷新失败 (静默刷新失败只提示一句, 不把整页换成错误态) */
+const refreshError = ref('');
+const lastRefreshText = computed(() => {
+  if (refreshError.value) return `失败 (${refreshError.value})`;
+  if (!lastRefreshAt.value) return '—';
+  return lastRefreshAt.value.toLocaleTimeString('zh-CN');
+});
+
 /** 防御: items 可能是 undefined (响应形状异常 / 请求被中断), 绝不能让 list.length 抛错
  *  —— 一旦渲染抛异常, Vue 会保留上一次的 DOM, 页面就会永远停在 loading 态. */
 const list = computed(() => items.value ?? []);
@@ -264,8 +284,8 @@ const syncSubHint = computed(() => {
 /* 分类表 (后端下发的完整分类 + 各分类资产数) —— chip 动态渲染, 不再硬编码.
    ⚠️ 以前用硬编码的 MARKET_CATEGORIES: 用户自建的分类**没有 chip** → 筛不出来. */
 const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
-/** 项目列表 (通用 + 各项目) —— 筛选 chip 用 */
-const projects = ref<{ code: string; name: string; total: number }[]>([]);
+/** 项目列表 (通用 + 各项目) —— 筛选菜单用 */
+const projects = ref<MarketProjectItem[]>([]);
 /** 项目筛选: '' = 全部, 'general' = 只看通用, '6100' = 该项目特有 + 通用 */
 const projectFilter = ref('');
 async function loadProjects() {
@@ -312,9 +332,19 @@ function catCount(c: { by_kind?: Record<string, number>; total?: number }): numb
   return c.total || 0;
 }
 
-async function load() {
-  loading.value = true;
-  loadError.value = '';
+/**
+ * 读一次市场列表.
+ *
+ * ⚠️ `silent` = **静默刷新** (自动刷新用):
+ *    不置 loading (免得整页闪一下 spinner), 失败也**不动页面** ——
+ *    用户正在看的列表保留, 只在页脚提示一句.
+ */
+async function fetchList(opts: { silent?: boolean } = {}) {
+  const silent = !!opts.silent;
+  if (!silent) {
+    loading.value = true;
+    loadError.value = '';
+  }
   // 看门狗: 请求卡住 (网络中断 / 上游异常) 时给出可操作提示, 而不是无限转圈
   const watchdog = window.setTimeout(() => {
     if (loading.value) loadError.value = '加载超时, 请检查后端服务后点「重试」';
@@ -328,8 +358,11 @@ async function load() {
       kind: mine ? undefined : kind.value,
       category: mine || category.value === '__featured'
         ? undefined : (category.value || undefined),
-      // 项目筛选: 留空 = 不过滤; 'general' = 只看通用; '6100' = 该项目特有 + 通用
-      project: mine ? undefined : (projectFilter.value || undefined),
+      // 项目筛选: 留空 = 不过滤; 'general' → 后端约定的 '__general' (只看通用);
+      // 其他 = 该项目特有 + 通用
+      project: mine ? undefined : (projectFilter.value === 'general'
+        ? '__general'
+        : (projectFilter.value || undefined)),
       q: keyword.value.trim() || undefined,
       sort: sortBy.value,
       limit: 500,
@@ -351,14 +384,50 @@ async function load() {
     }
     // ⚠️ 客户端过滤之后, 条数就是过滤后的条数 —— 别再显示后端的总数 (虚高)
     total.value = items.value.length;
+    lastRefreshAt.value = new Date();
+    refreshError.value = '';
+    // 抽屉里开着的资产同步一下 (静默刷新后抽屉别停在旧数据上).
+    // ⚠️ 找不到**不关抽屉** —— 刷新期间资产可能被并发删掉, 关抽屉会打断用户.
+    if (current.value) {
+      const fresh = rawItems.value.find((i) => i.code === current.value!.code);
+      if (fresh) current.value = fresh;
+    }
   } catch (e: any) {
-    loadError.value = e?.response?.data?.detail || e?.message || '未知错误';
-    items.value = [];
-    total.value = 0;
+    const msg = e?.response?.data?.detail || e?.message || '未知错误';
+    if (silent) {
+      refreshError.value = msg;
+    } else {
+      loadError.value = msg;
+      items.value = [];
+      total.value = 0;
+    }
   } finally {
     window.clearTimeout(watchdog);
-    loading.value = false;
+    if (!silent) loading.value = false;
   }
+}
+
+/** 正常加载 —— 整页 loading 态 (首次进入 / 改筛选条件 / 手动重试) */
+function load() {
+  return fetchList();
+}
+/** 静默刷新 —— 自动刷新用: 不闪 spinner, 失败不动页面 */
+function silentLoad() {
+  return fetchList({ silent: true });
+}
+
+/** 筛选菜单改了项目 / 排序 → 立刻刷列表 (不靠 watch, 免得复位时重复请求) */
+function onProjectChange(v: string) {
+  projectFilter.value = v;
+  load();
+}
+function onSortChange(v: MarketSort) {
+  sortBy.value = v;
+  load();
+}
+/** 页脚的「刷新」按钮 —— 只重读本地镜像, 不去 GitLab 拉 (那个是「重新同步」) */
+function manualRefresh() {
+  load();
 }
 
 let searchTimer: number | null = null;
@@ -480,13 +549,32 @@ function resetFilters() {
 
 watch(kind, () => load());
 
+/**
+ * 自动刷新 (静默) —— 定时重读本地镜像, 让页面上的数据自己变新.
+ *
+ * ⚠️ 页面**看不见**时跳过 (切到别的标签页了, 没人看, 白费一次请求);
+ *    切回来时立刻补一次 —— 免得用户盯着一个十分钟前的列表.
+ */
+function autoRefresh() {
+  if (typeof document !== 'undefined' && document.hidden) return;
+  silentLoad();
+}
+function onVisibilityChange() {
+  if (!document.hidden) autoRefresh();
+}
+
 let timer: number | null = null;
+let autoTimer: number | null = null;
 onMounted(async () => {
   await Promise.all([load(), loadKindCounts(), loadSyncStatus(), loadCategories(), loadProjects()]);
   timer = window.setInterval(pollJobs, 5000);
+  autoTimer = window.setInterval(autoRefresh, AUTO_REFRESH_MS);
+  document.addEventListener('visibilitychange', onVisibilityChange);
 });
 onUnmounted(() => {
   if (timer) window.clearInterval(timer);
+  if (autoTimer) window.clearInterval(autoTimer);
+  document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>
 
@@ -628,12 +716,12 @@ onUnmounted(() => {
 .back:hover { background: var(--surface-sunken); color: var(--ink-900); }
 
 
-/* ===== 分类 + 排序 ===== */
+/* ===== 分类 + 项目/排序筛选 ===== */
 .mk-filters {
   display: flex; justify-content: space-between; align-items: center;
   gap: 14px; flex-wrap: wrap;
 }
-.cat-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.cat-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
 .chip {
   background: transparent; border: 1px solid var(--border);
   padding: 5px 12px; border-radius: var(--radius-pill);
@@ -645,22 +733,13 @@ onUnmounted(() => {
 .chip.active { background: var(--primary-grad); border-color: transparent; color: #fff; font-weight: 600; }
 .chip.active .count { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
-/* ===== 项目筛选 ===== */
-.proj-chips {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  padding-left: 12px; border-left: 1px dashed var(--border);
-}
-.pc-label { font-size: 11.5px; color: var(--ink-500); }
-
-.sort {
-  background: var(--surface); border: 1px solid var(--border);
-  padding: 6px 10px; border-radius: 8px;
-  font-size: 12.5px; color: var(--ink-700); font-family: inherit; cursor: pointer;
-}
-
-/* ===== 网格 ===== */
-.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+/* ===== 网格 =====
+   ⚠️ 市场页 **4 列** —— 跟广场页 (3 列大卡片) 拉开密度差:
+   广场是"白底浮动大卡片", 这里是"扁平紧凑列表卡", 一眼能分清两个页面. */
+.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 1400px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
 
 .state {
   background: var(--surface-soft); backdrop-filter: blur(8px);
@@ -692,4 +771,6 @@ onUnmounted(() => {
   font-size: 11px; cursor: pointer; font-family: inherit; padding: 0; text-decoration: underline;
 }
 .muted { color: var(--ink-500); }
+/* 静默刷新失败 —— 提示一句, 但页面不动 (别把用户正在看的列表变成错误页) */
+.refresh-fail { color: var(--err); }
 </style>
