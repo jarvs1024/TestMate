@@ -174,7 +174,10 @@
            非管理员点了只吃一个 403, 不如直接不显示. -->
       <button v-if="isAdmin && !syncing" class="link-btn" title="从 GitLab 拉取最新资产 (慢一点, 仅管理员)"
               @click="doSync">重新同步</button>
-      <span v-else class="muted">同步中…</span>
+      <!-- ⚠️ 这里**不能**用 v-else: 非管理员 (isAdmin=false) 时按钮不渲染,
+           v-else 会跟着渲染出「同步中…」—— 看着像有个同步一直在跑, 实际根本没有.
+           所以单独判 syncing: 只有**真的在同步**时才显示. -->
+      <span v-if="syncing" class="muted">同步中…</span>
       <!-- ⚠️ 两个时间源必须分清:
            「GitLab 最近对齐」= 后端最后一次从 GitLab 拉取的时间;
            「本页上次刷新」= 前端最后一次读本地镜像的时间. -->
@@ -205,6 +208,24 @@ import {
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
 } from '@/api/assets';
 import { isAuthor } from './identity';
+
+/**
+ * 从 Git 远端地址里取出**给人看的仓库路径** (如 root/testmate-market).
+ *
+ * ⚠️ 别把整条 SSH 地址摊在页脚上 —— 那带���内网 host:port (host.docker.internal:8922),
+ *    界面里没必要暴露部署拓扑; 管理员要看完整地址去设置页, 那儿是管理员专属页.
+ */
+function repoPathOf(remote: string): string {
+  let s = (remote || '').trim();
+  if (!s) return '';
+  s = s.replace(/\.git$/, '');
+  // URL 形态: ssh://git@host:port/group/project → 取路径部分
+  const m = s.match(/^[a-z+]+:\/\/[^/]*\/(.+)$/i);
+  if (m) return m[1];
+  // 本地路径形态: /a/b/c → 取最后两段
+  const segs = s.split('/').filter(Boolean);
+  return segs.slice(-2).join('/');
+}
 
 /**
  * 市场仓库的兜底路径 —— 只在**取不到后端配置**时用.
@@ -558,7 +579,8 @@ const gitRemote = ref('');
 const gitRemoteLoaded = ref(false);
 const gitRemoteText = computed(() => {
   if (!gitRemoteLoaded.value) return '…';
-  return gitRemote.value || GITLAB_PROJECT_FALLBACK;
+  // ⚠️ 只显示仓库路径 —— 完整 SSH 地址 (带内网 host:port) 不该摊在页脚上
+  return repoPathOf(gitRemote.value) || GITLAB_PROJECT_FALLBACK;
 });
 async function loadMarketConfig() {
   try {
