@@ -243,7 +243,13 @@ export async function listAssets(params: {
   include_unpublished?: boolean; limit?: number; offset?: number;
   /** 按上架状态过滤: published | pending | rejected | unpublished | mine | all; 留空=默认可见性 */
   status?: string;
-} = {}): Promise<AssetListResp> {
+} = {}, opts: { silent?: boolean } = {}): Promise<AssetListResp> {
+  if (opts.silent) {
+    return (await request.get('/assets', {
+      params: { client_id: getClientId(), ...params },
+      silent: true,
+    })) as unknown as AssetListResp;
+  }
   return apiGet<AssetListResp>('/assets', { client_id: getClientId(), ...params });
 }
 

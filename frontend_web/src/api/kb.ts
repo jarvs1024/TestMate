@@ -108,16 +108,30 @@ export interface KbDocumentListResult {
   total: number;
 }
 
-export async function listDatasets(): Promise<{ items: KbDataset[]; total: number }> {
-  return (await request.get('/kb/datasets')) as { items: KbDataset[]; total: number };
+/**
+ * 列出 RAGFlow 数据集.
+ * @param opts.silent 失败时不弹全局错误 (调用方自己降级, 比如首页卡片取数)
+ */
+export async function listDatasets(
+  opts: { silent?: boolean } = {},
+): Promise<{ items: KbDataset[]; total: number }> {
+  return (await request.get('/kb/datasets', { silent: opts.silent })) as {
+    items: KbDataset[];
+    total: number;
+  };
 }
 
 export async function kbSearch(params: KbSearchParams): Promise<KbSearchResult> {
   return (await request.post('/kb/search', params)) as KbSearchResult;
 }
 
-export async function kbHealth(): Promise<{ status: string; message: string }> {
-  return (await request.get('/kb/health')) as { status: string; message: string };
+export async function kbHealth(
+  opts: { silent?: boolean } = {},
+): Promise<{ status: string; message: string }> {
+  return (await request.get('/kb/health', { silent: opts.silent })) as {
+    status: string;
+    message: string;
+  };
 }
 
 // P2 新增: 文档相关

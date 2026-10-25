@@ -143,8 +143,10 @@ const todos = ref<Todo[]>([]);
 async function loadTodos() {
   const list: Todo[] = [];
   // 知识库状态: 这个接口不要求登录, 匿名也能探到 RAGFlow 通不通
+  // ⚠️ silent: 首页把这几个接口的失败都当"降级"处理 (卡片显示兜底文案),
+  //    不该弹全局错误 —— 否则 RAGFlow 没配时首页一进来就弹红条.
   try {
-    const kb = await kbHealth();
+    const kb = await kbHealth({ silent: true });
     if (kb?.status && kb.status !== 'ok') {
       list.push({
         key: 'kb-off',
@@ -212,14 +214,14 @@ async function loadMetas() {
   if (!loggedIn.value) return;
   // 目录: 资产数 (接口要鉴权)
   try {
-    const assets = await listAssets({ limit: 200 });
+    const assets = await listAssets({ limit: 200 }, { silent: true });
     catalogMeta.value = [{ icon: '🗂', text: `${assets.total ?? assets.items?.length ?? 0} 个资产` }];
   } catch {
     /* 同上 */
   }
   // 知识: 数据集 / 文档 / 分段
   try {
-    const ds = await listDatasets();
+    const ds = await listDatasets({ silent: true });
     const items = ds.items || [];
     const docs = items.reduce((s, d) => s + (d.document_count || 0), 0);
     const chunks = items.reduce((s, d) => s + (d.chunk_count || 0), 0);

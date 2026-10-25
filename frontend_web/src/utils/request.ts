@@ -27,6 +27,19 @@ function isPublicReadRoute(): boolean {
   );
 }
 
+/**
+ * axios 配置扩展: `silent: true` = 失败不弹全局错误提示.
+ *
+ * 用于**调用方自己会兜底降级**的请求 (首页给卡片取指标数字:
+ * RAGFlow 没配 / ReviewAgent 没起 时失败是常态, 卡片该显示降级文案,
+ * 而不是弹一个"环境故障"的红条).
+ */
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    silent?: boolean;
+  }
+}
+
 const request = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
@@ -59,7 +72,10 @@ request.interceptors.response.use(
       const userStore = useUserStore();
       userStore.logout();
       window.location.href = '/login';
-    } else if (status !== 401) {
+    } else if (status !== 401 && !err.config?.silent) {
+      // ⚠️ silent: 调用方自己会兜底降级的请求 (比如首页给卡片取指标数字),
+      //    失败时**不要**弹全局错误 —— 否则首页一进来就弹一个"ragflow error",
+      //    卡片却好好地显示着降级文案, 像是出了故障.
       ElMessage.error(err.response?.data?.detail || err.message);
     }
     return Promise.reject(err);
