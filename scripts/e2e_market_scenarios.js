@@ -391,11 +391,16 @@ z.close()
     check('⑬b 卡片上标出「6100 项目」', /6100/.test(projBadge), projBadge || '(无徽标)');
 
     // 按项目筛选: 选 6100 → 该项目特有 + 通用 都在
-    const chipTexts = await ins.page.evaluate(() =>
-      [...document.querySelectorAll('.proj-chips .chip')].map((c) => c.textContent.replace(/\s+/g, ' ').trim()));
-    check('⑬c 市场页有项目筛选 chip', chipTexts.length >= 2, chipTexts.join(' | '));
+    // ⚠️ 2026-10-25: 项目筛选从 chip 收进了**下拉菜单** (跟排序合并) —— 定位方式跟着改
     await ins.page.evaluate(() => {
-      const chip = [...document.querySelectorAll('.proj-chips .chip')]
+      document.querySelector('.filter-trigger')?.click();
+    });
+    await sleep(700);
+    const chipTexts = await ins.page.evaluate(() =>
+      [...document.querySelectorAll('.filter-panel .fp-item')].map((c) => c.textContent.replace(/\s+/g, ' ').trim()));
+    check('⑬c 市场页有项目筛选 (下拉菜单里)', chipTexts.length >= 2, chipTexts.join(' | '));
+    await ins.page.evaluate(() => {
+      const chip = [...document.querySelectorAll('.filter-panel .fp-item')]
         .find((x) => x.textContent.includes('6100'));
       chip && chip.click();
     });
@@ -405,7 +410,11 @@ z.close()
     check('⑬d 按 6100 筛选能筛出该资产', afterFilter);
     // 选「通用」→ 6100 特有的不该出现
     await ins.page.evaluate(() => {
-      const chip = [...document.querySelectorAll('.proj-chips .chip')]
+      document.querySelector('.filter-trigger')?.click();
+    });
+    await sleep(700);
+    await ins.page.evaluate(() => {
+      const chip = [...document.querySelectorAll('.filter-panel .fp-item')]
         .find((x) => x.textContent.includes('通用'));
       chip && chip.click();
     });
@@ -415,8 +424,12 @@ z.close()
     check('⑬e 选「通用」时项目特有的被筛掉', !generalOnly);
     // ⚠️ 恢复筛选 —— 后续用例还要在这个列表里找资产
     await ins.page.evaluate(() => {
-      const chip = [...document.querySelectorAll('.proj-chips .chip')]
-        .find((x) => x.textContent.trim() === '全部');
+      document.querySelector('.filter-trigger')?.click();
+    });
+    await sleep(700);
+    await ins.page.evaluate(() => {
+      const chip = [...document.querySelectorAll('.filter-panel .fp-item')]
+        .find((x) => x.textContent.includes('全部项目'));
       chip && chip.click();
     });
     await sleep(1600);

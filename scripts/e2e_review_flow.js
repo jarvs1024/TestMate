@@ -122,7 +122,10 @@ async function waitJobDone(page, timeoutMs = 45000) {
   while (Date.now() - t0 < timeoutMs) {
     txt = await page.evaluate(() =>
       document.querySelector('.job-box')?.textContent.replace(/\s+/g, ' ').trim() || '');
-    if (/已同步到 GitLab|等待管理员审核|同步失败/.test(txt)) return txt;
+    // ⚠️ 「已同步到 GitLab, 正在确认上架状态…」是**中间态** (还在查要不要审核) ——
+    //    碰到它不能返回, 否则会读到一句还没定论的结论.
+    const checking = /正在确认上架状态/.test(txt);
+    if (!checking && /已同步到 GitLab|等待管理员审核|同步失败/.test(txt)) return txt;
     await sleep(800);
   }
   return txt;

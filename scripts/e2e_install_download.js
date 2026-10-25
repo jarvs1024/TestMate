@@ -9,7 +9,7 @@
  *   1. 详情抽屉能打开
  *   2. 有「下载」按钮, 且**没有**装到本地/重新安装/卸载
  *   3. 点下载真的把 zip 落到了磁盘 (文件名正确)
- *   4. 提示说清解压到哪
+ *   4. 提示说清怎么装 (通用话术: 在 Agent 里导入压缩包)
  *   5. 全程无 JS 错误
  *
  * 用法: node scripts/e2e_install_download.js
@@ -147,8 +147,8 @@ function check(name, ok, detail) {
     const afterN = await totalCount();
     check('E5b 下载计数 +1', afterN === beforeN + 1, `${beforeN} → ${afterN}`);
 
-    check('E6 提示说清下载与解压位置',
-      /已下载/.test(msg) && /解压/.test(msg), msg.slice(0, 80));
+    check('E6 提示说清下载与怎么装 (通用话术, 不写死某个 Agent 的目录)',
+      /已下载/.test(msg) && /导入|压缩包/.test(msg), msg.slice(0, 80));
 
     // 再等一下让 zip 落盘
     for (let i = 0; i < 20; i++) {

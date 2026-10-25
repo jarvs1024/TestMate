@@ -143,6 +143,12 @@ async function snap(page) {
       adBtnLabels: [...document.querySelectorAll('.ad-actions button, .ins-btn')]
         .map((b) => (b.textContent || '').trim()),
       insDir: txt(document.querySelector('.ins-dir')),
+      // ⚠️ 2026-10-25: 安装提示改成通用话术, 目录折叠进 .ins-more (details 里)
+      insTip: txt(document.querySelectorAll('.ins-tip')[0]),
+      insMoreOpen: !!document.querySelector('.ins-more'),
+      // 适用项目块 (形态并进来了)
+      adScope: txt(document.querySelector('.ad-scope')),
+      adMeta: txt(document.querySelector('.ad-meta')),
       useWhen: txt(document.querySelector('.ad-block-h.ok')?.parentElement?.querySelector('.ad-block-b')),
       tagCount: document.querySelectorAll('.ad-tags .tag').length,
       techOpen: !!document.querySelector('.tech-toggle'),
@@ -190,11 +196,18 @@ async function codeByName(page, name) {
   });
   const page = await browser.newPage();
   const errors = [];
+  // ⚠️ 记下市场列表的请求 URL —— 用来断言**请求参数**
+  //    (如 project=__general / q=6100), 比断言数据可靠: 生产库里不一定有那个项目的资产.
+  const apiCalls = [];
   // 有些步骤会**故意**触发 4xx (比如验证资产已删除), 那不是缺陷
   let expectHttpError = false;
   // ⚠️ 关掉缓存 —— 否则会加载上一次的旧 JS, 调已下线的端点
   await page.setCacheEnabled(false);
   page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
+  page.on('request', (r) => {
+    const u = r.url();
+    if (u.includes('/api/v1/assets?')) apiCalls.push(u);
+  });
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
     // HTTP 状态码错误交给下面的 response 钩子记 —— 它带 URL, 好定位.
@@ -329,6 +342,116 @@ async function codeByName(page, name) {
     s = await snap(page);
     check('C1 搜索可过滤', filtered >= 0 && s.cards.length >= filtered, `搜索命中 ${filtered} 张 / 清空后 ${s.cards.length} 张`);
 
+    // ---------- C2. 搜索支持按项目 (2026-10-25) ----------
+    // ⚠️ 断言**请求参数**, 不看数据 —— 生产库里不一定有某个项目的资产,
+    //    断言数据会时灵时不灵. 参数对了才说明功能在.
+    await page.evaluate(() => {
+      const el = document.querySelector('.search input');
+      el.value = '';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await sleep(1200);
+    apiCalls.length = 0;
+    await page.type('.search input', '6100');
+    await sleep(1600);
+    const qCall = apiCalls.find((u) => u.includes('q=6100'));
+    check('C2 搜索框把关键词传给后端 (能按项目搜)',
+      !!qCall, qCall || `最近请求: ${apiCalls.slice(-2).join(' | ')}`);
+    await page.evaluate(() => {
+      const el = document.querySelector('.search input');
+      el.value = '';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await sleep(1200);
+
+    // ---------- C3. 项目 + 排序合并成一个下拉 ----------
+    const menuBtn = await page.evaluate(() => {
+      const b = document.querySelector('.filter-trigger');
+      if (!b) return '';
+      b.click();
+      return (b.textContent || '').replace(/\s+/g, ' ').trim();
+    });
+    await sleep(600);
+    const menuOpen = await page.evaluate(() => !!document.querySelector('.filter-panel'));
+    check('C3 筛选按钮存在 (项目 + 排序合并成了一个)',
+      !!menuBtn && menuOpen, `按钮="${menuBtn}" 面板=${menuOpen}`);
+
+    // 选「通用」→ 请求必须是 project=__general (后端约定的哨兵值)
+    apiCalls.length = 0;
+    const generalPicked = await page.evaluate(() => {
+      const it = [...document.querySelectorAll('.filter-panel .fp-item')]
+        .find((x) => x.textContent.includes('通用'));
+      if (!it) return false;
+      it.click();
+      return true;
+    });
+    await sleep(1600);
+    const generalCall = apiCalls.find((u) => u.includes('project='));
+    check('C4 选「通用」→ 请求带 project=__general (契约对齐)',
+      generalPicked && !!generalCall && generalCall.includes('project=__general'),
+      generalCall || '没发出带 project 的请求');
+
+    // 点外面 → 菜单收起
+    await page.evaluate(() => document.querySelector('.filter-trigger')?.click());
+    await sleep(500);
+    await page.evaluate(() => {
+      const h = [...document.querySelectorAll('.filter-panel .fp-title')]
+        .find((x) => x.textContent.includes('项目'));
+      h && h.click();
+    });
+    await sleep(500);
+    const closedByOutside = await page.evaluate(() => {
+      // 点页面别处 (模拟用户点空白)
+      const t = document.querySelector('.cat-chips');
+      if (!t) return null;
+      t.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return true;
+    });
+    await sleep(500);
+    const menuClosed = await page.evaluate(() => !document.querySelector('.filter-panel'));
+    check('C5 点外面 → 筛选菜单收起', closedByOutside && menuClosed, `closed=${menuClosed}`);
+
+    // 复位回全部项目
+    apiCalls.length = 0;
+    await page.evaluate(() => document.querySelector('.filter-trigger')?.click());
+    await sleep(500);
+    await page.evaluate(() => {
+      const it = [...document.querySelectorAll('.filter-panel .fp-item')]
+        .find((x) => x.textContent.includes('全部项目'));
+      it && it.click();
+    });
+    await sleep(1500);
+
+    // ---------- C6. 卡片一排 4 个 (2026-10-25) ----------
+    // ⚠️ 必须切到**卡片多**的页签 (插件只有 3 个, 量出来自然是 3 张一行)
+    await clickByText(page, '.kind-tab', '技能');
+    await sleep(1500);
+    const perRow = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('.asset-card')];
+      if (!cards.length) return 0;
+      const top = cards[0].getBoundingClientRect().top;
+      return cards.filter((c) => Math.abs(c.getBoundingClientRect().top - top) < 4).length;
+    });
+    check('C6 卡片一排 4 个 (跟广场的 3 列大卡片区分开)',
+      perRow === 4, `第一行 ${perRow} 张`);
+    await clickByText(page, '.kind-tab', '插件');
+    await sleep(1200);
+    s = await snap(page);   // 切回插件页签后重新取一次 (后面的用例要用第一张卡)
+
+    // ---------- C7. 自动刷新 (2026-10-25) ----------
+    const footBefore = await page.evaluate(() =>
+      (document.querySelector('.foot-hint')?.textContent || '').replace(/\s+/g, ' ').trim());
+    apiCalls.length = 0;
+    await sleep(22000);
+    const autoCall = apiCalls.find((u) => u.includes('/api/v1/assets?'));
+    const footAfter = await page.evaluate(() =>
+      (document.querySelector('.foot-hint')?.textContent || '').replace(/\s+/g, ' ').trim());
+    check('C7 市场页自动刷新 (20s 内自己刷一次)',
+      !!autoCall, autoCall ? '已自动刷新' : '没自动刷新');
+    check('C8 页脚区分两个时间源 (GitLab 对齐 vs 本页刷新)',
+      /本页上次刷新/.test(footAfter) && !/· 最近对齐 /.test(footAfter),
+      footAfter.slice(0, 120));
+
     // ---------- D. 详情抽屉 ----------
     const cardName = s.cards[0] ? s.cards[0].name : '';
     // code 必须从"实际打开的这张卡片"反查 —— 否则下架 A、重新上架 B,
@@ -346,9 +469,18 @@ async function codeByName(page, name) {
     check('D4 抽屉里没有权限声明/安装步骤/不适用的独立区块',
       s.permRows === 0 && !s.permEmpty && s.steps.length === 0,
       `permRows=${s.permRows} steps=${s.steps.length}`);
-    check('D4b 安装卡说清"装到哪"', /解压到/.test(s.insDir || ''), s.insDir);
-    check('D4c 「适用场景」和标签还在', s.useWhen || s.tagCount > 0,
+    check('D4b 安装卡说清"怎么装" (通用话术, 不写死某个 Agent 的目录)',
+      /导入/.test(s.insTip || '') && /压缩包/.test(s.insTip || '')
+      && !/\.qoder-cn/.test(s.insTip || ''),
+      s.insTip);
+    check('D4c 「适用场景」整块没了, 标签还在',
+      !s.useWhen && s.tagCount > 0,
       `useWhen=${s.useWhen} tags=${s.tagCount}`);
+    check('D4d 形态并进「适用项目」块, 头部不再显示英文 kind',
+      /通用资产|项目专属/.test(s.adScope || '')
+      && /技能|插件|连接器/.test(s.adScope || '')
+      && !/plugin|skill|mcp/.test(s.adMeta || ''),
+      `scope=${s.adScope} meta=${s.adMeta}`);
     check('D6 GitLab 存储路径展示', /assets\//.test(s.gitPath || ''), s.gitPath);
     check('D7 同步状态标签', /已同步|待同步|失败/.test(s.syncChip || ''), s.syncChip);
     await page.screenshot({ path: path.join(OUT_DIR, '01-drawer.png') });
@@ -435,8 +567,9 @@ async function codeByName(page, name) {
       [...document.querySelectorAll('.pick-item')]
         .map((x) => (x.textContent || '').replace(/\s+/g, ' ').trim()));
     check('H0-1 上传入口先让用户选形态', kinds.length === 3, kinds.join(' | '));
-    check('H0-2 技能/插件/连接器三种都在',
-      /技能/.test(kinds[0] || '') && /插件/.test(kinds[1] || '') && /连接器/.test(kinds[2] || ''),
+    // ⚠️ 顺序跟市场页的页签一致 (插件 / 技能 / 连接器) —— 2026-10-25 统一过
+    check('H0-2 插件/技能/连接器三种都在 (顺序跟页签一致)',
+      /插件/.test(kinds[0] || '') && /技能/.test(kinds[1] || '') && /连接器/.test(kinds[2] || ''),
       kinds.join(' | '));
 
     // 选「连接器」→ 直接进 MCP 配置表单 (没有安装包)

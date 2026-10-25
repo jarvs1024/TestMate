@@ -24,6 +24,10 @@ FEATURES=(
   "适用项目"                  # 2026-10-25: 「适用范围」改名
   "选好包后自动生成"            # 2026-10-25: 没选包时 code 显示占位, 不露初始 dml-
   "的名字只能用小写字母/数字/连字符 (如 my-connector)"   # 2026-10-25: 更新存量连接器时不强制 dml- 前缀
+  "搜索名称、说明、标签或项目号"    # 2026-10-25: 搜索支持按项目
+  "本页上次刷新"               # 2026-10-25: 市场页自动刷新 + 页脚时间戳
+  "导入这个压缩包即可安装"        # 2026-10-25: 下载提示通用化
+  "全部项目"                  # 2026-10-25: 项目+排序合并成一个下拉
 )
 
 echo "=== 源码里有没有这些特征串 (确认我们测的是当前代码) ==="
@@ -64,3 +68,38 @@ if [ "$missing" -ne 0 ]; then
   exit 1
 fi
 echo "✅ 线上 bundle 与源码一致"
+
+# ---------- 后端: 源码 ↔ 容器 ----------
+# ⚠️ 前端有特征串可查, 后端没有 —— 以前改了后端忘部署, 查不出来.
+#    这里直接比 sha256: 源码跟容器里的文件不一致 = 漂移.
+BACKEND_CONTAINER="${BACKEND_CONTAINER:-test-mate-backend-1}"
+BACKEND_FILES=(
+  app/api/marketplace.py
+  app/core/dingtalk.py
+  app/core/market_state.py
+  app/core/market_notify.py
+  app/core/mcp_config.py
+  app/schemas/asset.py
+)
+echo
+echo "=== 后端: 容器里的代码跟源码对得上吗 ==="
+if ! docker ps --format '{{.Names}}' | grep -qx "$BACKEND_CONTAINER"; then
+  echo "❌ 容器 $BACKEND_CONTAINER 不在跑"
+  exit 2
+fi
+drift=0
+for f in "${BACKEND_FILES[@]}"; do
+  local_sum=$(shasum -a 256 "backend_gateway/$f" | cut -d' ' -f1)
+  ctr_sum=$(docker exec "$BACKEND_CONTAINER" sh -lc "sha256sum /app/$f 2>/dev/null | cut -d' ' -f1")
+  if [ "$local_sum" = "$ctr_sum" ]; then
+    printf "  ✓ %s\n" "$f"
+  else
+    printf "  ✗ %s  ← 容器里跟源码不一样! 该重新部署后端\n" "$f"
+    drift=1
+  fi
+done
+if [ "$drift" -ne 0 ]; then
+  echo "❌ 后端容器与源码漂移 —— 跑 scripts/deploy.sh backend 再验证"
+  exit 1
+fi
+echo "✅ 后端容器与源码一致"

@@ -243,10 +243,19 @@ async function openUpload(page, kindLabel) {
   await sleep(800);
 
   // ================= ④ 项目筛选到空结果 =================
+  // ⚠️ 2026-10-25: 项目筛选从 chip 收进了**下拉菜单** (跟排序合并) —— 定位方式跟着改
+  // ⚠️ 选「通用」而不是某个具体项目号 —— 项目列表是**配置**
+  //    (设置项 marketplace.projects), 生产上未必有某个号, 写死会误判.
   await page.evaluate(() => {
-    const chip = [...document.querySelectorAll('.proj-chips .chip')]
-      .find((x) => x.textContent.includes('3361'));
-    chip && chip.click();
+    document.querySelector('.filter-trigger')?.click();
+  });
+  await sleep(600);
+  const pickedGeneral = await page.evaluate(() => {
+    const it = [...document.querySelectorAll('.filter-panel .fp-item')]
+      .find((x) => x.textContent.includes('通用'));
+    if (!it) return false;
+    it.click();
+    return true;
   });
   await sleep(1800);
   //    ⚠️ 语义: 选某项目 = 该项目特有 **+ 通用** —— 所以通用资产仍然显示是**对的**
@@ -256,14 +265,18 @@ async function openUpload(page, kindLabel) {
     allGeneral: [...document.querySelectorAll('.asset-card .ac-badge.proj')].length === 0,
   }));
   check('E14 项目筛选 → 只剩通用资产, 页面不报错',
-    emptyState.allGeneral && !/失败|错误/.test(emptyState.state || ''),
+    pickedGeneral && emptyState.allGeneral && !/失败|错误/.test(emptyState.state || ''),
     `cards=${emptyState.cards} state=${emptyState.state || '(空)'}`);
 
   // 切回全部
   await page.evaluate(() => {
-    const chip = [...document.querySelectorAll('.proj-chips .chip')]
-      .find((x) => x.textContent.trim() === '全部');
-    chip && chip.click();
+    document.querySelector('.filter-trigger')?.click();
+  });
+  await sleep(600);
+  await page.evaluate(() => {
+    const it = [...document.querySelectorAll('.filter-panel .fp-item')]
+      .find((x) => x.textContent.includes('全部项目'));
+    it && it.click();
   });
   await sleep(1500);
 
