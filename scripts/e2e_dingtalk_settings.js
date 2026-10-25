@@ -77,22 +77,6 @@ function check(name, ok, detail) {
   }, login.token, login.user);
 
   // 设置页 → 通知
-  await page.goto(BASE + '/settings', { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.set-layout', { timeout: 15000 });
-  await sleep(1500);
-  const tocOk = await page.evaluate(() => {
-    const el = [...document.querySelectorAll('.set-toc *')].find((x) => x.textContent.trim().startsWith('通知'));
-    if (!el) return false;
-    el.click();
-    return true;
-  });
-  await sleep(1500);
-  check('S1 设置页能进入「通知」区', tocOk);
-  const hasRows = await page.evaluate(() =>
-    [...document.querySelectorAll('#sec-notification code')].map((c) => c.textContent.trim()));
-  check('S2 通知区渲染出钉钉配置项', hasRows.includes('dingtalk.market_webhook'), hasRows.join(', '));
-  check('S3 关键词配置项已就位', hasRows.includes('dingtalk.market_keyword'), hasRows.join(', '));
-
   // ---------- 通知开关的默认状态 ----------
   // 需求 (2026-10-24): 上架 / 更新 / 下架 这三个**市场动作默认开**,
   // 删除 / 待审核 / 驳回 默认**关** (不刷屏).
@@ -112,21 +96,7 @@ function check(name, ok, detail) {
   const SWITCHES_OFF_BY_DEFAULT = [
     'dingtalk.notify_on_delete',
   ];
-  const switchState = await page.evaluate(async (keys) => {
-    const tk = localStorage.getItem('testmate:token');
-    const r = await fetch('/api/v1/settings/schema', { headers: { Authorization: 'Bearer ' + tk } });
-    const d = await r.json();
-    const out = {};
-    for (const g of d.groups || []) {
-      for (const it of g.items || []) {
-        if (keys.includes(it.key)) out[it.key] = { value: it.value, is_default: it.is_default };
-      }
-    }
-    return out;
-  }, SWITCHES);
-  // ---------- 改开关 / 还原 (测试期间要动生产设置, 结束必须还原) ----------
-  const savedSwitches = {};
-  for (const k of SWITCHES) savedSwitches[k] = switchState[k] ? switchState[k].value : false;
+  // ---------- 改开关 (测试期间要动生产设置, 结束必须复位) ----------
   const setSwitches = async (vals) => {
     await page.evaluate(async (v) => {
       const tk = localStorage.getItem('testmate:token');
@@ -140,19 +110,53 @@ function check(name, ok, detail) {
     }, vals || {});
     await sleep(600);
   };
-  const restoreSwitches = async () => {
-    await page.evaluate(async (saved) => {
-      const tk = localStorage.getItem('testmate:token');
-      for (const [k, v] of Object.entries(saved || {})) {
-        await fetch('/api/v1/settings/' + k, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
-          body: JSON.stringify({ value: v }),
-        });
-      }
-    }, savedSwitches);
-    await sleep(600);
+  /**
+   * 复位到**产品默认值**.
+   *
+   * ⚠️ 不用"恢复到跑之前的值" —— 跑之前的值可能就是上一轮崩溃 (finally 没执行)
+   *    留下的脏值, 恢复它等于把污染固化下来, 永远好不了.
+   *    复位到默认值既能自愈, 又保证跑完生产设置是干净的产品定义值.
+   */
+  const resetToDefaults = async () => {
+    const vals = {};
+    for (const k of SWITCHES_ON_BY_DEFAULT) vals[k] = true;
+    for (const k of SWITCHES_OFF_BY_DEFAULT) vals[k] = false;
+    await setSwitches(vals);
   };
+
+  // ⚠️ **进设置页之前**就复位 —— 页面加载时读到的才是复位后的值
+  //    (否则页面上显示的还是复位前的旧值, 断言会误报)
+  await resetToDefaults();
+  await page.goto(BASE + '/settings', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('.set-layout', { timeout: 15000 });
+  await sleep(1500);
+  const tocOk = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.set-toc *')].find((x) => x.textContent.trim().startsWith('通知'));
+    if (!el) return false;
+    el.click();
+    return true;
+  });
+  await sleep(1500);
+  check('S1 设置页能进入「通知」区', tocOk);
+  const hasRows = await page.evaluate(() =>
+    [...document.querySelectorAll('#sec-notification code')].map((c) => c.textContent.trim()));
+  check('S2 通知区渲染出钉钉配置项', hasRows.includes('dingtalk.market_webhook'), hasRows.join(', '));
+  check('S3 关键词配置项已就位', hasRows.includes('dingtalk.market_keyword'), hasRows.join(', '));
+
+  // ⚠️ 先复位, **再**读状态 —— 否则断言读到的还是上一轮留下的脏值
+  await resetToDefaults();
+  const switchState = await page.evaluate(async (keys) => {
+    const tk = localStorage.getItem('testmate:token');
+    const r = await fetch('/api/v1/settings/schema', { headers: { Authorization: 'Bearer ' + tk } });
+    const d = await r.json();
+    const out = {};
+    for (const g of d.groups || []) {
+      for (const it of g.items || []) {
+        if (keys.includes(it.key)) out[it.key] = { value: it.value, is_default: it.is_default };
+      }
+    }
+    return out;
+  }, SWITCHES);
 
   const shouldBeOn = SWITCHES_ON_BY_DEFAULT.filter((k) => switchState[k] && switchState[k].value === true);
   const shouldBeOff = SWITCHES_OFF_BY_DEFAULT.filter((k) => switchState[k] && switchState[k].value === true);
@@ -261,7 +265,9 @@ function check(name, ok, detail) {
       quiet.dApprove.length === 0 && quiet.dUpload.length === 0 && quiet.dApply.length === 0,
       `上架=${JSON.stringify(quiet.dUpload)} 申请=${JSON.stringify(quiet.dApply)} 彻底下架=${JSON.stringify(quiet.dApprove)}`);
   } finally {
-    await restoreSwitches();
+    // ⚠️ 复位到**产品默认值**, 不是"跑之前的值" ——
+    //    跑之前的值可能就是上一轮崩溃留下的脏值, 恢复它等于把污染固化下来
+    await resetToDefaults();
   }
 
   // 在 UI 里填 webhook (按 key 定位到那一行)
@@ -398,7 +404,8 @@ function check(name, ok, detail) {
       `彻底下架后新通知: ${JSON.stringify(marketNotify.dApprove)}`);
   } finally {
     // 还原开关 —— 不然真实环境就变成"一直发通知"了
-    await restoreSwitches();
+    // ⚠️ 复位到**产品默认值** (而不是"跑之前的值" —— 那可能就是上一轮崩溃留下的脏值)
+    await resetToDefaults();
     await sleep(500);
   }
 

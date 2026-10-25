@@ -17,7 +17,7 @@ import {
   type AssetItem, type MarketKind, type PackagePreview,
 } from '@/api/assets';
 import {
-  CODE_EXAMPLE, CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
+  CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
   checkCodeSync, codeFromPackageName, pickIcon, validateCode, validatePackageName,
 } from './assetForm';
 import { kindMeta } from './kindMeta';
@@ -72,8 +72,6 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   /** 连接器 (mcp) 的 MCP 配置 (JSON 文本) */
   const mcpConfigText = ref('');
   const keywordsText = ref('');
-  /** code 动过才提示 —— 刚打开时预填的 "dml-" 还没填完, 立刻标红只会碍眼 */
-  const codeTouched = ref(false);
   /** 抽屉里的第几步: pick = 选形态, form = 填配置 */
   const step = ref<'pick' | 'form'>('form');
 
@@ -96,8 +94,14 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   }
 
   // ---------- 校验 ----------
+  /**
+   * code 的格式错误.
+   *
+   * ⚠️ code 是**派生值** (取包名 / MCP 连接器名) —— 不可编辑, 所以只在
+   *    新建时报错; 更新时那是老资产的 code, 标红没有意义.
+   */
   const codeError = computed(() => {
-    if (mode() === 'update' || !codeTouched.value) return '';
+    if (mode() === 'update') return '';
     return validateCode(form.code);
   });
   const versionError = computed(() => {
@@ -129,6 +133,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     }
     return checkCodeSync(form.code, { pkgBase: pkgBaseName.value });
   });
+
   /** code 字段上要显示的错误 (格式 + 一致性, 一起说清) */
   const codeFieldError = computed(() =>
     [codeError.value, codeSyncError.value].filter(Boolean).join('; '));
@@ -176,6 +181,13 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     return all.filter((ic) => !usedIcons.value.has(ic));
   });
 
+  /**
+   * 有没有"来源" —— code 就是从这儿派生的:
+   *   技能/插件 → 选了安装包; 连接器 → 填了 MCP 配置.
+   */
+  const hasSource = computed(() =>
+    isMcp.value ? !!mcpConfigText.value.trim() : !!pkgFile.value);
+
   /** 缺什么 —— 一次说清, 别让人点一次报一个 */
   const missing = computed(() => {
     const out: string[] = [];
@@ -187,7 +199,9 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     }
     if (!form.name.trim()) out.push('名称');
     if (!form.summary.trim()) out.push('一句话简介');
-    if (mode() === 'create') {
+    if (mode() === 'create' && hasSource.value) {
+      // ⚠️ 只有**已经有来源** (选了包 / 填了 MCP 配置) 才校验 code ——
+      //    否则 code 还是初始的 "dml-", 报了名儿用户也改不了 (它是派生值)
       const c = validateCode(form.code);
       if (c) out.push('资产 code');
       // code 必须跟包名 / MCP 连接器名一致 —— 不一致不让上架
@@ -280,13 +294,6 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   async function onPickPackage(e: Event) {
     const input = e.target as HTMLInputElement;
     pkgFile.value = input.files?.[0] ?? null;
-    // ⚠️ code **自动跟包名保持一致** —— 选完包就把 code 带出来。
-    //    之后用户再改 code 就会不一致 → 报错 + 不让上架 (见 codeSyncError)。
-    const derived = codeFromPackageName(pkgFile.value?.name || '');
-    if (derived && mode() === 'create') {
-      form.code = derived;
-      codeTouched.value = false;   // 这是同步过来的, 不算用户手改
-    }
     await runPreview();
   }
 
@@ -325,7 +332,6 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     } else {
       mcpConfigText.value = '';
     }
-    codeTouched.value = false;   // 让新的包名/连接器名能重新同步进 code
     step.value = 'form';
   }
 
@@ -339,7 +345,6 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     preview.value = null;
     previewing.value = false;
     iconPanel.value = false;
-    codeTouched.value = false;
     // ⚠️ 必须重置: 上一轮用户手选过图标 → iconTouched 残留为 true →
     //    这次新资产的图标就**不再自动分配**了 (还可能撞上别人已用的图标)
     iconTouched.value = false;
@@ -374,6 +379,18 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     }
   }
 
+  /**
+   * 选了包 → code 自动跟包名一致.
+   *
+   * ⚠️ 放在 watch 里而不是 onPickPackage 里 —— 这样**任何**途径换包都会同步
+   *    (也才好单测); code 是派生值, 用户改不了它.
+   */
+  watch(() => pkgFile.value, (f) => {
+    if (mode() !== 'create') return;
+    const derived = codeFromPackageName(f?.name || '');
+    if (derived) form.code = derived;
+  });
+
   // 类型变了, 体检结论也得重算 (skill 要 SKILL.md, plugin 要 plugin.json)
   watch(() => form.kind, () => {
     if (pkgFile.value) runPreview();
@@ -390,7 +407,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * 连接器名本身就得 dml- 开头 (配置校验会拦) —— 这里原样带成 code, 不另做加工.
    */
   watch(() => mcpConfigText.value, () => {
-    if (mode() !== 'create' || codeTouched.value || !isMcp.value) return;
+    if (mode() !== 'create' || !isMcp.value) return;
     const p = mcpParsed.value;
     if (!p.ok) return;
     const names = Object.keys((p.config as any)?.mcpServers || {});
@@ -401,7 +418,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
 
   return {
     // 状态
-    form, tagsText, keywordsText, mcpConfigText, step, codeTouched,
+    form, tagsText, keywordsText, mcpConfigText, step,
     fileInput, pkgFile, preview, previewing, iconPanel, usedIcons, iconTouched,
     categories, projectOptions,
     // 派生
@@ -414,5 +431,3 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     runPreview, chooseKind, reset,
   };
 }
-
-export { CODE_EXAMPLE };

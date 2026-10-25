@@ -219,8 +219,7 @@ async function openPage(browser, token, user) {
     };
     const inputs = [...document.querySelectorAll('.el-drawer input[type=text]')];
     const byPlaceholder = (ph) => inputs.find((i) => (i.placeholder || '').includes(ph));
-    // ⚠️ code 现在有统一前缀要求 (dml-)
-    set(byPlaceholder('dml-'), code);
+    // ⚠️ 资产 code **不让填了** —— 自动取安装包名 (dml-e2e-review-probe.zip)
     set(byPlaceholder('SSD 日志医生'), '审核流程端到端资产');
     const ta = [...document.querySelectorAll('.el-drawer textarea')];
     const sum = ta.find((t) => (t.placeholder || '').includes('贴日志'));

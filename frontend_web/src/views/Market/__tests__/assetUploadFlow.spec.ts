@@ -162,11 +162,16 @@ describe('上传抽屉: 表单内容', () => {
     expect(w.find('.up-form').text()).toContain('适用场景');
   });
 
-  it('资产 code 跟包区放一起 (它是包名派生的)', async () => {
+  it('资产 code 是**只读展示**, 不给输入框 (它是包名派生的)', async () => {
     const w = await open({ initialKind: 'skill' });
-    const codeItem = w.findAll('.el-form-item').find((f) => f.text().includes('资产 code'));
-    expect(codeItem).toBeTruthy();
-    expect(codeItem!.classes()).toContain('code-item');
+    // 跟包要求放在同一个块里 —— code 是包名派生的, 挨着来源才说得清
+    const view = w.find('.pkg-req .pr-code');
+    expect(view.exists()).toBe(true);
+    expect(view.text()).toContain('资产 code');
+    // 没有任何 code 输入框 —— 用户改不了派生值
+    const codeInput = w.findAll('input[type=text]')
+      .find((i) => (i.attributes('placeholder') || '').includes('dml-'));
+    expect(codeInput).toBeUndefined();
   });
 
   it('进阶信息标题写明「可展开」', async () => {
@@ -174,12 +179,11 @@ describe('上传抽屉: 表单内容', () => {
     expect(w.find('.sec-hint').text()).toContain('可展开');
   });
 
-  it('基础信息只留一条按形态的提示 (不再写「三条约定」)', async () => {
+  it('基础信息不再有「怎么填 / 三条约定」那类引导语', async () => {
     const w = await open({ initialKind: 'mcp' });
-    const guide = w.find('.guide').text();
-    expect(guide).toContain('怎么填');
-    expect(guide).not.toContain('三条约定');
-    expect(guide).toContain('dml-');
+    expect(w.find('.guide').exists()).toBe(false);
+    expect(w.text()).not.toContain('怎么填');
+    expect(w.text()).not.toContain('三条约定');
   });
 
   it('安装包区写清这个形态对包的要求', async () => {

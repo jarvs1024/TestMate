@@ -188,8 +188,7 @@ z.close()
       };
       const inputs = [...document.querySelectorAll('.el-drawer input[type=text]')];
       const byPh = (ph) => inputs.find((i) => (i.placeholder || '').includes(ph));
-      // ⚠️ code 现在有统一前缀要求 (dml-), 资产号也用它
-      set(byPh('dml-'), code);
+      // ⚠️ 资产 code **不让填了** —— 自动取安装包名 (dml-scenario-ssd-skill.zip)
       set(byPh('SSD 日志医生'), '场景验证技能');
       const ta = [...document.querySelectorAll('.el-drawer textarea')];
       set(ta.find((t) => (t.placeholder || '').includes('贴日志')), '端到端场景验证用技能');

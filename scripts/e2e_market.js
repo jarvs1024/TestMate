@@ -94,7 +94,7 @@ async function fillRequiredFields(page) {
     const byPhTa = (ph) => document.querySelector(`.el-drawer textarea[placeholder*="${ph}"]`);
     const name = byPh('SSD 日志医生'); if (name) set(name, 'E2E 体检探针');
     const sum = byPhTa('贴日志即可定位 assert 与超时点'); if (sum) setter2(sum, 'e2e 体检探针');
-    const code = byPh('dml-ssd-log-doctor'); if (code) set(code, 'dml-e2e-probe');
+    // ⚠️ 资产 code **不让填了** —— 自动取安装包名 (dml-e2e-probe.zip)
   });
   await sleep(400);
   // 分类下拉 —— 按**稳定类名**定位 (不靠"第一个 el-select"这种顺序假设)
@@ -510,8 +510,10 @@ async function codeByName(page, name) {
       const drawer = document.querySelector('.up-drawer');
       const txt = (sel) => (drawer.querySelector(sel)?.textContent || '').replace(/\s+/g, ' ').trim();
       const scopeSel = drawer.querySelector('.sel-project');
+      const baseSec = drawer.querySelector('.up-sec:nth-of-type(2)') || drawer;
       return {
         guide: txt('.guide'),
+        baseText: (baseSec.textContent || '').replace(/\s+/g, ' ').trim(),
         pkgReq: txt('.pkg-req'),
         adv: txt('.adv-body'),
         advTitle: txt('.sec-toggle'),
@@ -520,8 +522,9 @@ async function codeByName(page, name) {
         scopeOptions: scopeSel ? scopeSel.textContent.replace(/\s+/g, ' ').trim() : '',
       };
     });
-    check('H1-1 基础信息只留一条按形态的提示',
-      /怎么填/.test(formState.guide) && !/三条约定/.test(formState.guide), formState.guide.slice(0, 70));
+    check('H1-1 基础信息不再有「怎么填」引导语',
+      formState.guide === '' && !/怎么填/.test(formState.baseText || ''),
+      `guide=${formState.guide || '(无)'} base=${(formState.baseText || '').slice(0, 40)}`);
     check('H1-2 安装包要求写在上传区下方',
       /技能包要求/.test(formState.pkgReq) && /SKILL\.md/.test(formState.pkgReq), formState.pkgReq.slice(0, 90));
     check('H1-3 进阶信息只留标签/关键词 (适用场景已上提)',
@@ -595,44 +598,19 @@ async function codeByName(page, name) {
     check('H2b 必填项补齐后「还缺」清空', !/还缺/.test(s.footText || ''), s.footText);
     check('H3 合规包不禁用提交按钮', s.submitDisabled === false, `disabled=${s.submitDisabled}`);
 
-    // ---------- H3b. code 必须跟包名一致 (不一致就不让上架) ----------
-    const setCode = async (v) => {
-      await page.evaluate((val) => {
-        const inp = document.querySelector('.up-drawer input[placeholder*="dml-"]');
-        if (!inp) return;
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        setter.call(inp, val);
-        inp.dispatchEvent(new Event('input', { bubbles: true }));
-        inp.dispatchEvent(new Event('blur', { bubbles: true }));
-      }, v);
-      await sleep(800);
-    };
-    await setCode('dml-some-other-name');
-    const syncState = await page.evaluate(() => {
+    // ---------- H3b. 资产 code 是**只读展示**, 自动跟包名一致 ----------
+    const codeView = await page.evaluate(() => {
       const d = document.querySelector('.up-drawer');
+      const v = d.querySelector('.pkg-req .pr-code');
       return {
-        err: (d.querySelector('.el-form-item__error')?.textContent || '').trim(),
-        foot: (d.querySelector('.foot-bar')?.textContent || '').replace(/\s+/g, ' ').trim(),
-        disabled: !!d.querySelector(
-          '.el-drawer__footer .el-button--primary.is-disabled, .el-drawer__footer .el-button--primary[disabled]'),
+        text: (v?.textContent || '').replace(/\s+/g, ' ').trim(),
+        hasInput: !!d.querySelector('input[placeholder*="dml-"]'),
       };
     });
-    check('H3b code 与包名不一致 → 字段报错', /安装包名/.test(syncState.err), syncState.err.slice(0, 80));
-    check('H3c 不一致时「还缺」里点名', /一致/.test(syncState.foot), syncState.foot.slice(0, 80));
-    check('H3d 不一致时不让上架', syncState.disabled === true, `disabled=${syncState.disabled}`);
-    // 改回与包名一致 → 恢复可上架
-    await setCode('dml-e2e-probe');
-    const backState = await page.evaluate(() => {
-      const d = document.querySelector('.up-drawer');
-      return {
-        err: (d.querySelector('.el-form-item__error')?.textContent || '').trim(),
-        disabled: !!d.querySelector(
-          '.el-drawer__footer .el-button--primary.is-disabled, .el-drawer__footer .el-button--primary[disabled]'),
-      };
-    });
-    check('H3e 改回与包名一致 → 恢复可上架',
-      !/安装包名/.test(backState.err) && backState.disabled === false,
-      `err=${backState.err.slice(0, 40)} disabled=${backState.disabled}`);
+    check('H3b 资产 code 只做展示, 没有输入框',
+      codeView.hasInput === false && /dml-e2e-probe/.test(codeView.text),
+      codeView.text.slice(0, 60));
+    check('H3c code 自动跟包名一致', /dml-e2e-probe/.test(codeView.text), codeView.text.slice(0, 60));
 
     // 换成不合规的包 (缺 SKILL.md) → 体检应拦下并禁用提交
     const fileInput2 = await page.$('.file-input');

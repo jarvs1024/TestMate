@@ -144,6 +144,9 @@ describe('上传表单: 切换形态', () => {
     expect(f.form.code).toBe('dml-conn');
     f.chooseKind('skill');
     expect(f.mcpConfigText.value).toBe('');
-    expect(f.codeTouched.value).toBe(false);
+    // code 不可编辑 —— 切回技能后由**包名**重新派生 (同步在 watch 里, 等一拍)
+    f.pkgFile.value = new File(['x'], 'dml-from-package.zip');
+    await nextTick();
+    expect(f.form.code).toBe('dml-from-package');
   });
 });

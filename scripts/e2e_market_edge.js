@@ -143,8 +143,7 @@ async function openUpload(page, kindLabel) {
   check('E2 体检结论点名包名问题', /dml-/.test(st.pv || ''), st.pv.slice(0, 120));
   check('E3 包名不合规 → 不让上架', st.disabled === true, `disabled=${st.disabled}`);
 
-  // ================= ② code 与包名不一致 → 报错 + 不让上架 =================
-  //    换成**合法**包名 (dml- 前缀), 这样"前缀错误"不会把"一致性错误"盖住
+  // ================= ② 资产 code 是**只读派生值**, 跟着包名自动变 =================
   await page.evaluate(() => {
     const b = [...document.querySelectorAll('.el-drawer__footer .el-button')]
       .find((x) => x.textContent.includes('取消'));
@@ -157,18 +156,33 @@ async function openUpload(page, kindLabel) {
   const fileInput2 = await page.$('.up-drawer .file-input');
   await fileInput2.uploadFile(goodZip);
   await sleep(2500);
-  await fillDrawer(page, { 'dml-': 'dml-some-other-name' });
-  st = await drawerState(page);
-  check('E4 code 与包名不一致 → 字段报错', /安装包名/.test(st.err || ''), st.err.slice(0, 90));
-  check('E5 「还缺」里点名一致性问题', /一致/.test(st.foot || ''), st.foot.slice(0, 90));
-  check('E6 不一致 → 不让上架', st.disabled === true, `disabled=${st.disabled}`);
-  await page.screenshot({ path: path.join(OUT_DIR, 'edge-01-bad-package.png') });
+  let codeState = await page.evaluate(() => {
+    const d = document.querySelector('.up-drawer');
+    const v = d.querySelector('.pkg-req .pr-code');
+    return {
+      text: (v?.textContent || '').replace(/\s+/g, ' ').trim(),
+      hasInput: !!d.querySelector('input[placeholder*="dml-"]'),
+    };
+  });
+  check('E4 资产 code 只做展示, 没有输入框',
+    codeState.hasInput === false && /dml-weekly-report/.test(codeState.text),
+    codeState.text.slice(0, 70));
+  check('E5 code 自动跟包名一致', /dml-weekly-report/.test(codeState.text), codeState.text.slice(0, 70));
 
-  // 改回一致 → 不一致错误消失 (包名本身合法, 所以应该完全没错了)
-  await fillDrawer(page, { 'dml-': 'dml-weekly-report' });
-  await sleep(600);
-  st = await drawerState(page);
-  check('E7 包名/code 对齐后不再报不一致', !/一致/.test(st.err || ''), st.err.slice(0, 70) || '(无错误)');
+  // 换包 → code 跟着变 (而不是让用户去改一个派生值)
+  const otherZip = path.join(OUT_DIR, 'dml-other-report.zip');
+  makeZip(otherZip, [['SKILL.md', '---\nname: y\ndescription: d\n---\n\n# y\n']]);
+  const fileInput3 = await page.$('.up-drawer .file-input');
+  await fileInput3.uploadFile(otherZip);
+  await sleep(2500);
+  codeState = await page.evaluate(() => {
+    const v = document.querySelector('.up-drawer .pkg-req .pr-code');
+    return (v?.textContent || '').replace(/\s+/g, ' ').trim();
+  });
+  check('E6 换包后 code 自动跟着变',
+    /dml-other-report/.test(codeState) && !/dml-weekly-report/.test(codeState),
+    codeState.slice(0, 70));
+  await page.screenshot({ path: path.join(OUT_DIR, 'edge-01-code-readonly.png') });
 
   // 取消, 退出抽屉
   await page.evaluate(() => {
@@ -214,13 +228,13 @@ async function openUpload(page, kindLabel) {
   await sleep(900);
   st = await drawerState(page);
   check('E12 改成合法连接器名 → 错误消失', /✓ 配置合法/.test(st.mcpMsg || ''), st.mcpMsg.slice(0, 60));
-  // code 应自动同步成连接器名
+  // code 应自动同步成连接器名 (只读展示区)
   const syncedCode = await page.evaluate(() => {
-    const el = [...document.querySelectorAll('.up-drawer input[type=text]')]
-      .find((i) => (i.placeholder || '').includes('dml-'));
-    return el ? el.value : '';
+    const v = document.querySelector('.up-drawer .pkg-req .pr-code');
+    return (v?.textContent || '').replace(/\s+/g, ' ').trim();
   });
-  check('E13 code 自动同步成连接器名', syncedCode === 'dml-good-conn', `code=${syncedCode}`);
+  check('E13 code 自动同步成连接器名 (只读展示)',
+    /dml-good-conn/.test(syncedCode), `code=${syncedCode.slice(0, 60)}`);
 
   await page.evaluate(() => {
     const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => x.textContent.includes('取消'));

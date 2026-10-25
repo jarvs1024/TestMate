@@ -64,48 +64,55 @@
             详情页会原样展示这份配置, 用户照着加到自己的 MCP 配置里。
           </p>
 
-          <!-- 资产 code: 跟 MCP 配置里的连接器名保持一致 -->
-          <el-form-item label="资产 code" required :error="codeFieldError" class="code-item">
-            <el-input v-model="form.code" :disabled="mode === 'update'"
-                      :placeholder="`${CODE_EXAMPLE} — 英文, dml- 开头`"
-                      @blur="codeTouched = true" />
-            <p class="hint">自动跟 MCP 配置里的连接器名保持一致</p>
-          </el-form-item>
+          <!-- 资产 code: 从 MCP 配置里的连接器名**自动派生** —— 只展示, 不让填 -->
+          <div class="pkg-req">
+            <span class="pr-ic">🔌</span>
+            <span class="pr-txt">
+              <b>连接器名</b>必须以 <code>dml-</code> 开头。
+            </span>
+            <span class="pr-code">
+              <span class="pc-label">资产 code</span>
+              <code class="pc-val">{{ form.code || '（填好配置后自动生成）' }}</code>
+              <span class="pc-hint">自动取 MCP 配置里的连接器名</span>
+              <span v-if="codeFieldError" class="cv-err">{{ codeFieldError }}</span>
+            </span>
+          </div>
         </section>
 
         <section v-else class="up-sec">
           <div class="sec-h"><span class="sec-no">1</span>安装包<span class="sec-tip">必填</span></div>
-          <el-form-item label="" :error="pkgError || pkgNameError">
+          <!-- 选文件: 隐藏原生 input (系统默认按钮跟整页风格不搭), 换成统一风格的自定义按钮.
+               ⚠️ 文件名只显示一次 —— 原生 input 旁边那个是重复的. -->
+          <div class="file-pick">
             <input ref="fileInput" type="file" class="file-input"
                    accept=".zip,.tar.gz,.tgz" @change="onPickPackage" />
-            <div v-if="pkgFile" class="file-list">
-              <span class="file-chip">{{ pkgFile.name }}
-                <b @click="clearPackage">×</b>
-              </span>
-            </div>
-          </el-form-item>
+            <button type="button" class="pick-btn" @click="fileInput?.click()">
+              <span class="pb-ic">📦</span>选择安装包
+            </button>
+            <span v-if="pkgFile" class="file-chip">
+              {{ pkgFile.name }}<b @click="clearPackage">×</b>
+            </span>
+            <span v-else class="pick-hint">未选择文件</span>
+          </div>
+          <p v-if="pkgError" class="pick-err">{{ pkgError }}</p>
+          <p v-if="pkgNameError" class="pick-err">{{ pkgNameError }}</p>
 
-          <!-- 包的要求: **每个形态不一样** —— 放上传区正下方, 别塞在角落小字里 -->
+          <!-- 包的要求 + 资产 code 合成一块: code 是包名派生的, 挨着来源才说得清 -->
           <div class="pkg-req">
             <span class="pr-ic">📦</span>
             <span class="pr-txt">
               <b>{{ kind.label }}包要求</b>:
               包名以 <code>dml-</code> 开头 (如 dml-weekly-report.zip);
               <template v-if="kind.pkgNeed">{{ kind.pkgNeed }}。</template>
+              压缩包会在服务端解压后推送到 GitLab。
+            </span>
+            <span class="pr-code">
+              <span class="pc-label">资产 code</span>
+              <code class="pc-val">{{ form.code || '（选好包后自动生成）' }}</code>
+              <span class="pc-hint">自动取安装包名</span>
+              <span v-if="codeFieldError" class="cv-err">{{ codeFieldError }}</span>
             </span>
           </div>
-
-          <!-- 资产 code: 它是**包名派生的** —— 跟着 ① 走, 别孤零零放 ② -->
-          <el-form-item label="资产 code" required :error="codeFieldError" class="code-item">
-            <el-input v-model="form.code" :disabled="mode === 'update'"
-                      :placeholder="`${CODE_EXAMPLE} — 英文, dml- 开头`"
-                      @blur="codeTouched = true" />
-            <p class="hint">选好安装包后自动跟包名保持一致</p>
-          </el-form-item>
-
-          <p class="hint">
-            压缩包会在服务端解压后推送到 GitLab, 仓库里存的是解压后的文件。
-          </p>
 
           <!-- 包体检: 选好包就当场验, 不用填完一整张表单才被 422 拦下 -->
           <div v-if="previewing" class="pv-box checking">正在体检安装包…</div>
@@ -136,9 +143,7 @@
         <!-- ============ ② 基础信息 ============ -->
         <section class="up-sec">
           <div class="sec-h"><span class="sec-no">2</span>基础信息</div>
-          <p class="guide">
-            <b>怎么填</b>: {{ kind.guide }}
-          </p>
+          <!-- ① 名称 (必填) + 图标 —— 卡片上最先看到的两样 -->
           <div class="row-2">
             <el-form-item label="名称" required>
               <el-input v-model="form.name" maxlength="60" show-word-limit
@@ -156,33 +161,18 @@
                           @click="chooseIcon(ic)">{{ ic }}</button>
                 </div>
               </div>
-              <p class="hint">
-                自动分配, <b>不会跟现有资产重复</b>
-                <template v-if="usedIcons.size">· 已用过的 {{ usedIcons.size }} 个不再提供</template>
-              </p>
+              <p class="hint">自动分配 · 不会跟现有资产重复</p>
             </el-form-item>
           </div>
 
+          <!-- ② 一句话简介 (必填) -->
           <el-form-item label="一句话简介" required>
             <el-input v-model="form.summary" type="textarea" :rows="2" maxlength="200" show-word-limit
                       placeholder="一句话说清它干什么 (卡片副标题 + 搜索都用这句), 如 贴日志即可定位 assert 与超时点" />
           </el-form-item>
 
+          <!-- ③ 分类 (必填) + 适用范围 (选填) —— 都是"归类", 并排一行 -->
           <div class="row-2">
-            <el-form-item label="版本 (semver)" :error="versionError">
-              <el-input v-model="form.version" placeholder="语义化版本, 如 1.0.0" />
-              <p v-if="mode === 'update'" class="hint">发新版本建议 +1 (如 1.0.0 → 1.1.0)</p>
-            </el-form-item>
-          </div>
-
-          <!-- 适用场景: 详情页首屏就有这一块 → 别藏在进阶信息里 -->
-          <el-form-item label="适用场景">
-            <el-input v-model="form.use_when" type="textarea" :rows="2"
-                      placeholder="什么时候该用它 (如: 拿到一段 dmesg 需要快速判断问题域)" />
-          </el-form-item>
-
-          <div class="row-2">
-            <!-- 分类 (必填) 与适用范围 (选填) 并排; 各有稳定类名, e2e 不靠顺序定位 -->
             <el-form-item label="分类" required>
               <el-select v-model="form.category" class="sel-category" style="width:100%" filterable
                          @change="onCategoryChange">
@@ -192,17 +182,25 @@
                 </el-option>
               </el-select>
             </el-form-item>
-            <!-- 适用范围: 通用 (所有项目) 或某个项目特有 -->
             <el-form-item label="适用范围 (选填)">
               <el-select v-model="form.project" class="sel-project" style="width:100%">
                 <el-option value="" label="通用 —— 所有项目都能用" />
                 <el-option v-for="p in projectOptions" :key="p" :value="p"
                            :label="`${p} 项目 —— 只有 ${p} 项目用得上`" />
               </el-select>
-              <p class="hint">
-                资产是团队共有的, 但项目各有各的机台和流程 ——
-                通用资产所有人都能用; 项目特有的会在卡片上标出来。
-              </p>
+              <p class="hint">通用的所有人都能用; 项目特有的会在卡片上标出来</p>
+            </el-form-item>
+          </div>
+
+          <!-- ④ 版本 (必填) + 适用场景 —— 版本是短字段, 别独占一行 -->
+          <div class="row-2">
+            <el-form-item label="版本 (semver)" required :error="versionError">
+              <el-input v-model="form.version" placeholder="1.0.0" />
+              <p v-if="mode === 'update'" class="hint">发新版本建议 +1 (如 1.0.0 → 1.1.0)</p>
+            </el-form-item>
+            <el-form-item label="适用场景">
+              <el-input v-model="form.use_when" type="textarea" :rows="2"
+                        placeholder="什么时候该用它 (如: 拿到一段 dmesg 需要快速判断问题域)" />
             </el-form-item>
           </div>
         </section>
@@ -303,7 +301,7 @@ import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
 import { getAsset, getJob, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind } from '@/api/assets';
 import { KIND_META } from './kindMeta';
 import { MCP_TEMPLATE } from './mcpConfig';
-import { CODE_EXAMPLE, useAssetUploadForm } from './useAssetUploadForm';
+import { useAssetUploadForm } from './useAssetUploadForm';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -336,8 +334,8 @@ const advOpen = ref(false);
  * 缺项清单 / 图标不重复), 埋在组件里时**没法单测**, 只能靠 e2e 兜.
  */
 const {
-  form, tagsText, keywordsText, mcpConfigText, step, codeTouched,
-  fileInput, pkgFile, preview, previewing, iconPanel, usedIcons,
+  form, tagsText, keywordsText, mcpConfigText, step,
+  fileInput, pkgFile, preview, previewing, iconPanel,
   categories, projectOptions,
   isMcp, kind, mcpConfigError, codeFieldError,
   versionError, pkgError, pkgNameError,
@@ -366,7 +364,6 @@ function splitList(s: string): string[] {
 }
 
 async function submit() {
-  codeTouched.value = true;
   if (missing.value.length) {
     ElMessage.warning('还缺: ' + missing.value.join('、'));
     return;
@@ -562,14 +559,28 @@ function close() {
 
 /* 包的要求条 —— 放在上传区正下方, 每个形态内容不同 */
 .pkg-req {
-  display: flex; align-items: flex-start; gap: 8px;
+  display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap;
   padding: 8px 10px; margin: 0 0 8px;
   background: var(--surface-sunken); border: 1px solid var(--border);
   border-radius: var(--radius-sm); font-size: 11.5px; line-height: 1.7;
   color: var(--ink-700);
 }
 .pkg-req .pr-ic { font-size: 14px; line-height: 1.3; }
+.pkg-req .pr-txt { flex: 1 1 240px; min-width: 0; }
 .pkg-req .pr-txt b { color: var(--ink-900); }
+/* 资产 code: 跟要求同一个块 —— 它是包名派生的, 挨着来源才说得清 */
+.pkg-req .pr-code {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
+  flex-basis: 100%; padding-top: 6px; margin-top: 2px;
+  border-top: 1px dashed var(--border);
+}
+.pkg-req .pc-label { font-size: 11.5px; font-weight: 600; color: var(--ink-700); }
+.pkg-req .pc-val {
+  font-family: var(--font-mono); font-size: 12px; color: var(--ink-900);
+  background: var(--surface); padding: 1px 7px; border-radius: 4px;
+}
+.pkg-req .pc-hint { font-size: 11px; color: var(--ink-500); }
+.pkg-req .cv-err { flex-basis: 100%; font-size: 11.5px; color: var(--err); }
 .pkg-req code {
   font-family: var(--font-mono); font-size: 11px;
   background: var(--surface-soft); padding: 1px 4px; border-radius: 4px;
@@ -625,8 +636,20 @@ function close() {
 }
 .perm-note { margin: 0 0 10px; padding: 7px 9px; background: var(--surface-sunken);
   border-radius: var(--radius-sm); line-height: 1.6; }
-.file-input { display: block; margin-bottom: 8px; font-size: 12.5px; }
-.file-list { display: flex; flex-wrap: wrap; gap: 6px; }
+/* ⚠️ 原生 file input 的系统按钮跟整页风格不搭 —— 藏起来, 用自定义按钮 */
+.file-input { display: none; }
+.file-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.pick-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 7px 14px;
+  color: var(--ink-700); font-size: 13px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s ease;
+}
+.pick-btn:hover { border-color: var(--primary); color: var(--primary); }
+.pick-btn .pb-ic { font-size: 14px; }
+.pick-hint { font-size: 12.5px; color: var(--ink-500); }
+.pick-err { margin: -4px 0 10px; font-size: 11.5px; color: var(--err); }
 .hint code {
   font-family: var(--font-mono); font-size: 11px;
   background: var(--surface-sunken); padding: 1px 5px; border-radius: 4px;
