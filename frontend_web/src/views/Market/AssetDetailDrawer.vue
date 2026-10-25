@@ -62,7 +62,7 @@
 
       <p class="ad-summary">{{ item.description || item.summary }}</p>
 
-      <!-- 适用范围: 项目特有 / 通用 -->
+      <!-- 适用项目: 项目特有 / 通用 -->
       <div class="ad-scope" :class="{ proj: !!item.project }">
         <span class="sc-ic">📁</span>
         <span class="sc-txt">
@@ -72,9 +72,11 @@
         </span>
       </div>
 
-      <div class="ad-block">
+      <!-- 适用场景: 上传表单里已经不让填了 → 新资产没这字段,
+           只有存量资产有内容时才显示 (空着占一格没意义) -->
+      <div v-if="item.use_when" class="ad-block">
         <div class="ad-block-h ok">✓ 适用场景</div>
-        <div class="ad-block-b">{{ item.use_when || '—' }}</div>
+        <div class="ad-block-b">{{ item.use_when }}</div>
       </div>
       <!-- ⚠️ 「不适用」去掉了 (2026-10-24): README 里已经写了, 页面再列一遍是重复. -->
 
@@ -557,7 +559,7 @@ async function doSubmit() {
   margin: 0 0 14px; font-size: 13px; color: var(--ink-700); line-height: 1.65; white-space: pre-wrap;
 }
 
-/* 适用范围 (通用 / 项目专属) */
+/* 适用项目 (通用 / 项目专属) */
 .ad-scope {
   display: flex; align-items: flex-start; gap: 9px;
   padding: 9px 12px; margin-bottom: 14px;

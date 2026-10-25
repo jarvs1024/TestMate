@@ -30,7 +30,7 @@ export interface AssetItem {
   use_when: string;
   not_for: string;
   category: string;
-  /** 适用范围: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有 */
+  /** 适用项目: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有 */
   project: string;
   tags: string[];
   keywords: string[];
@@ -201,7 +201,7 @@ export interface UploadForm {
   use_when: string;
   not_for: string;
   category: string;
-  /** 适用范围: 空 = 通用; "6100" = 6100 项目特有 */
+  /** 适用项目: 空 = 通用; "6100" = 6100 项目特有 */
   project?: string;
   icon: string;
   tags: string[];
@@ -256,7 +256,7 @@ export async function listCategories(): Promise<{
 }
 
 /**
- * 项目列表 + 每个项目的资产数 —— 上传表单的「适用范围」与市场页的筛选都用它.
+ * 项目列表 + 每个项目的资产数 —— 上传表单的「适用项目」与市场页的筛选都用它.
  *
  * ⚠️ 通用 (code = "") 也在列表里 —— 它是"默认选项", 不是某个项目。
  */

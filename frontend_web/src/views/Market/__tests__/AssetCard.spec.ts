@@ -93,7 +93,7 @@ describe('AssetCard 状态徽标', () => {
   });
 });
 
-describe('适用范围徽标', () => {
+describe('适用项目徽标', () => {
   it('项目特有 → 卡片上标出是哪个项目', () => {
     const w = mount(AssetCard, { props: { item: item({ project: '6100' }) } });
     const badge = w.find('.ac-badge.proj');

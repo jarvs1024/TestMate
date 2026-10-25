@@ -159,11 +159,11 @@ def build_manifest(
     #    自定义分类不该在 GitLab 里开新目录, 也不该在前端留一个筛不出来的孤儿分类.
     category = market_categories.normalize(category)
 
-    # 适用范围 (空 = 通用) —— 只校验长度, 归一在上传入口做
+    # 适用项目 (空 = 通用) —— 只校验长度, 归一在上传入口做
     # (项目列表是配置, manifest 是真源: 项目从列表里删掉了, 老资产的归属也不该丢)
     project = (project or "").strip()
     if len(project) > 32:
-        raise ManifestError("project (适用范围) 不能超过 32 个字符")
+        raise ManifestError("project (适用项目) 不能超过 32 个字符")
 
     # ⚠️ 连接器 (mcp) 是**配置型**资产: 只有一段 MCP 配置, 没有安装包也没有 README.
     #    非 mcp 的资产不许带 mcp_config (免得两边语义混了).
@@ -215,7 +215,7 @@ def asset_to_index_entry(a: Asset) -> dict[str, Any]:
         "use_when": a.use_when,
         "not_for": a.not_for,
         "category": a.category,
-        # 适用范围 (空 = 通用) —— getattr 兜底: 老对象/测试替身可能没这字段
+        # 适用项目 (空 = 通用) —— getattr 兜底: 老对象/测试替身可能没这字段
         "project": getattr(a, "project", "") or "",
         "tags": list(a.tags or []),
         "keywords": list(a.keywords or []),
@@ -335,7 +335,7 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         a.use_when = e.get("use_when") or ""
         a.not_for = e.get("not_for") or ""
         a.category = e.get("category") or ""
-        # 适用范围: 索引里没有这一项的旧数据 = 通用
+        # 适用项目: 索引里没有这一项的旧数据 = 通用
         a.project = e.get("project") or ""
         a.tags = list(e.get("tags") or [])
         a.keywords = list(e.get("keywords") or [])

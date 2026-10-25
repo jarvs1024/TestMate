@@ -74,7 +74,7 @@ async function shot(page, name, desc) {
   });
   await page.waitForSelector('.ad-scope', { timeout: 10000 });
   await sleep(1500);
-  await shot(page, '03-detail-mcp', '详情抽屉: 适用范围 + MCP 配置');
+  await shot(page, '03-detail-mcp', '详情抽屉: 适用项目 + MCP 配置');
 
   // ---- ④ 展开技术信息 ----
   await page.evaluate(() => {

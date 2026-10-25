@@ -206,7 +206,7 @@ z.close()
       opt && opt.click();
     });
     await sleep(700);
-    // 适用范围: 选 6100 项目 (抽屉里第二个下拉 = 分类之后的「适用范围」)
+    // 适用项目: 选 6100 项目 (抽屉里第二个下拉 = 分类之后的「适用项目」)
     // ⚠️ 必须用**真实点击** (elementHandle.click) —— DOM 的 el.click() 不会触发
     //    element-plus 的下拉开关 (它绑在 wrapper 的指针事件上)
     const scope = await pub.page.$('.up-drawer .sel-project');
@@ -239,8 +239,8 @@ z.close()
 
     const st = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
     check('③ 资产状态为待审核', st.json && st.json.publish_status === 'pending', st.json && st.json.publish_status);
-    // 适用范围: 上传时选了 6100 → 资产上要带着
-    check('③c 资产带上了适用范围 (6100 项目)',
+    // 适用项目: 上传时选了 6100 → 资产上要带着
+    check('③c 资产带上了适用项目 (6100 项目)',
       st.json && st.json.project === '6100', `project=${st.json && st.json.project}`);
 
 
@@ -375,7 +375,7 @@ z.close()
       [...document.querySelectorAll('.asset-card')].some((x) => x.textContent.includes(name)), '场景验证技能');
     check('⑬ 上架后小李能看到', visibleToInstaller);
 
-    // ===== ④b 适用范围: 卡片标注 + 按项目筛选 =====
+    // ===== ④b 适用项目: 卡片标注 + 按项目筛选 =====
     await ins.page.reload({ waitUntil: 'domcontentloaded' });
     await ins.page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1500);

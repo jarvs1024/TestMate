@@ -491,7 +491,7 @@ async def list_projects(_user: User = Depends(get_current_user)) -> dict[str, An
     """项目列表 + 每个项目的资产数.
 
     ⚠️ 返回的是**完整列表** (含计数为 0 的) —— 前端据此渲染:
-      · 上传表单的「适用范围」下拉
+      · 上传表单的「适用项目」下拉
       · 市场页的项目筛选 chip
     项目列表来自设置项 marketplace.projects (管理员可改, 不用发版)。
     """
@@ -987,7 +987,7 @@ async def _set_publish_state(
 
     publish_status 四态: pending(待审核) / published(在架) / rejected(已驳回) / unpublished(已下架)
     """
-    # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他) / 适用范围
+    # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他) / 适用项目
     kind = category = author = project = ""
     # ⚠️ 状态流转必须**加锁** —— manifest 是读-改-写:
     #    上传 v2 与审核通过并发时, 谁后写谁覆盖谁 → GitLab 上的权威 manifest 丢更新
@@ -1077,7 +1077,7 @@ async def _set_publish_state(
     return {
         "ok": True, "code": code, "publish_status": publish_status,
         "changed": True, "job_id": job_id, "name": name, "version": version,
-        # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他) / 适用范围
+        # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他) / 适用项目
         "kind": kind, "category": category, "author": author, "project": project,
     }
 
@@ -1716,7 +1716,7 @@ async def _stage_asset_locked(
         a.use_when = manifest.get("use_when") or ""
         a.not_for = manifest.get("not_for") or ""
         a.category = manifest.get("category") or ""
-        # 适用范围 (空 = 通用)
+        # 适用项目 (空 = 通用)
         a.project = manifest.get("project") or ""
         # 连接器专有: MCP 配置 (非 mcp 恒为 None)
         a.mcp_config = manifest.get("mcp_config") if (a.kind or "") == "mcp" else None
@@ -1825,7 +1825,7 @@ async def upload_asset(
     use_when: str = Form(""),
     not_for: str = Form(""),
     category: str = Form(""),
-    project: str = Form("", description="适用范围: 空 = 通用; 6100 = 6100 项目特有"),
+    project: str = Form("", description="适用项目: 空 = 通用; 6100 = 6100 项目特有"),
     icon: str = Form("🧩"),
     tags: str = Form("[]"),
     keywords: str = Form("[]"),
@@ -1853,7 +1853,7 @@ async def upload_asset(
             code=code, kind=kind, name=name, summary=summary, version=version,
             description=description, use_when=use_when, not_for=not_for,
             category=category, icon=icon,
-            # 适用范围: 不在项目列表里的一律归**通用** (脏值不进 manifest)
+            # 适用项目: 不在项目列表里的一律归**通用** (脏值不进 manifest)
             project=await _resolve_project(code, project, action="create"),
             tags=json.loads(tags or "[]"), keywords=json.loads(keywords or "[]"),
             author=user.username, featured=featured,
@@ -1920,7 +1920,7 @@ async def update_asset(
     use_when: str = Form(""),
     not_for: str = Form(""),
     category: str = Form(""),
-    project: str = Form("", description="适用范围: 空 = 通用; 6100 = 6100 项目特有"),
+    project: str = Form("", description="适用项目: 空 = 通用; 6100 = 6100 项目特有"),
     icon: str = Form("🧩"),
     tags: str = Form("[]"),
     keywords: str = Form("[]"),
@@ -1952,7 +1952,7 @@ async def update_asset(
             code=code, kind=kind, name=name, summary=summary, version=version,
             description=description, use_when=use_when, not_for=not_for,
             category=category, icon=icon,
-            # 适用范围: 更新时保留老归属 (项目从设置里删掉也不该丢)
+            # 适用项目: 更新时保留老归属 (项目从设置里删掉也不该丢)
             project=await _resolve_project(code, project, action="update"),
             tags=json.loads(tags or "[]"), keywords=json.loads(keywords or "[]"),
             author=user.username, featured=featured,

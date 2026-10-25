@@ -111,3 +111,21 @@ describe('资产详情抽屉 · 下架申请制', () => {
     expect(buttonTexts(w)).toContain('重新上架');
   });
 });
+
+describe('资产详情抽屉 · 适用项目与适用场景', () => {
+  it('项目归属显示成「适用项目」', async () => {
+    const w = await mountDrawer({ it: item({ project: '6100' }) });
+    expect(w.find('.ad-scope').text()).toContain('6100');
+  });
+
+  it('存量资产有适用场景 → 显示出来', async () => {
+    const w = await mountDrawer({ it: item({ use_when: '拿到 dmesg 时用它' }) });
+    expect(w.text()).toContain('适用场景');
+    expect(w.text()).toContain('拿到 dmesg 时用它');
+  });
+
+  it('没有适用场景 → 整块不显示 (空着占一格没意义)', async () => {
+    const w = await mountDrawer({ it: item({ use_when: '' }) });
+    expect(w.text()).not.toContain('适用场景');
+  });
+});
