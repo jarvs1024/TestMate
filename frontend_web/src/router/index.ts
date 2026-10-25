@@ -29,7 +29,7 @@ export const routes: RouteRecordRaw[] = [
         { path: 'agents/:code', redirect: (to) => ({ name: 'tool-runner', params: to.params }) },
 
         // ===== 底座型: AI 资产市场 =====
-        { path: 'market', name: 'market', meta: { title: 'AI 资产市场', lede: '智能体的技能沉淀 —— 插件 / 技能 / 连接器, 挑一个装进你的 Agent' }, component: () => import('@/views/Capability/Catalog/index.vue') },
+        { path: 'market', name: 'market', meta: { title: 'AI 资产市场', lede: '能力的技能沉淀 —— 插件 / 技能 / 连接器, 挑一个装进你的 Agent' }, component: () => import('@/views/Capability/Catalog/index.vue') },
 
         // ===== 底座型: 知识库 =====
         // 以前知识库是侧栏跟「广场」平级的顶级项, 现在它是能力墙上的一张卡.

@@ -61,7 +61,7 @@ export const CAPABILITY_KINDS: CapabilityKindMeta[] = [
     icon: '🧱',
     cta: '打开',
     order: 3,
-    hint: '供料 —— 智能体的技能沉淀 + RAG 语料',
+    hint: '供料 —— 能力的技能沉淀 + RAG 语料',
   },
 ];
 

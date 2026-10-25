@@ -157,7 +157,7 @@ SEED_AGENTS: list[dict] = [
         "cta": "浏览技能包",
         "version": "v0.1.0",
         "status": AgentStatus.beta.value,
-        "summary": "智能体的技能沉淀: 插件 / 技能 / 连接器, 挑一个装进你的 Agent",
+        "summary": "能力的技能沉淀: 插件 / 技能 / 连接器, 挑一个装进你的 Agent",
         "use_when": "想找团队里现成的 AI 能力 (技能包 / 连接器 / 插件), 或要把自己沉淀的资产上架共享",
         "not_for": "运行具体的 SSD 测试任务请直接点对应的工具型能力",
         "tags": ["技能包", "插件", "连接器"],

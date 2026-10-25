@@ -159,3 +159,26 @@ async def test_get_capability_anonymous(client):
     assert r.status_code == 200, r.text()
     assert r.json()["kind"] == "platform"
     assert r.json()["cta"] == "检索语料"
+
+
+# ===== 主词统一: 「智能体」→「能力」(2026-10-26) =====
+#
+# 能力墙重构之后首页/侧栏都叫「能力」了, 后端却还在往外送「智能体」——
+# 用户在首页看到「能力」, 点进详情页却写着「智能体」, 会以为是两套东西.
+# 注释里提历史随便提, 但**会渲染出去的字**必须统一.
+
+
+def test_seed_cards_avoid_legacy_agent_wording():
+    """能力卡上的文案不许再出现「智能体」—— 名字/简介/CTA/什么时候用 都一样."""
+    for cfg in SEED_AGENTS:
+        for field in ("name", "summary", "cta", "use_when", "not_for"):
+            text = cfg.get(field) or ""
+            assert "智能体" not in text, f"{cfg['code']} 的 {field} 还留着「智能体」: {text}"
+
+
+def test_settings_category_labels_avoid_legacy_agent_wording():
+    """设置页的分类标签同理 —— 后端不再发「🤖 智能体」这种旧叫法."""
+    from app.api.settings import CATEGORY_LABELS
+
+    for cat, label in CATEGORY_LABELS.items():
+        assert "智能体" not in label, f"分类 {cat} 的标签还留着「智能体」: {label}"

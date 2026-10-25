@@ -25,7 +25,7 @@ router = APIRouter()
 
 # ===== 分组显示 =====
 CATEGORY_LABELS: dict[str, str] = {
-    "agents":     "🤖 智能体",
+    "agents":     "🗂️ 能力墙",
     "knowledge":       "📚 知识库 / RAGFlow",
     "notification": "🔔 通知 / 钉钉",
     "general":    "⚙️ 通用",

@@ -84,13 +84,18 @@
 
         </section>
 
-        <!-- 🤖 智能体 -->
-        <!-- ⚠️ 以前这里有个「🧪 智能体业务」子组 (引擎 / 模型 / 工具等参数) ——
+        <!-- 🗂️ 能力墙 -->
+        <!-- ⚠️ 以前这里叫「🤖 智能体」, 前面首页改成「能力墙」后这里没跟上 ——
+             用户在设置里看到的还是旧叫法. 2026-10-26 统一成「能力墙」,
+             内部 id 也一起从 sec-agents 改成 sec-capability (只有本文件 3 处引用).
+             ⚠️ 图标用 🗂️ 而不是 🧱 —— 🧱 已经是「底座」这个能力角色的图标
+             (能力卡片 / 侧栏分组头在用), 同一个字形表示两件事会让人懵.
+             ⚠️ 以前这里还有个「🧪 智能体业务」子组 (引擎 / 模型 / 工具等参数) ——
              Dify 下线后后端 schema 里已经没有 agents 类别的配置项了, 那个子组**永远空**,
              只会一直显示「暂无智能体业务配置」, 让人以为功能坏了. 死 UI, 直接去掉. -->
-        <section v-if="activeTop === 'sec-agents'" :id="'sec-agents'" class="card grp">
+        <section v-if="activeTop === 'sec-capability'" :id="'sec-capability'" class="card grp">
           <h2>
-            <span>🤖 智能体</span>
+            <span>🗂️ 能力墙</span>
             <span class="grp-cnt">{{ marketItems.length }} 项</span>
           </h2>
 
@@ -450,7 +455,7 @@ const sourceGroups = computed<DataSourceGroup[]>(() =>
 );
 
 // ⚠️ 「智能体业务」那一组已经删掉了 (Dify 下线后没有 agents 类别的配置项,
-//    留着只会永远显示「暂无智能体业务配置」). 智能体相关的配置都在下面的「数据源」里.
+//    留着只会永远显示「暂无智能体业务配置」). 能力相关的配置都在下面的「数据源」里.
 
 function itemsByCategory(cat: string): SettingItem[] {
   for (const g of groups.value) {
@@ -477,7 +482,7 @@ const sections = computed<TocSection[]>(() => {
       { id: 'sec-chat',              label: '知识对话',         count: chatItems.value.length },
     ],
   },
-  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: marketItems.value.length, children: [] },
+  { id: 'sec-capability',   icon: '🗂️', label: '能力墙', count: marketItems.value.length, children: [] },
   { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length + dataSourceItems.value.length, children: [
     { id: 'sec-general-data-source', label: '📡 数据源', count: dataSourceItems.value.length },
   ] },
@@ -500,7 +505,7 @@ function onPickTop(topId: string) {
   // 通知区带送达回执, 进区就拉一次
   if (topId === 'sec-notification') loadNotifyLog();
   // 资产市场区展示当前生效的工作区/远端
-  if (topId === 'sec-agents') loadMarketConfig();
+  if (topId === 'sec-capability') loadMarketConfig();
   // 用户管理区拉账号列表
   if (topId === 'sec-users') loadUsers();
 }
@@ -631,7 +636,7 @@ onMounted(() => {
 
 <style scoped>
 
-/* ===== 智能体 section: 数据源区 / 业务智能体区 分割线 ===== */
+/* ===== 能力墙 section: 数据源区 / 能力业务区 分割线 ===== */
 .sec-divider {
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--border), transparent);
