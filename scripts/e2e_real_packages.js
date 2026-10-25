@@ -675,9 +675,27 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
     if (browser) await browser.close();
 
     // 还原设置 (改生产设置必须还原)
+    //
+    // ⚠️ 2026-10-25: 以前这里是 `catch (e) { /* 尽力而为 */ }` —— 还原失败**一声不吭**,
+    //    结果生产白名单里长期挂着一个已删除的测试账号 (e2e_real_pub), 谁都不知道.
+    //    现在: 失败要**说出来**, 并且还原完**回读核对** —— 写了不等于写进去了.
     for (const k of TOUCHED) {
       if (saved[k] === undefined) continue;
-      try { await setSetting(adminToken, k, String(saved[k])); } catch (e) { /* 尽力而为 */ }
+      try {
+        await setSetting(adminToken, k, String(saved[k]));
+      } catch (e) {
+        console.log(`  [清理] ⚠️ 设置 ${k} 还原失败: ` + String(e.message).split('\n')[0]);
+      }
+    }
+    // 回读核对: 还原真的生效了吗 (PUT 成功 ≠ 值写对了)
+    const after = await getSettings(adminToken, TOUCHED);
+    const notRestored = TOUCHED.filter(
+      (k) => saved[k] !== undefined && String(after[k]) !== String(saved[k]));
+    if (notRestored.length) {
+      console.log(`  [清理] ⚠️ 有设置没还原干净, 生产配置是脏的: `
+        + notRestored.map((k) => `${k}=${JSON.stringify(after[k])} (应为 ${JSON.stringify(saved[k])})`).join(', '));
+    } else {
+      console.log('  [清理] 生产设置已全部还原');
     }
     // 删测试账号
     try {

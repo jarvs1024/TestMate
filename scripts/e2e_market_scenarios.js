@@ -578,6 +578,17 @@ z.close()
         console.log(`  [清理] 设置 ${k} 还原失败: ` + String(e.message).split('\n')[0]);
       }
     }
+    // ⚠️ 回读核对 —— 写了不等于写进去了 (PUT 成功 ≠ 值对).
+    //    还原失败还一声不吭的话, 生产白名单会长期挂着已删除的测试账号, 谁都不知道.
+    const afterSettings = await getSettings(adminToken, TOUCHED);
+    const notRestored = TOUCHED.filter(
+      (k) => savedSettings[k] !== undefined && String(afterSettings[k]) !== String(savedSettings[k]));
+    if (notRestored.length) {
+      console.log('  [清理] ⚠️ 有设置没还原干净, 生产配置是脏的: '
+        + notRestored.map((k) => `${k}=${JSON.stringify(afterSettings[k])} (应为 ${JSON.stringify(savedSettings[k])})`).join(', '));
+    } else {
+      console.log('  [清理] 生产设置已全部还原');
+    }
     // 清理测试账号 —— 别在库里留两个已知口令的账号
     try {
       const env = fs.readFileSync(path.join(__dirname, '..', 'deploy', '.env'), 'utf8');
