@@ -61,6 +61,37 @@ _ACTION_LABEL: dict[str, str] = {
     "publish": "重新上架",
 }
 
+# 审计动作 → 审计列表里显示的话 (「这条记录干了啥」).
+#
+# ⚠️ 跟上面的 _ACTION_LABEL **刻意分开** —— 那张表是状态机报错时用的
+#    ("不能通过下架申请"), 这张表是描述一次操作 ("通过下架申请, 资产已删除").
+#    同一个动作两句话, 不矛盾.
+#
+# ⚠️ 这张表是**唯一真源** (2026-10-25): 前端原来自己维护了一份, 结果
+#    · 漏了 create / update / approve / reject / submit → 列表里显示原始 action id;
+#    · 多了一个 unpublish_reject —— 状态机里**没有**这个迁移, 永远是死选项;
+#    · 同一个动作 (unpublish_approve) 在状态机 / 前端 / git commit 文本里
+#      三套说法, 迟早漂移.
+#    现在由审计接口直接把 action_label 吐给前端, 前端不再自己翻译.
+AUDIT_ACTION_LABEL: dict[str, str] = {
+    "create": "新建资产",
+    "update": "发布新版本",
+    "publish": "重新上架",
+    "unpublish_request": "申请下架",
+    "unpublish_cancel": "撤销下架申请",
+    "unpublish_approve": "通过下架申请 (资产已删除)",
+    "approve": "审核通过",
+    "reject": "审核驳回",
+    "submit": "提交审核",
+    "delete": "管理员删除",
+    "conflict_resolved": "同步冲突已解决",
+}
+
+
+def audit_action_label(action: str) -> str:
+    """审计动作 → 中文 (没登记过的动作原样返回, 宁可露 id 也不显示空白)."""
+    return AUDIT_ACTION_LABEL.get(action or "", action or "")
+
 # 当前状态 → 允许对它做的动作 (给"为什么不能做"用)
 _STATE_HINT: dict[str, str] = {
     PENDING: "该资产正在等审核, 审核通过前不能再上架",

@@ -312,7 +312,13 @@ async def list_assets(
             "6100=6100 项目特有 **+ 通用** (通用资产在该项目同样适用)"
         ),
     ),
-    q: str | None = Query(None),
+    q: str | None = Query(
+        None,
+        description=(
+            "关键词检索: 命中 名称 / 简介 / 详细说明 / 作者 / 标签 / 检索词 / "
+            "**所属项目** (如 6100; 中文「通用」命中通用资产)"
+        ),
+    ),
     sort: str = Query("hot", pattern="^(hot|new|name)$"),
     include_unpublished: bool = Query(False),
     status: str = Query(
@@ -394,10 +400,20 @@ async def list_assets(
                 )
             )
         if q:
-            like = f"%{q.strip()}%"
+            raw_q = q.strip()
+            like = f"%{raw_q}%"
             # ⚠️ tags / keywords 也参与检索 —— 上传表单里那个「搜索关键词」
             #    字段的承诺是"搜不到时靠它", 后端不搜就等于白填.
             #    (JSON 列没法直接 like, 只能 CAST 成文本; 走不了索引, 但资产量不大)
+            #
+            # ⚠️ **项目也参与检索** (2026-10-25): 输入项目号 (如 6100) 能搜到
+            #    归属该项目的资产 —— 市场页搜索框的承诺就是"按项目也能搜".
+            #    (注意: 这是**文本命中**, 不是"项目筛选" —— 选项目 6100 会带上通用资产,
+            #     搜 6100 只命中 project='6100' 的那些, 两者语义不同, 别混)
+            proj_match = [Asset.project.like(like)]
+            if "通用" in raw_q:
+                # 「通用」是**显示名** —— 资产里通用 = project 为空串, LIKE 匹配不到
+                proj_match.append(Asset.project == "")
             stmt = stmt.where(
                 or_(
                     Asset.name.like(like),
@@ -406,6 +422,7 @@ async def list_assets(
                     Asset.author.like(like),
                     cast(Asset.tags, Text).like(like),
                     cast(Asset.keywords, Text).like(like),
+                    *proj_match,
                 )
             )
         rows = list((await session.execute(stmt)).scalars().all())
@@ -565,9 +582,13 @@ async def list_audits(
         if code:
             stmt = stmt.where(AssetAudit.code == code)
         rows = (await session.execute(stmt)).scalars().all()
-        return AssetAuditListOut(
-            items=[AssetAuditOut.model_validate(r) for r in rows], total=len(rows)
-        )
+        items = []
+        for r in rows:
+            out = AssetAuditOut.model_validate(r)
+            # 动作的中文由后端给 (唯一真源) —— 前端不再自己翻译
+            out.action_label = market_state.audit_action_label(r.action)
+            items.append(out)
+        return AssetAuditListOut(items=items, total=len(items))
 
 
 @router.get("/sync-status", response_model=SyncStatusOut)
@@ -1329,6 +1350,9 @@ async def publish_asset(
     await market_notify.notify_asset(
         "publish", out, actor=user.username,
         detail=comment or "重新上架",
+        # ⚠️ 事件 key 还是 publish (开关映射不变), 只是标题别写成「新资产上架」——
+        #    这条是**重新**上架, 不是新资产.
+        title_override="🎉 资产重新上架",
     )
     return {"ok": True, "code": code, "publish_status": "published"}
 
@@ -1798,18 +1822,25 @@ async def _stage_asset_locked(
     # ---- 3. 入队, 后台 commit + push ----
     enqueue(out.id)
     # 通知: 待审核的资产通知"有人提交了, 请审核"; 直接上架的才通知"已上架"
+    # ⚠️ detail 是**这次操作发生了什么**, 不是资产的简介 ——
+    #    把简介塞进来, 群里读起来像重复了一遍卡片副标题, 看不出发生了什么.
     if a.publish_status == "pending":
         await market_notify.notify_asset(
             "review", manifest,
             actor=user.username,
-            detail=manifest.get("summary", "") or "新资产待审核",
+            detail=(
+                "提交了新资产, 等管理员审核"
+                if action == "create" else "更新了资产, 等管理员审核"
+            ),
             author=manifest.get("author", "") or user.username,
         )
     else:
         await market_notify.notify_asset(
             "publish" if action == "create" else "update", manifest,
             actor=user.username,
-            detail=manifest.get("summary", ""),
+            # ⚠️ 说明写**动作**, 不写资产简介 (简介在卡片上就有, 通知里再写一遍
+            #    看着像重复了一遍, 而且看不出"发生了什么")
+            detail="新资产已上架" if action == "create" else "发布了新版本",
         )
     return out
 

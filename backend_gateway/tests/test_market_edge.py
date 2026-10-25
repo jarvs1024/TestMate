@@ -343,6 +343,77 @@ async def test_search_with_special_chars(client, auth, ws,  # noqa: ARG001
         assert r.status_code == 200, (q, r.text)
 
 
+# ---------- 搜索: 按项目 (2026-10-25) ----------
+
+async def test_search_hits_assets_of_that_project(client, auth, ws,  # noqa: ARG001
+                                                   restore_git_config, publisher_user):
+    """输入项目号 → 能搜到归属该项目的资产.
+
+    ⚠️ 注意语义: 搜索是**文本命中** (project 字段 LIKE %6100%),
+       不是"项目筛选" (那会带上通用资产). 两者不一样, 别混.
+    """
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="proj-6100-demo", project="6100")
+    await _upload(client, pauth, code="proj-general-demo", project="")
+
+    r = await client.get(f"{API}?q=6100&limit=50", headers=auth)
+    assert r.status_code == 200, r.text
+    codes = [i["code"] for i in r.json()["items"]]
+    assert "proj-6100-demo" in codes, codes
+    # 通用资产的 project 是空串 —— 搜项目号**不该**命中它
+    assert "proj-general-demo" not in codes, codes
+
+
+async def test_search_general_keyword_hits_general_assets(client, auth, ws,  # noqa: ARG001
+                                                           restore_git_config, publisher_user):
+    """搜「通用」→ 命中通用资产 (显示名叫「通用」, 存的却是空串)."""
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="gen-kw-demo", project="")
+    await _upload(client, pauth, code="proj-kw-demo", project="6100")
+
+    r = await client.get(f"{API}?q=通用&limit=50", headers=auth)
+    assert r.status_code == 200, r.text
+    codes = [i["code"] for i in r.json()["items"]]
+    assert "gen-kw-demo" in codes, codes
+    assert "proj-kw-demo" not in codes, codes
+
+
+# ---------- 审计: 动作中文由后端给 ----------
+
+async def test_audit_action_label_comes_from_backend(client, auth, ws,  # noqa: ARG001
+                                                      restore_git_config, publisher_user):
+    """审计接口要吐 action_label —— 中文只有一个真源, 前端不再自己翻译."""
+    await set_setting("marketplace.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="audit-label-demo")
+
+    r = await client.get(f"{API}/audits?limit=50", headers=auth)
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert items, "应该至少有上传那条审计"
+    for it in items:
+        assert it.get("action_label"), f"审计条目缺 action_label: {it}"
+        assert it["action_label"] != it["action"], f"action_label 没翻译: {it}"
+    creates = [i for i in items if i["action"] == "create"]
+    assert creates and creates[0]["action_label"] == "新建资产", creates
+
+
+def test_audit_action_label_known_actions():
+    """后端认得的动作都要有中文; 没登记的原样返回 (宁可露 id 也不显示空白)."""
+    from app.core.market_state import audit_action_label
+
+    assert audit_action_label("create") == "新建资产"
+    assert audit_action_label("unpublish_approve").startswith("通过下架申请")
+    # 不存在的动作 → 原样返回
+    assert audit_action_label("nope") == "nope"
+    assert audit_action_label("") == ""
+
+
 async def test_upload_with_huge_metadata_rejected(client, auth, ws,  # noqa: ARG001
                                                   restore_git_config, publisher_user):
     """超长字段 → 422 (别把垃圾写进 manifest)."""

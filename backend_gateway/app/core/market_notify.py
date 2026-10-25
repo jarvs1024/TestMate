@@ -31,6 +31,7 @@ async def notify_asset(
     detail: str = "",
     link: str = "",
     author: str | None = None,
+    title_override: str = "",
 ) -> bool:
     """按资产统一发一条市场通知.
 
@@ -41,6 +42,10 @@ async def notify_asset(
     ⚠️ 通知在 **enqueue() 之后**立即发 —— push 失败时市场群照样收到"上架"公告.
       这是已知取舍 (通知比 GitLab 推送更重要: 团队要知道"有人在做什么"),
       真要严格一致得等 job 终态再发, 代价是延迟变长.
+
+    ⚠️ detail 是**这次操作发生了什么** (如"新资产已上架") —— 不是资产的简介.
+       把简介塞进来, 群里读起来像重复了一遍卡片副标题, 看不出发生了什么.
+    ⚠️ title_override 只改标题文案, 事件 key 不变 (开关映射靠 key).
     """
     return await notify_market(
         event,
@@ -54,4 +59,5 @@ async def notify_asset(
         category=_get(asset, "category"),
         project=_get(asset, "project"),
         author=author if author is not None else _get(asset, "author"),
+        title_override=title_override,
     )

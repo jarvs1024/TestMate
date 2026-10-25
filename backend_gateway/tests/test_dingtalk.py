@@ -515,7 +515,7 @@ async def test_retry_uses_each_row_channel(monkeypatch):
 # ---------- 通知内容 (@人 / 资产类型) ----------
 
 async def test_publish_at_all_and_kind_in_text(monkeypatch):
-    """上架成功 → @所有人, 并且消息里要说清"这是个啥" (技能包/插件)."""
+    """上架成功 → @所有人, 并且消息里要说清"这是个啥" (技能/插件)."""
     sent: list[dict] = []
 
     async def fake_send(webhook, title, text, *, secret="", at_mobiles=None,
@@ -546,6 +546,67 @@ async def test_publish_at_all_and_kind_in_text(monkeypatch):
     assert "1.2.0" in sent[0]["text"], sent[0]["text"]
 
 
+async def test_skill_kind_label_matches_ui(monkeypatch):
+    """技能在 UI 上叫「技能」—— 通知里也得叫「技能」, 不能叫「技能包」.
+
+    ⚠️ 两种叫法会让收到通知的人以为是两种东西 (2026-10-25).
+    """
+    sent: list[dict] = []
+
+    async def fake_send(webhook, title, text, **kw):
+        sent.append({"title": title, "text": text})
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+
+    async def _get(key, default=None):
+        return {
+            "dingtalk.notify_on_publish": "true",
+            "dingtalk.market_webhook": "http://market/hook",
+        }.get(key, default)
+
+    monkeypatch.setattr(dingtalk, "get", _get)
+
+    await dingtalk.notify_market(
+        "publish", name="技能演示", kind="skill", category="质量诊断", code="sk",
+    )
+    assert "类型: 技能" in sent[0]["text"], sent[0]["text"]
+    assert "技能包" not in sent[0]["text"], sent[0]["text"]
+
+
+async def test_title_override_changes_heading_but_not_event_key(monkeypatch):
+    """标题可覆盖 (重新上架别写成「新资产上架」), 但**事件 key 不变**.
+
+    ⚠️ 开关映射 (dingtalk.notify_on_publish 等) 靠事件 key ——
+    改了 key 就等于改了开关行为.
+    """
+    sent: list[dict] = []
+
+    async def fake_send(webhook, title, text, **kw):
+        sent.append({"title": title, "text": text})
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+
+    async def _get(key, default=None):
+        return {
+            "dingtalk.notify_on_publish": "true",
+            "dingtalk.market_webhook": "http://market/hook",
+        }.get(key, default)
+
+    monkeypatch.setattr(dingtalk, "get", _get)
+
+    await dingtalk.notify_market(
+        "publish", name="老资产", code="old",
+        detail="重新上架", title_override="🎉 资产重新上架",
+    )
+    assert "资产重新上架" in sent[0]["title"], sent[0]["title"]
+    assert "新资产上架" not in sent[0]["title"], sent[0]["title"]
+    assert "资产重新上架" in sent[0]["text"], sent[0]["text"]
+    # 事件 key 没变 → 开关映射不变
+    assert dingtalk._SWITCH_KEY["publish"] == "dingtalk.notify_on_publish"
+
+
 async def test_reject_at_author_only(monkeypatch):
     """审核不通过 → 只 @发布者 (不是 @所有人)."""
     sent: list[dict] = []
@@ -573,7 +634,8 @@ async def test_reject_at_author_only(monkeypatch):
     assert sent[0]["all"] is False, "审核不通过不该 @所有人"
     assert sent[0]["at"] == ["jarvs"], sent[0]
     assert "@jarvs" in sent[0]["text"], sent[0]["text"]
-    assert "技能包" in sent[0]["text"], sent[0]["text"]
+    # ⚠️ 技能在 UI 上就叫「技能」—— 通知里曾经叫「技能包」, 两种叫法会让人以为是两种东西
+    assert "类型: 技能" in sent[0]["text"], sent[0]["text"]
 
 
 def test_parse_mentions():

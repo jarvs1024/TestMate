@@ -169,8 +169,10 @@ _CHANNEL_KEYS = {
 _CHANNEL_LABEL = {"market": "市场群", "review": "审核群"}
 
 # 资产类型 → 中文 (通知里要说明"这是个啥": skill 还是插件)
+# ⚠️ 跟 UI 的说法**保持一致** (页签/形态选择器/上传表单都叫「技能」) ——
+#    这里以前叫「技能包」, 同一件事两种叫法, 收到通知的人会以为是两种东西.
 _KIND_LABEL = {
-    "skill": "技能包",
+    "skill": "技能",
     "plugin": "插件",
     "mcp": "连接器",
 }
@@ -228,6 +230,7 @@ async def notify_market(
     project: str = "",
     at_all: bool | None = None,
     at_author: bool | None = None,
+    title_override: str = "",
 ) -> bool:
     """发一条市场通知. 返回是否发送成功 (失败只记日志, 不抛).
 
@@ -236,10 +239,12 @@ async def notify_market(
       审核群 —— 需要管理员处理的事 (上架审核 / 下架申请)
       市场群 —— 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
 
-    kind / category: 通知里要说明"这是个啥" (技能包? 插件? 连接器?)
+    kind / category: 通知里要说明"这是个啥" (技能? 插件? 连接器?)
     project: 适用项目 (空 = 通用; 有值才写这一行)
     author: 发布者 —— 审核不通过时要 @他
     at_all / at_author: 覆盖事件默认的 @ 策略 (一般不用传)
+    title_override: 覆盖标题文案 —— **事件 key 不变** (开关映射必须稳定),
+        只是同一个事件在不同场景下标题不一样 (如「重新上架」不是「新资产上架」)
     """
     if event not in _EVENT_TEXT:
         logger.warning("dingtalk.notify_market 未知事件: %s", event)
@@ -268,8 +273,11 @@ async def notify_market(
     do_at_all = at_rule["at_all"] if at_all is None else at_all
     do_at_author = at_rule["at_author"] if at_author is None else at_author
 
-    lines = [f"### {_EVENT_TEXT[event]} · {name}"]
-    # 类型要说清楚 —— 收到通知的人得知道这是个技能包还是插件
+    # ⚠️ 标题可覆盖 (如「重新上架」别写成「新资产上架」), 但事件 key 不变 ——
+    #    开关映射 (dingtalk.notify_on_publish 等) 靠 key, 改了会关掉/打开错开关.
+    event_text = title_override or _EVENT_TEXT[event]
+    lines = [f"### {event_text} · {name}"]
+    # 类型要说清楚 —— 收到通知的人得知道这是个技能还是插件
     kind_line = f"- 类型: {_KIND_LABEL.get(kind, kind)}" if kind else ""
     if category:
         kind_line += f" · {category}"
@@ -283,11 +291,13 @@ async def notify_market(
     if actor:
         lines.append(f"- 操作人: {actor}")
     if detail:
+        # ⚠️ detail 是**这次操作发生了什么** (如"新资产已上架"), 不是资产的简介 ——
+        #    把简介塞进来会变成"说明: 把测试数据整理成报告", 看着像重复了一遍简介.
         lines.append(f"- 说明: {detail}")
     if link:
         lines.append(f"- [查看详情]({link})")
     text = "\n".join(lines)
-    title = f"{_EVENT_TEXT[event]} · {name}"
+    title = f"{event_text} · {name}"
 
     # ---------- @谁 ----------
     # ⚠️ 钉钉要正文里带 "@xxx" 才渲染成提醒 (at 字段只是"谁被 @" 的名单).
