@@ -54,8 +54,8 @@
           <div class="mcp-bar">
             <button type="button" class="mini-btn" @click="formatMcp">格式化</button>
             <button type="button" class="mini-btn" @click="useMcpTemplate">用模板</button>
-            <span class="mcp-msg" :class="{ bad: !!mcpConfigError }">
-              {{ mcpConfigError || '✓ 配置合法' }}
+            <span class="mcp-msg" :class="mcpHintState">
+              {{ mcpHint }}
             </span>
           </div>
           <p class="hint">
@@ -68,11 +68,18 @@
           <div class="pkg-req">
             <span class="pr-ic">🔌</span>
             <span class="pr-txt">
-              <b>连接器名</b>必须以 <code>dml-</code> 开头。
+              <!-- ⚠️ dml- 前缀只在**新建**时要求 (团队命名约定) ——
+                   存量连接器的老名字没前缀, 更新时照样能改 -->
+              <template v-if="mode === 'create'">
+                <b>连接器名</b>必须以 <code>dml-</code> 开头。
+              </template>
+              <template v-else>
+                <b>连接器名</b>只能用小写字母/数字/连字符（新建时还要 <code>dml-</code> 开头）。
+              </template>
             </span>
             <span class="pr-code">
               <span class="pc-label">资产 code</span>
-              <code class="pc-val">{{ form.code || '（填好配置后自动生成）' }}</code>
+              <code class="pc-val">{{ (hasSource && form.code) || '（填好配置后自动生成）' }}</code>
               <span class="pc-hint">自动取 MCP 配置里的连接器名</span>
               <span v-if="codeFieldError" class="cv-err">{{ codeFieldError }}</span>
             </span>
@@ -94,7 +101,8 @@
             </span>
             <span v-else class="pick-hint">未选择文件</span>
           </div>
-          <p v-if="pkgError" class="pick-err">{{ pkgError }}</p>
+          <!-- ⚠️ 只报"包名不合法"这种真错误 ——
+               "还没选包"是缺项 (底部「还缺」清单会说), 不是错误, 别一上来就标红 -->
           <p v-if="pkgNameError" class="pick-err">{{ pkgNameError }}</p>
 
           <!-- 包的要求 + 资产 code 合成一块: code 是包名派生的, 挨着来源才说得清 -->
@@ -108,7 +116,7 @@
             </span>
             <span class="pr-code">
               <span class="pc-label">资产 code</span>
-              <code class="pc-val">{{ form.code || '（选好包后自动生成）' }}</code>
+              <code class="pc-val">{{ (hasSource && form.code) || '（选好包后自动生成）' }}</code>
               <span class="pc-hint">自动取安装包名</span>
               <span v-if="codeFieldError" class="cv-err">{{ codeFieldError }}</span>
             </span>
@@ -130,10 +138,12 @@
             <ul v-if="previewIssues.length" class="pv-list">
               <li v-for="(i, idx) in previewIssues" :key="'i' + idx">✗ {{ i }}</li>
             </ul>
-            <ul v-if="preview.warnings.length" class="pv-list warn">
+            <!-- ⚠️ 体检结果用 ?. 兜底 —— 后端返回的形状不完整时 (比如网关截断),
+                 读 undefined.length 会把整个抽屉炸白屏, 宁可少显示一段也不能崩 -->
+            <ul v-if="preview.warnings?.length" class="pv-list warn">
               <li v-for="(w, idx) in preview.warnings" :key="'w' + idx">⚠ {{ w }}</li>
             </ul>
-            <details v-if="preview.files.length" class="pv-files">
+            <details v-if="preview.files?.length" class="pv-files">
               <summary>文件清单 ({{ preview.files.length }})</summary>
               <code v-for="f in preview.files" :key="f">{{ f }}</code>
             </details>
@@ -171,7 +181,7 @@
                       placeholder="一句话说清它干什么 (卡片副标题 + 搜索都用这句), 如 贴日志即可定位 assert 与超时点" />
           </el-form-item>
 
-          <!-- ③ 分类 (必填) + 适用范围 (选填) —— 都是"归类", 并排一行 -->
+          <!-- ③ 分类 (必填) + 适用项目 (选填) —— 都是"归类", 并排一行 -->
           <div class="row-2">
             <el-form-item label="分类" required>
               <el-select v-model="form.category" class="sel-category" style="width:100%" filterable
@@ -182,7 +192,7 @@
                 </el-option>
               </el-select>
             </el-form-item>
-            <el-form-item label="适用范围 (选填)">
+            <el-form-item label="适用项目 (选填)">
               <el-select v-model="form.project" class="sel-project" style="width:100%">
                 <el-option value="" label="通用 —— 所有项目都能用" />
                 <el-option v-for="p in projectOptions" :key="p" :value="p"
@@ -192,17 +202,11 @@
             </el-form-item>
           </div>
 
-          <!-- ④ 版本 (必填) + 适用场景 —— 版本是短字段, 别独占一行 -->
-          <div class="row-2">
-            <el-form-item label="版本 (semver)" required :error="versionError">
-              <el-input v-model="form.version" placeholder="1.0.0" />
-              <p v-if="mode === 'update'" class="hint">发新版本建议 +1 (如 1.0.0 → 1.1.0)</p>
-            </el-form-item>
-            <el-form-item label="适用场景">
-              <el-input v-model="form.use_when" type="textarea" :rows="2"
-                        placeholder="什么时候该用它 (如: 拿到一段 dmesg 需要快速判断问题域)" />
-            </el-form-item>
-          </div>
+          <!-- ④ 版本 (必填) —— 短字段, 别拉满整行 -->
+          <el-form-item label="版本 (semver)" required :error="versionError">
+            <el-input v-model="form.version" placeholder="1.0.0" style="max-width: 220px" />
+            <p v-if="mode === 'update'" class="hint">发新版本建议 +1 (如 1.0.0 → 1.1.0)</p>
+          </el-form-item>
         </section>
 
         <!-- ============ ③ 进阶信息 (默认收起) ============ -->
@@ -334,11 +338,11 @@ const advOpen = ref(false);
  * 缺项清单 / 图标不重复), 埋在组件里时**没法单测**, 只能靠 e2e 兜.
  */
 const {
-  form, tagsText, keywordsText, mcpConfigText, step,
+  form, tagsText, keywordsText, mcpConfigText, step, hasSource,
   fileInput, pkgFile, preview, previewing, iconPanel,
   categories, projectOptions,
-  isMcp, kind, mcpConfigError, codeFieldError,
-  versionError, pkgError, pkgNameError,
+  isMcp, kind, mcpHint, mcpHintState, codeFieldError,
+  versionError, pkgNameError,
   previewBad, previewIssues, iconChoices, missing, canSubmit,
   formatMcp, useMcpTemplate,
   onCategoryChange, chooseIcon, clearPackage, onPickPackage,
@@ -381,7 +385,7 @@ async function submit() {
     use_when: form.use_when,
     not_for: props.mode === 'update' ? (props.asset?.not_for || '') : '',
     category: form.category,
-    // 适用范围: 空 = 通用; 不在项目列表里的后端会归一成通用
+    // 适用项目: 空 = 通用; 不在项目列表里的后端会归一成通用
     project: form.project || '',
     icon: form.icon || '🧩',
     tags: splitList(tagsText.value),
@@ -625,6 +629,8 @@ function close() {
 .mcp-bar button:hover { border-color: var(--primary); color: var(--primary); }
 .mcp-msg { font-size: 11.5px; color: var(--ok); }
 .mcp-msg.bad { color: var(--err); }
+/* ⚠️ 还没填配置 = 缺项, 不是错误 —— 别用红色 (也别用绿色, 那像在说"通过了") */
+.mcp-msg.idle { color: var(--ink-600, #6b7280); }
 .warn-hint { color: var(--warn); }
 .guide {
   margin: 0 0 12px; padding: 8px 10px; font-size: 11.5px; line-height: 1.7;

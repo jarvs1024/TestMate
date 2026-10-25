@@ -21,7 +21,12 @@ vi.mock('@/api/assets', () => ({
   })),
   getAsset: vi.fn(async () => ({})),
   getJob: vi.fn(async () => ({})),
-  previewPackage: vi.fn(async () => ({})),
+  previewPackage: vi.fn(async (file: File) => ({
+    ok: true, filename: file.name, size_bytes: file.size, kind: 'skill',
+    total_files: 1, files: ['SKILL.md'], doc_file: 'SKILL.md',
+    has_skill_md: true, has_plugin_manifest: false, has_mcp_config: false,
+    installable: true, block_reason: '', issues: [], warnings: [],
+  })),
   retryJob: vi.fn(async () => ({})),
   uploadAsset: vi.fn(async () => ({})),
   updateAsset: vi.fn(async () => ({})),
@@ -112,14 +117,14 @@ describe('上传抽屉: 类型头与换类型', () => {
   it('表单里不再有「类型」下拉 —— 形态在第 ① 步就定了', async () => {
     const w = await open({ initialKind: 'skill' });
     const labels = w.findAll('.el-form-item').map((f) => f.text());
-    // 有分类 + 适用范围两个下拉, 但没有「类型」
+    // 有分类 + 适用项目两个下拉, 但没有「类型」
     expect(labels.some((t) => t.includes('分类'))).toBe(true);
-    expect(labels.some((t) => t.includes('适用范围'))).toBe(true);
+    expect(labels.some((t) => t.includes('适用项目'))).toBe(true);
     expect(labels.some((t) => t.includes('类型'))).toBe(false);
     expect(w.findAll('.el-select').length).toBe(2);
   });
 
-  it('适用范围默认是通用, 且项目选项来自后端配置', async () => {
+  it('适用项目默认是通用, 且项目选项来自后端配置', async () => {
     const w = await open({ initialKind: 'skill' });
     const scope = w.findAll('.el-select').find((s) => s.text().includes('通用'));
     expect(scope).toBeTruthy();
@@ -146,20 +151,19 @@ describe('上传抽屉: 类型头与换类型', () => {
 });
 
 describe('上传抽屉: 表单内容', () => {
-  it('进阶信息只留标签 / 关键词 (适用场景上提到基础信息)', async () => {
+  it('进阶信息只留标签 / 关键词, 「适用场景」整个表单里都没有了', async () => {
     const w = await open({ initialKind: 'skill' });
     const adv = w.find('.adv-body').text();
     expect(adv).toContain('标签');
     expect(adv).toContain('搜索关键词');
-    expect(adv).not.toContain('适用场景');       // 已上提到基础信息
     // 这些都不该再出现在表单里
     expect(adv).not.toContain('详细说明');
     expect(adv).not.toContain('不适用');
     expect(adv).not.toContain('安装步骤');
     expect(adv).not.toContain('设为精选');
     expect(adv).not.toContain('权限声明');
-    // 适用场景在基础信息区 (详情页首屏就有它, 别藏在折叠区)
-    expect(w.find('.up-form').text()).toContain('适用场景');
+    // ⚠️ 「适用场景」也不在表单里了 (用户 2026-10-25 去掉)
+    expect(w.find('.up-form').text()).not.toContain('适用场景');
   });
 
   it('资产 code 是**只读展示**, 不给输入框 (它是包名派生的)', async () => {
@@ -199,5 +203,58 @@ describe('上传抽屉: 表单内容', () => {
     const req = w.find('.pkg-req').text();
     expect(req).toContain('插件包要求');
     expect(req).toContain('README.md');
+  });
+});
+
+/**
+ * 2026-10-25 用户反馈: 刷新后上传页一打开就有两条红字 ——
+ *   「请选择安装包」+「只能用小写字母/数字/连字符…」
+ * 那是**校验时机**错, 不是残留 —— 表单还没开始填就报错了。
+ */
+describe('上传抽屉: 没开始填时不该有红字', () => {
+  it('技能形态刚打开 → 没有任何红色错误提示', async () => {
+    const w = await open({ initialKind: 'skill' });
+    // 「还没选包」是缺项 —— 底部「还缺」清单会列, 不该以错误形式标红
+    expect(w.text()).not.toContain('请选择安装包');
+    // code 是派生值, 还没派生出来 → 不该报 code 格式错
+    expect(w.text()).not.toContain('只能用小写字母/数字/连字符');
+    // 真错误提示的位置 (选包后才会出现) 现在是空的
+    expect(w.find('.pick-err').exists()).toBe(false);
+    expect(w.find('.cv-err').exists()).toBe(false);
+  });
+
+  it('连接器形态刚打开 → 也没有红色错误提示', async () => {
+    const w = await open({ initialKind: 'mcp' });
+    expect(w.text()).not.toContain('请选择安装包');
+    expect(w.text()).not.toContain('只能用小写字母/数字/连字符');
+    expect(w.find('.cv-err').exists()).toBe(false);
+    // 配置还没填 = 缺项, 不是错误 → 中性提示, 不标红
+    expect(w.find('.mcp-msg.bad').exists()).toBe(false);
+    expect(w.find('.mcp-msg').text()).toContain('还没填配置');
+  });
+
+  it('没选包时 code 只显示占位文案, 不露出初始的 "dml-"', async () => {
+    const w = await open({ initialKind: 'skill' });
+    const code = w.find('.pkg-req .pr-code .pc-val').text();
+    expect(code).toContain('自动生成');
+    expect(code).not.toContain('dml-');
+  });
+
+  it('选了包之后 → 显示出派生出来的 code', async () => {
+    const w = await open({ initialKind: 'skill' });
+    // 走组件自己的入口: 选文件 → 触发 watch 同步 code
+    const file = new File(['x'], 'dml-weekly-report.zip');
+    const input = w.find('input[type=file]').element as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [file], writable: true });
+    await w.find('input[type=file]').trigger('change');
+    await w.vm.$nextTick();
+    expect(w.find('.pkg-req .pr-code .pc-val').text()).toContain('dml-weekly-report');
+  });
+
+  it('连接器名的前缀要求: 新建说 dml-, 更新按宽松口径 (存量老名字没前缀)', async () => {
+    const w = await open({ initialKind: 'mcp' });
+    expect(w.find('.pkg-req').text()).toContain('必须以 dml- 开头');
+    const w2 = await open({ mode: 'update', asset: assetOf('mcp') });
+    expect(w2.find('.pkg-req').text()).toContain('只能用小写字母/数字/连字符');
   });
 });

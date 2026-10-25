@@ -51,7 +51,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   const iconTouched = ref(false);
   /** 分类表 (后端下发) —— 上传/更新时只能从里面选 */
   const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
-  /** 项目列表 (后端下发, 设置项里可改) —— 适用范围的下拉选项 */
+  /** 项目列表 (后端下发, 设置项里可改) —— 适用项目的下拉选项 */
   const projectOptions = ref<string[]>([]);
 
   /**
@@ -64,7 +64,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   const form = reactive({
     code: CODE_PREFIX, kind: 'skill' as MarketKind, name: '', version: '1.0.0',
     summary: '', use_when: '', category: '', icon: '🧩',
-    // 适用范围: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有
+    // 适用项目: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有
     project: '',
     tags: [] as string[], files: [] as File[],
   });
@@ -80,11 +80,35 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   const isMcp = computed(() => form.kind === 'mcp');
   /** 当前形态的元信息 (图标 / 需要准备什么) */
   const kind = computed(() => kindMeta(form.kind));
-  /** MCP 配置的实时校验 (规则与后端一致) */
-  const mcpParsed = computed(() => parseMcpConfig(mcpConfigText.value));
+  /**
+   * MCP 配置的实时校验 (规则与后端一致).
+   *
+   * ⚠️ `requirePrefix` 只在**新建**时为 true —— 新上架的连接器统一叫 dml-xxx
+   *    (团队命名约定); 更新**存量**连接器时不强制 (那 4 个老名字没前缀,
+   *    硬拦等于把它们锁死 —— 连发个新版本都提交不了).
+   */
+  const mcpParsed = computed(() =>
+    parseMcpConfig(mcpConfigText.value, { requirePrefix: mode() === 'create' }));
   const mcpConfigError = computed(() => {
     if (!isMcp.value) return '';
     return mcpParsed.value.ok ? '' : mcpParsed.value.error;
+  });
+  /**
+   * MCP 配置栏上显示的那句话.
+   *
+   * ⚠️ **空配置不算错误** —— 刚打开抽屉还没填, 那是缺项 (底部「还缺」清单会列
+   *    「MCP 配置」), 标红只会让人以为哪里填错了. 填了之后才校验对错。
+   */
+  const mcpHint = computed(() => {
+    if (!isMcp.value) return '';
+    if (!mcpConfigText.value.trim()) return '还没填配置 —— 可点「用模板」';
+    return mcpConfigError.value || '✓ 配置合法';
+  });
+  /** 配置栏那句话的状态: idle=还没填 (中性) / ok=合法 (绿) / bad=填错了 (红) */
+  const mcpHintState = computed<'idle' | 'ok' | 'bad'>(() => {
+    if (!isMcp.value) return 'idle';
+    if (!mcpConfigText.value.trim()) return 'idle';
+    return mcpConfigError.value ? 'bad' : 'ok';
   });
   function formatMcp() {
     mcpConfigText.value = formatMcpConfig(mcpConfigText.value);
@@ -95,6 +119,13 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
 
   // ---------- 校验 ----------
   /**
+   * 有没有"来源" —— code 就是从这儿派生的:
+   *   技能/插件 → 选了安装包; 连接器 → 填了 MCP 配置.
+   */
+  const hasSource = computed(() =>
+    isMcp.value ? !!mcpConfigText.value.trim() : !!pkgFile.value);
+
+  /**
    * code 的格式错误.
    *
    * ⚠️ code 是**派生值** (取包名 / MCP 连接器名) —— 不可编辑, 所以只在
@@ -102,6 +133,9 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    */
   const codeError = computed(() => {
     if (mode() === 'update') return '';
+    // ⚠️ 还没选包 / 没填配置时, code 还是初始的 "dml-" —— 那不是错误,
+    //    是"还没派生出来". 提前标红会让人以为填错了.
+    if (!hasSource.value) return '';
     return validateCode(form.code);
   });
   const versionError = computed(() => {
@@ -110,8 +144,12 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(v)) return '版本格式应为 1.0.0';
     return '';
   });
-  const pkgError = computed(() => (pkgFile.value ? '' : '请选择安装包'));
-  /** 安装包名 (去掉扩展名) —— 跟 code 应该一致 */
+  /**
+   * 安装包名 (去掉扩展名) —— 跟 code 应该一致
+   *
+   * ⚠️ 这里**没有** "请选择安装包" 这种缺项提示 —— 还没选包是缺项,
+   *    底部「还缺」清单会列出来, 不是错误, 别一上来就标红.
+   */
   const pkgBaseName = computed(() => codeFromPackageName(pkgFile.value?.name || ''));
   /**
    * code 与「包名 / MCP 连接器名」不一致时的报错 (空串 = 一致 / 还不用管).
@@ -181,13 +219,6 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     return all.filter((ic) => !usedIcons.value.has(ic));
   });
 
-  /**
-   * 有没有"来源" —— code 就是从这儿派生的:
-   *   技能/插件 → 选了安装包; 连接器 → 填了 MCP 配置.
-   */
-  const hasSource = computed(() =>
-    isMcp.value ? !!mcpConfigText.value.trim() : !!pkgFile.value);
-
   /** 缺什么 —— 一次说清, 别让人点一次报一个 */
   const missing = computed(() => {
     const out: string[] = [];
@@ -228,7 +259,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   }
 
   /**
-   * 拉项目列表 (设置项 marketplace.projects) —— 适用范围的下拉选项.
+   * 拉项目列表 (设置项 marketplace.projects) —— 适用项目的下拉选项.
    *
    * ⚠️ **不缓存** —— 管理员在设置里加了项目, 用户不刷新页面也得能选到.
    *    (以前只拉一次, 新项目在下拉里根本不出现)
@@ -356,7 +387,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
       form.summary = a.summary;
       form.use_when = a.use_when;
       form.category = a.category; form.icon = a.icon;
-      form.project = a.project || '';   // 适用范围: 带出原值 (可改)
+      form.project = a.project || '';   // 适用项目: 带出原值 (可改)
       // 连接器: 带出老配置 (发布新版本 = 只改这段配置)
       mcpConfigText.value = a.mcp_config ? JSON.stringify(a.mcp_config, null, 2) : '';
       form.tags = [...a.tags];
@@ -404,7 +435,8 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   /**
    * MCP 配置变了 → code 跟着配置里的连接器名走 (用户没手改过时).
    *
-   * 连接器名本身就得 dml- 开头 (配置校验会拦) —— 这里原样带成 code, 不另做加工.
+   * ⚠️ 只在**新建**时同步 —— 更新时 code 不可改 (后端也只允许改配置, 不改 code).
+   *    连接器名在新建时得是 dml- 开头 (配置校验会拦), 这里原样带成 code, 不另做加工.
    */
   watch(() => mcpConfigText.value, () => {
     if (mode() !== 'create' || !isMcp.value) return;
@@ -418,12 +450,13 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
 
   return {
     // 状态
-    form, tagsText, keywordsText, mcpConfigText, step,
+    form, tagsText, keywordsText, mcpConfigText, step, hasSource,
     fileInput, pkgFile, preview, previewing, iconPanel, usedIcons, iconTouched,
     categories, projectOptions,
     // 派生
-    isMcp, kind, mcpParsed, mcpConfigError, codeError, codeFieldError,
-    codeSyncError, versionError, pkgError, pkgNameError, pkgBaseName,
+    isMcp, kind, mcpParsed, mcpConfigError, mcpHint, mcpHintState,
+    codeError, codeFieldError,
+    codeSyncError, versionError, pkgNameError, pkgBaseName,
     previewBad, previewIssues, iconChoices, missing, canSubmit,
     // 动作
     formatMcp, useMcpTemplate, loadCategories, loadProjects, loadUsedIcons,

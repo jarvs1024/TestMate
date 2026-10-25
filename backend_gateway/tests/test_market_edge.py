@@ -73,7 +73,7 @@ def test_project_parse_handles_all_separators():
     '{"mcpServers": {"dml-a": {"command": 123}}}',        # command 类型错
     '{"mcpServers": {"dml-a": {"command": "npx", "args": "x"}}}',  # args 不是数组
     '{"mcpServers": {"dml-a": {"command": "npx", "env": []}}}',    # env 不是对象
-    '{"mcpServers": {"xx-xxx": {"url": "http://h/mcp"}}}',  # 名字不以 dml- 开头
+    '{"mcpServers": {"Bad_Name": {"url": "http://h/mcp"}}}',  # 名字字符集不对
 ])
 def test_mcp_config_rejects_bad_shapes(bad):
     from app.core.mcp_config import McpConfigError, parse_mcp_config

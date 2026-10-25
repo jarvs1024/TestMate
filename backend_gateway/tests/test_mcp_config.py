@@ -92,11 +92,16 @@ def test_format_is_stable():
     assert '"mcpServers"' in out
 
 
-def test_server_name_must_start_with_dml():
-    """连接器名必须 dml- 开头 —— 详情页会原样展示这份配置, 用户照着抄。"""
-    with pytest.raises(McpConfigError) as ei:
-        validate_mcp_config({"mcpServers": {"xx-xxx": {"url": "http://h/mcp"}}})
-    assert "dml-" in str(ei.value)
+def test_server_name_does_not_require_dml_prefix():
+    """后端**不强制** dml- 前缀 —— 那是团队命名约定, 由前端在新建时把关.
+
+    ⚠️ 以前这里硬要求 dml-, 结果把存量的 4 个连接器
+       (review-agent-board / pr-agent-review / testmate-machine-ops / dingtalk-notify)
+       锁死了 —— 连"发个新版本"都提交不了 (前端标红 + 后端 422).
+       口径必须跟 market_naming / CODE_RE 一致: 只管字符集.
+    """
+    cfg = {"mcpServers": {"review-agent-board": {"url": "http://h/mcp"}}}
+    assert validate_mcp_config(cfg) == cfg
 
 
 def test_server_name_rejects_illegal_chars():

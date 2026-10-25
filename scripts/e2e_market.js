@@ -455,8 +455,8 @@ async function codeByName(page, name) {
     check('H0-3 选「连接器」直接进 MCP 配置页', mcpState.mcp === true, `typeBar=${mcpState.typeBar}`);
     check('H0-4 连接器没有安装包区', mcpState.pkg === false, `typeBar=${mcpState.typeBar}`);
     check('H0-5 类型头显示「连接器」', /连接器/.test(mcpState.typeBar || ''), mcpState.typeBar);
-    // 下拉有两个: 分类 + 适用范围 (类型在第 ① 步就定了, 表单里不再有)
-    check('H0-6 表单里没有类型下拉 (只剩分类 + 适用范围)', mcpState.selects === 2,
+    // 下拉有两个: 分类 + 适用项目 (类型在第 ① 步就定了, 表单里不再有)
+    check('H0-6 表单里没有类型下拉 (只剩分类 + 适用项目)', mcpState.selects === 2,
       `el-select=${mcpState.selects}`);
 
     // MCP 配置里的连接器名必须是 dml- 开头 ——
@@ -532,7 +532,7 @@ async function codeByName(page, name) {
       && !/详细说明|不适用|安装步骤|设为精选|权限声明/.test(formState.adv),
       formState.adv.slice(0, 70));
     check('H1-4 进阶信息标题写明「可展开」', /可展开/.test(formState.advTitle), formState.advTitle.slice(0, 40));
-    check('H1-8 上传表单有「适用范围」下拉', /适用范围/.test(formState.labels),
+    check('H1-8 上传表单有「适用项目」下拉', /适用项目/.test(formState.labels),
       formState.labels.slice(0, 70));
     // 项目列表来自后端配置 (设置项 marketplace.projects)
     const projCodes = await page.evaluate(async () => {
@@ -733,13 +733,19 @@ async function codeByName(page, name) {
     s = await snap(page);
     check('K2b 通过下架要二次确认', /彻底删除|不可恢复/.test(s.msgBox || ''), (s.msgBox || '').slice(0, 60));
     await clickByText(page, '.el-message-box__btns .el-button', '确认删除');
-    await sleep(4000);
-    expectHttpError = true;   // 下面这个 404 是"资产确实被删掉了"的证据, 不是缺陷
-    const gone = await page.evaluate(async (c) => {
-      const tk = localStorage.getItem('testmate:token');
-      const r = await fetch('/api/v1/assets/' + c, { headers: { Authorization: 'Bearer ' + tk } });
-      return r.status;
-    }, tmpCode);
+    // ⚠️ 删除要走 **GitLab 写操作 + DB 更新 + 索引重写** —— 固定等 4s 偶尔不够
+    //    (后端刚重启过 / GitLab 慢一点就会漏判成"没删掉"). 改成**轮询**到 404 为止.
+    expectHttpError = true;   // 下面这些 404 是"资产确实被删掉了"的证据, 不是缺陷
+    let gone = 0;
+    for (let i = 0; i < 20; i++) {
+      gone = await page.evaluate(async (c) => {
+        const tk = localStorage.getItem('testmate:token');
+        const r = await fetch('/api/v1/assets/' + c, { headers: { Authorization: 'Bearer ' + tk } });
+        return r.status;
+      }, tmpCode);
+      if (gone === 404) break;
+      await sleep(1000);
+    }
     // 浏览器的 console 消息比 fetch resolve 晚一点到 —— 多留 1.5s 再解除抑制
     await sleep(1500);
     expectHttpError = false;

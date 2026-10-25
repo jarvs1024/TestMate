@@ -78,6 +78,24 @@ describe('MCP 配置解析', () => {
     if (!r.ok) expect(r.error).toContain('dml-');
   });
 
+  it('更新存量连接器时不强制 dml- 前缀 (老名字得能改得动)', () => {
+    // 存量 4 个连接器的名字本来就没前缀 —— 硬拦等于把它们锁死
+    const r = parseMcpConfig(
+      '{"mcpServers": {"review-agent-board": {"url": "http://h/mcp"}}}',
+      { requirePrefix: false },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('不要求前缀时也要守住字符集', () => {
+    const r = parseMcpConfig(
+      '{"mcpServers": {"Bad_Name": {"url": "http://h/mcp"}}}',
+      { requirePrefix: false },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('小写字母');
+  });
+
   it('连接器名只能用小写字母/数字/连字符', () => {
     const r = parseMcpConfig('{"mcpServers": {"dml-Bad_Name": {"url": "http://h/mcp"}}}');
     expect(r.ok).toBe(false);
