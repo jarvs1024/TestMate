@@ -67,7 +67,7 @@
  *
  * 新规则 (后端 app/api/auth.py):
  *   · 账号**必须管理员先建过**才能登录 —— 填了没开通的账号进不来;
- *   · **普通用户**: 输入公司邮箱前缀 (后缀固定 @twsc.com.cn) → 建号时没设密码
+ *   · **普通用户**: 输入公司邮箱前缀 (后缀由后端的 AUTH_EMAIL_DOMAIN 决定) → 建号时没设密码
  *     就是免密登录, 设了密码就要输;
  *   · **管理员**: 账号名 (不含 @) → 必须密码.
  *
@@ -84,6 +84,7 @@ import BrandLogo from '@/components/BrandLogo.vue';
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useUserStore } from '@/stores/user';
+import { getAuthConfig } from '@/api/users';
 
 /** 上次登录用的用户名 */
 const LAST_USERNAME_KEY = 'testmate:last-username';
@@ -101,18 +102,34 @@ const needPassword = ref(false);
 const userInput = ref<HTMLInputElement | null>(null);
 const pwdInput = ref<HTMLInputElement | null>(null);
 
-/** 邮箱后缀 —— 从登录接口约定来的常量 (前端只做展示, 真正补后缀在后端) */
-const emailDomain = '@twsc.com.cn';
+/**
+ * 公司邮箱后缀 —— **运行时向后端取** (GET /api/v1/auth/config, 公开端点).
+ *
+ * ⚠️ 真源是后端的 AUTH_EMAIL_DOMAIN (可配) —— 前端写死的话, 后端换了域名,
+ *    这里还显示旧后缀, 用户按旧后缀填账号就登不进去.
+ * ⚠️ 初始值先用兜底常量 (= 后端默认值): 配置接口挂了也不能让登录表单渲染不出来;
+ *    真值取到后立刻覆盖 —— 后端默认就是它, 一般看不出跳变.
+ *    (兜底只在"取不到"时用, 不是"永远用".)
+ */
+const FALLBACK_EMAIL_DOMAIN = '@twsc.com.cn';
+const emailDomain = ref(FALLBACK_EMAIL_DOMAIN);
 
 /** 输入里已经有 @ 了就不用再显示固定后缀 */
 const showDomain = computed(() => !form.username.includes('@'));
 
-onMounted(() => {
+onMounted(async () => {
   const last = localStorage.getItem(LAST_USERNAME_KEY) || '';
   if (last) {
     form.username = last;
     // 上次这个账号要过密码 → 直接把密码框摆出来
     needPassword.value = localStorage.getItem(NEEDS_PASSWORD_KEY) === last;
+  }
+  // 后缀取真值 (取不到就用兜底常量, 见上面的说明)
+  try {
+    const cfg = await getAuthConfig();
+    if (cfg?.email_domain) emailDomain.value = cfg.email_domain;
+  } catch {
+    /* 保留兜底常量 —— 表单照常能用 */
   }
 });
 

@@ -16,7 +16,10 @@
           class="kind-tab" :class="{ active: kind === k.value }"
           @click="kind = k.value">
           {{ k.label }}
-          <span class="count">{{ kindCounts[k.value] || 0 }}</span>
+          <!-- ⚠️ 计数取不到时显示 "?" 而不是 0 —— 0 看着像"这个类型一个都没有" -->
+          <span class="count" :title="kindCountsError ? `计数读取失败: ${kindCountsError}` : ''">
+            {{ kindCountsError ? '?' : (kindCounts[k.value] || 0) }}
+          </span>
         </button>
       </div>
       <div class="ma-right">
@@ -66,10 +69,19 @@
         <template v-else-if="sync.pending_count">{{ sync.pending_count }} 个资产待同步到 GitLab</template>
         <span class="sb-sub">{{ syncSubHint }}</span>
       </span>
-      <button v-if="sync.failed_count" class="sb-btn" :disabled="retrying" @click="retryAll">
-        {{ retrying ? '重试中…' : '全部重试' }}
+      <!-- ⚠️ 后端把 GET /assets/jobs 收紧了: 非管理员只能看到**自己**创建的任务.
+           所以文案不能说"全部" —— 说的应该是"我看得见的那些失败任务". -->
+      <button v-if="sync.failed_count" class="sb-btn" :disabled="retrying" @click="retryFailed">
+        {{ retrying ? '重试中…' : '重试失败任务' }}
       </button>
       <button class="sb-btn ghost" @click="load">刷新</button>
+    </div>
+
+    <!-- ⚠️ 资产状态取不到 → 说清楚 (别让"同步状态条"整段消失, 看着像"一切正常") -->
+    <div v-if="syncError" class="sync-bar err">
+      <span class="sb-icon">⚠️</span>
+      <span class="sb-text">资产状态读取失败: {{ syncError }}</span>
+      <button class="sb-btn ghost" @click="loadSyncStatus">重试</button>
     </div>
 
     <!-- ===== 我提交但还没过审的资产: 给个显眼入口, 免得被埋在列表里 ===== -->
@@ -107,6 +119,10 @@
           {{ c.name }}<span v-if="catCount(c)" class="count">{{ catCount(c) }}</span>
         </button>
       </div>
+
+      <!-- ⚠️ 分类 / 项目取不到 → 筛选维度会凭空消失 (只剩「全部 / ⭐精选」),
+           用户会以为市场里没有别的分类 —— 得说清楚是"读失败"不是"没有" -->
+      <div v-if="filterLoadError" class="filter-err">⚠️ {{ filterLoadError }}</div>
 
       <!-- ===== 项目 + 排序 (合成一个下拉) =====
            原来项目是一排 chip, 跟分类 chip 挤在一起换行, 很乱.
@@ -151,10 +167,12 @@
     <AssetAuditDrawer v-model="auditOpen" />
 
     <p v-if="total > 0" class="foot-hint mono">
-      共 {{ total }} 项 · 数据源: GitLab {{ GITLAB_PROJECT }}
+      共 {{ total }} 项 · 数据源: GitLab {{ gitRemoteText }}
       <button v-if="!syncing" class="link-btn" title="重新读一次市场数据 (不拉 GitLab, 快)"
               @click="manualRefresh">刷新</button>
-      <button v-if="!syncing" class="link-btn" title="从 GitLab 拉取最新资产 (慢一点)"
+      <!-- ⚠️ 「重新同步」= 从 GitLab 全量回灌 + 重新入队 → 后端已收紧成 **admin only**.
+           非管理员点了只吃一个 403, 不如直接不显示. -->
+      <button v-if="isAdmin && !syncing" class="link-btn" title="从 GitLab 拉取最新资产 (慢一点, 仅管理员)"
               @click="doSync">重新同步</button>
       <span v-else class="muted">同步中…</span>
       <!-- ⚠️ 两个时间源必须分清:
@@ -171,7 +189,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import AssetCard from './AssetCard.vue';
 import AssetDetailDrawer from './AssetDetailDrawer.vue';
@@ -183,12 +201,17 @@ import { useUserStore } from '@/stores/user';
 import { MARKET_KINDS, type MarketProjectItem, type MarketSort } from './marketCatalog';
 import { KIND_META } from './kindMeta';
 import {
-  listAssets, listCategories, listJobs, listProjects, getSyncStatus, retryJob, syncFromGit,
+  listAssets, listCategories, listJobs, listProjects, getSyncStatus, getMarketConfig, retryJob, syncFromGit,
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
 } from '@/api/assets';
 import { isAuthor } from './identity';
 
-const GITLAB_PROJECT = 'root/testmate-market';
+/**
+ * 市场仓库的兜底路径 —— 只在**取不到后端配置**时用.
+ *
+ * ⚠️ 真源是后端的 marketplace.git.remote (设置页可改), 前端写死只是兜底.
+ */
+const GITLAB_PROJECT_FALLBACK = 'root/testmate-market';
 /** 列表加载超时 (ms) —— 超过就提示重试, 不让页面无限转圈 */
 const LOAD_TIMEOUT_MS = 15000;
 
@@ -261,6 +284,16 @@ const sync = ref<SyncStatus>({
   unpublish_pending_count: 0, my_unpublish_count: 0,
   last_sync_at: null,
 });
+/** 资产状态读取失败 —— 页面内提示用 (失败 ≠ 没有待办/没有冲突) */
+const syncError = ref('');
+
+/** 后端的 detail 可能是字符串也可能是对象 —— 取不到就退化到 message */
+function errText(e: any, fallback: string): string {
+  const d = e?.response?.data?.detail;
+  if (typeof d === 'string' && d) return d;
+  if (d && typeof d === 'object' && d.message) return String(d.message);
+  return e?.message || fallback;
+}
 
 /**
  * 自动刷新周期 (2026-10-25 用户要求: 市场首页要能自动更新).
@@ -296,28 +329,61 @@ const syncSubHint = computed(() => {
 });
 
 /* 分类表 (后端下发的完整分类 + 各分类资产数) —— chip 动态渲染, 不再硬编码.
-   ⚠️ 以前用硬编码的 MARKET_CATEGORIES: 用户自建的分类**没有 chip** → 筛不出来. */
+   ⚠️ 以前用硬编码的分类清单: 用户自建的分类**没有 chip** → 筛不出来. */
 const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
 /** 项目列表 (通用 + 各项目) —— 筛选菜单用 */
 const projects = ref<MarketProjectItem[]>([]);
 /** 项目筛选: '' = 全部, 'general' = 只看通用, '6100' = 该项目特有 + 通用 */
 const projectFilter = ref('');
+
+/**
+ * 分类 / 项目取数失败 —— 页面内提示用.
+ *
+ * ⚠️ 以前两个 catch 都是空注释: 后端 500 时分类只剩「全部 / ⭐精选」,
+ *    项目菜单一个都没有 —— 用户以为市场里就这些, 筛选维度**凭空消失**了.
+ */
+const filterLoadError = ref('');
+/** 分类 / 项目各自的失败原因 (两种都失败时合成一条显示) */
+const filterErrors = reactive({ categories: '', projects: '' });
+function refreshFilterError() {
+  const parts: string[] = [];
+  if (filterErrors.categories) parts.push(`分类加载失败: ${filterErrors.categories}`);
+  if (filterErrors.projects) parts.push(`项目列表加载失败: ${filterErrors.projects}`);
+  filterLoadError.value = parts.join(' · ');
+}
+
 async function loadProjects() {
   try {
     const r = await listProjects();
     projects.value = (r?.items || []) as typeof projects.value;
-  } catch {
-    /* 拿不到就不过滤 —— 不影响浏览 */
+    filterErrors.projects = '';
+    refreshFilterError();
+  } catch (e: any) {
+    /* 拿不到就不过滤 —— 但要说出来, 别让筛选维度凭空消失 */
+    filterErrors.projects = errText(e, '未知错误');
+    refreshFilterError();
   }
 }
 async function loadCategories() {
   try {
     const r = await listCategories();
     categories.value = (r?.items || []) as typeof categories.value;
-  } catch {
-    /* 分类表拿不到就不显示 chip, 不阻塞主列表 */
+    filterErrors.categories = '';
+    refreshFilterError();
+  } catch (e: any) {
+    /* 分类表拿不到就不显示 chip —— 但要说出来 */
+    filterErrors.categories = errText(e, '未知错误');
+    refreshFilterError();
   }
 }
+
+/**
+ * Tab 上的计数取数失败 —— 页面内提示用.
+ *
+ * ⚠️ 以前 catch 是空注释, 计数留 0 —— 后端挂掉时用户以为市场是空的.
+ *    现在显示 "?" 并在 title 里说明.
+ */
+const kindCountsError = ref('');
 
 /* Tab 上的计数: 各类型总数, 不受筛选影响 */
 async function loadKindCounts() {
@@ -328,8 +394,9 @@ async function loadKindCounts() {
       counts[k.value] = r?.total ?? r?.items?.length ?? 0;
     }
     kindCounts.value = counts;
-  } catch {
-    /* 计数失败不阻塞主列表 */
+    kindCountsError.value = '';
+  } catch (e: any) {
+    kindCountsError.value = errText(e, '未知错误');
   }
 }
 
@@ -469,10 +536,39 @@ function onSearch() {
 
 async function loadSyncStatus() {
   try {
-    const s = await getSyncStatus();
+    // ⚠️ silent: 这段自己会显示错误提示, 不用再弹一个全局红条 (重复提示)
+    const s = await getSyncStatus({ silent: true });
     sync.value = { ...sync.value, ...(s ?? {}) };
+    syncError.value = '';
+  } catch (e: any) {
+    // ⚠️ 以前 catch 是空的 —— 状态条整段消失, 看着像"一切正常"
+    syncError.value = errText(e, '未知错误');
+  }
+}
+
+/**
+ * 市场当前生效的配置 —— 页脚显示的"数据源仓库"以它为准.
+ *
+ * ⚠️ 以前页脚写死 root/testmate-market, 后端换了仓库地址, 页脚还在说旧的.
+ *    取不到才回退常量; 还没取到时不渲染 (别先闪一个错的出来).
+ * ⚠️ 非管理员拿不到 remote (后端按设计隐藏了仓库地址) → 也走同一个兜底常量,
+ *    页脚**不能**渲染成空白 (那会让人以为数据源没配).
+ */
+const gitRemote = ref('');
+const gitRemoteLoaded = ref(false);
+const gitRemoteText = computed(() => {
+  if (!gitRemoteLoaded.value) return '…';
+  return gitRemote.value || GITLAB_PROJECT_FALLBACK;
+});
+async function loadMarketConfig() {
+  try {
+    const c = await getMarketConfig();
+    gitRemote.value = c?.remote || '';
   } catch {
-    /* 状态条失败不阻塞 */
+    // ⚠️ 取不到就用兜底常量 (总比空着强)
+    gitRemote.value = GITLAB_PROJECT_FALLBACK;
+  } finally {
+    gitRemoteLoaded.value = true;
   }
 }
 
@@ -490,7 +586,14 @@ async function pollJobs() {
   }
 }
 
-async function retryAll() {
+/**
+ * 重试**看得见的**失败任务.
+ *
+ * ⚠️ 后端把 GET /assets/jobs 收紧了: 非管理员只能拿到**自己**创建的任务,
+ *    所以这里重试的只是"我能看见的那些" —— 按钮文案也跟着说"重试失败任务",
+ *    别写成"全部重试" (会让人以为是全市场的任务).
+ */
+async function retryFailed() {
   retrying.value = true;
   try {
     for (const j of failedJobs.value) {
@@ -503,6 +606,11 @@ async function retryAll() {
   }
 }
 
+/**
+ * 从 GitLab 全量回灌 + 重新入队 —— **admin only** (后端已收紧).
+ *
+ * ⚠️ 页脚的「重新同步」按钮用 v-if="isAdmin" 门控: 普通发布者点了只吃一个 403.
+ */
 async function doSync() {
   syncing.value = true;
   try {
@@ -599,7 +707,7 @@ function onVisibilityChange() {
 let timer: number | null = null;
 let autoTimer: number | null = null;
 onMounted(async () => {
-  await Promise.all([load(), loadKindCounts(), loadSyncStatus(), loadCategories(), loadProjects()]);
+  await Promise.all([load(), loadKindCounts(), loadSyncStatus(), loadCategories(), loadProjects(), loadMarketConfig()]);
   timer = window.setInterval(pollJobs, 5000);
   autoTimer = window.setInterval(autoRefresh, AUTO_REFRESH_MS);
   document.addEventListener('visibilitychange', onVisibilityChange);
@@ -626,6 +734,11 @@ onUnmounted(() => {
   padding: 9px 14px; font-size: 12.5px; color: var(--warn);
 }
 .sync-bar.hasErr {
+  background: rgba(239, 68, 68, 0.07);
+  border-color: rgba(239, 68, 68, 0.3); color: var(--err);
+}
+/* 状态读取失败 —— 跟"有冲突/有失败"区分开 (那个是黄色, 这个是红色) */
+.sync-bar.err {
   background: rgba(239, 68, 68, 0.07);
   border-color: rgba(239, 68, 68, 0.3); color: var(--err);
 }
@@ -750,6 +863,14 @@ onUnmounted(() => {
   gap: 14px; flex-wrap: wrap;
 }
 .cat-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+/* 分类 / 项目取数失败 —— 提示要显眼, 但别抢列表的戏 */
+.filter-err {
+  width: 100%;
+  font-size: 12px; color: var(--err);
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 8px; padding: 6px 12px;
+}
 .chip {
   background: transparent; border: 1px solid var(--border);
   padding: 5px 12px; border-radius: var(--radius-pill);

@@ -216,7 +216,9 @@ async function loadTodos() {
   // 资产市场的待办需要登录态 (接口要鉴权)
   if (loggedIn.value) {
     try {
-      const s = await getSyncStatus();
+      // ⚠️ silent: 首页把这几个接口的失败都当"降级"处理 (卡片显示兜底文案),
+      //    不该弹全局错误 —— 否则 RAGFlow 没配时首页一进来就弹红条.
+      const s = await getSyncStatus({ silent: true });
       if (s.my_review_count > 0) {
         list.push({
           key: 'asset-review',
@@ -244,11 +246,27 @@ async function loadTodos() {
           to: { name: 'market' },
         });
       }
-    } catch {
-      /* 同上 */
+    } catch (e: any) {
+      // ⚠️ 取不到资产状态 ≠ 没有待办 —— 以前这里 catch 是空的, 整段待办静默消失,
+      //    用户以为"今天没待办". 现在留一条可见的错误提示, 这一段不消失.
+      list.push({
+        key: 'asset-status-failed',
+        icon: '⚠️',
+        text: `资产状态读取失败: ${errText(e, '未知错误')}`,
+        tone: 'err',
+        to: { name: 'market' },
+      });
     }
   }
   todos.value = list;
+}
+
+/** 后端的 detail 可能是字符串也可能是对象 —— 取不到就退化到 message */
+function errText(e: any, fallback: string): string {
+  const d = e?.response?.data?.detail;
+  if (typeof d === 'string' && d) return d;
+  if (d && typeof d === 'object' && d.message) return String(d.message);
+  return e?.message || fallback;
 }
 
 // ===== 角色 meta 取数 =====

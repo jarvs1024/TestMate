@@ -148,7 +148,15 @@
               </td>
             </tr>
           </template>
-          <tr v-if="datasets.length === 0 && !loading">
+          <!-- ⚠️ 取不到数据集 ≠ 没有数据集 —— 以前这里直接显示「暂无数据集」,
+               同页的"加载失败"提示跟它自相矛盾 (失败和空是两回事). -->
+          <tr v-if="dsError">
+            <td colspan="9" class="empty err">
+              数据集加载失败：{{ dsError }}
+              <button class="ghost-btn" @click="onReload">重试</button>
+            </td>
+          </tr>
+          <tr v-else-if="datasets.length === 0 && !loading">
             <td colspan="9" class="empty">暂无数据集</td>
           </tr>
           <tr v-if="loading">
@@ -256,6 +264,13 @@ import {
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
+/**
+ * 数据集列表加载失败 —— 页面内提示用.
+ *
+ * ⚠️ 以前 catch 只弹一个 ElMessage, datasets 保持空 —— 表格同时显示「暂无数据集」,
+ *    同页两条信息互相矛盾 (到底是没数据还是没取到?). 现在表格里直接说失败.
+ */
+const dsError = ref('');
 const rfStatus = ref<'ok' | 'warn' | 'off' | ''>('');
 const rfMsg = ref('');
 
@@ -430,6 +445,7 @@ async function openChunks(d: KbDataset, doc: KbDocument) {
 // === 数据加载 ===
 async function loadAll() {
   loading.value = true;
+  dsError.value = '';
   try {
     const h = await kbHealth();
     rfStatus.value = h.status as any;
@@ -443,7 +459,9 @@ async function loadAll() {
     }
   } catch (e: any) {
     rfStatus.value = 'off'; rfMsg.value = '加载失败';
-    ElMessage.error('知识库加载失败: ' + (e?.response?.data?.detail || e?.message));
+    // ⚠️ 失败 ≠ 空列表 —— 表格里要单独说 (别再显示「暂无数据集」)
+    dsError.value = e?.response?.data?.detail || e?.message || '数据集加载失败';
+    ElMessage.error('知识库加载失败: ' + dsError.value);
   } finally { loading.value = false; }
 }
 
@@ -534,6 +552,9 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .empty { text-align: center; color: var(--ink-500); padding: 32px 12px !important; }
+/* 取数失败 —— 跟"真的没有数据"区分开 */
+.empty.err { color: var(--err); }
+.empty.err .ghost-btn { margin-left: 10px; }
 
 .ghost-btn { background: transparent; border: 1px solid var(--border); color: var(--ink-700); padding: 3px 9px; border-radius: 6px; font-size: 11.5px; cursor: pointer; font-family: inherit; transition: border-color .15s, color .15s; }
 .ghost-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }

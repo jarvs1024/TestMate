@@ -3,7 +3,7 @@
     <BrandLogo :size="38" />
     <div class="brand">
       <span class="t1">TestMate</span>
-      <span class="t2">SSD 测试伙伴 · v0.1</span>
+      <span class="t2">SSD 测试伙伴 · v{{ version }}</span>
     </div>
     <!-- 当前页面标题 (居中显示, 跟左侧 brand 视觉对称) -->
     <div v-if="pageTitle" class="page-title">
@@ -22,17 +22,34 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import BrandLogo from './BrandLogo.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 import UserMenu from './UserMenu.vue';
 import NoticeBar, { type NoticeItem } from './NoticeBar.vue';
 import { useUserStore } from '@/stores/user';
+import { getBackendVersion } from '@/api/settings';
 
 const route = useRoute();
 const pageTitle = computed(() => (route.meta?.title as string) || '');
 const pageLede = computed(() => (route.meta?.lede as string) || '');
+
+/**
+ * 后端版本号 —— 真源在后端, 前端不再写死.
+ *
+ * ⚠️ 初始值是兜底默认: 版本号接口挂了也不能让页头显示空白 (更不能说"没有版本").
+ *    取到真值后覆盖 —— 后端 APP_VERSION 默认就是 0.1.0, 一般看不出差别.
+ */
+const version = ref('0.1');
+onMounted(async () => {
+  try {
+    const v = await getBackendVersion();
+    if (v) version.value = v;
+  } catch {
+    /* 取不到就保留默认版本号 */
+  }
+});
 
 // 通知数据源 (AppHeader 全局管理, 跨页面共享).
 // 当前: 匿名访问提示. 后续要加系统公告 / 实验功能提示, push 到 list 即可.

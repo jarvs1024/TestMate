@@ -5,7 +5,7 @@
  * 团队成员互传资产时, 直接 v-html 渲染就是**存储型 XSS**.
  * 所以: marked 解析 → DOMPurify 消毒 → 才允许进 v-html.
  *
- * 项目里唯一已有的 v-html 是 sanitizeIcon.ts 消毒过的 SVG;
+ * 项目里唯一已有的 v-html 是**资产图标**那处 SVG (走 Vue 的 v-bind, 不拼字符串);
  * 这条路径同样不能绕过消毒.
  */
 import { marked } from 'marked';

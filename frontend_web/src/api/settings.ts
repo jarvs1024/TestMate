@@ -38,9 +38,8 @@ export interface TestResult {
 export async function testRagflow(): Promise<TestResult> {
   return (await request.post('/settings/test/ragflow')) as TestResult;
 }
-export async function testPrAgent(): Promise<TestResult> {
-  return (await request.post('/settings/test/pr_agent')) as TestResult;
-}
+
+// ⚠️ testPrAgent 已删 —— PR-Agent 服务下线了, 这个测试接口没有调用方了.
 
 export async function testReviewAgent(): Promise<TestResult> {
   return (await request.post('/settings/test/review_agent')) as TestResult;
@@ -65,4 +64,44 @@ export async function testGitLab(): Promise<TestResult> {
 // prefix: 配置项前缀 (search / chat / agent), 不带 .embed_url 后缀
 export async function buildEmbedUrl(prefix: string, theme: string): Promise<{ url: string }> {
   return (await request.get(`/settings/embed/${prefix}`, { params: { theme } })) as { url: string };
+}
+
+// ===== 后端版本号 (页头显示) =====
+
+/** 已经探到的版本号 —— 一次会话只探一次, 别每页都发一遍请求 */
+let versionCache: string | null = null;
+
+/**
+ * 探后端版本号.
+ *
+ * ⚠️ 探两个地方, 谁先给 version 用谁:
+ *   ① GET /api/v1/health —— 公开存活探针, 带上 version 就直接用;
+ *   ② GET / (根路径返回 { name, version, docs }) —— 注意要**覆盖 baseURL**,
+ *      不然 '/api/v1' + '/' 会打到 /api/v1/ 而不是根路径.
+ * 两者都取不到就返回空串 —— 调用方保留自己的默认版本号,
+ * 页头**不能**因为接口挂了就显示空白.
+ */
+async function probeVersion(): Promise<string> {
+  try {
+    const r = (await request.get('/health', { silent: true })) as { version?: string };
+    if (r?.version) return String(r.version);
+  } catch {
+    /* 探不到就试下一个 */
+  }
+  try {
+    const r = (await request.get('/', { baseURL: '/', silent: true })) as { version?: string };
+    if (r?.version) return String(r.version);
+  } catch {
+    /* 取不到就回退默认值 */
+  }
+  return '';
+}
+
+/** 后端版本号 —— 取不到返回空串 (调用方自己回退默认值) */
+export async function getBackendVersion(): Promise<string> {
+  if (versionCache) return versionCache;
+  const v = await probeVersion();
+  // ⚠️ 只缓存**成功**的结果 —— 失败要留机会下次再探 (后端可能只是暂时挂了)
+  if (v) versionCache = v;
+  return v;
 }

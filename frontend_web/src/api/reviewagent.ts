@@ -1,6 +1,6 @@
 /** ReviewAgent telemetry 看板 API. 全部走 backend Gateway (/api/v1/review-agent/*),
  *  前端不直接连 ReviewAgent (避免 host 路径泄漏 + 跨域).
- *  字段形态对齐 pragent.ts, 让 V2 视图几乎能复用 V1 代码.
+ *  ⚠️ pr-agent 那一版 (pragent.ts / /api/v1/pr-agent) 已整体下线, 这里只留 ReviewAgent.
  */
 import request from '@/utils/request';
 

@@ -19,10 +19,10 @@ const ANONYMOUS_TOKEN = import.meta.env.VITE_ANONYMOUS_READ_TOKEN as string | un
  */
 function isPublicReadRoute(): boolean {
   const p = window.location.pathname;
+  // ⚠️ 这里只列**真实存在**的 publicRead 路径 —— '/plaza' 现在只是路由表里的 redirect,
+  //    URL 不会停留在 /plaza, 留着那个判断等于永远命中不了的死代码.
   return (
     p === '/' ||
-    p === '/plaza' ||
-    p.startsWith('/plaza/') ||
     p.startsWith('/code-review')
   );
 }

@@ -62,7 +62,13 @@
         <button class="mini-link" :disabled="busy" @click="emit('changed')">刷新</button>
       </h3>
 
-      <div v-if="!users.length" class="empty">还没有账号 —— 在上面建一个吧</div>
+      <!-- ⚠️ 取不到列表 ≠ 一个账号都没有 —— 失败要说清楚, 并给个重试入口 -->
+      <div v-if="error" class="empty err">
+        账号列表加载失败：{{ error }}
+        <button class="ghost retry" :disabled="busy" @click="emit('changed')">重试</button>
+      </div>
+
+      <div v-else-if="!users.length" class="empty">还没有账号 —— 在上面建一个吧</div>
 
       <ul v-else class="user-list">
         <li v-for="u in users" :key="u.id" :class="{ off: !u.is_active }">
@@ -105,20 +111,37 @@
  *
  * 登录规则 (后端 app/api/auth.py):
  *   · 账号**必须管理员先建过**才能登录 —— 这里是唯一的建号入口;
- *   · 普通用户 = 公司邮箱 (后缀固定), 建号时密码留空 → 免密, 填了 → 必须密码;
+ *   · 普通用户 = 公司邮箱 (后缀由后端的 AUTH_EMAIL_DOMAIN 决定, 这里运行时取), 建号时密码留空 → 免密, 填了 → 必须密码;
  *   · 管理员 = 不含 @ 的账号名, 一律要密码.
  *
  * ⚠️ 停用而不是删除: 账号名下的资产归属还在, 删号会把那些资产变成无主.
  */
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { createUser, updateUser, type ManagedUser, type UserRole } from '@/api/users';
+import { createUser, updateUser, getAuthConfig, type ManagedUser, type UserRole } from '@/api/users';
 
-defineProps<{ users: ManagedUser[] }>();
+defineProps<{ users: ManagedUser[]; error?: string }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
 
-/** 公司邮箱后缀 (后端也会补, 这里只做展示) */
-const emailDomain = '@twsc.com.cn';
+/**
+ * 公司邮箱后缀 —— **运行时向后端取** (GET /api/v1/auth/config, 公开端点).
+ *
+ * ⚠️ 真源是后端的 AUTH_EMAIL_DOMAIN (可配) —— 前端写死的话, 后端换了域名,
+ *    这里还显示旧后缀, 用户按旧后缀建号就登不进去.
+ * ⚠️ 初始值先用兜底常量 (= 后端默认值): 配置接口挂了也不能让表单渲染不出来;
+ *    真值取到后立刻覆盖 (后端默认就是它, 一般看不出跳变).
+ */
+const FALLBACK_EMAIL_DOMAIN = '@twsc.com.cn';
+const emailDomain = ref(FALLBACK_EMAIL_DOMAIN);
+
+onMounted(async () => {
+  try {
+    const cfg = await getAuthConfig();
+    if (cfg?.email_domain) emailDomain.value = cfg.email_domain;
+  } catch {
+    /* 保留兜底常量 —— 表单照常能用 */
+  }
+});
 
 const form = reactive<{ username: string; password: string; role: UserRole }>({
   username: '',
@@ -313,6 +336,12 @@ async function onResetPwd(u: ManagedUser) {
 
 /* ===== 账号列表 ===== */
 .empty { font-size: 12.5px; color: var(--ink-500); padding: 14px 0; }
+/* 取数失败 —— 别跟"真的没有账号"长得一样 */
+.empty.err {
+  color: var(--err);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.empty.err .retry { padding: 3px 12px; }
 .user-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .user-list li {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;

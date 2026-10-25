@@ -65,7 +65,7 @@
               :saving="saving === it.key" :secret-display="getInputValue(it)"
               @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
             <div class="hint">
-              💡 这组控制 <code>/kb</code> 页"知识检索"卡片的嵌入 URL. 换 RAGFlow 共享 Search App 或任意可嵌入页面都改这里, 不需要改代码.
+              💡 这组控制 <code>/kb-manage</code> 页"知识检索"卡片的嵌入 URL. 换 RAGFlow 共享 Search App 或任意可嵌入页面都改这里, 不需要改代码.
             </div>
           </div>
 
@@ -78,30 +78,21 @@
               :saving="saving === it.key" :secret-display="getInputValue(it)"
               @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
             <div class="hint">
-              💡 这组控制 <code>/kb</code> 页"知识对话"tab 的嵌入 URL (RAGFlow 共享 Chat App / 任意可嵌入聊天页).
+              💡 这组控制 <code>/kb-manage</code> 页"知识对话"tab 的嵌入 URL (RAGFlow 共享 Chat App / 任意可嵌入聊天页).
             </div>
           </div>
 
         </section>
 
         <!-- 🤖 智能体 -->
+        <!-- ⚠️ 以前这里有个「🧪 智能体业务」子组 (引擎 / 模型 / 工具等参数) ——
+             Dify 下线后后端 schema 里已经没有 agents 类别的配置项了, 那个子组**永远空**,
+             只会一直显示「暂无智能体业务配置」, 让人以为功能坏了. 死 UI, 直接去掉. -->
         <section v-if="activeTop === 'sec-agents'" :id="'sec-agents'" class="card grp">
           <h2>
             <span>🤖 智能体</span>
-            <span class="grp-cnt">{{ agentItems.length + marketItems.length }} 项</span>
+            <span class="grp-cnt">{{ marketItems.length }} 项</span>
           </h2>
-
-          <div class="sub-grp">
-            <h3>🧪 智能体业务 <span class="sub-cnt">{{ agentItems.length }} 项</span></h3>
-            <SettingRow v-for="(it, idx) in agentItems" :key="it.key"
-              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
-              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
-              :saving="saving === it.key" :secret-display="getInputValue(it)"
-              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
-            <div v-if="agentItems.length === 0" class="hint">
-              暂无智能体业务配置. 智能体引擎 / 模型 / 工具等参数会出现在这里.
-            </div>
-          </div>
 
           <!-- 🧩 资产市场: 团队共享的插件 / 技能 / 连接器 -->
           <div class="sub-grp">
@@ -267,7 +258,12 @@
             <h3>📜 最近通知 <span class="sub-cnt">{{ notifyLog.length }} 条</span>
               <button class="mini-link" @click="loadNotifyLog">刷新</button>
             </h3>
-            <div v-if="!notifyLog.length" class="notif-empty">还没有通知记录</div>
+            <!-- ⚠️ 取不到回执 ≠ 从来没发过通知 —— 失败要单独说清楚 -->
+            <div v-if="notifyError" class="notif-empty err">
+              通知记录加载失败：{{ notifyError }}
+              <button class="mini-link" @click="loadNotifyLog">重试</button>
+            </div>
+            <div v-else-if="!notifyLog.length" class="notif-empty">还没有通知记录</div>
             <ul v-else class="notif-list">
               <li v-for="n in notifyLog" :key="n.id" :class="n.status">
                 <span class="nl-act">{{ NOTIFY_EVENTS[n.event] || n.event }}</span>
@@ -283,7 +279,8 @@
         </section>
 
         <!-- 👥 用户管理 (仅 admin) —— 账号必须在这里建出来才能登录 -->
-        <UserManage v-if="activeTop === 'sec-users'" :users="users" @changed="loadUsers" />
+        <!-- ⚠️ 取不到账号列表 ≠ 一个账号都没有 —— 错误由 UserManage 自己显示 (带重试) -->
+        <UserManage v-if="activeTop === 'sec-users'" :users="users" :error="usersError" @changed="loadUsers" />
 
         <div class="card info-card">
           <h2>📌 说明</h2>
@@ -317,16 +314,34 @@ const isAdmin = computed(() => userStore.user?.role === 'admin');
 // 账号列表的**唯一数据源** —— 建号/停用/改角色之后都靠 loadUsers() 重新拉.
 // ⚠️ 非 admin 看不到这个 section (目录里也不列) —— 接口本身也拒了, 前端只是不白费一趟请求.
 const users = ref<ManagedUser[]>([]);
+/**
+ * 账号列表加载失败 —— 页面内提示用.
+ *
+ * ⚠️ 以前 catch 里直接 users.value = [], 模板显示「还没有账号 —— 在上面建一个吧」:
+ *    后端 500 时管理员会以为账号被清空了 (实际是取不到). 失败 ≠ 空列表.
+ */
+const usersError = ref('');
 async function loadUsers() {
   if (!isAdmin.value) {
     users.value = [];
+    usersError.value = '';
     return;
   }
   try {
-    users.value = await listUsers();
-  } catch {
-    users.value = [];
+    // ⚠️ silent: 失败由页面内的错误态提示, 不用再弹一个全局红条 (重复提示)
+    users.value = await listUsers({ silent: true });
+    usersError.value = '';
+  } catch (e: any) {
+    usersError.value = errText(e, '账号列表加载失败');
   }
+}
+
+/** 后端 422 的 detail 是字符串, 403/409 也是 —— 统一取出来给人看 (对象 detail 退化到 message) */
+function errText(e: any, fallback: string): string {
+  const d = e?.response?.data?.detail;
+  if (typeof d === 'string' && d) return d;
+  if (d && typeof d === 'object' && d.message) return String(d.message);
+  return e?.message || fallback;
 }
 
 const groups = ref<{ category: string; label: string; items: SettingItem[] }[]>([]);
@@ -359,13 +374,22 @@ async function loadMarketConfig() {
     marketWorkspace.value = c.workspace || '(未知)';
     marketRemote.value = c.remote || '(未配置)';
   } catch {
+    // ⚠️ 以前失败时 marketRemote = '' → 模板渲染出一个**空代码块**,
+    //    用户分不清"没配"还是"读失败". 两个都标成「读取失败」.
     marketWorkspace.value = '(读取失败)';
-    marketRemote.value = '';
+    marketRemote.value = '(读取失败)';
   }
 }
 
 // ===== 通知回执 (送达记录) =====
 const notifyLog = ref<AssetNotification[]>([]);
+/**
+ * 通知回执加载失败 —— 页面内提示用.
+ *
+ * ⚠️ 以前 catch 里直接 notifyLog.value = [], 模板显示「还没有通知记录」:
+ *    钉钉 webhook 配错时管理员会以为通知**从未发出过**. 失败 ≠ 没有记录.
+ */
+const notifyError = ref('');
 /**
  * 通知事件 → 中文 (回执列表用).
  *
@@ -386,8 +410,9 @@ async function loadNotifyLog() {
   try {
     const r = await listNotifications(20);
     notifyLog.value = r.items || [];
-  } catch {
-    notifyLog.value = [];
+    notifyError.value = '';
+  } catch (e: any) {
+    notifyError.value = errText(e, '通知记录加载失败');
   }
 }
 function fmtTime(iso: string | null): string {
@@ -395,21 +420,6 @@ function fmtTime(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
-
-// ===== 智能体 section: 业务配置 (引擎 / 模型 / 工具等) =====
-// 数据源 (RAGFlow / ReviewAgent) 统一在 '通用 → 数据源' sub-group 配置
-// AGENT_PREFIXES: 智能体业务配置 key 前缀, 后续加新智能体就在这里 append
-const AGENT_PREFIXES: string[] = [];
-
-function itemsByPrefix(prefix: string): SettingItem[] {
-  const out: SettingItem[] = [];
-  for (const g of groups.value) {
-    for (const it of g.items) {
-      if (it.key.startsWith(prefix)) out.push(it);
-    }
-  }
-  return out;
 }
 
 // ===== 数据源 sub-group: 按 prefix 拆子组 (RAGFlow / ReviewAgent) =====
@@ -439,10 +449,8 @@ const sourceGroups = computed<DataSourceGroup[]>(() =>
   })).filter(g => g.items.length > 0),
 );
 
-const agentItems = computed(() =>
-  AGENT_PREFIXES.flatMap(p => itemsByPrefix(p))
-);
-
+// ⚠️ 「智能体业务」那一组已经删掉了 (Dify 下线后没有 agents 类别的配置项,
+//    留着只会永远显示「暂无智能体业务配置」). 智能体相关的配置都在下面的「数据源」里.
 
 function itemsByCategory(cat: string): SettingItem[] {
   for (const g of groups.value) {
@@ -469,7 +477,7 @@ const sections = computed<TocSection[]>(() => {
       { id: 'sec-chat',              label: '知识对话',         count: chatItems.value.length },
     ],
   },
-  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: agentItems.value.length + marketItems.value.length, children: [] },
+  { id: 'sec-agents',       icon: '🤖', label: '智能体', count: marketItems.value.length, children: [] },
   { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length + dataSourceItems.value.length, children: [
     { id: 'sec-general-data-source', label: '📡 数据源', count: dataSourceItems.value.length },
   ] },
@@ -1038,6 +1046,12 @@ onMounted(() => {
 }
 .mini-link:hover { border-color: var(--primary); color: var(--primary); }
 .notif-empty { font-size: 12px; color: var(--ink-500); padding: 12px 0; }
+/* 取数失败 —— 别跟"真的没有记录"长得一样 (灰色一行 vs 红色一行) */
+.notif-empty.err {
+  color: var(--err);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.notif-empty.err .mini-link { margin-left: 0; }
 .notif-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .notif-list li {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;

@@ -241,16 +241,23 @@ export async function listAssets(params: {
   /** 按项目过滤: 留空=不过滤; __general=只看通用; 6100=该项目特有 + 通用 */
   project?: string;
   include_unpublished?: boolean; limit?: number; offset?: number;
-  /** 按上架状态过滤: published | pending | rejected | unpublished | mine | all; 留空=默认可见性 */
+  /** 按上架状态过滤: published | pending | rejected | unpublished | unpublish_pending | mine | all;
+   *  留空=默认可见性 */
   status?: string;
 } = {}, opts: { silent?: boolean } = {}): Promise<AssetListResp> {
+  // ⚠️ 后端 GET /assets 的 limit 上限是 500 —— 超过会 422.
+  //    前端先夹住 (调用方传了默认值也得夹), 别让一个越界参数换来一个 422.
+  const query: Record<string, any> = { client_id: getClientId(), ...params };
+  if (query.limit !== undefined && query.limit !== null) {
+    query.limit = Math.min(query.limit, 500);
+  }
   if (opts.silent) {
     return (await request.get('/assets', {
-      params: { client_id: getClientId(), ...params },
+      params: query,
       silent: true,
     })) as unknown as AssetListResp;
   }
-  return apiGet<AssetListResp>('/assets', { client_id: getClientId(), ...params });
+  return apiGet<AssetListResp>('/assets', query);
 }
 
 export async function listCategories(): Promise<{
@@ -291,8 +298,16 @@ export async function getAssetBundle(code: string): Promise<AssetBundle> {
   return apiGet<AssetBundle>(`/assets/${encodeURIComponent(code)}/bundle`);
 }
 
-export async function getSyncStatus(): Promise<SyncStatus> {
-  return apiGet<SyncStatus>('/assets/sync-status', { client_id: getClientId() });
+/**
+ * 资产同步状态 (待审核 / 同步失败 / 下架申请 …)
+ *
+ * @param opts.silent 失败时不弹全局错误 (调用方自己在页面上提示)
+ */
+export async function getSyncStatus(opts: { silent?: boolean } = {}): Promise<SyncStatus> {
+  return (await request.get('/assets/sync-status', {
+    params: { client_id: getClientId() },
+    silent: opts.silent,
+  })) as unknown as SyncStatus;
 }
 
 export async function listAudits(code?: string): Promise<{ items: AssetAudit[]; total: number }> {

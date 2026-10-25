@@ -81,7 +81,7 @@
                 {{ m.name }} ({{ m.ip }})
               </option>
             </select>
-            <span v-if="machines.length === 0" class="hint">暂无机台, 去 "我的 → 机台" 加</span>
+            <span v-if="machines.length === 0" class="hint">{{ machineHint }}</span>
           </div>
 
           <div v-else-if="f.type === 'machine_multi_select'" class="machine-multi">
@@ -91,7 +91,7 @@
                 @change="toggleMulti(f.key, m.id, ($event.target as HTMLInputElement).checked)" />
               {{ m.name }} <span class="hint">({{ m.ip }})</span>
             </label>
-            <span v-if="machines.length === 0" class="hint">暂无机台</span>
+            <span v-if="machines.length === 0" class="hint">{{ machineHint }}</span>
           </div>
 
           <div v-else class="unknown">⚠ 未实现的字段类型: {{ f.type }}</div>
@@ -156,6 +156,12 @@
       </div>
     </div>
 
+    <div v-else-if="loadError" class="loading err">
+      <div class="ld-ic">⚠️</div>
+      <div class="ld-t">能力加载失败：{{ loadError }}</div>
+      <router-link :to="{ name: 'home' }" class="ld-back">← 返回工作台</router-link>
+    </div>
+
     <div v-else class="loading">加载中...</div>
   </div>
 </template>
@@ -164,14 +170,31 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { getCapability, type Capability, type AgentInputField } from '@/api/capabilities';
-import axios from 'axios';
+import request from '@/utils/request';
 import CapabilityShell from '@/components/CapabilityShell.vue';
 
 const route = useRoute();
 const code = String(route.params.code);
 
 const agent = ref<Capability | null>(null);
+/**
+ * 能力加载失败 —— 页面内提示用.
+ *
+ * ⚠️ 以前 catch 里只 console.error, 而模板的 v-else 分支是「加载中...」——
+ *    接口挂了页面就**永远**停在"加载中", 用户以为还在转圈.
+ */
+const loadError = ref('');
 const machines = ref<Array<{ id: number; name: string; ip: string }>>([]);
+/** 后端说"机台字典还没接"时给的说明 (跟"取不到"要分开说) */
+const machineNote = ref('');
+/** 机台列表读取失败 */
+const machineError = ref('');
+/** 机台下拉旁边的提示 —— 「还没接字典」vs「取不到」vs「真的没有」 */
+const machineHint = computed(() => {
+  if (machineError.value) return `机台列表读取失败: ${machineError.value}`;
+  if (machineNote.value) return `暂无机台（${machineNote.value}）`;
+  return '暂无机台（机台字典尚未接入）';
+});
 const form = reactive<Record<string, any>>({});
 const files = reactive<Record<string, File | null>>({});
 const running = ref(false);
@@ -379,14 +402,28 @@ async function runLogAnalysis() {
 }
 
 
+/**
+ * 机台字典 —— 走统一的 request 实例.
+ *
+ * ⚠️ 以前用的是**裸 axios**: localStorage 的 token key 抄了一份,
+ *    还绕过了 request.ts 的 401 处理 (token 过期不会跳登录页).
+ *    现在走 request.get('/machines') —— baseURL 是 /api/v1, 不用自己拼前缀.
+ * ⚠️ 后端还没接机台字典时, 它会回 {"machines": [], "note": "..."} ——
+ *    那是"还没接", 不是"取不到", 界面上要说区别.
+ */
 async function loadMachines() {
   try {
-    const { data } = await axios.get('/api/v1/machines', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('testmate:token')}` },
-    });
-    machines.value = data.machines || [];
-  } catch {
+    const r = (await request.get('/machines', { silent: true })) as {
+      machines?: Array<{ id: number; name: string; ip: string }>;
+      note?: string;
+    };
+    machines.value = r?.machines || [];
+    machineNote.value = r?.note || '';
+    machineError.value = '';
+  } catch (e: any) {
     machines.value = [];
+    machineNote.value = '';
+    machineError.value = errText(e, '未知错误');
   }
 }
 
@@ -462,10 +499,19 @@ onMounted(async () => {
     agent.value = a;
     initDefaults(a.input_schema);
     await loadMachines();
-  } catch (e) {
-    console.error(e);
+  } catch (e: any) {
+    // ⚠️ 页面里要能看到失败 (见 loadError 的说明), 不能只 console.error
+    loadError.value = errText(e, '未知错误');
   }
 });
+
+/** 后端的 detail 可能是字符串也可能是对象 —— 取不到就退化到 message */
+function errText(e: any, fallback: string): string {
+  const d = e?.response?.data?.detail;
+  if (typeof d === 'string' && d) return d;
+  if (d && typeof d === 'object' && d.message) return String(d.message);
+  return e?.message || fallback;
+}
 </script>
 
 <style scoped>
@@ -702,6 +748,11 @@ button.secondary:hover { border-color: var(--border-strong); color: var(--ink-90
   border: 1px solid var(--border); border-radius: var(--radius-card);
   padding: 60px; text-align: center; color: var(--ink-500);
 }
+/* 加载失败 —— 跟"还在加载"区分开 (以前失败也停在这儿, 永远转圈) */
+.loading.err { color: var(--err); border-color: rgba(239, 68, 68, 0.3); }
+.loading.err .ld-ic { font-size: 30px; }
+.loading.err .ld-t { margin-top: 8px; font-size: 13.5px; }
+.loading.err .ld-back { display: inline-block; margin-top: 12px; color: var(--primary); font-size: 12.5px; }
 
 .unknown {
   padding: 8px 12px; background: rgba(239, 68, 68, 0.05);

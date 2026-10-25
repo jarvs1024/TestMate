@@ -78,7 +78,9 @@ const store = useCapabilityStore();
 const route = useRoute();
 const router = useRouter();
 
-const isHome = computed(() => route.path === '/' || route.path === '/plaza');
+// ⚠️ '/plaza' 现在只是路由表里的 redirect (旧「智能体广场」地址), URL 不会停留在那儿 ——
+//    留着它等于一个永远命中不了的判断.
+const isHome = computed(() => route.path === '/');
 
 /** 能力 → 路由 (工具型要带 code 参数) */
 function targetOf(c: Capability) {

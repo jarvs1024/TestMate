@@ -49,12 +49,12 @@
                手动安装的参考目录收在下面的折叠里, 想看的人点开看. -->
           <p class="ins-tip">下载后在 Agent 里导入这个压缩包即可安装 (Agent 支持从压缩包导入插件 / 技能)</p>
           <details class="ins-more">
-            <summary>手动安装到目录</summary>
+            <summary>手动安装到默认目录 (Qoder)</summary>
             <div class="ins-dir">
-              <span class="ins-dir-l">解压到</span>
+              <span class="ins-dir-l">默认安装目录 (Qoder)</span>
               <code>{{ targetDir }}/</code>
             </div>
-            <p class="ins-tip">解压到这个目录后, 重启 Agent 会话即可使用</p>
+            <p class="ins-tip">解压到这个目录后, 重启 Qoder 会话即可使用 (其他 Agent 的目录不一样, 以其文档为准)</p>
           </details>
         </template>
         <template v-else>
@@ -387,6 +387,8 @@ watch(() => props.modelValue, (open) => {
  * ⚠️ 主提示已改成通用话术 ("在 Agent 里导入压缩包即可安装") ——
  *    不同 Agent 的安装方式/目录不一样, 把某个 Agent 的路径写死在主提示上
  *    会误导用别的 Agent 的人. 这个路径只当"手动装的话放这儿"供参考.
+ * ⚠️ 路径本身是 **Qoder 专用**的 (别的 Agent 不是这个目录) ——
+ *    所以标签上写明「默认安装目录 (Qoder)」, 别让人以为所有资产都装在这儿.
  */
 const targetDir = computed(() => {
   const it = props.item;
