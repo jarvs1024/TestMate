@@ -2,16 +2,29 @@ import axios, { InternalAxiosRequestConfig } from 'axios';
 import { ElMessage } from 'element-plus';
 import { useUserStore } from '@/stores/user';
 
-// 公共只读看板 (router meta.publicRead) 的 anonymous JWT.
+// 公共只读路由 (publicRead) 的 anonymous JWT.
 // 后端 get_optional_user 接受任意有效 JWT; sub=0 查不到 user → 返回 anonymous 占位 User.
 // 重新生成: 在 backend 容器里
 //   python -c "from app.core.security import create_access_token; print(create_access_token('0', {'role':'anonymous','username':'anonymous'})[0])"
 const ANONYMOUS_TOKEN = import.meta.env.VITE_ANONYMOUS_READ_TOKEN as string | undefined;
 
-/** 当前路由是不是公共只读看板 (匿名访问, 用 ANONYMOUS_TOKEN 调 API) */
+/**
+ * 当前路由是不是公共只读 (匿名访问, 用 ANONYMOUS_TOKEN 调 API).
+ *
+ * 2026-10-25: 首页能力墙也开放匿名只读 —— 首页要能看见"平台上有什么",
+ * 进详情页才要登录. 代码检视看板维持匿名可看.
+ *
+ * ⚠️ 这里用**路径前缀**判断, 不用 router meta ——
+ *    axios 拦截器不能 import router (会跟路由懒加载形成循环依赖).
+ */
 function isPublicReadRoute(): boolean {
-  const m = window.location.pathname.match(/^\/code-review(\/|$)/);
-  return !!m;
+  const p = window.location.pathname;
+  return (
+    p === '/' ||
+    p === '/plaza' ||
+    p.startsWith('/plaza/') ||
+    p.startsWith('/code-review')
+  );
 }
 
 const request = axios.create({

@@ -1,23 +1,16 @@
 <template>
   <div class="runner">
-    <!-- 顶栏 -->
-    <div class="run-hd">
-      <button class="back" @click="$router.push({ name: 'plaza' })">← 返回广场</button>
-      <div class="run-title">
-        <div class="run-icon" v-if="agent">{{ agent.icon }}</div>
-        <div>
-          <div class="run-name">
-            <span v-if="agent">{{ agent.name }}</span>
-            <span v-else>加载中...</span>
-            <span v-if="agent" class="run-ver">{{ agent.version }}</span>
-          </div>
-          <div v-if="agent" class="run-summary">{{ agent.summary }}</div>
-        </div>
-      </div>
-      <div v-if="agent" class="run-badge" :class="`st-${agent.status}`">
-        <span class="dot"></span>{{ STATUS_LABELS[agent.status] }}
-      </div>
-    </div>
+    <!-- 顶栏: 能力详情统一外壳 (跟看板 / 目录 / 知识 一致) -->
+    <CapabilityShell
+      v-if="agent"
+      :name="agent.name"
+      :icon="agent.icon"
+      :kind="agent.kind"
+      :status="agent.status"
+      :summary="agent.summary"
+      :version="agent.version"
+      :category="agent.category"
+    />
 
     <div v-if="agent && agent.embed_url" class="run-embed">
       <div class="embed-hd">
@@ -37,10 +30,10 @@
     <div v-else-if="agent && agent.status === 'draft'" class="run-body draft-mode">
       <div class="draft-page">
         <div class="draft-emoji">{{ agent.icon }}</div>
-        <h3>{{ agent.name }} · 建设中</h3>
+        <h3>{{ agent.name }} · 规划中</h3>
         <p class="draft-summary">{{ agent.summary }}</p>
-        <p class="draft-meta">本智能体还在规划中, 上线会推送到广场. 现在点
-          <router-link :to="{ name: 'plaza' }">返回广场</router-link>
+        <p class="draft-meta">这项能力还在规划中, 上线后会出现在工作台. 现在点
+          <router-link :to="{ name: 'home' }">返回工作台</router-link>
           看其他能用的.
         </p>
       </div>
@@ -111,7 +104,7 @@
         </div>
 
         <details class="sop">
-          <summary>📖 使用场景 (SOP)</summary>
+          <summary>📖 什么时候用 / 什么时候别用</summary>
           <div class="sop-body">
             <div class="sop-when">
               <strong>✓ 适用</strong>
@@ -161,20 +154,21 @@
       </div>
     </div>
 
-    <div v-else class="loading">加载智能体...</div>
+    <div v-else class="loading">加载中...</div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { getAgent, type AgentSummary, type AgentInputField } from '@/api/agents';
+import { getCapability, type Capability, type AgentInputField } from '@/api/capabilities';
 import axios from 'axios';
+import CapabilityShell from '@/components/CapabilityShell.vue';
 
 const route = useRoute();
 const code = String(route.params.code);
 
-const agent = ref<AgentSummary | null>(null);
+const agent = ref<Capability | null>(null);
 const machines = ref<Array<{ id: number; name: string; ip: string }>>([]);
 const form = reactive<Record<string, any>>({});
 const files = reactive<Record<string, File | null>>({});
@@ -191,9 +185,6 @@ const embedLabel = computed(() => {
   return '内嵌外部应用';
 });
 
-const STATUS_LABELS: Record<string, string> = {
-  draft: '建设中', alpha: '内测', beta: 'Beta', stable: '稳定', deprecated: '弃用',
-};
 const EV_ICON: Record<string, string> = {
   info: 'ℹ', ok: '✓', warn: '⚠', err: '✗', section: '▣', stream: '✎', log: '›',
 };
@@ -465,7 +456,7 @@ function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
 onMounted(async () => {
   try {
-    const a = await getAgent(code);
+    const a = await getCapability(code);
     agent.value = a;
     initDefaults(a.input_schema);
     await loadMachines();
@@ -477,43 +468,6 @@ onMounted(async () => {
 
 <style scoped>
 .runner { display: flex; flex-direction: column; gap: 16px; }
-
-.run-hd {
-  display: flex; align-items: center; gap: 16px;
-  background: var(--surface-soft); backdrop-filter: blur(8px);
-  border: 1px solid var(--border); border-radius: var(--radius-card);
-  padding: 16px 20px; box-shadow: var(--shadow-sm);
-}
-.back {
-  background: transparent; border: 1px solid var(--border);
-  padding: 6px 12px; border-radius: 8px;
-  color: var(--ink-700); font-size: 12.5px; cursor: pointer;
-  font-family: inherit; transition: all 0.15s ease;
-}
-.back:hover { background: var(--surface-sunken); color: var(--ink-900); }
-.run-title { display: flex; align-items: center; gap: 14px; flex: 1; }
-.run-icon {
-  width: 48px; height: 48px; border-radius: 12px;
-  background: linear-gradient(135deg, var(--primary), var(--primary-2));
-  display: flex; align-items: center; justify-content: center; font-size: 24px;
-  box-shadow: var(--primary-shadow);
-}
-.run-name { display: flex; align-items: baseline; gap: 8px; }
-.run-name > span:first-child { font-size: 20px; font-weight: 800; color: var(--ink-900); }
-.run-ver { font-size: 12px; color: var(--ink-500); font-family: var(--font-mono); }
-.run-summary { font-size: 13px; color: var(--ink-700); margin-top: 2px; }
-
-.run-badge {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 10px; border-radius: var(--radius-pill);
-  font-size: 11px; font-weight: 600;
-  background: var(--surface-sunken); color: var(--ink-700);
-}
-.run-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.st-stable { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
-.st-beta { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
-.st-alpha { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
-.st-draft { background: var(--surface-sunken); color: var(--ink-500); }
 
 /* 嵌入模式 (Dify / RAGFlow iframe) */
 .run-embed {

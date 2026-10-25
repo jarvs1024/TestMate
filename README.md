@@ -1,4 +1,4 @@
-# TestMate 智能测试辅助平台
+# TestMate · SSD 测试伙伴
 
 > SSD 测试组的内网 AI 工作平台,基于 Vue 3 + FastAPI + Dify + RAGFlow。
 
@@ -12,7 +12,9 @@
 
 ## 一句话
 
-前店后厂:Vue 3 结构化卡片前端 + FastAPI 中台(完全包裹 AI 引擎 + 触达硬件)+ Dify agent 编排 + RAGFlow 知识库,部署在内网,服务 SSD 测试组日常工作。
+前店后厂:Vue 3 **能力墙**前端(一张卡 = 一项能力,分工具/看板/目录/知识四种形态)+ FastAPI 中台(完全包裹 AI 引擎 + 触达硬件)+ Dify agent 编排 + RAGFlow 知识库,部署在内网,服务 SSD 测试组日常工作。
+
+> 2026-10-25 起首页不再是「智能体广场」——卡片不全是智能体(代码检视是看板、资产市场是目录、知识库存是知识),统一叫「能力」,详见 [能力墙重构设计](docs/specs/2026-10-25-capability-wall-design.md)。
 
 ## 核心特性
 
@@ -55,7 +57,9 @@ TestMate/
 │   ├── src/
 │   │   ├── api/               # axios 客户端
 │   │   ├── components/        # 通用组件
-│   │   ├── views/             # 路由页面(Login / Plaza / AgentRunner / KnowledgeManage / Settings)
+│   │   ├── views/             # 路由页面
+│   │   │   ├── Home/         # 首页 · 能力墙 (CapabilityCard)
+│   │   │   └── Capability/   # 能力详情: ToolRunner / BoardView / Catalog / Library
 │   │   ├── layouts/           # MainLayout
 │   │   ├── router/            # 路由表
 │   │   ├── stores/            # pinia stores
@@ -87,6 +91,7 @@ TestMate/
 | 文档 | 用途 |
 |---|---|
 | `docs/specs/2026-07-04-testmate-brief.md` | 老板汇报 |
+| `docs/specs/2026-10-25-capability-wall-design.md` | 能力墙重构设计 (首页信息架构 / 形态模型 / 文案对照) |
 | `docs/specs/2026-07-04-testmate-design.md` | 完整技术方案 |
 | `docs/specs/2026-07-04-p0-progress.md` | P0 进度笔记(2026-07-04) |
 | `deploy/README.md` | 一键部署实操(在线 / 离线 / 备份 / 排错) |

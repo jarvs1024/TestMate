@@ -46,6 +46,8 @@ _TABLES = (
     "assets",
     "system_settings",
     "users",
+    # agents 也清 —— 能力用例会 seed_agents() 写库, 不清会漏到别的用例里
+    "agents",
 )
 
 

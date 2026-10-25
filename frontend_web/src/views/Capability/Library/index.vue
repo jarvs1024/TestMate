@@ -1,5 +1,15 @@
 <template>
   <div class="kb">
+    <!-- ===== 能力详情统一外壳 ===== -->
+    <CapabilityShell
+      name="知识库存"
+      icon="📚"
+      kind="library"
+      status="stable"
+      version="v0.1.0"
+      category="ssd-kb"
+      summary="团队知识库存 —— 数据集 / 文档 / 检索，已对接 RAGFlow" />
+
     <!-- 概览 -->
     <div class="card card-overview">
       <h2>
@@ -239,6 +249,7 @@ import {
   type KbDocChunk,
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
+import CapabilityShell from '@/components/CapabilityShell.vue';
 import {
   fmtSize, fmtTime, fmtChunkMethod, docIcon,
   runStatusClass, runStatusLabel, fmtDuration, sourceLabel,

@@ -1,7 +1,9 @@
-"""智能体/工作流注册表。
+"""智能体/工作流注册表 —— 现在叫「能力注册表」。
 
-每个 Agent = 一个 SSD 测试域专用 AI 智能体或工作流(Dify workflow / n8n flow / 自研 prompt)。
-平台所有能力都挂在这个表上,新增 agent = 广场多一张卡,不动主框架。
+每个 Agent = 平台上的一项**能力**. 能力有四种形态 (AgentKind):
+工具 / 看板 / 目录 / 知识 —— 只有 tool 形态才是真正的"智能体"(有引擎、有输入 schema).
+
+平台所有能力都挂在这张表上, 新增一项能力 = 首页多一张卡, 不动主框架.
 """
 from datetime import datetime
 import enum
@@ -34,6 +36,30 @@ class AgentCategory(str, enum.Enum):
     ssd_ops = "ssd-ops"               # 机台/环境运维
     auto_code = "auto-code"           # 自动化代码 (代码检视 / PR-Agent / 静态分析等)
     ai_market = "ai-market"           # AI 资产市场入口 (插件 / 技能 / 连接器集市, 跳 /market 页)
+    ssd_kb = "ssd-kb"                 # 知识库存 (RAGFlow 数据集 / 文档 / 检索)
+
+
+class AgentKind(str, enum.Enum):
+    """能力形态 —— 这张卡**怎么用**, 跟 category (业务域) 正交.
+
+    2026-10-25 起前端首页是「能力墙」而不是「智能体广场」:
+    卡片不再都是智能体 —— 代码检视是看板, 资产市场是目录, 知识库存是知识.
+    这四种交互形态必须显式建模, 否则卡片会继续顶着智能体的皮
+    (引擎 / 调用次数 / 最近调用 这些字段对看板和目录全是假信息).
+
+    · tool     填参数 → 出结果 (日志分析 / 用例生成)
+    · board    只读指标看板 (代码检视)
+    · catalog  可浏览的共享资产目录 (AI 资产市场)
+    · library  知识库存 + 检索 (知识库)
+
+    ⚠️ 名字与值故意一致 (都无连字符): MySQL ENUM 存的是 enum **name**,
+       name 与 value 一致时不会有 0003/0004 踩过的那个坑.
+    """
+
+    tool = "tool"
+    board = "board"
+    catalog = "catalog"
+    library = "library"
 
 
 class AgentEngine(str, enum.Enum):
@@ -54,6 +80,10 @@ class Agent(Base):
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     icon: Mapped[str] = mapped_column(String(16), nullable=False, default="🩺")
     category: Mapped[AgentCategory] = mapped_column(Enum(AgentCategory), nullable=False)
+    # ===== 能力形态 (2026-10-25) =====
+    # 跟 category 正交: category 说的是"管哪块业务", kind 说的是"这张卡怎么用".
+    # 默认 tool —— 老数据在 seed_agents 启动同步里会被改写成正确的形态.
+    kind: Mapped[AgentKind] = mapped_column(Enum(AgentKind), nullable=False, default=AgentKind.tool)
     version: Mapped[str] = mapped_column(String(16), nullable=False, default="v0.1.0")
     status: Mapped[AgentStatus] = mapped_column(
         Enum(AgentStatus), nullable=False, default=AgentStatus.draft

@@ -1,0 +1,373 @@
+<template>
+  <div class="home">
+    <!-- ===== 待办带: 首页真正的职责是"告诉我今天该看什么" ===== -->
+    <div v-if="todos.length" class="todo-strip">
+      <span class="ts-label">待办</span>
+      <button v-for="t in todos" :key="t.key" type="button" class="ts-item" :class="`tone-${t.tone}`" @click="go(t.to)">
+        <span class="ts-ic">{{ t.icon }}</span>
+        <span class="ts-text">{{ t.text }}</span>
+        <span class="ts-go">→</span>
+      </button>
+    </div>
+    <div v-else-if="!loggedIn" class="todo-strip anon">
+      <span class="ts-ic">🔒</span>
+      <span class="ts-text">登录后可见你的待办 (资产审核 / 同步失败 / 知识库状态)</span>
+    </div>
+
+    <!-- ===== 工具条: 形态筛选 + 状态 + 搜索 ===== -->
+    <div class="home-toolbar">
+      <div class="filters">
+        <button v-for="f in kindFilters" :key="f.value"
+          class="filter" :class="{ active: kindFilter === f.value }"
+          @click="kindFilter = f.value">
+          <span class="lbl">{{ f.label }}</span><span class="count">{{ countBy(f.value) }}</span>
+        </button>
+      </div>
+      <div class="right">
+        <select v-model="statusFilter" class="status-sel" title="按可用状态筛选">
+          <option value="">全部状态</option>
+          <option value="ready">可用</option>
+          <option value="planned">规划中</option>
+        </select>
+        <div class="search">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input v-model="keyword" placeholder="搜能力 / 标签 / 说明..." />
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 能力网格 ===== -->
+    <div v-if="loading" class="state">加载中…</div>
+    <div v-else-if="filtered.length === 0" class="state">
+      <div class="st-ic">🧭</div>
+      <div>没有匹配的能力</div>
+      <div class="st-sub">换个关键词, 或者把筛选切回「全部」</div>
+    </div>
+    <div v-else class="grid">
+      <CapabilityCard v-for="c in filtered" :key="c.code" :capability="c" :meta="metaOf(c)" @open="onOpen" />
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+/**
+ * 首页 —— 能力墙.
+ *
+ * 2026-10-25 重构: 原来的「智能体广场」假设每张卡都是智能体 (统一显示引擎 /
+ * 调用次数 / 最近调用). 实际上卡片有四种形态 (工具 / 看板 / 目录 / 知识),
+ * 那些字段对非工具卡是假信息. 现在:
+ *   ① 卡片按 kind 渲染形态徽标 + 对应的 meta (真实数字);
+ *   ② 顶部多一条**待办带** —— 首页先回答"今天该看什么", 再回答"有什么";
+ *   ③ 规划中的能力沉底, 不占首屏黄金位.
+ */
+import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import CapabilityCard from './CapabilityCard.vue';
+import { useCapabilityStore } from '@/stores/capabilities';
+import { useUserStore } from '@/stores/user';
+import { CAPABILITY_KINDS, isPlanned, type CapabilityKind } from '@/constants/capabilityKinds';
+import { capabilityRouteName, engineLabel, matchesKeyword, relativeTime, sortCapabilities } from '@/utils/capabilities';
+import type { Capability } from '@/api/capabilities';
+import { getOverview } from '@/api/reviewagent';
+import { getSyncStatus, listAssets } from '@/api/assets';
+import { kbHealth, listDatasets } from '@/api/kb';
+
+interface Todo {
+  key: string;
+  icon: string;
+  text: string;
+  tone: 'warn' | 'err' | 'info';
+  to: { name: string };
+}
+
+interface MetaItem { icon: string; text: string }
+
+const router = useRouter();
+const store = useCapabilityStore();
+const userStore = useUserStore();
+
+const kindFilter = ref<'all' | CapabilityKind>('all');
+const statusFilter = ref<'' | 'ready' | 'planned'>('');
+const keyword = ref('');
+
+const loading = computed(() => store.loading && !store.loaded);
+const loggedIn = computed(() => userStore.isLoggedIn);
+
+/** 形态筛选条 —— 顺序跟 CAPABILITY_KINDS 一致 */
+const kindFilters = computed(() => [
+  { value: 'all' as const, label: '全部' },
+  ...CAPABILITY_KINDS.map((k) => ({ value: k.value, label: `${k.icon} ${k.label}` })),
+]);
+
+/** 能力列表 (过滤 + 排序) */
+const filtered = computed(() => {
+  let list = store.all;
+  if (kindFilter.value !== 'all') list = list.filter((c) => c.kind === kindFilter.value);
+  if (statusFilter.value === 'ready') list = list.filter((c) => !isPlanned(c.status));
+  else if (statusFilter.value === 'planned') list = list.filter((c) => isPlanned(c.status));
+  const kw = keyword.value.trim();
+  if (kw) list = list.filter((c) => matchesKeyword(c, kw));
+  return sortCapabilities(list);
+});
+
+function countBy(kind: string): number {
+  return store.countByKind[kind] ?? 0;
+}
+
+// ===== 卡片 meta: 按形态取真实数据 =====
+// 取数失败一律降级 (不阻塞卡片渲染), 免得一个接口挂了就白屏.
+const boardMeta = ref<MetaItem[]>([]);
+const catalogMeta = ref<MetaItem[]>([]);
+const libraryMeta = ref<MetaItem[]>([]);
+
+function metaOf(c: Capability): MetaItem[] {
+  switch (c.kind) {
+    case 'board':
+      return boardMeta.value.length ? boardMeta.value : [{ icon: '📡', text: '评审数据' }];
+    case 'catalog':
+      return catalogMeta.value.length ? catalogMeta.value : [{ icon: '🗂', text: '团队共享资产' }];
+    case 'library':
+      return libraryMeta.value.length ? libraryMeta.value : [{ icon: '📚', text: '团队知识源' }];
+    default: {
+      // 工具型: 引擎 + 最近使用 —— 这两个字段只有工具型才有意义
+      const items: MetaItem[] = [{ icon: '🔧', text: engineLabel(c.engine) }];
+      items.push({ icon: '🕐', text: relativeTime(c.last_called_at) });
+      return items;
+    }
+  }
+}
+
+// ===== 待办带 =====
+const todos = ref<Todo[]>([]);
+
+async function loadTodos() {
+  const list: Todo[] = [];
+  // 知识库状态: 这个接口不要求登录, 匿名也能探到 RAGFlow 通不通
+  try {
+    const kb = await kbHealth();
+    if (kb?.status && kb.status !== 'ok') {
+      list.push({
+        key: 'kb-off',
+        icon: '📚',
+        text: kb.status === 'off' ? '知识库未接入 (RAGFlow 未配置)' : `知识库状态异常: ${kb.message || kb.status}`,
+        tone: 'warn',
+        to: { name: 'kb-manage' },
+      });
+    }
+  } catch {
+    /* 探不到就当没这回事, 不给用户添堵 */
+  }
+  // 资产市场的待办需要登录态 (接口要鉴权)
+  if (loggedIn.value) {
+    try {
+      const s = await getSyncStatus();
+      if (s.my_review_count > 0) {
+        list.push({
+          key: 'asset-review',
+          icon: '📋',
+          text: `${s.my_review_count} 个资产等你处理 (待审核 / 被驳回)`,
+          tone: 'warn',
+          to: { name: 'market' },
+        });
+      }
+      if (s.failed_count > 0) {
+        list.push({
+          key: 'asset-failed',
+          icon: '❌',
+          text: `${s.failed_count} 个资产同步失败`,
+          tone: 'err',
+          to: { name: 'market' },
+        });
+      }
+      if (s.unpublish_pending_count > 0) {
+        list.push({
+          key: 'asset-unpublish',
+          icon: '🗑',
+          text: `${s.unpublish_pending_count} 个下架申请等确认`,
+          tone: 'info',
+          to: { name: 'market' },
+        });
+      }
+    } catch {
+      /* 同上 */
+    }
+  }
+  todos.value = list;
+}
+
+// ===== 形态 meta 取数 =====
+async function loadMetas() {
+  // 看板: 评审概览 (匿名可读, 后端走 get_optional_user)
+  try {
+    const ov = await getOverview();
+    if (ov?.mrs) {
+      boardMeta.value = [
+        { icon: '📈', text: `${ov.mrs.total} 个 MR` },
+        { icon: '💡', text: `${ov.suggestions?.total ?? 0} 条建议` },
+      ];
+    }
+  } catch {
+    /* ReviewAgent 没配 / 挂了 → 保持降级文案 */
+  }
+  if (!loggedIn.value) return;
+  // 目录: 资产数 (接口要鉴权)
+  try {
+    const assets = await listAssets({ limit: 200 });
+    catalogMeta.value = [{ icon: '🗂', text: `${assets.total ?? assets.items?.length ?? 0} 个资产` }];
+  } catch {
+    /* 同上 */
+  }
+  // 知识: 数据集 / 文档 / 分段
+  try {
+    const ds = await listDatasets();
+    const items = ds.items || [];
+    const docs = items.reduce((s, d) => s + (d.document_count || 0), 0);
+    const chunks = items.reduce((s, d) => s + (d.chunk_count || 0), 0);
+    libraryMeta.value = [
+      { icon: '📚', text: `${items.length} 数据集` },
+      { icon: '📄', text: `${docs} 文档` },
+      { icon: '🧩', text: `${chunks} 分段` },
+    ];
+  } catch {
+    /* 同上 */
+  }
+}
+
+// ===== 交互 =====
+function go(target: { name: string }) {
+  router.push(target);
+}
+
+/**
+ * 点卡片.
+ *
+ * 匿名用户: 只有**公开只读**的能力能直接进 (目前是代码检视看板),
+ * 其余一律引导去登录 —— 首页能看, 进详情要登录.
+ */
+function onOpen(c: Capability) {
+  const name = capabilityRouteName(c);
+  const target = router.getRoutes().find((r) => r.name === name);
+  const isPublic = !!(target?.meta?.publicRead);
+  if (!loggedIn.value && !isPublic) {
+    router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } });
+    return;
+  }
+  if (name === 'tool-runner') {
+    router.push({ name, params: { code: c.code } });
+    return;
+  }
+  router.push({ name });
+}
+
+onMounted(async () => {
+  await store.load();
+  // 待办 / meta 都不阻塞卡片渲染 —— 卡片先出来, 数字后到
+  await Promise.allSettled([loadTodos(), loadMetas()]);
+});
+</script>
+
+<style scoped>
+.home { display: flex; flex-direction: column; gap: 16px; }
+
+/* ===== 待办带 ===== */
+.todo-strip {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--surface-soft); backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: 10px 14px; box-shadow: var(--shadow-sm);
+  position: sticky; top: 0; z-index: 4;
+}
+.todo-strip.anon { color: var(--ink-500); font-size: 12.5px; }
+.ts-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--ink-500); text-transform: uppercase;
+}
+.ts-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12.5px; font-family: inherit; cursor: pointer;
+  color: var(--ink-700);
+  transition: all .15s ease;
+}
+.ts-item:hover { border-color: var(--primary); color: var(--ink-900); }
+.ts-item .ts-ic { font-size: 12px; }
+.ts-item .ts-go { opacity: 0.6; font-size: 13px; }
+.tone-warn { color: var(--warn); }
+.tone-err { color: var(--err); }
+.tone-info { color: var(--ink-700); }
+
+/* ===== 工具条 ===== */
+.home-toolbar {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  background: var(--surface-soft); backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: 12px 16px; box-shadow: var(--shadow-sm);
+  position: sticky; top: 52px; z-index: 3;
+}
+.filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.filter {
+  background: transparent; border: 1px solid transparent;
+  padding: 7px 14px; border-radius: var(--radius-pill);
+  font-size: 13px; color: var(--ink-700); cursor: pointer;
+  font-family: inherit; transition: all 0.15s ease;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.filter:hover { background: var(--surface-sunken); color: var(--ink-900); }
+.filter.active {
+  background: var(--primary-grad-soft);
+  border-color: transparent;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.filter.active .lbl {
+  display: inline-block;
+  background: var(--primary-grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.filter .count {
+  font-size: 11.5px; background: var(--surface); padding: 1px 7px; border-radius: var(--radius-pill);
+  font-family: var(--font-mono); font-weight: 600;
+}
+.filter.active .count { background: var(--primary-grad); color: #fff; }
+
+.right { display: flex; align-items: center; gap: 10px; }
+.status-sel {
+  font-size: 12.5px; font-family: inherit;
+  padding: 6px 9px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--ink-700); cursor: pointer;
+}
+.search {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 6px 10px; border-radius: 8px;
+  color: var(--ink-500);
+}
+.search input {
+  border: 0; outline: none; background: transparent;
+  font-size: 13px; color: var(--ink-900); font-family: inherit; width: 190px;
+}
+
+/* ===== 网格 ===== */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px)  { .grid { grid-template-columns: 1fr; } }
+
+.state {
+  background: var(--surface-soft); backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: 60px 20px; text-align: center; color: var(--ink-500);
+  font-size: 13.5px; display: flex; flex-direction: column; gap: 8px; align-items: center;
+}
+.st-ic { font-size: 32px; opacity: 0.4; }
+.st-sub { font-size: 12px; opacity: 0.8; }
+</style>

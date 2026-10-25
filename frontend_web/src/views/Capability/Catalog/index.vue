@@ -1,8 +1,17 @@
 <template>
   <div class="market">
-    <!-- ===== 动作条: 返回 + 类型 Tab + 搜索 + 主操作 (一栏装下) ===== -->
+    <!-- ===== 能力详情统一外壳 ===== -->
+    <CapabilityShell
+      name="AI 资产市场"
+      icon="🏪"
+      kind="catalog"
+      status="beta"
+      version="v0.1.0"
+      category="ai-market"
+      summary="团队共享的插件 / 技能 / 连接器 —— 浏览、下载、装进你的环境" />
+
+    <!-- ===== 动作条: 类型 Tab + 搜索 + 主操作 (一栏装下) ===== -->
     <div class="mk-actions">
-      <button class="back" type="button" @click="$router.push({ name: 'plaza' })">← 返回广场</button>
       <div class="kind-tabs">
         <button v-for="k in MARKET_KINDS" :key="k.value"
           class="kind-tab" :class="{ active: kind === k.value }"
@@ -170,6 +179,7 @@ import AssetDetailDrawer from './AssetDetailDrawer.vue';
 import AssetUploadDialog from './AssetUploadDialog.vue';
 import AssetAuditDrawer from './AssetAuditDrawer.vue';
 import MarketFilterMenu from './MarketFilterMenu.vue';
+import CapabilityShell from '@/components/CapabilityShell.vue';
 import { useUserStore } from '@/stores/user';
 import { MARKET_KINDS, type MarketProjectItem, type MarketSort } from './marketCatalog';
 import { KIND_META } from './kindMeta';
@@ -710,14 +720,6 @@ onUnmounted(() => {
   display: flex; align-items: center; gap: 8px;
   margin-left: auto; flex-shrink: 0;
 }
-.back {
-  background: transparent; border: 1px solid var(--border);
-  padding: 6px 12px; border-radius: 8px;
-  color: var(--ink-700); font-size: 12.5px; cursor: pointer;
-  font-family: inherit; transition: all 0.15s ease;
-  flex-shrink: 0;
-}
-.back:hover { background: var(--surface-sunken); color: var(--ink-900); }
 
 
 /* ===== 分类 + 项目/排序筛选 ===== */
@@ -738,8 +740,8 @@ onUnmounted(() => {
 .chip.active .count { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
 /* ===== 网格 =====
-   ⚠️ 市场页 **4 列** —— 跟广场页 (3 列大卡片) 拉开密度差:
-   广场是"白底浮动大卡片", 这里是"扁平紧凑列表卡", 一眼能分清两个页面. */
+   ⚠️ 目录页 **4 列** —— 跟首页能力墙 (3 列大卡片) 拉开密度差:
+   首页是"白底浮动大卡片", 这里是"扁平紧凑列表卡", 一眼能分清两个页面. */
 .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 @media (max-width: 1400px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

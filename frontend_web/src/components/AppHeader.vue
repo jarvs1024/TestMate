@@ -3,7 +3,7 @@
     <BrandLogo :size="38" />
     <div class="brand">
       <span class="t1">TestMate</span>
-      <span class="t2">智能测试辅助平台 · v0.1</span>
+      <span class="t2">SSD 测试伙伴 · v0.1</span>
     </div>
     <!-- 当前页面标题 (居中显示, 跟左侧 brand 视觉对称) -->
     <div v-if="pageTitle" class="page-title">
@@ -42,9 +42,9 @@ const notices = computed<NoticeItem[]>(() => {
   const list: NoticeItem[] = [];
   if (!userStore.token) {
     list.push({
-      id: 'cr-anon-readonly',
+      id: 'anon-readonly',
       type: 'info',
-      text: '您正在匿名访问,部分交互功能需 [登录](/login?redirect=/code-review) 后使用',
+      text: '您正在匿名访问,能力清单可看,进入具体能力需 [登录](/login?redirect=/) 后使用',
       marquee: true,
       dismissKey: 'cr:anon-notice-dismissed',
       dismissScope: 'session',

@@ -61,7 +61,7 @@ function shortDate(iso: string | null): string {
 
 <style scoped>
 /* ⚠️ 市场页的卡片是**扁平紧凑列表卡** (4 列) ——
-   跟广场页的"白底浮动大卡片" (3 列, 全局 .card) 拉开密度差, 一眼能分清两个页面. */
+   跟首页能力墙的"白底浮动大卡片" (3 列, 全局 .card) 拉开密度差, 一眼能分清两个页面. */
 .asset-card {
   cursor: pointer;
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
@@ -71,7 +71,7 @@ function shortDate(iso: string | null): string {
   min-height: 150px;
 }
 .asset-card:hover {
-  /* ⚠️ 刻意**不抬升** (没有 translateY) —— 广场卡片是浮起来的, 这里保持"列表感" */
+  /* ⚠️ 刻意**不抬升** (没有 translateY) —— 能力墙卡片是浮起来的, 这里保持"列表感" */
   border-color: var(--primary);
   box-shadow: 0 4px 14px rgba(59, 130, 246, 0.10);
 }

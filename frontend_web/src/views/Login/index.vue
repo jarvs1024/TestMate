@@ -6,7 +6,7 @@
           <BrandLogo :size="44" />
           <div class="b-txt">
             <div class="t1">TestMate</div>
-            <div class="t2">智能测试辅助平台</div>
+            <div class="t2">SSD 测试伙伴</div>
           </div>
         </div>
 

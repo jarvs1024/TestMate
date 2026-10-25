@@ -397,7 +397,7 @@ interface DataSourceGroup {
 type SourceGroupDef = Omit<DataSourceGroup, 'items'>;
 const SOURCE_GROUPS: SourceGroupDef[] = [
   { id: 'ragflow',  prefix: 'ragflow.',  icon: '📚', label: 'RAGFlow (知识库 API)', testKey: 'ragflow',  hint: 'KB 知识库 · 数据集 / 文档 / chunking API' },
-  { id: 'dify',     prefix: 'dify.',     icon: '🤖', label: 'Dify (Workflow API)',   testKey: 'dify',     hint: '智能体广场 · workflow / 对话 API' },
+  { id: 'dify',     prefix: 'dify.',     icon: '🤖', label: 'Dify (Workflow API)',   testKey: 'dify',     hint: '能力墙 · workflow / 对话 API' },
   { id: 'review-agent', prefix: 'review_agent.', icon: '🧬', label: 'ReviewAgent (代码检视)', testKey: 'review-agent', hint: '代码检视 · HTTP / 健康检查' },
 ];
 const sourceGroups = computed<DataSourceGroup[]>(() =>

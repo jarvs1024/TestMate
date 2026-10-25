@@ -34,18 +34,18 @@ try {
   await page.fill('input[type=password]', 'TestMate@2026');
   const loginBtn = page.locator('button:has-text("登录"), button:has-text("Login")').first();
   await loginBtn.click();
-  await page.waitForURL(/\/kb|\/plaza|\/$/, { timeout: 15000 });
+  await page.waitForURL(/\/kb|\/$/, { timeout: 15000 });
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(()=>{});
   log('   登录后 URL:', page.url());
   await page.screenshot({ path: `${SHOTS}/02-after-login.png`, fullPage: true });
 
-  log('3. 进 KB 页');
-  // 找 KB 链接
-  const kbLink = page.locator('a[href*="/kb"], a:has-text("知识库"), [role=link]:has-text("知识库")').first();
+  log('3. 进知识库存页');
+  // 找知识库存链接 (2026-10-25: 知识库从侧栏顶级项降级成能力墙上的一张卡, 文案改成"知识库存")
+  const kbLink = page.locator('a[href*="/kb-manage"], a:has-text("知识库存"), [role=link]:has-text("知识库存")').first();
   if (await kbLink.count() > 0) {
     await kbLink.click();
   } else {
-    await page.goto('http://localhost:8080/kb');
+    await page.goto('http://localhost:8080/kb-manage');
   }
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(()=>{});
   await page.waitForSelector('iframe[title=knowledge-search]', { timeout: 15000 });

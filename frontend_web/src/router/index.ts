@@ -1,35 +1,52 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { useUserStore } from '@/stores/user';
 
-const router = createRouter({
-  history: createWebHistory(),
-  routes: [
+/**
+ * 路由表 —— 单独导出, 方便单测直接断言 (名字 / meta / 跳转规则).
+ */
+export const routes: RouteRecordRaw[] = [
     { path: '/login', name: 'login', component: () => import('@/views/Login/index.vue') },
     {
       path: '/',
       component: () => import('@/layouts/MainLayout.vue'),
       meta: { requiresAuth: true },
       children: [
-        // 默认进广场
-        { path: '', redirect: '/plaza' },
-        { path: 'plaza',       name: 'plaza',       meta: { title: '智能体广场', lede: 'SSD 测试域专用 AI 智能体 · 点击卡片进入运行页' },  component: () => import('@/views/Plaza/index.vue') },
-        // 代码检视: ReviewAgent (原 pr-agent 版已下线, 合并到这一个).
+        // ===== 首页 = 能力墙 (2026-10-25) =====
+        // 匿名可读: 首页对未登录用户开放只读 (能看能力清单与形态),
+        // 进详情页需要登录 —— 唯一例外是标记 publicRead 的代码检视看板.
+        { path: '', name: 'home', meta: { publicRead: true, title: '工作台', lede: '测试伙伴能干的活都在这儿 —— 工具、看板、资产、知识，点卡片直接进去' }, component: () => import('@/views/Home/index.vue') },
+        // 旧地址 (原「智能体广场」): 保留跳转, 免得旧书签 404
+        { path: 'plaza', redirect: { name: 'home' } },
+
+        // ===== 看板型: 代码检视 (匿名只读) =====
         // publicRead 标记: 未登录也放行, 走完整布局 (导航栏/侧栏都显示, 跟登录用户一致).
         // axios 拦截器对 publicRead 路由: 登录用 user token, 未登录用 VITE_ANONYMOUS_READ_TOKEN.
-        { path: 'code-review', name: 'code-review', meta: { publicRead: true, title: '代码检视', lede: 'ReviewAgent 评审数据看板 · MR / 建议采纳率 / 规则命中 / 作者分布' }, component: () => import('@/views/CodeReviewV2/index.vue') },
-        { path: 'agents/:code', name: 'agent-runner', meta: { title: '运行' },       component: () => import('@/views/AgentRunner/index.vue') },
-        // AI 资产市场: 由广场里 agent-market 卡片的 route="page:market" 跳进来.
-        // name 必须叫 market — Plaza/index.vue onOpen 是 router.push({ name }) 按名字跳.
-        { path: 'market',      name: 'market',       meta: { title: 'AI 资产市场', lede: '团队沉淀的插件 / 技能 / 连接器 · 浏览详情并下载安装包' }, component: () => import('@/views/Market/index.vue') },
-        { path: 'kb-manage',   name: 'kb-manage',   meta: { title: '知识库', lede: '所有智能体共享的私有知识源 · 已对接 RAGFlow' },      component: () => import('@/views/KnowledgeManage/index.vue') },
-        { path: 'settings',   name: 'settings',   meta: { title: '设置', lede: '平台配置 · RAGFlow / Dify / 用户管理' },         component: () => import('@/views/Settings/index.vue') },
+        { path: 'code-review', name: 'code-review', meta: { publicRead: true, title: '代码检视', lede: '代码评审数据看板 —— MR 生命周期 / 建议采纳率 / 规则命中 / 作者分布' }, component: () => import('@/views/Capability/BoardView.vue') },
+
+        // ===== 工具型: 运行页 =====
+        { path: 'c/:code', name: 'tool-runner', meta: { title: '运行' }, component: () => import('@/views/Capability/ToolRunner.vue') },
+        // 旧地址 (原 /agents/:code): 保留跳转
+        { path: 'agents/:code', redirect: (to) => ({ name: 'tool-runner', params: to.params }) },
+
+        // ===== 目录型: AI 资产市场 =====
+        { path: 'market', name: 'market', meta: { title: 'AI 资产市场', lede: '团队共享的插件 / 技能 / 连接器 —— 浏览、下载、装进你的环境' }, component: () => import('@/views/Capability/Catalog/index.vue') },
+
+        // ===== 知识型: 知识库存 =====
+        // 以前知识库是侧栏跟「广场」平级的顶级项, 现在它是能力墙上的一张卡.
+        { path: 'kb-manage', name: 'kb-manage', meta: { title: '知识库存', lede: '团队知识库存 —— 数据集 / 文档 / 检索，已对接 RAGFlow' }, component: () => import('@/views/Capability/Library/index.vue') },
+
+        { path: 'settings', name: 'settings', meta: { title: '设置', lede: '平台配置 · RAGFlow / Dify / 用户管理' }, component: () => import('@/views/Settings/index.vue') },
       ],
     },
-  ],
+];
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
 });
 
 router.beforeEach((to, _from, next) => {
-  // publicRead 路由 (代码检视): 匿名也放行, 走完整 MainLayout 布局
+  // publicRead 路由 (首页能力墙 / 代码检视): 匿名也放行, 走完整 MainLayout 布局
   if (to.meta.publicRead) return next();
   const userStore = useUserStore();
   if (to.meta.requiresAuth && !userStore.token) {

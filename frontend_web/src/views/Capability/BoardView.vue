@@ -1,23 +1,15 @@
 <template>
   <div class="cr">
-    <!-- 顶栏: 与其他智能体详情布局一致 (返回广场 + icon + 名/版本/简介 + status + 时间窗/刷新) -->
-    <div class="run-hd">
-      <button class="back" @click="$router.push({ name: 'plaza' })">← 返回广场</button>
-      <div class="run-title">
-        <div class="run-icon">🧪</div>
-        <div>
-          <div class="run-name">
-            <span>代码检视</span>
-            <span class="run-ver">v0.2.0</span>
-          </div>
-          <div class="run-summary">ReviewAgent 评审数据看板 · MR / 建议采纳率 / 规则命中 / 作者分布</div>
-        </div>
-      </div>
-      <!-- 状态徽章: 跟广场 /api/v1/agents 里 code-review (stable) 对齐, 写死稳定.
-           后续若需要动态, 从 agents API 拉自己的 status 即可. -->
-      <div class="run-badge st-stable">
-        <span class="dot"></span>稳定
-      </div>
+    <!-- 顶栏: 能力详情统一外壳 (返回工作台 + icon + 名称/形态/状态 + 时间窗/刷新) -->
+    <CapabilityShell
+      name="代码检视"
+      icon="🧬"
+      kind="board"
+      status="stable"
+      version="v0.2.0"
+      category="auto-code"
+      summary="MR 生命周期 / 建议采纳率 / 规则命中 / 作者分布">
+      <template #actions>
       <div class="hd-r">
         <select v-model="windowSel" class="win-sel" @change="reload">
           <option value="all">全部时间</option>
@@ -36,7 +28,8 @@
           <span :class="{ spinning: loading }">↻</span> 刷新
         </button>
       </div>
-    </div>
+      </template>
+    </CapabilityShell>
 
     <!-- 评审失败 banner: 顶部醒目提示, 点击展开 inline failed MR list (不必滚到 MR 表) -->
     <div v-if="unackedFailedCount > 0" class="banner banner-err" :class="{ open: bannerOpen }" role="region" :aria-expanded="bannerOpen">
@@ -589,6 +582,7 @@ import {
   type WeeklyReport,
 } from '@/api/reviewagent';
 import ErrorView from '@/components/ErrorView.vue';
+import CapabilityShell from '@/components/CapabilityShell.vue';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
 const loading = ref(false);
 const loadError = ref('');
@@ -1275,44 +1269,6 @@ const runsSubHint = computed(() => {
 
 <style scoped>
 .cr { display: flex; flex-direction: column; gap: 16px; }
-/* 顶部栏 (跟 AgentRunner 保持一致) */
-.run-hd {
-  display: flex; align-items: center; gap: 16px;
-  background: var(--surface-soft); backdrop-filter: blur(8px);
-  border: 1px solid var(--border); border-radius: var(--radius-card);
-  padding: 14px 18px; box-shadow: var(--shadow-sm);
-}
-.back {
-  background: transparent; border: 1px solid var(--border);
-  padding: 6px 12px; border-radius: 8px;
-  color: var(--ink-700); font-size: 12.5px; cursor: pointer;
-  font-family: inherit; transition: all 0.15s ease;
-  flex-shrink: 0;
-}
-.back:hover { background: var(--surface-sunken); color: var(--ink-900); }
-.run-title { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
-.run-icon {
-  width: 44px; height: 44px; border-radius: 11px;
-  background: var(--primary-grad);
-  display: flex; align-items: center; justify-content: center; font-size: 22px;
-  box-shadow: var(--primary-shadow);
-  flex-shrink: 0;
-}
-.run-name { display: flex; align-items: baseline; gap: 8px; }
-.run-name > span:first-child { font-size: 18px; font-weight: 800; color: var(--ink-900); letter-spacing: -0.2px; }
-.run-ver { font-size: 12px; color: var(--ink-500); font-family: var(--font-mono); }
-.run-summary { font-size: 12.5px; color: var(--ink-700); margin-top: 2px; }
-.run-badge {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 10px; border-radius: var(--radius-pill);
-  font-size: 11px; font-weight: 600;
-  background: var(--surface-sunken); color: var(--ink-700);
-  flex-shrink: 0;
-}
-.run-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.st-stable { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
-.st-beta { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
-.st-draft { background: var(--surface-sunken); color: var(--ink-500); }
 .win-sel, .reload {
   background: var(--surface); border: 1px solid var(--border);
   color: var(--ink-700); padding: 6px 12px; border-radius: 8px;
@@ -1346,7 +1302,7 @@ const runsSubHint = computed(() => {
 
 
 
-.hd-r { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.hd-r { display: flex; gap: 8px; align-items: center; }
 
 
 

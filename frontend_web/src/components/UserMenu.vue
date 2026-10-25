@@ -16,7 +16,7 @@
           </div>
         </el-dropdown-item>
         <el-dropdown-item divided command="settings">设置</el-dropdown-item>
-        <el-dropdown-item command="agents">智能体注册 (admin)</el-dropdown-item>
+        <el-dropdown-item command="agents">能力注册 (admin)</el-dropdown-item>
         <el-dropdown-item command="theme">主题 · {{ themeLabel }}</el-dropdown-item>
         <el-dropdown-item command="logout">退出登录</el-dropdown-item>
       </el-dropdown-menu>
@@ -50,7 +50,7 @@ function onCommand(cmd: string) {
   } else if (cmd === 'settings') {
     router.push('/settings');
   } else if (cmd === 'agents') {
-    ElMessage.info('智能体注册 · P1 实现');
+    ElMessage.info('能力注册 · P1 实现');
   } else if (cmd === 'theme') {
     ElMessage.info('点顶栏 ☀/🌙 切换主题');
   }
