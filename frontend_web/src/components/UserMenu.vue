@@ -16,8 +16,6 @@
           </div>
         </el-dropdown-item>
         <el-dropdown-item divided command="settings">设置</el-dropdown-item>
-        <el-dropdown-item command="agents">能力注册 (admin)</el-dropdown-item>
-        <el-dropdown-item command="theme">主题 · {{ themeLabel }}</el-dropdown-item>
         <el-dropdown-item command="logout">退出登录</el-dropdown-item>
       </el-dropdown-menu>
     </template>
@@ -33,7 +31,6 @@ import { useUserStore } from '@/stores/user';
 const router = useRouter();
 const userStore = useUserStore();
 const initial = computed(() => (userStore.user?.username || '?')[0]?.toUpperCase() || '?');
-const themeLabel = '☀ / 🌙 / 自动';
 
 function roleText(r?: string) {
   if (r === 'admin') return '管理员';
@@ -42,6 +39,15 @@ function roleText(r?: string) {
   return '-';
 }
 
+/**
+ * 下拉里只留"身份 + 设置 + 退出登录"三件事 (2026-10-25).
+ *
+ * 删掉的两个都是**死路**, 点了只会弹一句话:
+ *   · 「能力注册 (admin)」→ 只弹一句"这个功能以后才有", 什么都没发生
+ *   · 「主题 · ☀ / 🌙 / 自动」→ 只让用户自己去按那个主题按钮, 而它就在旁边
+ *   死路菜单项比没有更糟 —— 用户以为有功能, 点一下才发现是空头支票.
+ *   主题切换走 AppHeader 的 ThemeSwitcher, 那里一颗按钮就够了.
+ */
 function onCommand(cmd: string) {
   if (cmd === 'logout') {
     userStore.logout();
@@ -49,10 +55,6 @@ function onCommand(cmd: string) {
     router.push('/login');
   } else if (cmd === 'settings') {
     router.push('/settings');
-  } else if (cmd === 'agents') {
-    ElMessage.info('能力注册 · P1 实现');
-  } else if (cmd === 'theme') {
-    ElMessage.info('点顶栏 ☀/🌙 切换主题');
   }
 }
 </script>
