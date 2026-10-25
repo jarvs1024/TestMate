@@ -65,6 +65,38 @@ describe('侧栏能力导航器', () => {
     w.unmount();
   });
 
+  /**
+   * 排版层次 (2026-10-25 第三轮: 用户反馈"无层次感"):
+   *   区块标题「能力」 → 总览入口「全部能力」→ 角色组 → 能力条目.
+   *   顺序错了层次就塌了 —— 所以这里钉死 DOM 顺序.
+   */
+  it('四层结构: 区块标题 → 总览入口 → 角色组 → 条目', () => {
+    const { w } = mountNav();
+    expect(w.find('.nav-cap .nc-lb').text()).toBe('能力');
+    const kids = w.element.children;
+    expect(kids[0].classList.contains('nav-cap')).toBe(true);
+    expect(kids[1].classList.contains('all-link')).toBe(true);
+    expect(kids[2].classList.contains('group')).toBe(true);
+    w.unmount();
+  });
+
+  it('「全部能力」是总览入口, 带上能力总数', () => {
+    const { w } = mountNav();
+    expect(w.find('.all-link .count').text()).toBe(String(CAPS.length));
+    w.unmount();
+  });
+
+  it('每个角色组都有标题与组下分隔线 (组标题与它的条目成一个单元)', () => {
+    const { w } = mountNav();
+    const groups = w.findAll('.group');
+    expect(groups).toHaveLength(3);
+    for (const g of groups) {
+      expect(g.find('.g-hd').exists()).toBe(true);
+      expect(g.find('.g-rule').exists()).toBe(true);
+    }
+    w.unmount();
+  });
+
   it('按角色分组, 组标题带图标与计数', () => {
     const { w } = mountNav();
     const heads = w.findAll('.g-hd').map((h) => h.text());
