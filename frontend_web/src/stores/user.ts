@@ -20,8 +20,9 @@ export const useUserStore = defineStore('user', {
     /**
      * 登录.
      *
-     * ⚠️ password 可以为空 —— 普通用户是**免密登录** (公司邮箱即身份),
-     *    管理员才必须给密码. 空密码走后端就是免密那条路.
+     * ⚠️ password 可以为空 —— 账号必须**管理员先建过**, 但建号时没设密码的
+     *    账号是免密登录的 (设了密码的 / 管理员账号则必须给密码).
+     *    空密码走后端就是免密那条路.
      */
     async login(username: string, password?: string) {
       const { data } = await axios.post('/api/v1/auth/login', {

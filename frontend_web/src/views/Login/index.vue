@@ -12,8 +12,9 @@
 
         <h1 class="title">登录到工作台</h1>
         <p class="lede">
-          普通用户：填公司邮箱前缀即可<span v-if="emailDomain">（{{ emailDomain }}）</span><br />
-          管理员：直接填账号名，另输密码
+          账号需<strong>管理员提前开通</strong> —— 没开通的账号填了也进不来。<br />
+          普通用户：填公司邮箱前缀<span v-if="emailDomain">（{{ emailDomain }}）</span>；
+          管理员：填账号名，另输密码
         </p>
 
         <form @submit.prevent="onSubmit">
@@ -62,16 +63,17 @@
 
 <script setup lang="ts">
 /**
- * 登录页 —— 2026-10-25 重构.
+ * 登录页 —— 2026-10-25 账号管理重构.
  *
  * 新规则 (后端 app/api/auth.py):
- *   · **普通用户**: 输入公司邮箱前缀 (后缀固定 @twsc.com.cn) → 免密登录;
- *     首次登录自动开通账号, 不用管理员先建号.
+ *   · 账号**必须管理员先建过**才能登录 —— 填了没开通的账号进不来;
+ *   · **普通用户**: 输入公司邮箱前缀 (后缀固定 @twsc.com.cn) → 建号时没设密码
+ *     就是免密登录, 设了密码就要输;
  *   · **管理员**: 账号名 (不含 @) → 必须密码.
  *
  * 所以这个表单默认**只有一个输入框**: 填完用户名回车就进去了 —— 真"一键".
  * 密码框默认不占版面, 两种情况才出现:
- *   ① 后端回 password_required (说明这是管理员账号);
+ *   ① 后端回 password_required (说明这个账号设了密码 / 是管理员);
  *   ② 用户自己点「用密码登录」(拿旧密码体系的同事也能用).
  *
  * ⚠️ 记住两个东西 (localStorage):
@@ -144,13 +146,19 @@ async function onSubmit() {
     router.push(redirect);
   } catch (e: any) {
     const detail = e?.response?.data?.detail;
-    if (detail && typeof detail === 'object' && detail.code === 'password_required') {
-      // 管理员账号 → 展开密码框, 并记住 (下次直接摆出来)
-      needPassword.value = true;
-      error.value = detail.message || '管理员账号需要密码';
-      localStorage.setItem(NEEDS_PASSWORD_KEY, username);
-      await nextTick();
-      pwdInput.value?.focus();
+    if (detail && typeof detail === 'object') {
+      // 后端给的是结构化 detail: {code, message}
+      if (detail.code === 'password_required') {
+        // 这个账号要密码 → 展开密码框, 并记住 (下次直接摆出来)
+        needPassword.value = true;
+        error.value = detail.message || '该账号需要密码';
+        localStorage.setItem(NEEDS_PASSWORD_KEY, username);
+        await nextTick();
+        pwdInput.value?.focus();
+      } else {
+        // account_not_found / account_disabled 等 —— 直接显示后端给的话
+        error.value = detail.message || '登录失败, 请联系管理员';
+      }
     } else {
       error.value = typeof detail === 'string' ? detail : '登录失败,请检查账号密码';
     }

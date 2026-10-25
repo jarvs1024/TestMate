@@ -43,10 +43,10 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
 
     # ===== 登录身份 =====
-    # 普通用户 = 公司邮箱 (后缀固定), 免密登录; 管理员 = 不含 @ 的账号名, 必须密码.
+    # 账号**必须管理员先建过**才能登录 (建号入口: 设置页「用户管理」).
+    # 普通用户 = 公司邮箱 (后缀固定), 建号时给了密码就得输密码, 没给就是免密;
+    # 管理员 = 不含 @ 的账号名, 一律要密码.
     AUTH_EMAIL_DOMAIN: str = "@twsc.com.cn"
-    # 首次登录自动开通: 公司邮箱即身份, 不用管理员先建号 (后端 app/api/auth.py)
-    AUTH_AUTO_PROVISION: bool = True
 
     # RAGFlow
     # 默认空:本工程不打包 RAGFlow,需要时由用户在 Settings 页或 .env 填真值

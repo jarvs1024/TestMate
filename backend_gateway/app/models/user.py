@@ -1,6 +1,6 @@
 """User + RBAC。"""
 from datetime import datetime
-from sqlalchemy import String, DateTime, Enum, BigInteger
+from sqlalchemy import String, DateTime, Enum, BigInteger, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 import enum
 
@@ -23,6 +23,15 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False, default=UserRole.viewer)
     api_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    # 账号是否可用 —— 管理员停用后不能登录 (比删号安全: 资产归属还在).
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # 这个账号登录是否必须输密码.
+    #   · admin 角色永远是 True (跟 role 分开存, 是为了让"管理员"这条规则
+    #     只有一个来源 —— 登录时直接看 role, 不依赖这一列).
+    #   · 普通账号由管理员建号时定: 给了密码 → True; 没给密码 → False (免密).
+    # ⚠️ 免密账号的 password_hash 仍存一个随机哈希 (不是空串) —— 免得哪天
+    #    有人加个"空密码也算对"的判断就把它放行了.
+    password_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

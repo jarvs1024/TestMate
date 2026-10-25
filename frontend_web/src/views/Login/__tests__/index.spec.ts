@@ -1,7 +1,8 @@
 /**
- * 登录页 —— 2026-10-25 重构后的行为.
+ * 登录页 —— 2026-10-25 账号管理重构后的行为.
  *
- * 新规则: 普通用户 = 公司邮箱 (后缀固定) → **免密**登录, 首次登录自动开通;
+ * 新规则: 账号**必须管理员先建过**才能登录 (免的是密码, 不是身份);
+ *         普通用户 = 公司邮箱 (后缀固定), 建号时没设密码就是免密;
  *         管理员 = 账号名 → 必须密码.
  *
  * 盯住这几件事:
@@ -9,7 +10,8 @@
  *   ② 记住用户名: 上次登录过的名字自动填好;
  *   ③ 后端说 password_required → 展开密码框 + 记住"这个账号要密码";
  *   ④ 登录成功 → 把用户名记下来 (下次自动填);
- *   ⑤ 固定后缀 @twsc.com.cn 作为输入框的附加段显示 (输入里有 @ 就不显示).
+ *   ⑤ 固定后缀 @twsc.com.cn 作为输入框的附加段显示 (输入里有 @ 就不显示);
+ *   ⑥ 后端说 account_not_found → 把"请联系管理员开通"显示出来 (别只弹"登录失败").
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
@@ -156,6 +158,44 @@ describe('登录页 · 免密优先', () => {
     await w.find('form').trigger('submit');
     await flushPromises();
     expect(w.find('.err').text()).toContain('用户名或密码错误');
+    w.unmount();
+  });
+
+  it('账号没开通 → 显示"请联系管理员开通" (不是笼统的登录失败)', async () => {
+    const { w } = await mountLogin(async () => {
+      const err: any = new Error('401');
+      err.response = {
+        data: { detail: { code: 'account_not_found', message: '账号不存在, 请联系管理员开通' } },
+      };
+      throw err;
+    });
+    await w.find('input[autocomplete="username"]').setValue('nobody');
+    await w.find('form').trigger('submit');
+    await flushPromises();
+    expect(w.find('.err').text()).toContain('请联系管理员开通');
+    // 账号不存在 ≠ 要密码 —— 密码框不该冒出来
+    expect(w.find('input[autocomplete="current-password"]').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it('账号被停用 → 显示后端给的话', async () => {
+    const { w } = await mountLogin(async () => {
+      const err: any = new Error('401');
+      err.response = {
+        data: { detail: { code: 'account_disabled', message: '账号已停用, 请联系管理员' } },
+      };
+      throw err;
+    });
+    await w.find('input[autocomplete="username"]').setValue('leaver');
+    await w.find('form').trigger('submit');
+    await flushPromises();
+    expect(w.find('.err').text()).toContain('已停用');
+    w.unmount();
+  });
+
+  it('页面文案说清楚"账号要管理员先开通"', async () => {
+    const { w } = await mountLogin(async () => {});
+    expect(w.text()).toContain('管理员提前开通');
     w.unmount();
   });
 });

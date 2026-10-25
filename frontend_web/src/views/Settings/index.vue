@@ -271,6 +271,9 @@
           </div>
         </section>
 
+        <!-- 👥 用户管理 (仅 admin) —— 账号必须在这里建出来才能登录 -->
+        <UserManage v-if="activeTop === 'sec-users'" :users="users" @changed="loadUsers" />
+
         <div class="card info-card">
           <h2>📌 说明</h2>
           <ul class="tips">
@@ -291,11 +294,29 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { getSchema, updateSetting, testRagflow, testReviewAgent, testDingTalk, testGitLab, type SettingItem, type TestResult } from '@/api/settings';
 import { getMarketConfig, listNotifications, type AssetNotification } from '@/api/assets';
+import { listUsers, type ManagedUser } from '@/api/users';
 import SettingRow from './components/SettingRow.vue';
+import UserManage from './components/UserManage.vue';
 import { useUserStore } from '@/stores/user';
 
 const userStore = useUserStore();
 const isAdmin = computed(() => userStore.user?.role === 'admin');
+
+// ===== 账号管理 (仅 admin) =====
+// 账号列表的**唯一数据源** —— 建号/停用/改角色之后都靠 loadUsers() 重新拉.
+// ⚠️ 非 admin 看不到这个 section (目录里也不列) —— 接口本身也拒了, 前端只是不白费一趟请求.
+const users = ref<ManagedUser[]>([]);
+async function loadUsers() {
+  if (!isAdmin.value) {
+    users.value = [];
+    return;
+  }
+  try {
+    users.value = await listUsers();
+  } catch {
+    users.value = [];
+  }
+}
 
 const groups = ref<{ category: string; label: string; items: SettingItem[] }[]>([]);
 const drafts = reactive<Record<string, any>>({});
@@ -420,7 +441,13 @@ function itemsByCategory(cat: string): SettingItem[] {
 }
 
 // ===== 左侧目录 (sections 定义) =====
-const sections = computed(() => [
+interface TocItem { id: string; label: string; count: number }
+interface TocSection { id: string; icon: string; label: string; count: number; children: TocItem[] }
+
+// ⚠️ 「👥 用户」只在 admin 的目录里出现 —— 非 admin 连目录项都看不到
+//    (账号管理是 admin 的活, 普通用户点进去只会撞一堵 403 墙).
+const sections = computed<TocSection[]>(() => {
+  const list: TocSection[] = [
   {
     id: 'sec-knowledge',
     icon: '📚',
@@ -436,7 +463,12 @@ const sections = computed(() => [
     { id: 'sec-general-data-source', label: '📡 数据源', count: dataSourceItems.value.length },
   ] },
   { id: 'sec-notification', icon: '🔔', label: '通知',   count: notificationItems.value.length, children: [] },
-]);
+  ];
+  if (isAdmin.value) {
+    list.push({ id: 'sec-users', icon: '👥', label: '用户', count: users.value.length, children: [] });
+  }
+  return list;
+});
 
 // ===== 点击目录 =====
 function onPickTop(topId: string) {
@@ -450,6 +482,8 @@ function onPickTop(topId: string) {
   if (topId === 'sec-notification') loadNotifyLog();
   // 资产市场区展示当前生效的工作区/远端
   if (topId === 'sec-agents') loadMarketConfig();
+  // 用户管理区拉账号列表
+  if (topId === 'sec-users') loadUsers();
 }
 
 function onPickSub(topId: string, subId: string) {
@@ -555,7 +589,11 @@ async function onTest(testKey: string) {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  load();
+  // 管理员进设置页就把账号列表拉好 (目录上的数字要显示)
+  if (isAdmin.value) loadUsers();
+});
 </script>
 
 <style scoped>

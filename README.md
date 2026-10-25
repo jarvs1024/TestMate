@@ -30,8 +30,9 @@
 **前端**: Vue 3.5 + Vite 5.4 + TypeScript 5.5 + Element Plus 2.8 + Tailwind 3.4 + Pinia 2.2 + monaco-editor 0.50
 **后端**: Python 3.11 + FastAPI 0.115 + SQLAlchemy 2.0(async) + alembic 1.13 + aiomysql + redis.asyncio
 **认证**: python-jose JWT + passlib/bcrypt,7 天 token,RBAC 三级(admin / tester / viewer)
-  · 普通用户: 公司邮箱(后缀固定 @twsc.com.cn)即身份, **免密登录**, 首次登录自动开通
-  · 管理员: 账号名 + 密码
+  · 账号**必须管理员先建过**才能登录(建号入口: 设置页「👥 用户管理」)
+  · 普通用户: 公司邮箱(后缀固定 @twsc.com.cn),建号时没设密码就是**免密登录**
+  · 管理员: 账号名 + 密码(一律必填)
 **AI 集成**: httpx 调 RAGFlow / ReviewAgent / GitLab,外部服务不可达时降级
 **硬件触达**: paramiko SSH 2.x
 **数据**: MySQL 8.0(主数据)+ Redis 7-alpine(缓存 / 互斥锁)

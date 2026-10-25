@@ -1,5 +1,5 @@
 from typing import Optional
-"""登录 / 当前用户。"""
+"""登录 / 当前用户 / 账号管理。"""
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,7 +13,14 @@ from app.core.identity import lookup_candidates, to_email
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.db.session import get_session
 from app.models.user import User, UserRole
-from app.schemas.auth import LoginRequest, TokenResponse, UserCreate, UserOut
+from app.schemas.auth import (
+    LoginRequest,
+    TokenResponse,
+    UserCreate,
+    UserManageOut,
+    UserOut,
+    UserUpdate,
+)
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
@@ -32,6 +39,10 @@ async def get_current_user(
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
+    # ⚠️ 停用要**立刻**生效 —— token 有 7 天有效期, 不查这一列的话,
+    #    管理员停用了账号, 对方手上的 token 照样能用一整周.
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号已停用")
     return user
 
 
@@ -58,6 +69,8 @@ def _anonymous_user() -> User:
         password_hash="",
         role=UserRole.anonymous,
         api_token=None,
+        is_active=True,
+        password_required=False,
         created_at=now,
         updated_at=now,
     )
@@ -81,21 +94,27 @@ async def get_optional_user(
     except (TypeError, ValueError):
         return _anonymous_user()
     user = await session.get(User, user_id)
+    if user and not user.is_active:
+        # 停用的账号 → 退化成匿名 (它连"自己的身份"都不该还有)
+        return _anonymous_user()
     return user or _anonymous_user()
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, session: AsyncSession = Depends(get_session)):
-    """登录.
+    """登录 —— **账号必须管理员先建过** (2026-10-25 账号管理重构).
 
-    2026-10-25 重构 —— **普通用户免密, 管理员要密码**:
-
-    | 输入 | 结果 |
+    | 账号 | 登录要求 |
     |---|---|
-    | 'zhangsan' / 'zhangsan@twsc.com.cn' | 免密登录; 账号不存在则**首次登录自动开通** (角色 tester) |
-    | 'admin' (或其他管理员账号) | **必须密码** —— 缺密码时返回 `password_required` |
+    | 管理员建的普通账号 (建号时没给密码) | 免密: 只填用户名就能进 |
+    | 管理员建的普通账号 (建号时给了密码) | 必须密码 |
+    | 管理员账号 | 必须密码 |
+    | 库里没有 / 已被停用 | 401 |
 
-    ⚠️ 密码可空 (LoginRequest.password 默认 ""), 这是"一键免密"的落点.
+    ⚠️ 为什么不再"首次登录自动开通": 任何人知道同事邮箱就能进他的号 ——
+       账号必须**管理员先建**, 登录才是真的鉴权. 免密只保留在"管理员认可这个号"
+       的前提下 —— 免的是密码, 不是身份.
+
     ⚠️ 管理员缺密码时返回 401 + detail.code='password_required', 前端据此
        展开密码框 —— 别改成笼统的"用户名或密码错误", 那样用户会一直以为自己
        密码错了, 而实际是"这个账号压根不需要密码".
@@ -103,26 +122,35 @@ async def login(req: LoginRequest, session: AsyncSession = Depends(get_session))
     user = await _find_user(session, req.username)
 
     if user is None:
-        # 账号不存在 → 首次登录自动开通 (公司邮箱即身份)
-        user = await _provision_user(session, req.username, req.password)
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+        # 账号不存在 → 不给自动开通, 让管理员先建号
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "account_not_found", "message": "账号不存在, 请联系管理员开通"},
+        )
 
-    if user.role == UserRole.admin:
-        # 管理员必须密码
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "account_disabled", "message": "账号已停用, 请联系管理员"},
+        )
+
+    # 需要密码的两种情况: 管理员账号 / 建号时设了密码的账号
+    need_password = user.role == UserRole.admin or user.password_required
+    if need_password:
         if not req.password:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"code": "password_required", "message": "管理员账号需要密码"},
+                detail={
+                    "code": "password_required",
+                    "message": "管理员账号需要密码" if user.role == UserRole.admin else "该账号需要密码",
+                },
             )
         if not verify_password(req.password, user.password_hash):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
-    else:
-        # 普通用户: 密码**可空** (免密登录).
-        # 填了就必须对 —— 用户明确输了密码, 却不校验, 会让他以为自己密码是错的
-        # (或者反过来, 以为密码生效了). 首次开通时这个密码会被存成账号密码.
-        if req.password and not verify_password(req.password, user.password_hash):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+    elif req.password:
+        # 免密账号: 用户还是输了密码 —— 这个账号**压根没有密码**, 输什么都对不上.
+        # 直接放行 (而不是报"密码错误"), 否则用户会以为自己记错了密码.
+        pass
 
     token, expires_in = create_access_token(user.id, {"role": user.role.value, "username": user.username})
     return TokenResponse(access_token=token, expires_in=expires_in)
@@ -138,76 +166,155 @@ async def _find_user(session: AsyncSession, raw_username: str) -> User | None:
     return None
 
 
-async def _provision_user(
-    session: AsyncSession, raw_username: str, password: str = ""
-) -> User | None:
-    """首次登录自动开通账号 (公司邮箱即身份).
-
-    只有**合法的公司邮箱**才能开通 —— 输入 'admin' 或 'zhangsan@别的域' 一律
-    返回 None (走"用户名或密码错误"), 免得垃圾输入在库里堆出一堆账号.
-
-    ⚠️ 密码: 用户输了就存成账号密码 (他主动设的), 没输就存一个随机的 ——
-       两种情况下这个账号都能**免密**登录 (普通用户默认免密), 但只有前一种
-       还能用密码进. 存随机的而不是空串: 免得以后有人给 users 表加个
-       "空密码也算对"的逻辑就把它放行了.
-    """
-    if not settings.AUTH_AUTO_PROVISION:
-        return None
-    email = to_email(raw_username)
-    if not email:
-        return None
-
-    user = User(
-        username=email,
-        password_hash=hash_password(password) if password else hash_password(secrets.token_urlsafe(32)),
-        role=UserRole.tester,
-    )
-    session.add(user)
-    try:
-        await session.commit()
-    except IntegrityError:
-        # 并发首次登录: 另一个请求刚建好, 直接用它
-        await session.rollback()
-        result = await session.execute(select(User).where(User.username == email))
-        return result.scalar_one_or_none()
-    await session.refresh(user)
-    return user
-
-
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)):
     return user
 
 
-@router.post("/register", response_model=UserOut, status_code=201)
-async def register(
+# ===== 账号管理 (仅 admin) =====
+# 用户名口径: 普通用户 = 公司邮箱 (管理员建号时填前缀或全邮箱都行, 后端统一
+# 补成 'zhangsan@twsc.com.cn'); 管理员 = 不含 @ 的账号名.
+
+
+def _normalize_username(raw: str, role: UserRole) -> str:
+    """建号时的用户名归一.
+
+    · admin 角色 → 账号名原样 (小写, 去空格), **不补邮箱后缀** ——
+      管理员是账号名不是邮箱, 补上域名就变成另一个东西了.
+    · 其他角色  → 必须是公司邮箱形式 (填前缀自动补后缀).
+    """
+    s = (raw or "").strip().lower()
+    if not s:
+        raise HTTPException(status_code=422, detail="用户名不能为空")
+    if role == UserRole.admin:
+        if "@" in s:
+            raise HTTPException(status_code=422, detail="管理员账号名不能带 @, 请用纯账号名")
+        return s
+    email = to_email(s)
+    if not email:
+        raise HTTPException(
+            status_code=422,
+            detail=f"普通用户必须是公司邮箱 (如 zhangsan{settings.AUTH_EMAIL_DOMAIN})",
+        )
+    return email
+
+
+@router.get("/users", response_model=list[UserManageOut])
+async def list_users(
+    session: AsyncSession = Depends(get_session),
+    _admin: User = Depends(require_role(UserRole.admin)),
+):
+    """账号列表 —— 设置页「用户管理」区块的数据源."""
+    result = await session.execute(select(User).order_by(User.id))
+    return list(result.scalars().all())
+
+
+@router.post("/users", response_model=UserManageOut, status_code=201)
+async def create_user(
     req: UserCreate,
     session: AsyncSession = Depends(get_session),
     _admin: User = Depends(require_role(UserRole.admin)),
 ):
-    """仅 admin 可创建用户.
+    """管理员建号.
 
-    ⚠️ 2026-10-25: 用户名按**公司邮箱**存 (填 'zhangsan' 自动补成
-       'zhangsan@twsc.com.cn'), 跟登录口径一致 —— 否则会出现"登录要邮箱、
-       建号填的是短名"这种对不上的情况.
-
-    ⚠️ 密码可以不给 (普通用户免密登录用不上). 给不了就存一个随机的,
-       这个账号只能免密进, 管理员也登不进去 —— 符合"普通用户没有密码"的设定.
+    ⚠️ 密码给不给由管理员定:
+       · 给了 → password_required=True, 登录必须输密码;
+       · 没给 → 免密账号 (只填用户名就能进), password_hash 存随机串
+         (不是空串 —— 免得以后有人加个"空密码也算对"的判断就把它放行了).
     """
-    username = to_email(req.username) or req.username.strip().lower()
-    password_hash = (
-        hash_password(req.password) if req.password else hash_password(secrets.token_urlsafe(32))
-    )
+    username = _normalize_username(req.username, req.role)
+
+    password = (req.password or "").strip()
+    if req.password_required and not password:
+        raise HTTPException(status_code=422, detail="要求密码登录的账号必须设置密码")
+    if req.role == UserRole.admin and not password:
+        # 管理员账号必须密码, 否则建出来也登不进去
+        raise HTTPException(status_code=422, detail="管理员账号必须设置密码")
+
     user = User(
         username=username,
-        password_hash=password_hash,
+        password_hash=hash_password(password) if password else hash_password(secrets.token_urlsafe(32)),
         role=req.role,
+        is_active=True,
+        password_required=bool(password),
     )
     session.add(user)
     try:
         await session.commit()
-    except Exception as e:
+    except IntegrityError:
         await session.rollback()
-        raise HTTPException(status_code=400, detail=f"创建失败:{e}")
+        raise HTTPException(status_code=409, detail=f"账号已存在: {username}")
     await session.refresh(user)
     return user
+
+
+@router.patch("/users/{user_id}", response_model=UserManageOut)
+async def update_user(
+    user_id: int,
+    req: UserUpdate,
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_role(UserRole.admin)),
+):
+    """改账号 —— 停用/启用、改角色、重置密码.
+
+    ⚠️ 三条护栏 (防止管理员把自己锁在门外):
+       ① 不能停用自己;
+       ② 不能降级自己 (把自己从 admin 降成 tester);
+       ③ 不能停用/降级**最后一个**管理员 —— 否则这个系统再没人能管账号了.
+    """
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    # ① 停用 / 启用
+    if req.is_active is not None and req.is_active != user.is_active:
+        if user.id == admin.id and not req.is_active:
+            raise HTTPException(status_code=400, detail="不能停用当前登录的账号")
+        if not req.is_active and user.role == UserRole.admin:
+            await _guard_last_admin(session, user.id)
+        user.is_active = req.is_active
+
+    # ② 重置密码 —— 给了新密码就换掉, 同时这个账号变成"必须密码"
+    #    (不变式: password_required=True ⟹ 这个账号有可用的密码)
+    new_password = (req.password or "").strip()
+    if new_password:
+        user.password_hash = hash_password(new_password)
+        user.password_required = True
+
+    # ③ 角色变更
+    if req.role is not None and req.role != user.role:
+        if user.id == admin.id:
+            raise HTTPException(status_code=400, detail="不能修改当前登录账号自己的角色")
+        if user.role == UserRole.admin:
+            await _guard_last_admin(session, user.id)
+        if req.role == UserRole.admin and not user.password_required:
+            # 升成管理员却没密码 → 这个号登进去也没法用管理功能, 不许升
+            raise HTTPException(status_code=422, detail="升级为管理员必须设置密码")
+        user.role = req.role
+        if req.role == UserRole.admin:
+            user.password_required = True
+
+    # ④ 密码要求开关 (没给新密码时才处理 —— 给了新密码的走 ② 已经定了)
+    if req.password_required is not None and not new_password:
+        if req.password_required:
+            if not user.password_required:
+                raise HTTPException(status_code=422, detail="要求密码登录的账号必须设置密码")
+            user.password_required = True
+        else:
+            # 改成免密 → 密码作废 (存随机串, 免得"空密码也算对")
+            user.password_hash = hash_password(secrets.token_urlsafe(32))
+            user.password_required = False
+
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+async def _guard_last_admin(session: AsyncSession, exclude_user_id: int) -> None:
+    """系统里只剩一个管理员时, 不许把他停用/降级."""
+    result = await session.execute(
+        select(User).where(User.role == UserRole.admin, User.is_active.is_(True))
+    )
+    admins = [u for u in result.scalars().all() if u.id != exclude_user_id]
+    if not admins:
+        raise HTTPException(status_code=400, detail="系统至少要保留一个可用的管理员账号")
