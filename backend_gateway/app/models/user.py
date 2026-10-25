@@ -1,6 +1,6 @@
 """User + RBAC。"""
 from datetime import datetime
-from sqlalchemy import String, DateTime, Enum, BigInteger, Boolean
+from sqlalchemy import String, DateTime, Enum, BigInteger, Boolean, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 import enum
 
@@ -32,6 +32,15 @@ class User(Base):
     # ⚠️ 免密账号的 password_hash 仍存一个随机哈希 (不是空串) —— 免得哪天
     #    有人加个"空密码也算对"的判断就把它放行了.
     password_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 登录态版本号 —— **改密码 / 改角色 / 停用账号时自增**, 用来作废旧 token.
+    #
+    # ⚠️ 为什么需要它: JWT 一签发就是 7 天有效. 管理员重置了某人的密码 (或把
+    #    角色降了 / 停用了账号), 但那个人手上的旧 token **照样能用到过期** ——
+    #    "改了密码等于没改". 光靠"查库看 is_active"只能挡住停用, 挡不住改密码.
+    #
+    # ⚠️ 老 token (签发时还没有这一版号的) 没有 tv 字段 → 当成 0 处理,
+    #    而存量用户的 token_version 也是 0 → 升级后不用全员重新登录.
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

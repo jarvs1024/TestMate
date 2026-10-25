@@ -40,7 +40,7 @@ async def _package_bytes(asset: Asset) -> tuple[bytes, str] | None:
 
     优先用上传时存的原始包 (字节稳定); 老资产没存包则即时确定性打包.
     """
-    base = git_sync.WORKSPACE / asset.git_path
+    base = git_sync.resolve_in_workspace(asset.git_path) or (git_sync.WORKSPACE / "__invalid__")
     pkg_dir = base / "package"
     if pkg_dir.is_dir():
         # 优先匹配当前版本的包, 否则取目录里第一个

@@ -89,8 +89,7 @@ async def test_normal_user_cannot_change_settings(client, stranger_user):
 # ---------- 设置: 测试连接端点只给管理员 ----------
 
 @pytest.mark.parametrize("path", [
-    "/test/ragflow", "/test/pr_agent",
-    "/test/review_agent", "/test/gitlab", "/test/dingtalk",
+    "/test/ragflow", "/test/review_agent", "/test/gitlab", "/test/dingtalk",
 ])
 async def test_normal_user_cannot_run_connection_tests(client, stranger_user, path):
     """「测试连接」全是 admin only (以前 ragflow/pr_agent/review_agent 漏了)."""

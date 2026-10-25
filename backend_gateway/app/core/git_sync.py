@@ -310,6 +310,52 @@ def remove_path(rel_path: str) -> None:
         target.unlink()
 
 
+def safe_rel_path(rel_path: str) -> str | None:
+    """把"仓库里的相对路径"归一化; 不安全就返回 None.
+
+    ⚠️ 为什么需要这道闸: index.json 是**远端**内容 (GitLab 仓库里的文件) ——
+       谁有仓库写权限, 谁就能改它. 而里面的 ``git_path`` 会被拼成
+       ``WORKSPACE / git_path`` 去**读文件** (下载 / 看文件列表 / 打包).
+       不挡的话, 一个 "../../../app/.env" 就能把容器里的 JWT_SECRET 读出来 ——
+       **仓库写权限 ≠ 服务器文件读权限**, 这中间不能有一步跳跃.
+
+    规则 (刻意保守, 合法路径本来就不含这些):
+      · 不许绝对路径 (``/etc/passwd``)
+      · 不许任何 ``..`` 段 (哪怕是 ``a/../b`` 这种"看着无害"的)
+      · 不许空路径
+    """
+    s = (rel_path or "").strip().replace("\\", "/")
+    if not s or s.startswith("/"):
+        return None
+    parts: list[str] = []
+    for seg in s.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            return None
+        parts.append(seg)
+    if not parts:
+        return None
+    return "/".join(parts)
+
+
+def resolve_in_workspace(rel_path: str) -> Path | None:
+    """把相对路径解析成工作区内的绝对路径; 越界就返回 None.
+
+    ⚠️ 这是**读侧**的第二道闸 —— 即使 DB 里已经存进了脏数据 (比如老版本留下的),
+       也不会被拼成 WORKSPACE 之外的路径.
+    """
+    safe = safe_rel_path(rel_path)
+    if not safe:
+        return None
+    base = WORKSPACE.resolve()
+    target = (base / safe).resolve()
+    # resolve 之后还在 base 之下才算合法 (挡掉符号链接逃逸)
+    if target != base and base not in target.parents:
+        return None
+    return target
+
+
 def clean_path(rel_path: str) -> bool:
     """删掉某路径下**未被 git 跟踪**的文件 (落盘失败的残留清理用).
 

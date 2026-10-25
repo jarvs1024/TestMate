@@ -93,6 +93,9 @@ AUDIT_ACTION_LABEL: dict[str, str] = {
     "discard": "作者删除 (未上架)",
     "delete": "管理员删除",
     "conflict_resolved": "同步冲突已解决",
+    # 账号操作 (复用同一张审计表, 见 app/api/auth.py 的 _audit_user_action)
+    "user.create": "创建账号",
+    "user.update": "修改账号",
 }
 
 

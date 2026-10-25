@@ -28,7 +28,7 @@ from pydantic import ValidationError
 from fastapi import Response
 from sqlalchemy import Text, cast, select, or_, update
 
-from app.api.auth import get_current_user
+from app.api.auth import get_current_user, get_optional_user
 from app.core import git_sync, pkg
 from app.core.asset_jobs import enqueue, retry_job, start_worker
 from app.core.asset_locks import code_lock
@@ -125,6 +125,16 @@ async def require_publisher(user: User = Depends(get_current_user)) -> User:
 async def _is_reviewer(user: User) -> bool:
     """能不能审核 (管理员永远可以) —— 判定在 market_policy."""
     return await market_policy.is_reviewer(user)
+
+
+async def _public_download_enabled() -> bool:
+    """未登录能不能下载已上架资产的包 (设置项 marketplace.public_download, 默认关)."""
+    try:
+        from app.core.settings_store import to_bool
+
+        return to_bool(await _setting("marketplace.public_download", "false"), False)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 async def require_reviewer(user: User = Depends(get_current_user)) -> User:
@@ -291,6 +301,23 @@ async def _audit(
 
 
 # ---------- 读 ----------
+
+def _asset_dir(a: Asset) -> Path:
+    """资产在本地工作区里的目录 —— **越界就当"没落盘"** (404).
+
+    ⚠️ 为什么必须校验: ``git_path`` 来自**远端** index.json (GitLab 仓库里的文件) ——
+       谁有仓库写权限, 谁就能改它. 而它会被拼成 ``WORKSPACE / git_path`` 去**读文件**
+       (下载 / 看文件列表 / 打包). 不校验的话, 一个 ``../../../app/.env`` 就能把容器里的
+       JWT_SECRET 读出来 —— **仓库写权限 ≠ 服务器文件读权限**, 中间不能有这一步跳跃.
+
+    ⚠️ 这是**读侧**的第二道闸: 落库时 (market_catalog.apply_index_to_db) 也校验过一次,
+       两道都要有 —— 数据库里万一已经有脏数据 (老版本留下的), 读侧也能挡住.
+    """
+    p = git_sync.resolve_in_workspace(a.git_path)
+    if p is None:
+        raise HTTPException(status_code=404, detail="资产文件尚未落盘")
+    return p
+
 
 def _to_out(a: Asset, can_review: bool = False) -> AssetOut:
     out = AssetOut.model_validate(a)
@@ -553,28 +580,48 @@ async def list_projects(_user: User = Depends(get_current_user)) -> dict[str, An
 @router.get("/jobs", response_model=AssetJobListOut)
 async def list_jobs(
     limit: int = Query(20, ge=1, le=100),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> AssetJobListOut:
+    """任务列表 —— **默认只看自己的** (admin 看全部).
+
+    ⚠️ 为什么要限本人: job 里带 code / asset_name / git_path ——
+       那是**还没通过审核**的资产信息. 以前任何登录用户都能列出全市场的任务,
+       等于绕过审核机制去偷看别人的草稿.
+    """
     async with AsyncSessionLocal() as session:
-        rows = (
-            await session.execute(select(AssetJob).order_by(AssetJob.id.desc()).limit(limit))
-        ).scalars().all()
+        stmt = select(AssetJob).order_by(AssetJob.id.desc())
+        if not market_policy.is_admin(user):
+            stmt = stmt.where(AssetJob.created_by == user.id)
+        rows = (await session.execute(stmt.limit(limit))).scalars().all()
         return AssetJobListOut(items=[AssetJobOut.model_validate(j) for j in rows], total=len(rows))
 
 
 @router.get("/jobs/{job_id}", response_model=AssetJobOut)
-async def get_job(job_id: int, _user: User = Depends(get_current_user)) -> AssetJobOut:
+async def get_job(job_id: int, user: User = Depends(get_current_user)) -> AssetJobOut:
     async with AsyncSessionLocal() as session:
         job = await session.get(AssetJob, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job 不存在")
+        if not market_policy.is_admin(user) and job.created_by != user.id:
+            raise HTTPException(status_code=403, detail="只能查看自己的任务")
         return AssetJobOut.model_validate(job)
 
 
 @router.post("/jobs/{job_id}/retry", response_model=AssetJobOut)
 async def retry_failed_job(
-    job_id: int, _user: User = Depends(require_publisher)
+    job_id: int, user: User = Depends(require_publisher)
 ) -> AssetJobOut:
+    """重试一个失败的任务 —— **只能重试自己的** (admin 除外).
+
+    ⚠️ 以前任何有发布权的人都能重试**别人**的任务 —— 等于让别人攒的失败任务
+       被自己触发执行 (改别人的资产 / 抢着发布).
+    """
+    async with AsyncSessionLocal() as session:
+        job = await session.get(AssetJob, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job 不存在")
+        if not market_policy.is_admin(user) and job.created_by != user.id:
+            raise HTTPException(status_code=403, detail="只能重试自己的任务")
     ok = await retry_job(job_id)
     if not ok:
         raise HTTPException(status_code=404, detail="job 不存在")
@@ -763,7 +810,7 @@ async def get_asset_doc(code: str, user: User = Depends(get_current_user)) -> As
             detail="连接器没有文档, 只有 MCP 配置 (见资产详情的「MCP 配置」)",
         )
 
-    root = pkg.files_root(git_sync.WORKSPACE / a.git_path)
+    root = pkg.files_root(_asset_dir(a))
     wanted = "SKILL.md" if a.kind == "skill" else "README.md"
     target = root / wanted
     if not target.is_file():
@@ -797,7 +844,7 @@ async def get_asset_files(code: str, user: User = Depends(get_current_user)) -> 
     assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
                    is_admin=market_policy.is_admin(user))
 
-    root = pkg.files_root(git_sync.WORKSPACE / a.git_path)
+    root = pkg.files_root(_asset_dir(a))
     nodes: list[AssetFileNode] = []
     if root.is_dir():
         for p in sorted(root.rglob("*")):
@@ -831,7 +878,7 @@ async def get_asset_bundle(
     assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
                    is_admin=market_policy.is_admin(user))
 
-    base = git_sync.WORKSPACE / a.git_path
+    base = _asset_dir(a)
     root = pkg.files_root(base)
     if not root.is_dir():
         raise HTTPException(status_code=404, detail="资产文件尚未落盘")
@@ -871,17 +918,35 @@ def _find_stored_package(base: Path, version: str) -> Path | None:
 
 @router.get("/{code}/versions/{version}/download")
 async def download_package(
-    code: str, version: str, user: User = Depends(get_current_user)
+    code: str, version: str, user: User = Depends(get_optional_user)
 ) -> Response:
-    """下载安装包 (原始 zip; 老资产没有存包则即时确定性打包)."""
+    """下载安装包 (原始 zip; 老资产没有存包则即时确定性打包).
+
+    ⚠️ **未登录也能下, 但有条件** (设置项 marketplace.public_download, 默认关):
+       Qoder 原生安装器拉 marketplace.json 是**公开**的, 但它下载安装包时带不了
+       TestMate 的登录 token —— 不开这个口子, 那个安装器必然 401, 功能是死路.
+       开了之后也**只对已上架 (published) 的资产生效**: 待审核/已下架的照旧要登录.
+    """
     async with AsyncSessionLocal() as session:
         a = (
             await session.execute(select(Asset).where(Asset.code == code))
         ).scalar_one_or_none()
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-    assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
-                   is_admin=market_policy.is_admin(user))
+
+    is_anon = getattr(user, "id", 0) == 0
+    if is_anon:
+        if not await _public_download_enabled():
+            raise HTTPException(
+                status_code=401,
+                detail="下载需要登录 (若要让 Qoder 原生安装器直接下载, 请管理员开启「marketplace.public_download」)",
+            )
+        if a.publish_status != "published":
+            # 未上架的资产 (待审核/被驳回/已下架) 不给匿名下载
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+    else:
+        assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
+                       is_admin=market_policy.is_admin(user))
 
     if a.kind == "mcp":
         # ⚠️ 连接器没有安装包 —— 它是一段 MCP 配置, 不是一堆文件
@@ -890,7 +955,7 @@ async def download_package(
             detail="连接器没有安装包, 请照资产详情里的「MCP 配置」手动添加到宿主",
         )
 
-    base = git_sync.WORKSPACE / a.git_path
+    base = _asset_dir(a)
     stored = _find_stored_package(base, version)
     if stored is not None:
         data = stored.read_bytes()
@@ -2222,9 +2287,15 @@ async def update_asset(
 
 @router.post("/sync", response_model=SyncOut)
 async def sync_from_workspace(
-    _user: User = Depends(require_publisher),
+    _user: User = Depends(require_admin),
 ) -> SyncOut:
-    """从本地工作区的 index.json 回灌 DB 镜像, 并把待同步的任务重新入队."""
+    """从本地工作区的 index.json 回灌 DB 镜像, 并把待同步的任务重新入队.
+
+    ⚠️ **admin only**: 这是全市场级别的运维动作 —— 回灌 DB 镜像 + 把所有
+       待同步的任务重新入队. 以前用的是 require_publisher (默认 tester 就能发),
+       等于任何发布者都能触发一次全量回灌 (会把远端 index.json 的内容覆盖到
+       本地 DB, 也会把别人的待同步任务全部重新排队).
+    """
     idx = await read_index()
     async with AsyncSessionLocal() as session:
         added, updated = await apply_index_to_db(session)

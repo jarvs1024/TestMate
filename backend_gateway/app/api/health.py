@@ -6,6 +6,7 @@
   /health/services 聚合外部服务(RAGFlow / ReviewAgent)可达性,前端顶栏 30s 轮询
 """
 import asyncio
+import logging
 import time
 from typing import Tuple
 
@@ -13,6 +14,7 @@ from fastapi import APIRouter, Response, status
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -23,14 +25,26 @@ async def health() -> dict:
     """Liveness probe — 进程活着就返 ok,不依赖任何外部。
 
     容器编排 (k8s / docker compose) 用这个判断 "要不要重启容器"。
+
+    ⚠️ 这里**带 version**: 前端页头要显示版本号, 而根路径 `/` 在浏览器里
+       返回的是前端 SPA 的 HTML (不是这个后端) —— 版本号只能从这儿取.
     """
-    return {"status": "ok"}
+    return {"status": "ok", "version": settings.APP_VERSION}
 
 
 # ---------------- readiness ----------------
 
+# ⚠️ **错误原文不能回给调用方** —— /health/ready 是**无鉴权**的
+#    (docker compose healthcheck / k8s readinessProbe 拿不到 token).
+#    MySQL 的报错里带着账号和 host:port, Redis 的报错带 host:port,
+#    git 的报错直接带 SSH 仓库地址 —— 全是内网拓扑.
+#    探针函数返回**原文**, 由出口统一压成"哪个不可用", 原文只进日志.
+def _public_error(kind: str, raw: str) -> str:
+    return f"{kind} 不可用" if raw else ""
+
+
 async def _check_mysql() -> Tuple[bool, str]:
-    """SELECT 1 探 MySQL,2s 超时。返回 (ok, err_msg)"""
+    """SELECT 1 探 MySQL,2s 超时。返回 (ok, 原始 err_msg)"""
     try:
         from sqlalchemy import text
         from app.db.session import engine
@@ -38,11 +52,12 @@ async def _check_mysql() -> Tuple[bool, str]:
             await asyncio.wait_for(conn.execute(text("SELECT 1")), timeout=2.0)
         return True, ""
     except Exception as e:
+        logger.warning("readiness: mysql 探针失败: %s: %s", type(e).__name__, e)
         return False, f"{type(e).__name__}: {e}"
 
 
 async def _check_redis() -> Tuple[bool, str]:
-    """PING 探 Redis,2s 超时。返回 (ok, err_msg)"""
+    """PING 探 Redis,2s 超时。返回 (ok, 原始 err_msg)"""
     try:
         import redis.asyncio as aioredis
         from app.core.config import settings
@@ -59,6 +74,7 @@ async def _check_redis() -> Tuple[bool, str]:
         finally:
             await client.aclose()
     except Exception as e:
+        logger.warning("readiness: redis 探针失败: %s: %s", type(e).__name__, e)
         return False, f"{type(e).__name__}: {e}"
 
 
@@ -78,6 +94,12 @@ async def health_ready(response: Response) -> dict:
     if not overall_ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     market = await _check_marketplace()
+    # ⚠️ 出口统一脱敏 —— 探针返回的是**原文**(内部日志要看), 这里对外只说"哪个不可用".
+    if mysql_err:
+        mysql_err = _public_error("MySQL", mysql_err)
+    if redis_err:
+        redis_err = _public_error("Redis", redis_err)
+    market = _sanitize_market(market)
     return {
         "status": "ok" if overall_ok else "degraded",
         "checks": {
@@ -86,6 +108,17 @@ async def health_ready(response: Response) -> dict:
             "marketplace": market,
         },
     }
+
+
+def _sanitize_market(market: dict) -> dict:
+    """市场链路状态脱敏 (git 报错里有 SSH 仓库地址)."""
+    out = dict(market)
+    git = out.get("gitlab") or {}
+    if git.get("error"):
+        out["gitlab"] = {**git, "error": _public_error("GitLab", str(git["error"]))}
+    if out.get("error"):
+        out["error"] = _public_error("市场状态", str(out["error"]))
+    return out
 
 
 # ---------------- 市场链路 ----------------
@@ -114,6 +147,9 @@ async def _probe_gitlab() -> Tuple[bool, str]:
             ok, err = False, (se or so).strip()[:200]
     except Exception as e:  # noqa: BLE001
         ok, err = False, f"{type(e).__name__}: {e}"
+    if err:
+        # ⚠️ git 的报错里带 SSH 仓库地址 (内网 host + 仓库路径) —— 原文进日志, 不外发
+        logger.warning("readiness: gitlab 探针失败: %s", err)
 
     _market_probe_cache["gitlab"] = {"ok": ok, "err": err, "ts": now}
     return ok, err
@@ -133,6 +169,7 @@ async def _check_marketplace() -> dict:
         git_ok, git_err = await _probe_gitlab()
         out["gitlab"] = {"ok": git_ok, "error": git_err or None}
     except Exception as e:  # noqa: BLE001
+        logger.warning("readiness: gitlab 探针异常: %s: %s", type(e).__name__, e)
         out["gitlab"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     try:
@@ -164,6 +201,7 @@ async def _check_marketplace() -> dict:
         out["pending_jobs"] = int(pending)
         out["unpublished"] = int(unpublished)
     except Exception as e:  # noqa: BLE001
+        logger.warning("readiness: 市场统计查询失败: %s: %s", type(e).__name__, e)
         out["error"] = f"{type(e).__name__}: {e}"
 
     out["ok"] = bool(out["gitlab"]["ok"]) and out["failed_jobs"] == 0

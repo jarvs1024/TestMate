@@ -61,13 +61,25 @@ def _is_default(value: Any, default: Any, value_type: str) -> bool:
 #   · api_key / api_token / 加签密钥 = 凭据本身
 #   · publisher_ids / publisher_usernames / reviewer_usernames = 权限白名单
 #     (谁能上架/谁能审核 —— 这是管理员的配置, 普通用户该问管理员, 不该自己看)
+#   · marketplace.git.remote = SSH 地址 + 仓库路径 (拿到就能知道资产仓库在哪,
+#     配合 git.branch 就能拼出完整的目标); publisher_roles = 谁能发布的策略
 #
 # ⚠️ 为什么是**整条不返回**而不是打个码: 掩码后的字符串照样进了 JS,
 #    而且「已设置 / 未设置」本身就是信息.
+#
+# ⚠️ **不要只靠这个正则** —— 正则漏项的代价是"凭据/内网地址直接泄露给普通用户"
+#    (2026-10-26 实测: git.remote / git.branch / publisher_roles 三项就漏在这).
+#    新的敏感项请在 settings_store.SETTING_SCHEMA 里显式标 ``"admin_only": True``,
+#    正则只作为兜底.
 _ADMIN_ONLY_SETTING_RE = re.compile(
     r"(webhook|secret|token|api_key|password|publisher_ids|publisher_usernames|reviewer_usernames)",
     re.IGNORECASE,
 )
+
+
+def _is_admin_only(schema: dict) -> bool:
+    """这条设置是不是"只给管理员看"."""
+    return bool(schema.get("admin_only")) or bool(_ADMIN_ONLY_SETTING_RE.search(schema["key"]))
 
 
 @router.get("/schema")
@@ -81,7 +93,7 @@ async def get_schema(user: User = Depends(get_current_user)) -> dict:
     values = await get_all()
     by_cat: dict[str, list[dict]] = {}
     for s in SETTING_SCHEMA:
-        if not is_admin and _ADMIN_ONLY_SETTING_RE.search(s["key"]):
+        if not is_admin and _is_admin_only(s):
             continue
         raw = values.get(s["key"], s["default"])
         if s["value_type"] == "bool":
@@ -208,31 +220,6 @@ class EmbedOut(BaseModel):
 
 
 
-
-@router.post("/test/pr_agent", response_model=SettingTestOut)
-async def test_pr_agent(user: User = Depends(get_current_user)) -> SettingTestOut:
-    """用当前 DB 的 pr_agent 配置打 telemetry /health 端点."""
-    if user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
-    from app.core.settings_store import _rewrite_loopback
-    raw_url = (await get("pr_agent.base_url", "")) or ""
-    base_url = _rewrite_loopback(raw_url).rstrip("/") if raw_url else ""
-    api_token = await get("pr_agent.api_token", "") or ""
-    if not base_url:
-        return SettingTestOut(ok=False, status="off", message="未配置 base_url", detail=None)
-    try:
-        url = f"{base_url}/api/v1/telemetry/health"
-        headers = {"Accept": "application/json"}
-        if api_token:
-            headers["Authorization"] = f"Bearer {api_token}"
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code == 200:
-                data = r.json() or {}
-                return SettingTestOut(ok=True, status="ok", message=f"连通 · backend={data.get('backend', '?')}", detail=data)
-            return SettingTestOut(ok=False, status="warn", message=f"HTTP {r.status_code}", detail={"text": r.text[:200]})
-    except Exception as e:
-        return SettingTestOut(ok=False, status="off", message=f"不可达: {type(e).__name__}: {e}", detail=None)
 
 @router.post("/test/gitlab", response_model=SettingTestOut)
 async def test_gitlab(_user: User = Depends(get_current_user)) -> SettingTestOut:

@@ -13,6 +13,7 @@ index.json 是 GitLab 仓库根目录下的一份索引, 前端列表直接消�
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -28,6 +29,8 @@ INDEX_SCHEMA_VERSION = 1
 
 KIND_DIRS = {"plugin": "plugins", "skill": "skills", "mcp": "connectors"}
 VALID_KINDS = set(KIND_DIRS)
+
+logger = logging.getLogger(__name__)
 
 # 分类 → 目录 slug: **唯一真源在 market_categories** (分类表 / 校验 / 目录 / 前端 chip 共用)
 # 这里保留两个别名是为了不破坏既有引用 (app/api/marketplace.py 等)
@@ -335,6 +338,17 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         code = e.get("code")
         if not code or e.get("kind") not in VALID_KINDS:
             continue
+        # ⚠️ git_path 来自**远端** index.json —— 谁有仓库写权限谁就能改它.
+        #    它会被拼成 WORKSPACE / git_path 去读文件, 所以入库前先校验:
+        #    不安全 (绝对路径 / 含 ..) 的直接**跳过这条资产**, 别让它进 DB.
+        raw_git_path = e.get("git_path") or ""
+        safe_git_path = git_sync.safe_rel_path(raw_git_path) if raw_git_path else ""
+        if raw_git_path and not safe_git_path:
+            logger.warning(
+                "index.json 里的 git_path 不安全, 已忽略该资产: code=%s git_path=%r",
+                code, raw_git_path[:120],
+            )
+            continue
         a = existing.get(code)
         if a is None:
             a = Asset(code=code)
@@ -361,7 +375,7 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         a.permissions = dict(e.get("permissions") or {})
         a.install_steps = list(e.get("install_steps") or [])
         a.bindings = dict(e.get("bindings") or {})
-        a.git_path = e.get("git_path") or ""
+        a.git_path = safe_git_path
         # 上下架状态: 索引里没有这一项的旧数据按 published 处理
         a.publish_status = e.get("publish_status") or "published"
         # 审核意见 (索引里没有这一项的旧数据 = 没有意见)

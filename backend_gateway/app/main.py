@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, pr_agent, review_agent, marketplace
+from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, review_agent, marketplace
 from app.api.agents import seed_agents
 from app.core.settings_store import seed_defaults
 from app.db.session import init_db
@@ -75,7 +75,6 @@ app.include_router(kb.router, prefix="/api/v1/kb", tags=["kb"])
 app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(settings_api.router, prefix="/api/v1/settings", tags=["settings"])
-app.include_router(pr_agent.router, prefix="/api/v1/pr-agent", tags=["pr-agent"])
 app.include_router(review_agent.router, prefix="/api/v1/review-agent", tags=["review-agent"])
 app.include_router(marketplace.router, prefix="/api/v1/assets", tags=["marketplace"])
 
@@ -88,12 +87,21 @@ async def qoder_marketplace(request: Request):
     并可用 autoUpdate 自动更新.
     """
     from app.core.qoder_marketplace import build_marketplace, render
-    from app.core.settings_store import get
+    from app.core.settings_store import get, to_bool
 
     configured = (await get("marketplace.public_base_url", "")) or ""
     base = configured.rstrip("/") or str(request.base_url).rstrip("/")
     name = (await get("marketplace.marketplace_name", "testmate")) or "testmate"
     manifest = await build_marketplace(base, name=name)
+    # ⚠️ 清单是**公开**的, 但里面的下载 URL 默认要登录 —— Qoder 自带安装器带不了
+    #    TestMate 的 token, 不开「marketplace.public_download」的话它下载必然 401.
+    #    记一条日志: 免得管理员配了 public_base_url 就以为"原生安装器已经通了".
+    if manifest.get("plugins") and not to_bool(await get("marketplace.public_download", "false"), False):
+        log.warning(
+            "marketplace.json 已生成, 但「marketplace.public_download」是关的 —— "
+            "Qoder 原生安装器下载安装包会 401",
+            plugins=len(manifest["plugins"]),
+        )
     return Response(content=render(manifest), media_type="application/json")
 
 

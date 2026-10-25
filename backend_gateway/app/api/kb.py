@@ -6,7 +6,7 @@
 - GET  /api/v1/kb/health          健康检查
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_user
@@ -108,7 +108,15 @@ async def get_documents(
             }
             for d in docs
         ]
-        return {"docs": cleaned, "total": len(cleaned)}
+        # ⚠️ total 必须是**全量**文档数, 不是本页条数!
+        #    RAGFlow 的 data.total 就是全量; 以前这里返回 len(cleaned) (本页数),
+        #    前端那圈翻页循环 `for (page=2; all.length < total)` 于是永远不执行
+        #    → 超过一页的数据集, 概览统计和预热都只拿到第一页.
+        try:
+            total = int(data.get("total") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        return {"docs": cleaned, "total": max(total, len(cleaned))}
     except Exception as e:
         logger.exception("list_documents failed")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
@@ -262,59 +270,12 @@ async def search(payload: SearchIn, _user: User = Depends(get_current_user)) -> 
 
 
 @router.get("/health")
-async def health() -> dict:
+async def health(_user: User = Depends(get_current_user)) -> dict:
+    """知识库 (RAGFlow) 可达性.
+
+    ⚠️ **要登录**: 以前这个端点无鉴权, 谁都能探到 RAGFlow 的地址/错误详情
+       (探针报错里带 base_url 和 api_key 的一部分) —— 登录用户之间的情报没必要共享.
+    """
     status, msg = await probe()
     return {"status": status, "message": msg}
 
-@router.api_route("/share-embed/{path:path}", methods=["GET"])
-async def share_embed_proxy(path: str = "", theme: str = "light", shared_id: str = "ea62499872bb11f1a82f771aafbe4f81") -> Response:
-    """代理 RAGFlow 共享搜索页 + 静态资源.
-
-    浏览器访问 /api/v1/kb/share-embed/search/share?shared_id=xxx&theme=dark
-    后端去 RAGFlow 拉 HTML, 在 <head> 注入 localStorage 主题, 再透传.
-
-    RAGFlow HTML 里的 /entry/ /chunk/ /assets/ 静态资源由前端 nginx 在
-    /api/v1/kb/share-embed/{path} 透传 (nginx 配 /share-embed/ 反代到 RAGFlow 端口 18080).
-
-    ⚠️ **theme 必须走白名单** —— 它会被拼进 <script> 里, 原样拼就是反射型 XSS:
-       nginx 把整个 /api/ 反代到后端 (与前端同源), 注入的脚本能直接读
-       localStorage['testmate:token'] 把登录态偷走. 白名单之外的值一律当 light.
-    """
-    import json
-
-    import httpx
-
-    # 白名单: 只有 light / dark 两种主题, 其他值(包括脚本片段)一律降级成 light
-    theme = theme if theme in ("light", "dark") else "light"
-
-    # 透传到 RAGFlow
-    if path:
-        # 子资源: /entry/.../xxx.js, /chunk/.../xxx.js, /assets/.../xxx.css 等
-        target_url = f"http://host.docker.internal:18080/{path}"
-    else:
-        target_url = f"http://host.docker.internal:18080/search/share?shared_id={shared_id}"
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(target_url)
-        r.raise_for_status()
-        content = r.content
-        content_type = r.headers.get("content-type", "application/octet-stream")
-
-    # 仅对 HTML 注入 localStorage 主题
-    if "text/html" in content_type:
-        html = content.decode("utf-8", errors="ignore")
-        # json.dumps 再包一层引号 —— 就算白名单以后被放宽, 也不会拼出可执行的 JS
-        inject = (
-            "<script>(function(){"
-            "try{var t=" + json.dumps(theme) + ";"
-            "localStorage.setItem('ragflow-ui-theme',t);"
-            "localStorage.setItem('ragflow-ui-theme-mode',t);}catch(e){}"
-            "})();</script>"
-        )
-        if "</head>" in html:
-            html = html.replace("</head>", inject + "</head>", 1)
-        else:
-            html = inject + html
-        return Response(content=html, media_type="text/html; charset=utf-8")
-
-    return Response(content=content, media_type=content_type)

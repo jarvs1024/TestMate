@@ -19,30 +19,11 @@ from app.core.identity import lookup_candidates
 
 # ---------- ① XSS ----------
 
-async def test_share_embed_theme_is_whitelisted(client):
-    """theme 被拼进 <script> —— 注入脚本片段必须被降级成 light."""
-    # 端点会去连 RAGFlow (本机没有), 连不上会抛错 —— 重点是**不能**返回注入内容
-    try:
-        r = await client.get(
-            "/api/v1/kb/share-embed/search/share",
-            params={"theme": "';alert(document.domain);//"},
-        )
-    except Exception:
-        return  # 连不上 RAGFlow, 注入逻辑根本没走到
-    if r.status_code == 200:
-        body = r.text
-        assert "alert(document.domain)" not in body
-        assert "'" not in body.split("localStorage.setItem('ragflow-ui-theme'")[0].split("var t=")[-1][:40]
-
-
-async def test_share_embed_theme_whitelist_logic():
-    """白名单逻辑本身: 只认 light / dark."""
-    from app.api.kb import share_embed_proxy  # noqa: F401  (确保模块可导入)
-
-    # 直接验证被接受的值 (通过源码里的常量避免重复实现)
-    src = open("app/api/kb.py", encoding="utf-8").read()
-    assert 'theme in ("light", "dark")' in src
-    assert "json.dumps(theme)" in src
+# ⚠️ 2026-10-26: 原先这里有两条 share-embed 的用例 (theme 白名单 / 注入防护).
+#    那个端点 (GET /kb/share-embed) **已经删掉**了 ——
+#    生产上从来没人用 (前端 iframe 直连 RAGFlow, nginx 也没配 /share-embed 路由),
+#    而它**无鉴权** + 硬编码 shared_id + 能代理 RAGFlow 的任意路径, 是个没必要的敞口.
+#    主题注入的防护改由"根本不开这个口子"来保证.
 
 
 # ---------- ② JWT_SECRET 来自 .env 文件 ----------

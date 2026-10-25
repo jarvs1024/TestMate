@@ -226,6 +226,9 @@ SETTING_SCHEMA: list[dict] = [
             "清空 = 退回「只看白名单」的老行为"
         ),
         "is_secret": False,
+        # ⚠️ 显式标 admin_only: 这条是**发布权限策略**, 泄露出去等于告诉
+        #    普通用户"怎么绕过白名单" —— 别指望正则能一直兜住 (见 settings.py 的说明).
+        "admin_only": True,
     },
     {
         "key": "marketplace.publisher_ids",
@@ -314,6 +317,9 @@ SETTING_SCHEMA: list[dict] = [
             "改完立即生效, 下次同步会用新地址"
         ),
         "is_secret": False,
+        # ⚠️ SSH 地址里带**内网 host + 仓库路径** → 普通用户看到等于把
+        #    资产仓库的位置交出去. 非管理员的 schema 里整条不给.
+        "admin_only": True,
     },
     {
         "key": "marketplace.git.branch",
@@ -322,6 +328,8 @@ SETTING_SCHEMA: list[dict] = [
         "default": "main",
         "description": "GitLab 分支 (资产提交到哪个分支)",
         "is_secret": False,
+        # ⚠️ 和 remote 配套 —— remote 藏了 branch 露出来, 等于只藏了一半.
+        "admin_only": True,
     },
     {
         "key": "marketplace.git.web_url",
@@ -365,6 +373,23 @@ SETTING_SCHEMA: list[dict] = [
         "default": "",
         "description": "对外可达的基地址 (Qoder 拉 marketplace.json 与安装包用; 留空则用请求来源)",
         "is_secret": False,
+    },
+    {
+        "key": "marketplace.public_download",
+        "category": "marketplace",
+        "value_type": "bool",
+        "default": "false",
+        "description": (
+            "**允许未登录下载已上架资产的安装包** (只对 publish_status=published 的资产生效) —— "
+            "关 = 下载必须带登录 token. "
+            "开这个是因为 Qoder 原生安装器拉 marketplace.json 是公开的, 但它下载安装包时"
+            "**带不了 TestMate 的登录 token**, 不开的话安装器必然 401. "
+            "⚠️ 开了之后: 知道地址的人 (不用登录) 就能下载**已上架**资产的包; "
+            "待审核/已下架的资产照旧要登录. 用之前先想清楚这批资产能不能对外."
+        ),
+        "is_secret": False,
+        # ⚠️ 这是**对外暴露策略** —— 只给管理员看/改
+        "admin_only": True,
     },
     # ===== 钉钉 (市场通知) =====
     {
