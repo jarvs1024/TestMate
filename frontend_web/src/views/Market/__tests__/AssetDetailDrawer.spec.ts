@@ -118,14 +118,32 @@ describe('资产详情抽屉 · 适用项目与适用场景', () => {
     expect(w.find('.ad-scope').text()).toContain('6100');
   });
 
-  it('存量资产有适用场景 → 显示出来', async () => {
-    const w = await mountDrawer({ it: item({ use_when: '拿到 dmesg 时用它' }) });
-    expect(w.text()).toContain('适用场景');
-    expect(w.text()).toContain('拿到 dmesg 时用它');
+  it('形态并入「适用项目」块 (头部不再显示英文 kind)', async () => {
+    const w = await mountDrawer({ it: item({ kind: 'plugin', project: '' }) });
+    const scope = w.find('.ad-scope').text();
+    expect(scope).toContain('通用资产');
+    expect(scope).toContain('插件');
+    // 头部不再有后端原值 (plugin)
+    expect(w.find('.ad-meta').text()).not.toContain('plugin');
   });
 
-  it('没有适用场景 → 整块不显示 (空着占一格没意义)', async () => {
-    const w = await mountDrawer({ it: item({ use_when: '' }) });
+  it('「适用场景」整块不存在 (上传表单已不让填, 页面不再重复一遍)', async () => {
+    // ⚠️ 2026-10-25: 从"有内容才显示"改成**整块删掉** ——
+    //    字段还在 (存量资产有值), 但页面上不再单列一块.
+    const w = await mountDrawer({ it: item({ use_when: '拿到 dmesg 时用它' }) });
     expect(w.text()).not.toContain('适用场景');
+    expect(w.text()).not.toContain('拿到 dmesg 时用它');
+  });
+
+  it('安装提示是通用话术, 不写死某个 Agent 的目录', async () => {
+    const w = await mountDrawer({ it: item({ kind: 'skill' }) });
+    // ⚠️ 主提示 (第一条 .ins-tip) 必须是通用话术
+    const tip = w.findAll('.ins-tip')[0].text();
+    expect(tip).toContain('导入');
+    expect(tip).toContain('压缩包');
+    expect(tip).not.toContain('~/.qoder-cn');
+    // 目录只是**参考**, 折叠在 details 里 (想手动装的人点开看)
+    expect(w.find('.ins-more').exists()).toBe(true);
+    expect(w.find('.ins-more').text()).toContain('~/.qoder-cn');
   });
 });

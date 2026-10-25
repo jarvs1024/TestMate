@@ -32,21 +32,14 @@ export interface KindMeta {
   pkgNeed?: string;
 }
 
-/** 三种形态 —— 顺序即展示顺序 (技能 → 插件 → 连接器) */
+/**
+ * 三种形态 —— 顺序即展示顺序
+ *
+ * ⚠️ 顺序跟市场页的页签 (marketCatalog.ts 的 MARKET_KINDS) **保持一致**:
+ *    页签和 lede 都是「插件 / 技能 / 连接器」, 这里以前是「技能 / 插件 / 连接器」——
+ *    同一个东西两处顺序不同, 用户会以为上传入口跟页签对不上.
+ */
 export const KIND_META: KindMeta[] = [
-  {
-    value: 'skill',
-    label: '技能',
-    code: 'skill',
-    icon: '🧠',
-    tagline: '一段可复用的方法与知识, 装进 Agent 后直接照着做',
-    needs: [
-      '上传一个 .zip 安装包',
-      '包内含 SKILL.md 及配套脚本等',
-    ],
-    formHint: '上传 .zip 安装包 —— 技能包 (SKILL.md + 配套脚本)',
-    pkgNeed: '包内含 SKILL.md',
-  },
   {
     value: 'plugin',
     label: '插件',
@@ -59,6 +52,19 @@ export const KIND_META: KindMeta[] = [
     ],
     formHint: '上传 .zip 安装包 —— 插件包 (README.md + 配套 skill/脚本)',
     pkgNeed: '包内含 README.md + .qoder-plugin/plugin.json',
+  },
+  {
+    value: 'skill',
+    label: '技能',
+    code: 'skill',
+    icon: '🧠',
+    tagline: '一段可复用的方法与知识, 装进 Agent 后直接照着做',
+    needs: [
+      '上传一个 .zip 安装包',
+      '包内含 SKILL.md 及配套脚本等',
+    ],
+    formHint: '上传 .zip 安装包 —— 技能包 (SKILL.md + 配套脚本)',
+    pkgNeed: '包内含 SKILL.md',
   },
   {
     value: 'mcp',
@@ -74,7 +80,13 @@ export const KIND_META: KindMeta[] = [
   },
 ];
 
+/**
+ * 兜底形态 —— **固定是技能**, 不跟着 KIND_META 的顺序变.
+ * (以前用 KIND_META[0], 顺序一改兜底就悄悄变成另一种形态了)
+ */
+const FALLBACK_KIND: KindMeta = KIND_META.find((k) => k.value === 'skill')!;
+
 /** 取某个类型的元信息 (未知类型兜底回技能) */
 export function kindMeta(kind: MarketKind | string | undefined | null): KindMeta {
-  return KIND_META.find((k) => k.value === kind) || KIND_META[0];
+  return KIND_META.find((k) => k.value === kind) || FALLBACK_KIND;
 }

@@ -189,6 +189,8 @@ export interface AssetAudit {
   comment: string;
   detail: Record<string, any>;
   created_at: string | null;
+  /** 动作的中文说明 —— **后端给的** (唯一真源, 见 market_state.audit_action_label) */
+  action_label?: string;
 }
 
 export interface UploadForm {

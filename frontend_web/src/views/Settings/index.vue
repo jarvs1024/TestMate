@@ -95,7 +95,7 @@
           <div class="sub-grp">
             <h3>🧩 资产市场 <span class="sub-cnt">{{ marketItems.length }} 项</span></h3>
             <div class="hint">
-              💡 资产市场的后端配置 —— GitLab 仓库在哪、装到本机哪个目录、谁能发布、
+              💡 资产市场的后端配置 —— GitLab 仓库在哪、项目列表怎么配、谁能发布、
               怎么对外暴露 marketplace.json. 改完<strong>立即生效</strong>, 不用重启后端.
             </div>
             <SettingRow v-for="(it, idx) in marketItems" :key="it.key"
@@ -329,11 +329,21 @@ async function loadMarketConfig() {
 
 // ===== 通知回执 (送达记录) =====
 const notifyLog = ref<AssetNotification[]>([]);
+/**
+ * 通知事件 → 中文 (回执列表用).
+ *
+ * ⚠️ 必须跟后端的 _EVENT_TEXT (app/core/dingtalk.py) **一一对应** ——
+ *    以前这里只写了 4 个, 缺的 review / unpublish_request / reject
+ *    在列表里直接显示原始 event id, 看不懂.
+ */
 const NOTIFY_EVENTS: Record<string, string> = {
+  review: '新资产待审核',
+  unpublish_request: '申请下架, 待确认',
   publish: '新资产上架',
   update: '版本更新',
-  unpublish: '资产下架',
-  delete: '资产删除',
+  unpublish: '资产已下架',
+  reject: '审核未通过',
+  delete: '资产已删除',
 };
 async function loadNotifyLog() {
   try {

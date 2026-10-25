@@ -192,7 +192,7 @@
                 </el-option>
               </el-select>
             </el-form-item>
-            <el-form-item label="适用项目 (选填)">
+            <el-form-item label="适用项目">
               <el-select v-model="form.project" class="sel-project" style="width:100%">
                 <el-option value="" label="通用 —— 所有项目都能用" />
                 <el-option v-for="p in projectOptions" :key="p" :value="p"
@@ -213,7 +213,7 @@
         <section class="up-sec">
           <button type="button" class="sec-toggle" @click="advOpen = !advOpen">
             <span class="sec-no">3</span>进阶信息
-            <span class="sec-hint">可展开 · 补充标签与检索词</span>
+            <span class="sec-hint">可展开 · 补充标签与搜索关键词</span>
             <span class="sec-caret">{{ advOpen ? '▾' : '▸' }}</span>
           </button>
           <div v-show="advOpen" class="adv-body">
@@ -238,7 +238,9 @@
         <el-icon v-else class="is-loading"><Loading /></el-icon>
         <div>
           <div class="job-title">
-            {{ job.status === 'pushed' ? (pendingReview ? '已提交, 等待管理员审核' : '已同步到 GitLab')
+            {{ job.status === 'pushed'
+               ? (reviewState === 'checking' ? '已同步到 GitLab, 正在确认上架状态…'
+                  : reviewState === 'pending' ? '已提交, 等待管理员审核' : '已同步到 GitLab')
                : job.status === 'failed' ? '同步失败'
                : job.status === 'staged' ? '已保存到本地, 准备同步…'
                : '正在推送到 GitLab…' }}
@@ -246,7 +248,7 @@
           <div v-if="job.status === 'pushed'" class="job-sub mono">
             commit {{ job.commit_sha.slice(0, 12) }} · {{ job.git_path }}
           </div>
-          <div v-if="job.status === 'pushed' && pendingReview" class="job-sub">
+          <div v-if="job.status === 'pushed' && reviewState === 'pending'" class="job-sub">
             文件已推送, 管理员审核通过后才会出现在市场里
           </div>
           <div v-else-if="job.status === 'staged'" class="job-sub">
@@ -326,8 +328,17 @@ const visible = computed({
 
 const submitting = ref(false);
 const job = ref<AssetJob | null>(null);
-/** 上架要走审核 —— 提交完不是"已上架", 而是"已提交待审核" */
-const pendingReview = ref(false);
+/**
+ * 上传后的**上架状态**:
+ *   'checking'  → 刚推完, 还没确认要不要审核 (这时候**不能**说"已同步到 GitLab")
+ *   'pending'   → 要审核, 等管理员
+ *   'published' → 直接上架了
+ *
+ * ⚠️ 为什么要多一个 checking: 推送完才知道要不要审核 (要再查一次资产状态),
+ *    那一小段时间里如果直接显示"已同步到 GitLab", 会先闪一句**错的结论**,
+ *    再变成"等待管理员审核" —— 用户正好读到错的那句就懵了.
+ */
+const reviewState = ref<'checking' | 'pending' | 'published'>('checking');
 /** 进阶信息默认收起 (大部分人只填基础信息) */
 const advOpen = ref(false);
 
@@ -359,7 +370,7 @@ watch(() => props.modelValue, (open) => {
   reset();                 // 表单状态/校验/分类/项目/图标 全部重置
   job.value = null;
   submitting.value = false;
-  pendingReview.value = false;
+  reviewState.value = 'checking';
   advOpen.value = false;
 });
 
@@ -442,14 +453,17 @@ async function poll(id: number) {
         submitting.value = false;
         if (j.status === 'pushed') {
           // 上架可能要过审核 —— 查一下资产现在的状态再给提示
+          // ⚠️ 查的过程中**不下结论** (reviewState 停在 checking) ——
+          //    先闪一句「已同步到 GitLab」再改成「等待管理员审核」是错的.
+          reviewState.value = 'checking';
           try {
             const a = await getAsset(j.code);
-            pendingReview.value = a.publish_status === 'pending';
+            reviewState.value = a.publish_status === 'pending' ? 'pending' : 'published';
           } catch {
-            pendingReview.value = false;
+            reviewState.value = 'published';
           }
           ElMessage.success(
-            pendingReview.value
+            reviewState.value === 'pending'
               ? `${j.code} 已提交, 等待管理员审核`
               : `${j.code} 已同步到 GitLab`,
           );

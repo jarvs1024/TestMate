@@ -9,7 +9,8 @@ import { KIND_META, kindMeta } from '../kindMeta';
 
 describe('资产形态元信息', () => {
   it('三种形态齐全, 值不重复', () => {
-    expect(KIND_META.map((k) => k.value)).toEqual(['skill', 'plugin', 'mcp']);
+    // ⚠️ 顺序跟市场页的页签 (MARKET_KINDS) 一致 —— 插件 / 技能 / 连接器
+    expect(KIND_META.map((k) => k.value)).toEqual(['plugin', 'skill', 'mcp']);
     expect(new Set(KIND_META.map((k) => k.value)).size).toBe(3);
   });
 

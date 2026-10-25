@@ -9,7 +9,9 @@
             {{ item.name }}
             <span v-if="item.publish_status === 'unpublished'" class="ad-off">已下架</span>
           </div>
-          <div class="ad-meta mono">{{ item.kind }} · {{ item.version }} · {{ item.category }}</div>
+          <!-- ⚠️ 形态 (技能/插件/连接器) 不在这儿显示 —— 挪到下面的「适用项目」块了,
+               那一块统一说"这是什么 + 谁能用", 不用在两个地方各说一半. -->
+          <div class="ad-meta mono">{{ item.version }} · {{ item.category }}</div>
         </div>
       </div>
     </template>
@@ -32,7 +34,7 @@
                 :closable="false" show-icon class="ad-alert"
                 title="该资产已被下架" />
 
-      <!-- ① 安装卡 (吸顶: 无论滚到哪, "下载"和"装到哪"都在眼前) -->
+      <!-- ① 安装卡 (吸顶: 无论滚到哪, "下载"和"怎么装"都在眼前) -->
       <div class="ad-install">
         <template v-if="item.kind !== 'mcp'">
           <div class="ins-h">
@@ -42,11 +44,18 @@
           <el-button type="primary" class="ins-btn" :loading="busy" @click="doDownload">
             下载
           </el-button>
-          <div class="ins-dir">
-            <span class="ins-dir-l">解压到</span>
-            <code>{{ targetDir }}/</code>
-          </div>
-          <p class="ins-tip">解压到 Agent 的这个目录, 重启 Agent 会话后即可使用</p>
+          <!-- ⚠️ 提示写**通用话术** (2026-10-25 用户要求): 别把某个 Agent 的目录
+               写死成主提示 —— 不同 Agent 的安装方式不一样, 主提示只说"下载完怎么用".
+               手动安装的参考目录收在下面的折叠里, 想看的人点开看. -->
+          <p class="ins-tip">下载后在 Agent 里导入这个压缩包即可安装 (Agent 支持从压缩包导入插件 / 技能)</p>
+          <details class="ins-more">
+            <summary>手动安装到目录</summary>
+            <div class="ins-dir">
+              <span class="ins-dir-l">解压到</span>
+              <code>{{ targetDir }}/</code>
+            </div>
+            <p class="ins-tip">解压到这个目录后, 重启 Agent 会话即可使用</p>
+          </details>
         </template>
         <template v-else>
           <div class="ins-h">
@@ -55,30 +64,27 @@
           </div>
           <p class="ins-tip">
             连接器是配置型资产 —— 它就是一段 MCP 配置.
-            复制下面的 JSON, 按里面的 server 声明加到 Agent 的 MCP 配置里即可.
+            复制下面的 JSON, 把里面的 server 条目加到 Agent 的 MCP 配置里即可.
           </p>
         </template>
       </div>
 
       <p class="ad-summary">{{ item.description || item.summary }}</p>
 
-      <!-- 适用项目: 项目特有 / 通用 -->
+      <!-- 适用项目: 说清"这是什么形态 + 谁能用" —— 形态挪过来了, 一处说完 -->
       <div class="ad-scope" :class="{ proj: !!item.project }">
-        <span class="sc-ic">📁</span>
+        <span class="sc-ic">{{ kindInfo.icon }}</span>
         <span class="sc-txt">
-          <b>{{ item.project ? `${item.project} 项目专属` : '通用资产' }}</b>
+          <b>{{ item.project ? `${item.project} 项目专属` : '通用资产' }} · {{ kindInfo.label }}</b>
           <span v-if="item.project">只对 {{ item.project }} 项目有意义 —— 其他项目用不上</span>
           <span v-else>所有项目都能用</span>
         </span>
       </div>
 
-      <!-- 适用场景: 上传表单里已经不让填了 → 新资产没这字段,
-           只有存量资产有内容时才显示 (空着占一格没意义) -->
-      <div v-if="item.use_when" class="ad-block">
-        <div class="ad-block-h ok">✓ 适用场景</div>
-        <div class="ad-block-b">{{ item.use_when }}</div>
-      </div>
-      <!-- ⚠️ 「不适用」去掉了 (2026-10-24): README 里已经写了, 页面再列一遍是重复. -->
+      <!-- ⚠️ 「适用场景」整块去掉了 (2026-10-25 用户要求):
+           上传表单里已经不让人填这个字段 (新建不填 / 更新保留原值),
+           页面再单列一块只是把 README 里的内容重复一遍. -->
+      <!-- ⚠️ 「不适用」也早就去掉了 (2026-10-24): README 里已经写了, 页面再列一遍是重复. -->
 
       <!-- 连接器: 只有一段 MCP 配置 (没有 README) -->
       <div v-if="item.kind === 'mcp'" class="ad-block">
@@ -207,6 +213,7 @@ import {
 import { useUserStore } from '@/stores/user';
 import { renderMarkdown } from '@/utils/markdown';
 import { downloadBlob } from '@/utils/download';
+import { kindMeta } from './kindMeta';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -317,7 +324,13 @@ watch(() => props.modelValue, (open) => {
   if (open && props.item?.code) loadDoc(props.item.code);
 });
 
-/** 建议的解压目录 (Qoder 标准布局, ~ 表示家目录) */
+/**
+ * 手动安装的**参考目录** (2026-10-25: 降级成次要信息).
+ *
+ * ⚠️ 主提示已改成通用话术 ("在 Agent 里导入压缩包即可安装") ——
+ *    不同 Agent 的安装方式/目录不一样, 把某个 Agent 的路径写死在主提示上
+ *    会误导用别的 Agent 的人. 这个路径只当"手动装的话放这儿"供参考.
+ */
 const targetDir = computed(() => {
   const it = props.item;
   if (!it) return '';
@@ -325,6 +338,9 @@ const targetDir = computed(() => {
     ? `~/.qoder-cn/skills/${it.code}`
     : `~/.qoder-cn/plugins/cache/qoder-marketplace/${it.code}/${it.version}`;
 });
+
+/** 形态元信息 (图标 + 中文名) —— 头部不显示了, 挪到「适用项目」块里 */
+const kindInfo = computed(() => kindMeta(props.item?.kind));
 
 /**
  * 下载安装包 —— 落到浏览器的默认下载目录, 用户自己解压.
@@ -343,7 +359,7 @@ async function doDownload() {
     // ⚠️ 不记任何安装状态 —— 安装只是下载, 后端不知道用户到底装没装,
     //    记了也是虚假语义 ("已安装" 徽标会骗人)
     ElMessage.success(
-      `已下载 ${it.code}-${it.version}.zip, 解压到 ${targetDir.value}/ 即完成安装`,
+      `已下载 ${it.code}-${it.version}.zip —— 在 Agent 里导入这个压缩包即可安装`,
     );
   } catch (e: any) {
     ElMessage.error('下载失败: ' + (e?.response?.data?.detail || e?.message));
@@ -718,6 +734,17 @@ async function doSubmit() {
 }
 .ins-tip { margin: 7px 0 0; font-size: 11px; color: var(--ink-500); line-height: 1.6; }
 .ins-tip code { font-family: var(--font-mono); font-size: 10.5px; }
+/* 手动安装目录 (折叠) —— 主提示是通用话术, 这里是给要手动装的人看的参考 */
+.ins-more { margin-top: 7px; }
+.ins-more > summary {
+  font-size: 11px; color: var(--ink-500); cursor: pointer;
+  list-style: none; user-select: none;
+}
+.ins-more > summary::-webkit-details-marker { display: none; }
+.ins-more > summary::before { content: '▸ '; }
+.ins-more[open] > summary::before { content: '▾ '; }
+.ins-more > summary:hover { color: var(--ink-700); }
+.ins-more .ins-dir { margin-top: 6px; }
 
 /* ===== 技术信息 (折叠) ===== */
 .ad-tech { margin: 4px 0 8px; }

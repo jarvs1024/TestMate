@@ -19,7 +19,7 @@
         <ul v-else class="log-list">
           <li v-for="r in rows" :key="r.id" :class="['log-item', r.action]">
             <div class="log-hd">
-              <span class="log-act">{{ actionLabel(r.action) }}</span>
+              <span class="log-act">{{ actionLabel(r) }}</span>
               <code v-if="r.code" class="log-code">{{ r.code }}</code>
               <span v-if="r.actor_name" class="log-actor">{{ r.actor_name }}</span>
               <span class="log-time mono">{{ fmt(r.created_at) }}</span>
@@ -72,15 +72,26 @@ import {
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>();
 
+/**
+ * 审计动作的**筛选选项**.
+ *
+ * ⚠️ 这里只是"筛哪些动作"的下拉项 —— 显示的中文由**后端**给 (item.action_label,
+ *    见 market_state.audit_action_label), 前端不再自己翻译:
+ *    以前两边各写一份, 结果漏了几个动作 (create/update/approve/reject/submit),
+ *    还多一个**永远不会出现**的 unpublish_reject (状态机里没这个迁移).
+ */
 const ACTIONS = [
   { value: 'all', label: '全部' },
   { value: 'conflict_resolved', label: '同步冲突' },
-  { value: 'publish', label: '上架' },
-  { value: 'unpublish', label: '下架' },
+  { value: 'create', label: '新建' },
+  { value: 'update', label: '版本更新' },
+  { value: 'publish', label: '重新上架' },
+  { value: 'submit', label: '提交审核' },
+  { value: 'approve', label: '审核通过' },
+  { value: 'reject', label: '审核驳回' },
   { value: 'unpublish_request', label: '申请下架' },
-  { value: 'unpublish_approve', label: '下架通过' },
-  { value: 'unpublish_reject', label: '下架驳回' },
   { value: 'unpublish_cancel', label: '撤销下架' },
+  { value: 'unpublish_approve', label: '下架通过' },
   { value: 'delete', label: '删除' },
 ];
 
@@ -101,18 +112,25 @@ function countBy(action: string): number {
   return audits.value.filter((a) => a.action === action).length;
 }
 
-function actionLabel(a: string): string {
-  return ACTIONS.find((x) => x.value === a)?.label || a;
+/** 动作中文 —— **后端给的** (action_label), 前端只做兜底 */
+function actionLabel(r: { action: string; action_label?: string }): string {
+  return r.action_label || r.action;
 }
 
+/**
+ * 通知事件 → 中文.
+ * ⚠️ 必须跟后端的 _EVENT_TEXT (app/core/dingtalk.py) **一一对应** ——
+ *    以前漏了 unpublish_request, 回执列表里直接显示原始 event id.
+ */
 function eventLabel(e: string): string {
   return ({
+    review: '新资产待审核',
+    unpublish_request: '申请下架, 待确认',
     publish: '新资产上架',
     update: '版本更新',
-    unpublish: '资产下架',
-    delete: '资产删除',
-    review: '新资产待审核',
+    unpublish: '资产已下架',
     reject: '审核未通过',
+    delete: '资产已删除',
   } as Record<string, string>)[e] || e;
 }
 
