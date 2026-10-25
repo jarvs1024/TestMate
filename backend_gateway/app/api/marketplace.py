@@ -99,15 +99,26 @@ async def _setting(key: str, default: str = "") -> str:
 
 
 async def require_publisher(user: User = Depends(get_current_user)) -> User:
-    """发布者白名单 + admin 恒可发布.
+    """谁能发布 —— **角色**或**白名单**任一命中即可 (admin 恒可).
 
-    白名单两个口径任一命中即可: 用户 ID (JSON 数组) 或 用户名 (逗号分隔).
+    · 角色口径 (marketplace.publisher_roles, 默认 tester = 测试工程) —— 默认就能发;
+    · 白名单口径 (publisher_ids / publisher_usernames) —— 给角色不在列表里的人开口子;
+    · admin 恒可发布.
+
     判定逻辑在 app/core/market_policy.py (纯逻辑, 可单测).
     """
     if not await market_policy.can_publish(user):
-        if market_policy.role_of(user) == "anonymous":
+        role = market_policy.role_of(user)
+        if role == "anonymous":
             raise HTTPException(status_code=401, detail="未登录")
-        raise HTTPException(status_code=403, detail="不在发布者白名单内, 联系管理员开通")
+        roles = ", ".join(sorted(await market_policy.publisher_roles())) or "(空)"
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"当前角色「{role}」没有发布权限 —— "
+                f"可发布角色: {roles}; 或让管理员把你的用户名加进发布者白名单"
+            ),
+        )
     return user
 
 

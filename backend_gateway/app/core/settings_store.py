@@ -215,19 +215,36 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
+        "key": "marketplace.publisher_roles",
+        "category": "marketplace",
+        "value_type": "string",
+        "default": "tester",
+        "description": (
+            "默认可发布的**角色** (逗号分隔, 如 tester) —— "
+            "tester = 测试工程, 默认就能往市场里上传/更新资产; "
+            "admin 恒可发布, 跟这里无关; "
+            "清空 = 退回「只看白名单」的老行为"
+        ),
+        "is_secret": False,
+    },
+    {
         "key": "marketplace.publisher_ids",
         "category": "marketplace",
         "value_type": "string",
         "default": "[]",
-        "description": "允许发布的用户 ID (JSON 数组, 如 [1,2]; admin 恒可发布)",
+        "description": (
+            "**额外**允许发布的用户 ID (JSON 数组, 如 [1,2]) —— "
+            "给角色不在「publisher_roles」里的人开的口子; admin 恒可发布"
+        ),
         "is_secret": False,
-    },    {
+    },
+    {
         "key": "marketplace.publisher_usernames",
         "category": "marketplace",
         "value_type": "string",
         "default": "",
         "description": (
-            "允许发布的用户名 (逗号分隔, 如 zhangsan, lisi) —— 比填用户 ID 友好; "
+            "**额外**允许发布的用户名 (逗号分隔, 如 zhangsan, lisi) —— 比填用户 ID 友好; "
             "与「publisher_ids」任一命中即可"
         ),
         "is_secret": False,
@@ -239,7 +256,7 @@ SETTING_SCHEMA: list[dict] = [
         "default": "true",
         "description": (
             "上架是否需要管理员审核: 开 = 发布者上传后进入「待审核」, 管理员通过后才在市场可见; "
-            "关 = 白名单发布者直接上架 (恢复旧行为)"
+            "关 = 有发布权限的人直接上架 (恢复旧行为)"
         ),
         "is_secret": False,
     },

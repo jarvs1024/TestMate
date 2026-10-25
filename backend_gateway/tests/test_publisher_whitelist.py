@@ -194,26 +194,77 @@ async def test_upload_allowed_by_id_whitelist_written_as_comma(
 async def test_upload_denied_when_not_in_whitelist(
     client, ws, restore_git_config, stranger_user  # noqa: ARG001
 ):
-    """不在白名单 → 403, 且提示要说人话."""
+    """角色不在可发布列表 + 也不在白名单 → 403, 且提示要说人话."""
+    await set_setting("marketplace.publisher_roles", "")
     await set_setting("marketplace.publisher_usernames", '["someone_else"]')
     r = await _upload(client, _auth(stranger_user), code="wl-deny")
     assert r.status_code == 403, r.text
-    assert "白名单" in r.text
+    assert "没有发布权限" in r.text
 
 
 async def test_admin_can_publish_even_with_empty_whitelist(
     client, auth, ws, restore_git_config  # noqa: ARG001
 ):
     """admin 恒可发布, 与白名单无关."""
+    await set_setting("marketplace.publisher_roles", "")
     await set_setting("marketplace.publisher_usernames", "")
     r = await _upload(client, auth, code="wl-admin")
     assert r.status_code == 202, r.text
 
 
-async def test_empty_whitelist_denies_non_admin(
+async def test_empty_whitelist_denies_viewer(
+    client, ws, restore_git_config, stranger_user  # noqa: ARG001
+):
+    """白名单空 + 角色不可发布 → viewer 一律拒绝 (而不是放行所有人)."""
+    await set_setting("marketplace.publisher_roles", "")
+    await set_setting("marketplace.publisher_usernames", "")
+    r = await _upload(client, _auth(stranger_user), code="wl-empty")
+    assert r.status_code == 403, r.text
+
+
+# ---------- 角色口径 (2026-10-25: 测试工程默认就能发布) ----------
+
+async def test_tester_can_publish_without_whitelist(
     client, ws, restore_git_config, publisher_user  # noqa: ARG001
 ):
-    """白名单空 → 非 admin 一律拒绝 (而不是放行所有人)."""
+    """⚠️ 核心诉求: 测试工程 (tester) 要能直接往市场里上传/更新, 不必等管理员开白名单."""
+    await set_setting("marketplace.publisher_roles", "tester")
     await set_setting("marketplace.publisher_usernames", "")
-    r = await _upload(client, _auth(publisher_user), code="wl-empty")
+    await set_setting("marketplace.publisher_ids", "[]")
+    r = await _upload(client, _auth(publisher_user), code="wl-role-tester")
+    assert r.status_code == 202, r.text
+
+
+async def test_default_publisher_roles_is_tester():
+    """默认值就是 tester —— 不配也能发."""
+    from app.core.market_policy import publisher_roles as _roles
+
+    await set_setting("marketplace.publisher_roles", "tester")
+    assert await _roles() == {"tester"}
+
+
+async def test_viewer_can_publish_when_whitelisted(
+    client, ws, restore_git_config, stranger_user  # noqa: ARG001
+):
+    """白名单是给"角色不在列表里的人"开的额外口子."""
+    await set_setting("marketplace.publisher_roles", "tester")
+    await set_setting("marketplace.publisher_usernames", stranger_user["username"])
+    r = await _upload(client, _auth(stranger_user), code="wl-viewer-ok")
+    assert r.status_code == 202, r.text
+
+
+async def test_clearing_publisher_roles_reverts_to_whitelist_only(
+    client, ws, restore_git_config, publisher_user  # noqa: ARG001
+):
+    """清空角色列表 → 退回"只看白名单"的老行为 (管理员想收紧时用)."""
+    await set_setting("marketplace.publisher_roles", "")
+    await set_setting("marketplace.publisher_usernames", "")
+    r = await _upload(client, _auth(publisher_user), code="wl-role-off")
     assert r.status_code == 403, r.text
+
+
+async def test_publisher_roles_accepts_multiple_roles():
+    from app.core.market_policy import publisher_roles as _roles
+
+    await set_setting("marketplace.publisher_roles", "tester, viewer,admin")
+    assert await _roles() == {"tester", "viewer", "admin"}

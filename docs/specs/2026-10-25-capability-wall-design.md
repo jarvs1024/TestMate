@@ -544,3 +544,42 @@ frontend_web/src/
 | 匿名可达的探活端点会触发真实出网请求并回显内部错误串 | `health.py` | 需要区分「内网可信」与「对外暴露」两种部署形态 |
 
 回归测试见 `backend_gateway/tests/test_security_regressions.py`（19 条）+ `frontend_web/src/stores/__tests__/user.spec.ts`（6 条）。
+
+---
+
+## 十六、发布权限改为「角色 + 白名单」双通路（2026-10-25 夜）
+
+用户反馈：资产市场上传被拒，报「不在发布者白名单内, 联系管理员开通」——但当事人是**测试工程**（tester 角色）。
+
+### 根因
+
+线上 `marketplace.publisher_usernames` 与 `publisher_ids` **都是空的**，而原来的 `can_publish` 只有三条通路：admin、白名单 ID、白名单用户名。于是**除 admin 外谁都发不了布**——连天天要往市场里沉淀插件/技能/连接器的测试工程角色也被挡住。
+
+报错文案只说「不在白名单内」，让人以为是配置漏了；其实模型本身就没给角色留位置。
+
+### 改法
+
+新增设置 `marketplace.publisher_roles`（逗号分隔，默认 `tester`），`can_publish` 变成三条通路：
+
+| 通路 | 来源 | 说明 |
+|---|---|---|
+| ① admin | 角色 | 恒可发布，与任何配置无关 |
+| ② 角色 | `marketplace.publisher_roles`，默认 `tester` | **测试工程默认就能上传/更新** |
+| ③ 白名单 | `publisher_ids` / `publisher_usernames` | 给角色不在列表里的人开的**额外**口子 |
+
+设置页里 `publisher_ids` / `publisher_usernames` 的描述同步改成「**额外**允许发布…」，并说明与角色口径是并集关系。
+
+**没有**改成「tester 无条件可发」的硬编码：留一个可配的角色列表，管理员想收紧时把 `publisher_roles` 清空就退回「只看白名单」的老行为。
+
+403 提示同步改成说清两条规则：
+
+```
+当前角色「viewer」没有发布权限 —— 可发布角色: tester; 或让管理员把你的用户名加进发布者白名单
+```
+
+### 不受影响的部分
+
+- **能不能改别人的资产** 仍然只看「作者本人或管理员」（`can_modify`）—— 发布权放宽不等于可以覆盖别人的内容。
+- **上架审核** 流程不变：默认 `marketplace.review.enabled=true`，tester 上传后进「待审核」，管理员通过才在市场可见。
+
+回归测试见 `backend_gateway/tests/test_publisher_whitelist.py`（新增 6 条角色口径用例 + 改写 3 条旧断言）。

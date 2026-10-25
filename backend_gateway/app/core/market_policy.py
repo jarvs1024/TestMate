@@ -2,6 +2,11 @@
 
 ⚠️ 判定逻辑放这里 (纯逻辑, 可单测), api 层只留 Depends 装饰器的薄壳 ——
    以前判定散在路由里, 每加一条路径就可能漏掉一处身份判断.
+
+发布权 (can_publish) 是**两条路**:
+   ① 角色 —— marketplace.publisher_roles, 默认 tester (测试工程) 就能发;
+   ② 白名单 —— publisher_ids / publisher_usernames, 给角色不在列表里的人开口子.
+   admin 恒可发布.
 """
 from __future__ import annotations
 
@@ -15,6 +20,7 @@ from app.models.user import User
 
 PUBLISHER_IDS_KEY = "marketplace.publisher_ids"
 PUBLISHER_NAMES_KEY = "marketplace.publisher_usernames"
+PUBLISHER_ROLES_KEY = "marketplace.publisher_roles"
 REVIEWER_NAMES_KEY = "marketplace.review.reviewer_usernames"
 
 
@@ -75,6 +81,20 @@ async def publisher_names() -> set[str]:
     return {x.lower() for x in split_list(str(raw))}
 
 
+async def publisher_roles() -> set[str]:
+    """**按角色**默认可发布 (逗号分隔, 默认 tester = 测试工程).
+
+    ⚠️ 为什么要有这一层 (2026-10-25): 原来"谁能发布"只认白名单, 白名单空着
+       就等于**除 admin 外谁都发不了** —— 连"测试工程"这种天天要往市场里
+       沉淀插件/技能/连接器的角色也被挡住, 报错还只说"不在白名单内",
+       让人以为是配置漏了, 其实是模型本身把角色能力忽略了.
+       现在是**角色 + 白名单两条路**: 角色在列表里就能发, 白名单是给
+       "角色不在列表里、但也需要发"的人开的额外口子.
+    """
+    raw = await get(PUBLISHER_ROLES_KEY, "tester") or ""
+    return {x.strip().lower() for x in str(raw).replace("，", ",").replace(";", ",").split(",") if x.strip()}
+
+
 async def reviewer_names() -> set[str]:
     """被授权的审核人 (管理员永远有审核权)."""
     raw = await get(REVIEWER_NAMES_KEY, "") or ""
@@ -97,11 +117,20 @@ async def is_reviewer(user: User) -> bool:
 
 
 async def can_publish(user: User) -> bool:
-    """能不能发布 (白名单两个口径任一命中 + admin 恒可)."""
+    """能不能发布 —— **角色**或**白名单**任一命中即可 (admin 恒可).
+
+    三条通路:
+      ① admin                    —— 恒可
+      ② 角色在 publisher_roles 里 —— 默认 tester (测试工程) 就能发
+      ③ 白名单命中 (用户 ID / 用户名) —— 给角色不在列表里的人开的额外口子
+    """
     if is_admin(user):
         return True
-    if role_of(user) == "anonymous":
+    role = role_of(user)
+    if role == "anonymous":
         return False
+    if role in await publisher_roles():
+        return True
     if user.id in await publisher_ids():
         return True
     names = await publisher_names()
