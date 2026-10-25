@@ -192,6 +192,12 @@
                    class="ad-btn" type="primary" plain @click="doRepublish">
           重新上架
         </el-button>
+        <!-- ⚠️ 作者删自己**没上架过**的资产 (待审核 / 被驳回):
+             这两种状态的东西从来没对外可见过, 直接删是安全的, 不用走下架审核.
+             以前没这条出口 → 作者传错了只能干等, 文件还永久躺在 GitLab 里. -->
+        <el-button v-if="canDiscard" class="ad-btn danger" :loading="busy" @click="doDiscard">
+          删除
+        </el-button>
         <!--
           ⚠️ 这里**没有**「彻底删除」按钮 (2026-10-24 起) ——
              删除是不可逆的动作, 必须走「申请下架 → 管理员确认」, 有人拍板.
@@ -205,7 +211,7 @@
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  cancelUnpublish, downloadAssetPackage, getAssetDoc, publishAsset,
+  cancelUnpublish, deleteAsset, downloadAssetPackage, getAssetDoc, publishAsset,
   reviewAsset, reviewUnpublish, submitForReview,
   unpublishAsset,
   type AssetDoc, type AssetItem,
@@ -272,6 +278,49 @@ const canSubmit = computed(() => {
   return (a.author || '').trim().toLowerCase()
     === (userStore.user?.username || '').trim().toLowerCase();
 });
+
+/**
+ * 作者能不能直接删掉这个资产 —— 只限**还没上架过**的 (待审核 / 被驳回).
+ *
+ * ⚠️ 这两种状态的东西从来没对外可见过 (可见性只放行在架的 + 作者自己的),
+ *    所以作者直接删是安全的, 不需要走下架审核.
+ *    在架的资产**仍然不行**: 那种必须走「申请下架 → 管理员确认」, 有人拍板.
+ */
+const canDiscard = computed(() => {
+  const a = props.item;
+  if (!a) return false;
+  const ps = a.publish_status;
+  if (ps !== 'pending' && ps !== 'rejected') return false;
+  const me = (userStore.user?.username || '').trim().toLowerCase();
+  const author = (a.author || '').trim().toLowerCase();
+  return isAdmin.value || (!!me && !!author && me === author);
+});
+
+/** 作者删掉自己没上架过的资产 */
+async function doDiscard() {
+  const it = props.item;
+  if (!it) return;
+  try {
+    await ElMessageBox.confirm(
+      `确定删除「${it.name}」吗？它还没上架过, 删除后 GitLab 上的文件也会一起清掉, 不可恢复。`,
+      '删除未上架的资产',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;   // 用户取消了
+  }
+  busy.value = true;
+  try {
+    await deleteAsset(it.code, '作者删除未上架的资产');
+    ElMessage.success('已删除');
+    emit('deleted');
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + (e?.response?.data?.detail || e?.message));
+  } finally {
+    busy.value = false;
+  }
+}
 
 const docHtml = computed(() => renderMarkdown(doc.value?.content || ''));
 

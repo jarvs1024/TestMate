@@ -334,7 +334,13 @@ export async function submitForReview(
   };
 }
 
-/** 彻底删除资产 (不只是下架) —— ⚠️ **管理员专用**, 用户删除请走「申请下架」 */
+/**
+ * 彻底删除资产 (不只是下架).
+ *
+ * ⚠️ 在架的资产: **管理员专用** —— 用户删除要走「申请下架 → 管理员确认」.
+ * ⚠️ 还没上架过的 (待审核 / 被驳回): **作者本人也能删** ——
+ *    这两种状态的东西从来没对外可见过, 直接删是安全的, 不用走审核.
+ */
 export async function deleteAsset(code: string, comment = ''): Promise<{
   ok: boolean; code: string; commit_sha: string;
 }> {

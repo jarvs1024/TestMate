@@ -112,6 +112,30 @@ describe('资产详情抽屉 · 下架申请制', () => {
   });
 });
 
+describe('资产详情抽屉 · 删除未上架的资产', () => {
+  it('待审核 + 是作者本人 → 显示「删除」', async () => {
+    const w = await mountDrawer({ it: item({ publish_status: 'pending', author: 'jarvs' }) });
+    expect(buttonTexts(w).join(' ')).toContain('删除');
+  });
+
+  it('待审核但**不是**作者 → 不显示 (别人的东西不能删)', async () => {
+    const w = await mountDrawer({ it: item({ publish_status: 'pending', author: '别人' }) });
+    expect(buttonTexts(w).join(' ')).not.toContain('删除');
+  });
+
+  it('在架的资产 → 不显示「删除」 (必须走申请下架)', async () => {
+    const w = await mountDrawer({ it: item({ publish_status: 'published', author: 'jarvs' }) });
+    const labels = buttonTexts(w).join(' ');
+    expect(labels).not.toContain('删除');
+    expect(labels).toContain('申请下架');
+  });
+
+  it('被驳回 + 是作者本人 → 也显示「删除」 (留着也没用)', async () => {
+    const w = await mountDrawer({ it: item({ publish_status: 'rejected', author: 'jarvs' }) });
+    expect(buttonTexts(w).join(' ')).toContain('删除');
+  });
+});
+
 describe('资产详情抽屉 · 适用项目与适用场景', () => {
   it('项目归属显示成「适用项目」', async () => {
     const w = await mountDrawer({ it: item({ project: '6100' }) });
