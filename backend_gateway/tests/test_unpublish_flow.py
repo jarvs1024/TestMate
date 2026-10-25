@@ -20,6 +20,8 @@
 """
 from __future__ import annotations
 
+import subprocess
+
 from tests.test_market_api import _enable_publisher, _upload
 
 API = "/api/v1/assets"
@@ -391,12 +393,18 @@ async def test_list_filter_by_unpublish_pending(
     assert "unp-filter" in codes, codes
 
 
-# ---------- DELETE 端点收成 admin 专用 ----------
+# ---------- DELETE 端点: 在架的只有管理员能删, 未上架的作者能撤 ----------
 
 async def test_delete_endpoint_is_admin_only(
     client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
 ):
-    """普通发布者不能再直接删别人的资产 —— 删除必须走审核."""
+    """在架的资产作者不能直接删 —— 删除必须走审核.
+
+    ⚠️ 2026-10-25: DELETE 端点现在**多**开放了一条路 ——
+       作者可以删自己**还没上架过**的资产 (待审核 / 被驳回).
+       那种东西从来没对外可见过, 直接删是安全的.
+       但**在架**的资产仍然只有管理员能删 (作者要走「申请下架」).
+    """
     from tests.conftest import set_setting
 
     await set_setting("marketplace.review.enabled", "false")
@@ -405,6 +413,36 @@ async def test_delete_endpoint_is_admin_only(
     await _make_published(client, pauth, "unp-del")
 
     r = await client.delete(f"{API}/unp-del", headers=pauth)
-    assert r.status_code == 403, r.text
+    assert r.status_code == 409, r.text     # 在架 → 409 (提示走申请下架)
     d = await client.get(f"{API}/unp-del", headers=auth)
-    assert d.status_code == 200, d.text
+    assert d.status_code == 200, r.text
+
+
+async def test_author_can_discard_own_pending_asset(
+    client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
+):
+    """作者可以删自己**待审核**的资产 —— 传错了能撤回, 不必干等.
+
+    ⚠️ 2026-10-25 之前 pending/rejected 没有出口 → 作者只能干等,
+       文件还永久躺在 GitLab 里.
+    """
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "true")   # 开审核 → 落 pending
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="discard-demo")
+
+    st = await client.get(f"{API}/discard-demo", headers=pauth)
+    assert st.status_code == 200, st.text
+    assert st.json()["publish_status"] == "pending", st.text
+
+    r = await client.delete(f"{API}/discard-demo", headers=pauth)
+    assert r.status_code == 200, r.text
+    # 资产没了 (DB + GitLab 都不该留)
+    assert (await client.get(f"{API}/discard-demo", headers=auth)).status_code == 404
+    out = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "main"],
+        cwd=str(ws.parent / "remote.git"), capture_output=True, text=True,
+    )
+    assert "discard-demo" not in out.stdout, out.stdout

@@ -49,10 +49,15 @@ def test_classify_network_is_retryable():
     assert e.retryable is True
 
 
-def test_classify_nonfastforward_is_not_retryable():
+def test_classify_concurrent_is_retryable():
+    """远端有他人提交导致的 push 被拒 = **可重试** (退避后通常就过去了).
+
+    ⚠️ 以前归成 nonfastforward (不可重试) → 一次瞬时并发就把资产打成终态失败,
+       而 recover_pending_jobs 不重排 failed → 重启也不自愈.
+    """
     e = git_sync._classify("! [rejected] main -> main (non-fast-forward)", 1)
-    assert e.category == "nonfastforward"
-    assert e.retryable is False
+    assert e.category == "concurrent"
+    assert e.retryable is True
 
 
 def test_classify_unknown_is_retryable():

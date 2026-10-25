@@ -265,10 +265,26 @@ async def stage_index(session, override: dict[str, Any] | None = None,
     exclude 是本次要从索引里**剔除**的 code —— 硬删时用: DB 行还没删,
     但 index.json 必须先不含它, 否则会把资产又提交回去.
     DB 是索引的真相源, 工作区里的 index.json 是它的物化 —— 下一次 git commit 会带上.
+
+    ⚠️ **别把远端已有、本地 DB 还没有的资产抹掉** (2026-10-25 审计):
+       本地 DB 是远端的**镜像**, 反向同步器每 30s 才拉一次, 而且它有安全闸
+       (工作区脏 / 有未推送 commit 时整轮跳过). 所以本地 DB **完全可能比远端旧** ——
+       这时直接渲染 DB, 远端那些"本地还没同步到"的资产就会**从索引里消失**,
+       下一次 push 把这个索引推上去 = 别人的资产被下架了.
+       所以这里先读工作区里现有的 index.json, 把**远端多出来的条目补回去**
+       (本地的条目覆盖远端的 —— 本地更新).
+       ⚠️ exclude 优先: 硬删时那个 code 必须真的从索引里消失.
     """
     result = await session.execute(select(Asset))
     assets = list(result.scalars().all())
     entries = {a.code: asset_to_index_entry(a) for a in assets}
+    # 补回"工作区索引里有、DB 里还没有"的条目 (本地 DB 落后于远端时)
+    old = await read_index()
+    for e in (old or {}).get("assets") or []:
+        code = e.get("code")
+        if not code or code in entries or code in (exclude or ()):
+            continue
+        entries[code] = e
     if override and override.get("code"):
         entries[override["code"]] = override
     for c in (exclude or ()):

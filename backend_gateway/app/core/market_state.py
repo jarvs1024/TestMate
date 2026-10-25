@@ -42,6 +42,12 @@ _ACTIONS: dict[str, tuple[tuple[str, ...], str, str]] = {
     "submit": ((REJECTED,), PENDING, "author"),          # 驳回后改了重新提交
     "approve": ((PENDING,), PUBLISHED, "reviewer"),       # 审核通过 → 上架
     "reject": ((PENDING,), REJECTED, "reviewer"),         # 审核驳回
+    # ---- 撤回: 没上架过的东西, 作者自己就能撤掉 ----
+    # ⚠️ 以前 pending / rejected 两个状态**没有出口** —— 作者传错了想撤回,
+    #    或者被驳回后不想留着了, 都只能干等 (文件还永久躺在 GitLab 里).
+    #    这两个状态的东西**从来没对外可见过** (可见性只放行在架的 + 作者自己的),
+    #    所以作者直接删掉是安全的, 不需要走下架审核.
+    "discard": ((PENDING, REJECTED), "", "author"),
     # ---- 下架 (申请制) ----
     "unpublish_request": ((PUBLISHED,), UNPUBLISH_PENDING, "author"),
     "unpublish_cancel": ((UNPUBLISH_PENDING,), PUBLISHED, "author"),
@@ -55,6 +61,7 @@ _ACTION_LABEL: dict[str, str] = {
     "submit": "重新提交审核",
     "approve": "通过审核",
     "reject": "驳回审核",
+    "discard": "删除未上架的资产",
     "unpublish_request": "申请下架",
     "unpublish_cancel": "撤销下架申请",
     "unpublish_approve": "通过下架申请",
@@ -83,6 +90,7 @@ AUDIT_ACTION_LABEL: dict[str, str] = {
     "approve": "审核通过",
     "reject": "审核驳回",
     "submit": "提交审核",
+    "discard": "作者删除 (未上架)",
     "delete": "管理员删除",
     "conflict_resolved": "同步冲突已解决",
 }

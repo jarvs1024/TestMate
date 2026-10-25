@@ -1366,14 +1366,17 @@ async def _hard_delete_asset(
     comment: str,
     audit_action: str = "delete",
     event: str = "delete",
+    notify: bool = True,
 ) -> AssetDeleteOut:
     """彻底删除一个资产 (GitLab 文件 + 索引 + DB 记录一起没).
 
     两条路径共用它:
       · 管理员**通过下架申请** (POST /{code}/unpublish-review → approve) → event="unpublish"
       · 管理员**直接删** (DELETE /{code}, 运维口子) → event="delete"
+      · 作者删自己**没上架过**的资产 (DELETE /{code}, pending/rejected) → event="delete"
 
     事件分开是有意的: "走审核下架"和"直接删"在审计里是两回事, 通知也该分得清.
+    notify=False 用于"从没公开过"的资产 —— 没必要惊动市场群.
 
     顺序很关键 (**先推 GitLab, 后动 DB**):
       1. index.json 剔除该资产 (DB 行还在, 用 exclude 参数)
@@ -1411,6 +1414,8 @@ async def _hard_delete_asset(
         paths = [INDEX_PATH]
         if git_sync.tracked_files(git_path):
             paths.insert(0, git_path)
+        # ⚠️ 记下操作前的 HEAD —— push 失败时靠它把本地那条 commit 撤掉
+        prev_sha = git_sync.head_sha()
         try:
             result = await git_sync.sync_paths(
                 paths=paths,
@@ -1418,31 +1423,34 @@ async def _hard_delete_asset(
                 author=_author_of(user),
             )
         except git_sync.SyncError as e:
-            # 回滚工作区: 目录与 index.json 都从最后一次提交恢复
-            # ⚠️ 回滚**必须检查结果** —— 之前返回值被丢掉, 回滚失败也没人知道:
-            #    工作区会残留"已删"状态, 下一个任意 job 就把删除推上 GitLab,
-            #    而 DB 里这个资产还在 (远端没了本地有 → 资产变成幽灵)。
+            # ⚠️ **撤销本地那条 commit** —— 它已经产生了 (commit 成功、push 失败),
+            #    而 `_push()` 推的是 `HEAD:<branch>` → **下一次任何 job 的 push 都会
+            #    把它一起带走** → 删除在 GitLab 上**悄悄生效了**, 而 DB 里资产行还在
+            #    (DB 删在 push 成功之后) → 幽灵资产: 列表里有, 文档 404.
+            #
+            #    以前这里是 `checkout_from_ref("HEAD", ...)` —— HEAD 已经是那条删除
+            #    提交了, "恢复"回去等于恢复到已删除, 形同没回滚.
             rolled = False
             try:
-                rolled = bool(git_sync.checkout_from_ref("HEAD", [git_path, INDEX_PATH]))
+                rolled = git_sync.undo_local_commit(prev_sha, [git_path, INDEX_PATH])
             except Exception as re_:  # noqa: BLE001
                 logger.error("delete 回滚失败 code=%s err=%s", code, re_)
             if not rolled:
                 logger.error(
-                    "delete 推送失败且回滚未确认 —— 工作区可能残留半删状态, "
-                    "需要人工检查 code=%s err=%s", code, e,
+                    "delete 推送失败且本地提交没能撤销 —— 仓库状态需要人工检查 code=%s err=%s",
+                    code, e,
                 )
                 raise HTTPException(
                     status_code=502,
                     detail=(
                         f"删除未生效: 推送到 GitLab 失败 ({e}). "
-                        "工作区回滚也没成功, 请联系管理员检查仓库状态"
+                        "本地提交也没能撤销, 请联系管理员检查仓库状态"
                     ),
                 ) from e
-            logger.error("delete 推送失败, 工作区已回滚 code=%s err=%s", code, e)
+            logger.error("delete 推送失败, 本地提交已撤销 code=%s err=%s", code, e)
             raise HTTPException(
                 status_code=502,
-                detail=f"删除未生效: 推送到 GitLab 失败 ({e}). 资产未被删除, 可稍后重试",
+                detail=f"删除未生效: 推送到 GitLab 失败 ({e}). 本地已回滚, 可稍后重试",
             ) from e
 
         # 3) 推送成功 → 动 DB
@@ -1459,13 +1467,14 @@ async def _hard_delete_asset(
         # ⚠️ 用户本机的安装目录不动 —— 后端够不着, 也不该替用户删文件.
         #    (服务端写盘通道已下线)
 
-    await market_notify.notify_asset(
-        event,
-        {"name": asset_name, "version": version, "code": code,
-         "kind": kind, "category": category, "project": project},
-        actor=user.username,
-        detail=comment or "资产已从市场删除",
-    )
+    if notify:
+        await market_notify.notify_asset(
+            event,
+            {"name": asset_name, "version": version, "code": code,
+             "kind": kind, "category": category, "project": project},
+            actor=user.username,
+            detail=comment or "资产已从市场删除",
+        )
     logger.info("delete 资产 code=%s action=%s event=%s", code, audit_action, event)
     return AssetDeleteOut(
         ok=True, code=code,
@@ -1477,20 +1486,53 @@ async def _hard_delete_asset(
 async def delete_asset(
     code: str,
     comment: str = Query("", description="删除原因 (记入审计)"),
-    _user: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
 ) -> AssetDeleteOut:
-    """彻底删除一个资产 (不只是下架) —— **管理员专用**.
+    """彻底删除一个资产 (不只是下架).
 
-    ⚠️ 前端**不再暴露**这个按钮 (2026-10-24 起): 用户想删资产走
-    「申请下架 → 管理员确认 → 自动删除」, 删除这个不可逆的动作必须有人拍板.
-    这个端点留着是给管理员做运维清理的 (比如有人直接往仓库里塞了垃圾资产).
+    两种人能用:
+      · **管理员** —— 任何状态 (运维口子: 有人直接往仓库里塞垃圾资产)
+      · **作者本人** —— 但**只限还没上架过的** (待审核 / 被驳回).
+        这两种状态的东西从来没对外可见过 (可见性只放行在架的 + 作者自己的),
+        所以作者直接删掉是安全的, 不需要走下架审核.
+        ⚠️ 以前 pending / rejected 没有出口 —— 作者传错了想撤回、或被驳回后不想留着了,
+           都只能干等 (文件还永久躺在 GitLab 里).
+        在架的资产**仍然不行**: 那种必须走「申请下架 → 管理员确认」, 有人拍板.
 
     与「下架申请」的区别:
       申请下架 —— 作者发起, 管理员确认后才真删 (走审核)
-      直接删   —— 管理员当场删, 不走审核 (运维口子)
+      直接删   —— 管理员当场删, 或作者删自己没上架过的 (不走审核)
     """
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        is_admin = market_policy.is_admin(user)
+        is_author = market_policy.can_modify(a, user)
+        if not is_admin:
+            if not is_author:
+                raise HTTPException(
+                    status_code=403, detail="只有资产作者本人或管理员可以删除"
+                )
+            # 状态机裁决: 只有 pending / rejected 允许作者直接撤
+            try:
+                market_state.assert_transition(
+                    "discard", a.publish_status or market_state.PUBLISHED,
+                    is_author=is_author, is_reviewer=False, is_admin=is_admin,
+                )
+            except market_state.TransitionError as e:
+                raise HTTPException(status_code=409, detail=str(e)) from e
+            return await _hard_delete_asset(
+                code=code, user=user,
+                comment=comment or "作者删除未上架的资产",
+                audit_action="discard",
+                event="delete",
+                notify=False,   # ⚠️ 没过审的东西从没公开过 → 不用惊动市场群
+            )
     return await _hard_delete_asset(
-        code=code, user=_user,
+        code=code, user=user,
         comment=comment or "管理员删除",
         audit_action="delete",
     )
@@ -1542,6 +1584,70 @@ async def _parse_uploads(files: list[UploadFile] | None) -> dict[str, str]:
     except ManifestError as e:
         # 校验失败是**用户上传内容**的问题 (文件数/体积/路径/后缀), 不是服务端故障
         raise HTTPException(status_code=422, detail=f"上传文件不合规: {e}") from e
+
+
+def _cleanup_staged_dir(base: str) -> None:
+    """落盘失败后的清理: 把资产目录**恢复成 HEAD 里的样子** (本次落的东西全清掉).
+
+    ⚠️ 不能简单 rmtree 整个目录 —— 更新场景下目录里还有**上一个版本**的文件
+       (已经被提交到 git 了), 删掉它们等于"下次提交会把旧版本的文件也删了".
+       所以: 先 checkout 回 HEAD (恢复旧文件), 再把 HEAD 里没有的残留清掉.
+    """
+    try:
+        git_sync.checkout_from_ref("HEAD", [base])
+    except Exception as e:  # noqa: BLE001 — 清理失败不该盖掉原始错误
+        logger.warning("清理落盘目录失败 (checkout) base=%s err=%s", base, e)
+    try:
+        git_sync.clean_path(base)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("清理落盘目录失败 (clean) base=%s err=%s", base, e)
+
+
+def _snapshot_asset(a: Asset | None) -> dict:
+    """资产行的旧值快照 (补偿时原样还原)."""
+    if a is None:
+        return {}
+    return {
+        c.name: getattr(a, c.name)
+        for c in a.__table__.columns
+        if c.name not in ("id", "created_at")
+    }
+
+
+async def _compensate_staged_asset(
+    code: str, base: str, old_snapshot: dict, existed: bool
+) -> None:
+    """索引写失败后的补偿 —— 把这次操作留下的东西**全部清干净**.
+
+    ⚠️ 以前这里是直接抛 500 (2026-10-25 审计):
+       DB 行已提交 (sync_status='staged')、文件在工作区、**但没有 job**
+       → 没有任何东西会去提交这些文件 → 工作区永远脏 →
+       反向同步的安全闸每轮都跳过 → **整个反向同步永久卡死**, 且无自愈路径.
+
+    补偿三件事:
+       ① 工作区: 本次落盘的文件清掉 (恢复成 HEAD 的样子)
+       ② index.json: 还原 (原子写保证失败时它没被改坏, 这里是兜底)
+       ③ DB 行: 新建 → 删掉; 更新 → 还原成旧值
+    """
+    _cleanup_staged_dir(base)
+    try:
+        git_sync.checkout_from_ref("HEAD", [INDEX_PATH])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("补偿: 还原 index.json 失败 err=%s", e)
+    try:
+        async with AsyncSessionLocal() as session:
+            a = (
+                await session.execute(select(Asset).where(Asset.code == code))
+            ).scalar_one_or_none()
+            if a is not None:
+                if existed:
+                    for k, v in old_snapshot.items():
+                        setattr(a, k, v)
+                else:
+                    await session.delete(a)
+                await session.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.error("补偿: 还原 DB 行失败 code=%s err=%s", code, e)
 
 
 async def _stage_asset(
@@ -1641,6 +1747,23 @@ async def _stage_asset_locked(
         raise HTTPException(
             status_code=404, detail=f"资产 {manifest['code']} 不存在, 无法更新"
         )
+    if action == "create" and existing is None:
+        # ⚠️ 除了查 DB, 还要查 **git** (2026-10-25 审计):
+        #    本地 DB 只是远端的**镜像**, 而且反向同步器有安全闸 (工作区脏 / 有未推送
+        #    commit 时整轮跳过) → DB 完全可能比远端旧.
+        #    那种情况下, 同 code 的新上传会**静默覆盖** git 里已有的资产文件,
+        #    把别人的资产连同作者一起顶掉 —— 这里直接拒掉, 不给覆盖的机会.
+        git_codes = git_sync.index_codes_at_ref("HEAD") | git_sync.index_codes_at_ref(
+            f"origin/{git_sync.git_branch()}"
+        )
+        if manifest["code"] in git_codes:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"资产 {manifest['code']} 在 GitLab 上已经存在 "
+                    "(本地索引还没同步到) —— 请换个 code, 或先点「重新同步」"
+                ),
+            )
 
     # ---- 1. 落盘 ----
     try:
@@ -1680,6 +1803,10 @@ async def _stage_asset_locked(
             manifest["doc_file"] = doc_name
             # 原始包也存进 git —— Qoder marketplace 的 source.url 需要字节稳定的归档
             pkg_dir = git_sync.WORKSPACE / base / "package"
+            # ⚠️ **先清空旧档** (2026-10-25 审计): 归档文件名带版本号
+            #    (1.0.0.zip / 1.1.0.zip …), 不清的话每次升版都在仓库里多留一份
+            #    完整安装包 —— manifest 只指向最新版, 旧的成纯残留, 仓库体积单调增长.
+            shutil.rmtree(pkg_dir, ignore_errors=True)
             pkg_dir.mkdir(parents=True, exist_ok=True)
             (pkg_dir / manifest["package_name"]).write_bytes(package)
         else:
@@ -1711,8 +1838,13 @@ async def _stage_asset_locked(
             if manifest.get("description"):
                 git_sync.write_text(f"{base}/README.md", manifest["description"])
     except pkg.PackageError as e:
+        _cleanup_staged_dir(base)
         raise HTTPException(status_code=422, detail=f"安装包不合规: {e}") from e
     except git_sync.SyncError as e:
+        # ⚠️ 落盘中途失败 → 这次写的文件留在工作区 → 工作区脏 →
+        #    反向同步的安全闸每轮都跳过 → **整个反向同步永久卡死**.
+        #    所以这里必须把本次落的东西**全部清干净** (2026-10-25 审计).
+        _cleanup_staged_dir(base)
         raise HTTPException(status_code=500, detail=f"写入本地工作区失败: {e}") from e
 
     # ---- 2. DB 镜像 + index.json ----
@@ -1731,6 +1863,9 @@ async def _stage_asset_locked(
         a = existing or Asset(code=manifest["code"])
         if existing is None:
             session.add(a)
+        # ⚠️ 记下**旧值** —— 后面写 index.json 失败时要能把 DB 行原样还原
+        #    (更新场景下这一行已经被改成新值了, 不留快照就还原不回去)
+        old_snapshot = _snapshot_asset(existing)
         a.name = manifest.get("name") or a.code
         a.icon = manifest.get("icon") or "🧩"
         a.kind = manifest.get("kind") or "skill"
@@ -1784,6 +1919,12 @@ async def _stage_asset_locked(
         try:
             await stage_index(session, asset_to_index_entry(a))
         except git_sync.SyncError as e:
+            # ⚠️ 补偿: 索引写失败 → DB 行已提交、文件在工作区、**却没有 job**
+            #    → 没人会去提交这些文件 → 工作区永远脏 → 反向同步永久卡死.
+            #    这里把本次操作留下的东西全部清干净 (见 _compensate_staged_asset).
+            await _compensate_staged_asset(
+                manifest["code"], base, old_snapshot, existed=(existing is not None),
+            )
             raise HTTPException(status_code=500, detail=f"更新 index.json 失败: {e}") from e
 
         job = AssetJob(

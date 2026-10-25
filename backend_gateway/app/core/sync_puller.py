@@ -240,6 +240,34 @@ async def sync_once() -> dict[str, Any]:
                 if rc2 != 0:
                     logger.warning("删除远端已移除的文件失败: %s", se2.strip()[:200])
 
+            # ⚠️ **必须把本地分支对齐到远端** (2026-10-25 审计):
+            #    上面 checkout / git rm 都会**顺带改 index** (git checkout <tree> -- paths
+            #    同时改工作区和 index), 而这些改动**从不被提交** → 下一轮
+            #    `git status --porcelain` 看到含 "assets/" 的行 → 安全闸 1 命中 →
+            #    **反向同步从此每轮都跳过**, 自己把自己锁死.
+            #
+            #    `reset --mixed <ref>` 一次解决三件事:
+            #      · 分支指针移到远端 (不再 ahead → 安全闸 2 也不命中)
+            #      · index 重置成远端的树 (刚才 stage 的改动全部撤掉)
+            #      · **工作区不动** ← 关键: 不能用 --hard, 否则会把上传请求
+            #        刚落盘、还没提交的文件一起冲掉 (落盘阶段不在 git 锁里)
+            #
+            #    ⚠️ 只在本地是远端的祖先时做 —— 分叉了 (有人 force push) 就别动,
+            #    留给人看.
+            rc3, so3, se3 = git_sync._run_git(
+                ["merge-base", "--is-ancestor", "HEAD", ref], cwd=git_sync.WORKSPACE
+            )
+            if rc3 == 0:
+                rc4, so4, se4 = git_sync._run_git(
+                    ["reset", "--mixed", ref], cwd=git_sync.WORKSPACE
+                )
+                if rc4 != 0:
+                    logger.warning("对齐本地分支到远端失败: %s", se4.strip()[:200])
+            else:
+                logger.warning(
+                    "本地 HEAD 与远端已分叉 (可能被 force push), 本轮不对齐 —— 请人工检查"
+                )
+
         # ---- 回灌 DB 镜像 + 写冲突审计 ----
         async with AsyncSessionLocal() as session:
             added, updated = await apply_index_to_db(session)

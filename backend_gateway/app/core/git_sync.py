@@ -21,10 +21,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import shutil
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -70,8 +73,12 @@ def set_git_config(*, remote: str | None = None, branch: str | None = None) -> N
 LOCK_FILE = WORKSPACE.parent / f"{WORKSPACE.name}.sync.lock"
 
 # 可重试的错误类别 —— 这些会走后台指数退避重试
-# (missing 不在其中: 文件压根没落盘, 重试无意义)
-RETRYABLE = {"lock", "commit", "network", "unknown"}
+# (missing 不在其中: 文件压根没落盘, 重试无意义;
+#  repo 不在其中: 远端没这个分支 / 没鉴权, 重试没用, 得人工处理)
+#
+# ⚠️ concurrent (2026-10-25): 远端有他人提交导致的 push 被拒 —— 退避后重试通常就过去了,
+#    以前归成 nonfastforward (不可重试) → 一次瞬时并发就把资产打成终态失败.
+RETRYABLE = {"lock", "commit", "network", "unknown", "concurrent"}
 
 
 class SyncError(RuntimeError):
@@ -106,7 +113,30 @@ def _run_git(args: list[str], *, cwd: Path, timeout: int = 60) -> tuple[int, str
     except FileNotFoundError as e:
         raise SyncError("容器内没有 git 可执行文件", "repo", hint="镜像需安装 git") from e
     except subprocess.TimeoutExpired as e:
+        # ⚠️ git 被超时杀掉时, 可能留下 .git/index.lock —— 之后**所有** git 操作都会
+        #    撞它, 被归类成可重试的 "lock", 但重试永远不会成功 (没人删这个文件).
+        #    这里主动清一次: 只在锁文件"存在且明显陈旧"时才删, 免得删掉别人正在用的.
+        _cleanup_stale_index_lock()
         raise SyncError(f"git {args[0]} 超时 ({timeout}s)", "network") from e
+
+
+def _cleanup_stale_index_lock() -> None:
+    """清掉陈旧的 .git/index.lock (git 被超时杀掉时留下的).
+
+    ⚠️ 只在**明显陈旧** (超过 2 分钟) 时才删 —— 正常的 git 操作持锁是毫秒级的,
+       2 分钟还在的话基本可以断定是残留 (2026-10-25 审计).
+    """
+    lock = WORKSPACE / ".git" / "index.lock"
+    try:
+        if not lock.exists():
+            return
+        age = time.time() - lock.stat().st_mtime
+        if age < 120:
+            return
+        lock.unlink()
+        logger.warning("清理了陈旧的 index.lock (已存在 %.0f 秒)", age)
+    except OSError as e:
+        logger.warning("清理 index.lock 失败: %s", e)
 
 
 def _classify(stderr: str, rc: int) -> SyncError:
@@ -115,7 +145,9 @@ def _classify(stderr: str, rc: int) -> SyncError:
     hint = ""
 
     if "index.lock" in s or "cannot lock ref" in s or "unable to create" in s and "lock" in s:
-        return SyncError("仓库被占用 (index.lock), 稍后重试", "lock", hint="等待当前 git 操作完成")
+        return SyncError("仓库被占用 (index.lock), 稍后重试", "lock",
+                         hint="等待当前 git 操作完成; 若一直报这个, 检查 .git/index.lock "
+                              "是不是上次超时的残留 (超过 2 分钟会被自动清理)")
     if "cannot pull with rebase" in s or "unstaged changes" in s or "please commit your changes" in s:
         # 并发上传往工作区写了新文件, 导致 rebase 拒绝 —— 是瞬时状态, 重试即可
         return SyncError("工作区有并发写入, 稍后重试", "lock")
@@ -134,8 +166,17 @@ def _classify(stderr: str, rc: int) -> SyncError:
             or "connection reset" in s or "broken pipe" in s:
         return SyncError("网络异常, 无法连接 GitLab", "network")
     if "non-fast-forward" in s or "fetch first" in s or "rejected" in s and "push" in s:
-        return SyncError("远端有新提交, 本地被拒绝", "nonfastforward",
-                         hint="远端有他人改动, 需人工合并")
+        # ⚠️ 归为 **concurrent (可重试)**: 这通常是"另一个 job 正在提交 / 远端刚被别人推了",
+        #    退避后重试通常就过去了.
+        #    以前归成 nonfastforward (不可重试) → 一次瞬时并发就把资产打成**终态失败**,
+        #    而 recover_pending_jobs 不重排 failed → 重启也不自愈, 只能人工重试.
+        return SyncError("远端有新提交, 本地被拒绝 (并发提交冲突)", "concurrent",
+                         hint="通常是并发提交导致的瞬时冲突, 系统会自动退避重试")
+    if "couldn't find remote ref" in s or "could not find remote ref" in s:
+        # ⚠️ 远端**没有这个分支** —— 不是并发, 重试多少次都没用, 得人工建分支.
+        #    以前落到 unknown (可重试) → 每次都耗满退避次数, 最后报个看不懂的错.
+        return SyncError("远端没有这个分支", "repo",
+                         hint="在 GitLab 上创建该分支, 或改设置里的分支名")
     if "does not appear to be a git repository" in s or "not a git repository" in s:
         return SyncError("工作区不是 git 仓库", "repo", hint="检查 MARKET_WORKSPACE 挂载")
     if "could not read from remote repository" in s or "repository not found" in s:
@@ -213,13 +254,52 @@ def ensure_workspace() -> Path:
 # ===== 写本地 =====
 
 def write_text(rel_path: str, content: str) -> None:
-    """写一个文件到工作区 (自动建目录)."""
+    """写一个文件到工作区 (自动建目录).
+
+    ⚠️ **原子写** (2026-10-25): 以前是 `target.write_text(...)` —— 直接截断重写.
+       两个线程同时写 index.json 时会写出**截断的 JSON**, 而 read_index 遇解析失败
+       是静默返回 None 的 (market_catalog.py:282-290) → 回灌无声无息地什么都不做.
+       现在先写同目录的临时文件, 再 os.replace 原子替换 —— 读者要么看到旧内容,
+       要么看到新内容, 不会是半截的.
+    """
     target = WORKSPACE / rel_path
+    tmp = None
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        # 临时文件必须**同目录** —— os.replace 只在同一文件系统内保证原子性
+        tmp = target.with_name(target.name + f".tmp-{os.getpid()}-{threading.get_ident()}")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, target)
+        tmp = None
     except OSError as e:
         raise SyncError(f"写入 {rel_path} 失败: {e.strerror or e}", "disk") from e
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def index_codes_at_ref(ref: str) -> set[str]:
+    """某个 ref 上的 index.json 里有哪些 code.
+
+    用途: 上传前查"git 里是不是已经有这个 code" ——
+    本地 DB 只是远端的镜像, 可能落后, 只查 DB 会漏掉**幽灵资产**
+    (git 里有、DB 里没有), 同 code 的新上传就会静默覆盖别人的资产.
+    """
+    raw = read_text_at_ref("index.json", ref)
+    if not raw:
+        return set()
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return set()
+    out: set[str] = set()
+    for e in (data.get("assets") or []):
+        if isinstance(e, dict) and e.get("code"):
+            out.add(str(e["code"]))
+    return out
 
 
 def remove_path(rel_path: str) -> None:
@@ -228,6 +308,20 @@ def remove_path(rel_path: str) -> None:
         shutil.rmtree(target, ignore_errors=True)
     elif target.exists():
         target.unlink()
+
+
+def clean_path(rel_path: str) -> bool:
+    """删掉某路径下**未被 git 跟踪**的文件 (落盘失败的残留清理用).
+
+    ⚠️ 为什么不用 rmtree: 更新场景下目录里还有**上一个版本**的文件 (已经被提交到
+       git 了), 整个删掉等于"下次提交会把旧版本的文件也删了".
+       先 checkout 回 HEAD 恢复旧文件, 再用这个把 HEAD 里没有的残留清掉.
+    """
+    rc, so, se = _run_git(["clean", "-fd", "--", rel_path], cwd=WORKSPACE)
+    if rc != 0:
+        logger.warning("git_sync.clean_path 失败 path=%s err=%s", rel_path, se.strip()[:200])
+        return False
+    return True
 
 
 def read_text(rel_path: str) -> str | None:
@@ -286,11 +380,41 @@ def _head_sha() -> str:
     return so.strip() if rc == 0 else ""
 
 
+def head_sha() -> str:
+    """当前 HEAD 的 sha (公开版).
+
+    调用方在**做一件可能失败的事之前**记下来 —— push 失败时靠它把本地那条
+    commit 撤掉 (见 undo_local_commit). 不记的话就只能"猜"HEAD 是不是自己的.
+    """
+    return _head_sha()
+
+
+def _remote_branch_exists() -> bool:
+    """远端**有没有**这个分支."""
+    rc, so, _ = _run_git(
+        ["ls-remote", "--heads", git_remote(), git_branch()], cwd=WORKSPACE, timeout=15
+    )
+    return rc == 0 and bool(so.strip())
+
+
+def _remote_has_any_ref() -> bool:
+    """远端仓库上**有没有任何**分支 (用来区分"空仓库"和"分支名写错了")."""
+    rc, so, _ = _run_git(["ls-remote", "--heads", git_remote()], cwd=WORKSPACE, timeout=15)
+    return rc == 0 and bool(so.strip())
+
+
 def _ahead_of_remote() -> int:
-    """本地 HEAD 比远端多几个 commit (没 fetch 过就算 0)."""
+    """本地 HEAD 比远端多几个 commit.
+
+    ⚠️ 远端**没有这个 ref** 时返回 **-1** (不是 0) ——
+       0 会被当成"没有待推的 commit", 于是 no_change 快捷路径把资产标成"已推送",
+       而远端其实什么都没有 (2026-10-25 审计).
+    """
     rc, so, _ = _run_git(
         ["rev-list", "--count", f"origin/{git_branch()}..HEAD"], cwd=WORKSPACE
     )
+    if rc != 0:
+        return -1 if not _remote_branch_exists() else 0
     try:
         return int(so.strip()) if rc == 0 else 0
     except ValueError:
@@ -301,7 +425,13 @@ def _push() -> str:
     """push 到远端. 远端有新提交时先 rebase, 冲突则放弃并报需人工处理."""
     rc, so, se = _run_git(["fetch", "origin", git_branch()], cwd=WORKSPACE, timeout=120)
     if rc != 0:
-        raise _classify(se, rc)
+        low = (se or "").lower()
+        if ("couldn't find remote ref" in low or "not found" in low) \
+                and not _remote_has_any_ref():
+            # 远端仓库**完全空的** → 直接推, 由 git 把分支建出来 (首次部署的正常路径)
+            logger.info("git_sync.push: 远端还是空仓库, 直接推送并建分支 %s", git_branch())
+        else:
+            raise _classify(se, rc)
 
     rc, so, se = _run_git(
         ["rev-list", "--count", f"HEAD..origin/{git_branch()}"], cwd=WORKSPACE
@@ -343,6 +473,84 @@ class SyncResult:
     commit_sha: str
     pushed: bool
     no_change: bool = False
+    # ⚠️ 本次 commit **之前**的 HEAD —— push 失败时用它撤销本地那条 commit
+    #    (见 undo_local_commit). 没有它就无法安全回退.
+    prev_sha: str = ""
+
+
+def undo_local_commit(prev_sha: str, paths: list[str]) -> bool:
+    """撤销本地刚产生的 commit (push 失败时用).
+
+    ⚠️ **为什么必须撤** (2026-10-25 审计):
+       commit 成功、push 失败 → 本地分支领先远端 1 个 commit. 而 `_push()` 推的是
+       `HEAD:<branch>` —— **下一次任何 job 的 push 都会把它一起带走**.
+       对"删除"这种操作, 那意味着: API 刚返回"删除未生效", 过一会儿别的 job 一推,
+       删除在 GitLab 上**悄悄生效了**, 而 DB 里的资产行还在 → 幽灵资产
+       (列表里有, 文档 404).
+
+    ⚠️ **只在确定 HEAD 还是我们那条 commit 时才撤** —— 中间若被别人提交过,
+       `reset --soft` 会把人家的 commit 一起撤掉. 判断依据: HEAD 的上一个
+       必须正好是 prev_sha.
+
+    ⚠️ 整个过程持 LOCK_FILE —— 否则跟另一个 job 撞车.
+    """
+    if not prev_sha:
+        return False
+    with _FileLock(LOCK_FILE):
+        head = _head_sha()
+        if not head:
+            return False
+        rc, so, _ = _run_git(["rev-parse", "--verify", f"{head}~1"], cwd=WORKSPACE)
+        if rc != 0 or so.strip() != prev_sha:
+            logger.warning(
+                "undo_local_commit 跳过: HEAD~1 不是我们那条 commit (可能中间有别的提交)"
+            )
+            return False
+        # 1) 分支指针移回去 (--soft: 不动工作区, 别人的未提交改动不受影响)
+        rc, _, se = _run_git(["reset", "--soft", prev_sha], cwd=WORKSPACE)
+        if rc != 0:
+            logger.error("undo_local_commit reset 失败: %s", se.strip()[:200])
+            return False
+        # 2) index 里这几条路径也要撤回来 —— reset --soft 之后 index 还是"提交后"
+        #    的状态 (新文件是 staged-added), 不撤的话工作区看着干净、index 是脏的,
+        #    `git status` 照样报 AD → 反向同步的安全闸照样命中.
+        if paths:
+            _run_git(["reset", "--quiet", "HEAD", "--", *paths], cwd=WORKSPACE)
+        # 3) 把我们改过的那几条路径恢复成 prev_sha 的内容
+        #    (checkout <tree> -- paths 同时改工作区和 index → 相对新 HEAD 就是干净的)
+        restore = _paths_in_tree(prev_sha, paths)
+        if restore:
+            rc, _, se = _run_git(["checkout", prev_sha, "--", *restore], cwd=WORKSPACE)
+            if rc != 0:
+                logger.error("undo_local_commit checkout 失败: %s", se.strip()[:200])
+                return False
+        # prev_sha 里没有的路径 = 我们**这次新增**的 → 从工作区删掉, 别留半截
+        for p in paths:
+            if p.rstrip("/") not in restore:
+                remove_path(p)
+        logger.warning("undo_local_commit 已撤销本地 commit %s", head[:12])
+        return True
+
+
+def _paths_in_tree(ref: str, paths: list[str]) -> list[str]:
+    """给定路径里, 哪些在 ref 这棵树里**存在** (目录按前缀匹配).
+
+    ⚠️ `git checkout <tree> -- <pathspec>` 里, pathspec 匹配不到任何文件时
+       整条命令会失败 ("pathspec did not match") —— 连**其他**正常的路径也一起不生效.
+       所以只能 checkout 确实存在的那些.
+    """
+    rc, so, _ = _run_git(["ls-tree", "-r", "--name-only", ref], cwd=WORKSPACE)
+    if rc != 0:
+        return []
+    files = set(so.split())
+    out: list[str] = []
+    for p in paths:
+        p = (p or "").rstrip("/")
+        if not p:
+            continue
+        if p in files or any(f.startswith(p + "/") for f in files):
+            out.append(p)
+    return out
 
 
 def sync_paths_blocking(
@@ -354,17 +562,22 @@ def sync_paths_blocking(
     """把指定路径 commit + push. 阻塞版本 (在线程里跑)."""
     with _FileLock(LOCK_FILE):
         ensure_workspace()
+        # ⚠️ 记下 commit **之前**的 HEAD —— push 失败时要靠它把本地那条 commit 撤掉
+        #    (否则它会滞留到下次任意 job 的 push, 被悄悄带上远端)
+        prev_sha = _head_sha()
         _stage(paths)
         sha = _commit(message, paths, author)
         if not sha:
             # 没有新提交 —— 但可能是「上次提交成功、推送失败」后的重试,
             # 这时**必须继续推**, 否则本地永远领先远端, 资产卡在机器上.
             head = _head_sha()
-            if not head or _ahead_of_remote() <= 0:
-                return SyncResult(commit_sha="", pushed=False, no_change=True)
+            # ⚠️ 判定用 `== 0` 而不是 `<= 0` —— _ahead_of_remote 远端 ref 不存在时返回 -1
+            #    (意思是"全部待推"), 那个情况**不能**当成"无需推送".
+            if not head or _ahead_of_remote() == 0:
+                return SyncResult(commit_sha="", pushed=False, no_change=True, prev_sha=prev_sha)
             sha = head
         pushed_sha = _push()
-        return SyncResult(commit_sha=pushed_sha or sha, pushed=True)
+        return SyncResult(commit_sha=pushed_sha or sha, pushed=True, prev_sha=prev_sha)
 
 
 async def sync_paths(

@@ -237,13 +237,17 @@ async def test_cannot_modify_others_asset(client, auth, ws,  # noqa: ARG001
 
 async def test_delete_requires_admin(client, auth, ws,  # noqa: ARG001
                                      restore_git_config, publisher_user):
-    """硬删是 admin 专用 —— 普通发布者删不了."""
+    """在架的资产: 作者本人也删不了 —— 必须走「申请下架 → 管理员确认」."""
     await set_setting("marketplace.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="del-demo")
     r = await client.delete(f"{API}/del-demo", headers=pauth)
-    assert r.status_code == 403, r.text
+    # 409 (不是 403): 权限上作者本来就有, 但这个状态不允许删 —— 提示要走申请下架
+    assert r.status_code == 409, r.text
+    assert "下架" in r.json()["detail"], r.text
+    # 资产还在
+    assert (await client.get(f"{API}/del-demo", headers=auth)).status_code == 200
 
 
 # ---------- 幂等 / 并发 ----------
