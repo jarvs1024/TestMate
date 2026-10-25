@@ -186,6 +186,7 @@ import {
   listAssets, listCategories, listJobs, listProjects, getSyncStatus, retryJob, syncFromGit,
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
 } from '@/api/assets';
+import { isAuthor } from './identity';
 
 const GITLAB_PROJECT = 'root/testmate-market';
 /** 列表加载超时 (ms) —— 超过就提示重试, 不让页面无限转圈 */
@@ -228,9 +229,9 @@ const canEdit = computed(() => {
   const it = current.value;
   if (!it) return false;
   if (userStore.user?.role === 'admin') return true;
-  const me = (userStore.user?.username || '').trim().toLowerCase();
-  const author = (it.author || '').trim().toLowerCase();
-  return !!me && !!author && me === author;
+  // ⚠️ 用 isAuthor (短名/全邮箱都认) —— 别写 `author === me`:
+  //    用户名现在是邮箱式, 存量资产的 author 可能还是短名, 精确比会判成"不是我的".
+  return isAuthor(it.author, userStore.user?.username);
 });
 
 
@@ -397,12 +398,14 @@ async function fetchList(opts: { silent?: boolean } = {}) {
       : rows;
     if (onlyMine.value) {
       // 提示条的"只看这些": 我自己提交的, 按提示条的种类过滤
-      const me = (userStore.user?.username || '').trim();
+      // ⚠️ 作者比对走 isAuthor (短名/全邮箱都认) —— 后端认两种写法,
+      //    这里只认一种的话, 自己提交的资产会**整片消失**.
+      const me = userStore.user?.username || '';
       const want = onlyMine.value === 'unpublish'
         ? ['unpublish_pending']
         : ['pending', 'rejected'];
       items.value = items.value.filter(
-        (i) => (i.author || '').trim() === me && want.includes(i.publish_status),
+        (i) => isAuthor(i.author, me) && want.includes(i.publish_status),
       );
     }
     // ⚠️ 客户端过滤之后, 条数就是过滤后的条数 —— 别再显示后端的总数 (虚高)

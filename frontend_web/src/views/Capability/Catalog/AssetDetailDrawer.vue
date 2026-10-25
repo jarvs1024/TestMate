@@ -220,6 +220,7 @@ import { useUserStore } from '@/stores/user';
 import { renderMarkdown } from '@/utils/markdown';
 import { downloadBlob } from '@/utils/download';
 import { kindMeta } from './kindMeta';
+import { isAuthor } from './identity';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -275,8 +276,8 @@ const canSubmit = computed(() => {
   const a = props.item;
   if (!a) return false;
   if (isAdmin.value) return true;
-  return (a.author || '').trim().toLowerCase()
-    === (userStore.user?.username || '').trim().toLowerCase();
+  // ⚠️ 走 isAuthor (短名/全邮箱都认) —— 用户名是邮箱式, 存量资产 author 可能还是短名
+  return isAuthor(a.author, userStore.user?.username);
 });
 
 /**
@@ -291,9 +292,9 @@ const canDiscard = computed(() => {
   if (!a) return false;
   const ps = a.publish_status;
   if (ps !== 'pending' && ps !== 'rejected') return false;
-  const me = (userStore.user?.username || '').trim().toLowerCase();
-  const author = (a.author || '').trim().toLowerCase();
-  return isAdmin.value || (!!me && !!author && me === author);
+  if (isAdmin.value) return true;
+  // ⚠️ 走 isAuthor (短名/全邮箱都认) —— 别写 `author === me`
+  return isAuthor(a.author, userStore.user?.username);
 });
 
 /** 作者删掉自己没上架过的资产 */

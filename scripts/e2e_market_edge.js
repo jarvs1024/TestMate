@@ -123,10 +123,18 @@ async function openUpload(page, kindLabel) {
   const page = await browser.newPage();
   await page.setCacheEnabled(false);
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' });
-  await page.evaluate((t) => {
-    localStorage.setItem('testmate:token', t);
-    localStorage.setItem('testmate:user', JSON.stringify({ id: 1, username: 'admin', role: 'admin' }));
+  // ⚠️ 前端身份必须用**真实的** /auth/me —— 写死 {username:'admin'} 会在
+  //    管理员换账号 (或用 TESTMATE_USER 指定别人) 时失真:
+  //    前端的"这是不是我的资产"比对用的是登录用户名, 对不上就少给按钮,
+  //    用例会给出**假的**结论.
+  const me = await page.evaluate(async (t) => {
+    const r = await fetch('/api/v1/auth/me', { headers: { Authorization: 'Bearer ' + t } });
+    return r.ok ? await r.json() : { id: 1, username: 'admin', role: 'admin' };
   }, tk);
+  await page.evaluate((t, u) => {
+    localStorage.setItem('testmate:token', t);
+    localStorage.setItem('testmate:user', JSON.stringify(u));
+  }, tk, me);
   await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1500);

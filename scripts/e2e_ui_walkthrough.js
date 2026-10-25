@@ -50,10 +50,15 @@ async function shot(page, name, desc) {
 
   // ---- ① 登录 → 市场页 ----
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' });
-  await page.evaluate((t) => {
-    localStorage.setItem('testmate:token', t);
-    localStorage.setItem('testmate:user', JSON.stringify({ id: 1, username: 'admin', role: 'admin' }));
+  // ⚠️ 前端身份用真实的 /auth/me (写死 'admin' 会在换账号时失真)
+  const me = await page.evaluate(async (t) => {
+    const r = await fetch('/api/v1/auth/me', { headers: { Authorization: 'Bearer ' + t } });
+    return r.ok ? await r.json() : { id: 1, username: 'admin', role: 'admin' };
   }, token);
+  await page.evaluate((t, u) => {
+    localStorage.setItem('testmate:token', t);
+    localStorage.setItem('testmate:user', JSON.stringify(u));
+  }, token, me);
   await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1800);

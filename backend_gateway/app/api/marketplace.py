@@ -624,6 +624,8 @@ async def sync_status(
 
     is_admin = market_policy.is_admin(user)
     mine = (user.username or "").strip()
+    # "我的"这几个计数用的作者口径 —— 短名 / 全邮箱都认 (见 identity.author_forms)
+    my_forms = set(author_forms(user.username))
     async with AsyncSessionLocal() as session:
         pending = failed = unpublished = 0
         awaiting_review = rejected = my_review = my_pending = 0
@@ -642,7 +644,12 @@ async def sync_status(
                 rejected += 1
             elif a.publish_status == "unpublish_pending":
                 unpublish_pending += 1
-            if mine and (a.author or "") == mine:
+            # ⚠️ "我的"这几个计数必须跟 `status=mine` **同一口径** (author_forms):
+            #    这里以前用精确比较 (a.author == mine) → 存量资产的 author 还是短名
+            #    ('zhangsan') 而登录用户名已是邮箱式 ('zhangsan@twsc.com.cn') 时,
+            #    计数是 0 → 顶部「你有 N 个资产需要处理」**根本不出现** →
+            #    用户压根不知道自己还有待审资产 (而 status=mine 里又能查到 → 自相矛盾).
+            if mine and (a.author or "") in my_forms:
                 if a.publish_status == "pending":
                     my_pending += 1
                     my_review += 1      # 需要处理 = 在等审核 + 被驳回

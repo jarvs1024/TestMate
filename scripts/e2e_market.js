@@ -301,17 +301,15 @@ async function codeByName(page, name) {
     check('A4 无加载中/空态残留', !s.marketState, s.marketState || '(none)');
     check('A5 底部标注数据源', /GitLab/.test(s.footHint || ''), s.footHint);
 
-    // ---------- A6. 返回广场 ----------
-    const backFound = await page.evaluate(() => {
-      const b = [...document.querySelectorAll('.mk-actions .back')]
-        .find((x) => x.textContent.includes('返回广场'));
-      if (!b) return false;
-      b.click();
-      return true;
-    });
-    await sleep(2000);
-    const onPlaza = await page.evaluate(() => location.pathname);
-    check('A6 「返回广场」按钮存在且能跳回广场', backFound && onPlaza === '/plaza', `path=${onPlaza}`);
+    // ---------- A6. 旧「广场」地址 → 自动跳到能力墙首页 ----------
+    // ⚠️ 2026-10-25 信息架构重构: 广场变成了能力墙首页 (/home), 市场页不再有
+    //    「返回广场」按钮 (导航由外壳提供) —— 但**旧书签 /plaza 不能 404**.
+    await page.goto(BASE + '/plaza', { waitUntil: 'domcontentloaded' });
+    await sleep(1500);
+    const onHome = await page.evaluate(() => location.pathname);
+    // ⚠️ 首页路由的 path 是 '' (路由名 home) → 浏览器里的地址是 "/"
+    check('A6 旧地址 /plaza 自动跳到能力墙首页',
+      onHome === '/' || onHome === '/home', `path=${onHome}`);
     await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1200);

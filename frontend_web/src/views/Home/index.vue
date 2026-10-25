@@ -171,24 +171,47 @@ function metaOf(c: Capability): MetaItem[] {
 // ===== 待办带 =====
 const todos = ref<Todo[]>([]);
 
+/**
+ * 知识库通不通 —— **探一次**, 后面两处共用.
+ *
+ * ⚠️ 为什么要探 (2026-10-25):
+ *    RAGFlow 没配时 `/kb/datasets` 会返 502. 首页把它当"降级"处理 (卡片显示兜底文案),
+ *    但**请求照样发出去了** —— 浏览器控制台每次都留一条 502, e2e 的"全程无失败请求"
+ *    也会被它顶掉. 探明没配就别去拉数据 —— 省一次请求, 也少一条噪音.
+ */
+const kbState = ref<{ status?: string; message?: string } | null>(null);
+let kbProbe: Promise<boolean> | null = null;
+async function probeKb(): Promise<boolean> {
+  if (kbProbe) return kbProbe;
+  kbProbe = (async () => {
+    try {
+      // ⚠️ silent: 首页把这些接口的失败都当"降级"处理, 不该弹全局错误
+      const kb = await kbHealth({ silent: true });
+      kbState.value = kb || {};
+      return !!(kb?.status && kb.status === 'ok');
+    } catch {
+      kbState.value = {};
+      return false;   // 探不到 → 当作没通, 别再去拉数据
+    }
+  })();
+  return kbProbe;
+}
+
 async function loadTodos() {
   const list: Todo[] = [];
   // 知识库状态: 这个接口不要求登录, 匿名也能探到 RAGFlow 通不通
   // ⚠️ silent: 首页把这几个接口的失败都当"降级"处理 (卡片显示兜底文案),
   //    不该弹全局错误 —— 否则 RAGFlow 没配时首页一进来就弹红条.
-  try {
-    const kb = await kbHealth({ silent: true });
-    if (kb?.status && kb.status !== 'ok') {
-      list.push({
-        key: 'kb-off',
-        icon: '📚',
-        text: kb.status === 'off' ? '知识库未接入 (RAGFlow 未配置)' : `知识库状态异常: ${kb.message || kb.status}`,
-        tone: 'warn',
-        to: { name: 'kb-manage' },
-      });
-    }
-  } catch {
-    /* 探不到就当没这回事, 不给用户添堵 */
+  await probeKb();
+  const kb = kbState.value;
+  if (kb?.status && kb.status !== 'ok') {
+    list.push({
+      key: 'kb-off',
+      icon: '📚',
+      text: kb.status === 'off' ? '知识库未接入 (RAGFlow 未配置)' : `知识库状态异常: ${kb.message || kb.status}`,
+      tone: 'warn',
+      to: { name: 'kb-manage' },
+    });
   }
   // 资产市场的待办需要登录态 (接口要鉴权)
   if (loggedIn.value) {
@@ -254,6 +277,9 @@ async function loadMetas() {
     /* 同上 */
   }
   // 知识: 数据集 / 文档 / 分段
+  // ⚠️ 知识库没配 (RAGFlow 未配置) 时**别去拉** —— 那个接口必然 502,
+  //    白白留一条失败请求 (页面卡片本来就有兜底文案).
+  if (!(await probeKb())) return;
   try {
     const ds = await listDatasets({ silent: true });
     const items = ds.items || [];
