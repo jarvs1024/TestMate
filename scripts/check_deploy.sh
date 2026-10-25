@@ -74,12 +74,23 @@ echo "✅ 线上 bundle 与源码一致"
 #    这里直接比 sha256: 源码跟容器里的文件不一致 = 漂移.
 BACKEND_CONTAINER="${BACKEND_CONTAINER:-test-mate-backend-1}"
 BACKEND_FILES=(
+  app/api/auth.py
+  app/api/settings.py
+  app/api/agents.py
   app/api/marketplace.py
+  app/core/identity.py
+  app/core/config.py
+  app/core/security.py
+  app/core/git_sync.py
   app/core/dingtalk.py
   app/core/market_state.py
   app/core/market_notify.py
   app/core/mcp_config.py
+  app/models/user.py
+  app/models/agent.py
+  app/models/asset.py
   app/schemas/asset.py
+  app/schemas/auth.py
 )
 echo
 echo "=== 后端: 容器里的代码跟源码对得上吗 ==="

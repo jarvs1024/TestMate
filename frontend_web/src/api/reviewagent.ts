@@ -226,29 +226,55 @@ export interface HealthResp {
   message: string;
 }
 
-export async function getHealth(): Promise<HealthResp> {
-  return (await request.get('/review-agent/health')) as HealthResp;
+/**
+ * 读接口统一的**静默开关**.
+ *
+ * ⚠️ `silent: true` = 失败不弹全局错误提示 (调用方自己会兜底降级).
+ *    典型场景: 代码检视看板每 30s 自动刷新一次, ReviewAgent 没配 / 宕机时
+ *    每个周期都飘一个红条 —— 但看板自己已经降级渲染了, 用户并没遇到故障.
+ */
+export interface SilentOpt {
+  silent?: boolean;
 }
-export async function getOverview(since?: string): Promise<OverviewResp> {
-  return (await request.get('/review-agent/metrics/overview', { params: since ? { since } : {} })) as OverviewResp;
+
+export async function getHealth(opts: SilentOpt = {}): Promise<HealthResp> {
+  return (await request.get('/review-agent/health', { silent: opts.silent })) as HealthResp;
 }
-export async function getRules(since?: string): Promise<RuleStat[]> {
-  return ((await request.get('/review-agent/metrics/rules', { params: since ? { since } : {} })) as RuleStat[]) || [];
+export async function getOverview(since?: string, opts: SilentOpt = {}): Promise<OverviewResp> {
+  return (await request.get('/review-agent/metrics/overview', {
+    params: since ? { since } : {},
+    silent: opts.silent,
+  })) as OverviewResp;
 }
-export async function getAuthors(since?: string): Promise<AuthorStat[]> {
-  return ((await request.get('/review-agent/metrics/authors', { params: since ? { since } : {} })) as AuthorStat[]) || [];
+export async function getRules(since?: string, opts: SilentOpt = {}): Promise<RuleStat[]> {
+  return ((await request.get('/review-agent/metrics/rules', {
+    params: since ? { since } : {},
+    silent: opts.silent,
+  })) as RuleStat[]) || [];
 }
-export async function listMrs(params: { limit?: number; offset?: number; project_id?: number; state?: string; since?: string } = {}): Promise<MrListResp> {
-  return (await request.get('/review-agent/mrs', { params })) as MrListResp;
+export async function getAuthors(since?: string, opts: SilentOpt = {}): Promise<AuthorStat[]> {
+  return ((await request.get('/review-agent/metrics/authors', {
+    params: since ? { since } : {},
+    silent: opts.silent,
+  })) as AuthorStat[]) || [];
 }
-export async function getTimeline(projectId: number, mrId: number): Promise<TimelineResp> {
-  return (await request.get(`/review-agent/mrs/${projectId}/${mrId}/timeline`)) as TimelineResp;
+export async function listMrs(params: { limit?: number; offset?: number; project_id?: number; state?: string; since?: string } = {}, opts: SilentOpt = {}): Promise<MrListResp> {
+  return (await request.get('/review-agent/mrs', { params, silent: opts.silent })) as MrListResp;
 }
-export async function getSeverity(since?: string): Promise<SeverityBucket[]> {
-  return ((await request.get('/review-agent/metrics/severity', { params: since ? { since } : {} })) as SeverityBucket[]) || [];
+export async function getTimeline(projectId: number, mrId: number, opts: SilentOpt = {}): Promise<TimelineResp> {
+  return (await request.get(`/review-agent/mrs/${projectId}/${mrId}/timeline`, { silent: opts.silent })) as TimelineResp;
 }
-export async function getDismissalsByRule(since?: string): Promise<DismissalsByRuleItem[]> {
-  return ((await request.get('/review-agent/dismissals/by-rule', { params: since ? { since } : {} })) as DismissalsByRuleItem[]) || [];
+export async function getSeverity(since?: string, opts: SilentOpt = {}): Promise<SeverityBucket[]> {
+  return ((await request.get('/review-agent/metrics/severity', {
+    params: since ? { since } : {},
+    silent: opts.silent,
+  })) as SeverityBucket[]) || [];
+}
+export async function getDismissalsByRule(since?: string, opts: SilentOpt = {}): Promise<DismissalsByRuleItem[]> {
+  return ((await request.get('/review-agent/dismissals/by-rule', {
+    params: since ? { since } : {},
+    silent: opts.silent,
+  })) as DismissalsByRuleItem[]) || [];
 }
 
 /** 周报 list item: name / path / size / modified */
@@ -278,10 +304,10 @@ export interface WeeklyReport {
   };
 }
 
-export async function getWeeklyReports(limit = 5): Promise<WeeklyReportListItem[]> {
-  const r = await request.get('/review-agent/weekly-reports', { params: { limit } });
+export async function getWeeklyReports(limit = 5, opts: SilentOpt = {}): Promise<WeeklyReportListItem[]> {
+  const r = await request.get('/review-agent/weekly-reports', { params: { limit }, silent: opts.silent });
   return (r as any)?.reports || [];
 }
-export async function getWeeklyReport(name: string): Promise<WeeklyReport> {
-  return (await request.get(`/review-agent/weekly-reports/${encodeURIComponent(name)}`)) as WeeklyReport;
+export async function getWeeklyReport(name: string, opts: SilentOpt = {}): Promise<WeeklyReport> {
+  return (await request.get(`/review-agent/weekly-reports/${encodeURIComponent(name)}`, { silent: opts.silent })) as WeeklyReport;
 }

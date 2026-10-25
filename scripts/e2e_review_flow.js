@@ -44,6 +44,33 @@ async function api(pathname, opts = {}) {
 }
 
 /**
+ * 确保一个账号存在且口令/角色符合预期 (幂等).
+ *
+ * ⚠️ 2026-10-25: 建号端点从 `/auth/register` 换成了 `/auth/users`
+ *    (账号必须管理员先建过才能登录, /auth/register 已下线).
+ *    已存在时 (409) 走 PATCH 改口令 + 角色 —— 否则上一轮跑剩的旧账号
+ *    口令对不上, 后面 login 会失败.
+ */
+async function ensureUser(adminToken, username, password, role) {
+  const post = (path, body, method = 'POST') => api(path, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminToken },
+    body: JSON.stringify(body),
+  });
+  let r = await post('/api/v1/auth/users', { username, password, role });
+  if (r.status === 201) return r.json;
+  if (r.status !== 409) {
+    throw new Error(`建号失败 ${username}: ${r.status} ${JSON.stringify(r.json)}`);
+  }
+  const list = await api('/api/v1/auth/users', { headers: { Authorization: 'Bearer ' + adminToken } });
+  const found = (list.json || []).find((u) => u.username === username || u.username === `${username}@twsc.com.cn`);
+  if (!found) throw new Error(`账号 ${username} 已存在但列表里找不到`);
+  r = await post(`/api/v1/auth/users/${found.id}`, { password, role, is_active: true }, 'PATCH');
+  if (r.status !== 200) throw new Error(`改账号失败 ${username}: ${r.status} ${JSON.stringify(r.json)}`);
+  return r.json;
+}
+
+/**
  * 等资产卡片出现 (列表是异步取的 —— 固定 sleep 会抢跑, 卡片还没回来就断言).
  * 找到就点开详情, 返回徽标文案.
  */
@@ -162,11 +189,7 @@ async function openPage(browser, token, user) {
     method: 'DELETE',
     headers: { Authorization: 'Bearer ' + adminToken },
   });
-  await api('/api/v1/auth/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminToken },
-    body: JSON.stringify({ username: PUB, password: PUB_PW, role: 'tester' }),
-  });
+  await ensureUser(adminToken, PUB, PUB_PW, 'tester');
   // ⚠️ 先存原值 —— 白名单是**生产设置**, 结束时必须还原
   //    (以前直接恢复成空字符串, 会把管理员配好的真实白名单一起抹掉)
   savedPublisherSetting = await getSetting(adminToken, 'marketplace.publisher_usernames');

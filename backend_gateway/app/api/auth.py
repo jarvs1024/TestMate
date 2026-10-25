@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.identity import lookup_candidates, to_email
+from app.core.identity import local_part, lookup_candidates, to_email
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.db.session import get_session
 from app.models.user import User, UserRole
@@ -199,6 +199,59 @@ def _normalize_username(raw: str, role: UserRole) -> str:
     return email
 
 
+async def _check_name_collision(session: AsyncSession, username: str, role: UserRole) -> None:
+    """建号时挡住"撞名": 管理员账号名 与 用户邮箱前缀 撞了.
+
+    管理员账号名是不含 @ 的短名 ('zhangsan'), 普通用户的邮箱前缀也是短名
+    ('zhangsan') —— 两者撞名时, 用户用短名登录会**先命中管理员账号**
+    (精确匹配优先), 结果被要求输管理员的密码, 用户完全懵.
+
+    两个方向都要挡:
+      · 建管理员 'zhangsan' 时 → 库里不能已有 'zhangsan@twsc.com.cn' 这个用户
+      · 建用户 'zhangsan@…' 时 → 库里不能已有叫 'zhangsan' 的管理员
+    """
+    if role == UserRole.admin:
+        clash = f"{local_part(username)}{settings.AUTH_EMAIL_DOMAIN}"
+        exists = (
+            await session.execute(
+                select(User).where(User.username == clash, User.role != UserRole.admin)
+            )
+        ).scalar_one_or_none()
+        if exists is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"账号名 '{username}' 与用户 '{clash}' 撞名 —— 换个账号名, 否则该用户用短名登录会撞到这个管理员",
+            )
+    else:
+        lp = local_part(username)
+        exists = (
+            await session.execute(
+                select(User).where(User.username == lp, User.role == UserRole.admin)
+            )
+        ).scalar_one_or_none()
+        if exists is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"邮箱前缀 '{lp}' 与管理员账号 '{lp}' 撞名 —— 换个邮箱前缀, 否则该用户用短名登录会撞到那个管理员",
+            )
+
+
+def _check_password(raw: str | None) -> str:
+    """校验并返回管理员设置的密码 (原样, 不 strip).
+
+    ⚠️ **一律不 strip**: 口令是原样比对的, 建号时 strip 掉首尾空格、登录时
+    不 strip, 就会出现"管理员给的密码永远登不上"的不对称.
+    首尾空格本来就该是密码的一部分 —— 用户输入什么就存什么.
+
+    ⚠️ 全空白要显式拒绝: 否则 "   " 会被当成"没给密码" → 静默生成一个**免密**
+    账号, 管理员以为自己设了密码, 实际这个号谁都能进.
+    """
+    pw = raw or ""
+    if pw and not pw.strip():
+        raise HTTPException(status_code=422, detail="密码不能只有空白字符")
+    return pw
+
+
 @router.get("/users", response_model=list[UserManageOut])
 async def list_users(
     session: AsyncSession = Depends(get_session),
@@ -223,8 +276,9 @@ async def create_user(
          (不是空串 —— 免得以后有人加个"空密码也算对"的判断就把它放行了).
     """
     username = _normalize_username(req.username, req.role)
+    await _check_name_collision(session, username, req.role)
 
-    password = (req.password or "").strip()
+    password = _check_password(req.password)
     if req.password_required and not password:
         raise HTTPException(status_code=422, detail="要求密码登录的账号必须设置密码")
     if req.role == UserRole.admin and not password:
@@ -276,7 +330,7 @@ async def update_user(
 
     # ② 重置密码 —— 给了新密码就换掉, 同时这个账号变成"必须密码"
     #    (不变式: password_required=True ⟹ 这个账号有可用的密码)
-    new_password = (req.password or "").strip()
+    new_password = _check_password(req.password)
     if new_password:
         user.password_hash = hash_password(new_password)
         user.password_required = True
@@ -302,6 +356,10 @@ async def update_user(
             user.password_required = True
         else:
             # 改成免密 → 密码作废 (存随机串, 免得"空密码也算对")
+            # ⚠️ admin 角色**不能**改免密 —— 登录时 need_password 对 admin 恒为真,
+            #    免密 admin 等于一个谁也进不去的账号 (自己把自己锁死).
+            if user.role == UserRole.admin:
+                raise HTTPException(status_code=400, detail="管理员账号不能改成免密登录")
             user.password_hash = hash_password(secrets.token_urlsafe(32))
             user.password_required = False
 

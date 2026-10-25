@@ -329,6 +329,14 @@ const visible = computed({
 const submitting = ref(false);
 const job = ref<AssetJob | null>(null);
 /**
+ * 轮询取消标志 —— 关掉抽屉 / 组件卸载后立刻停止轮询.
+ *
+ * ⚠️ 以前关掉抽屉后还在每秒请求, 而且同步完成时会在**别的页面**
+ *    弹一句「已同步到 GitLab」—— 用户已经走了, 却被一条无关的提示打断.
+ */
+let pollCancelled = false;
+
+/**
  * 上传后的**上架状态**:
  *   'checking'  → 刚推完, 还没确认要不要审核 (这时候**不能**说"已同步到 GitLab")
  *   'pending'   → 要审核, 等管理员
@@ -366,7 +374,9 @@ const {
 });
 
 watch(() => props.modelValue, (open) => {
-  if (!open) return;
+  // ⚠️ 抽屉关掉 (点 X / 取消 / 关闭按钮) 都要停掉后台轮询 ——
+  //    不然同步完成时会在别的页面弹「已同步到 GitLab」.
+  if (!open) { pollCancelled = true; return; }
   reset();                 // 表单状态/校验/分类/项目/图标 全部重置
   job.value = null;
   submitting.value = false;
@@ -397,7 +407,10 @@ function onDocClick(e: MouseEvent) {
   iconPanel.value = false;
 }
 onMounted(() => document.addEventListener('click', onDocClick, true));
-onUnmounted(() => document.removeEventListener('click', onDocClick, true));
+onUnmounted(() => {
+  pollCancelled = true;   // 组件没了 → 轮询也停
+  document.removeEventListener('click', onDocClick, true);
+});
 
 async function submit() {
   if (missing.value.length) {
@@ -444,10 +457,16 @@ async function submit() {
 }
 
 async function poll(id: number) {
+  // ⚠️ 提交请求还在飞的时候用户可能已经把抽屉关了 —— 那就别再轮询了
+  //    (不然 poll 一进来就把取消标志清掉, 又在关着的抽屉背后继续轮询).
+  if (!props.modelValue) return;
+  pollCancelled = false;
   for (let i = 0; i < 90; i++) {
     await new Promise((r) => setTimeout(r, 1000));
+    if (pollCancelled) return;
     try {
       const j = await getJob(id);
+      if (pollCancelled) return;
       job.value = j;
       if (j.status === 'pushed' || j.status === 'failed') {
         submitting.value = false;
@@ -477,6 +496,7 @@ async function poll(id: number) {
       /* 轮询失败继续等 */
     }
   }
+  if (pollCancelled) return;
   submitting.value = false;
 }
 
@@ -493,6 +513,7 @@ async function doRetry() {
 }
 
 function close() {
+  pollCancelled = true;   // 抽屉关了 → 停掉后台轮询
   visible.value = false;
   if (fileInput.value) fileInput.value.value = '';
 }

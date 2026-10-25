@@ -100,10 +100,8 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
 
-      DIFY_MOCK: ${DIFY_MOCK:-true}
-      DIFY_BASE_URL: ${DIFY_BASE_URL:-}
-      DIFY_API_KEY: ${DIFY_API_KEY:-}
-      DIFY_TIMEOUT_SECONDS: "120"
+      # ⚠️ DIFY_* 已于 2026-10-25 整体下线 (引擎 / 数据源 / 配置 / 接口 / 文案全清),
+      #    compose 里这组透传是残留 —— config.py 早就没有对应字段了.
 
       RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-}
       RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:-}

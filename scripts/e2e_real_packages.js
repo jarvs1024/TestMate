@@ -74,6 +74,35 @@ async function login(username, password) {
   return r.json.access_token;
 }
 
+/**
+ * 确保一个账号存在且口令/角色符合预期 (幂等).
+ *
+ * ⚠️ 2026-10-25: 建号端点从 `/auth/register` 换成了 `/auth/users`
+ *    (账号必须管理员先建过才能登录, /auth/register 已下线).
+ *    已存在时 (409) 走 PATCH 改口令 + 角色 —— 否则上一轮跑剩的旧账号
+ *    口令对不上, 后面 login 会失败.
+ */
+async function ensureUser(adminToken, username, password, role) {
+  let r = await api('/api/v1/auth/users', {
+    method: 'POST', token: adminToken,
+    body: { username, password, role },
+  });
+  if (r.status === 201) return r.json;
+  if (r.status !== 409) {
+    throw new Error(`建号失败 ${username}: ${r.status} ${r.text}`);
+  }
+  // 已存在 → 找到它, 改口令 + 角色
+  const list = await api('/api/v1/auth/users', { token: adminToken });
+  const found = (list.json || []).find((u) => u.username === username || u.username === `${username}@twsc.com.cn`);
+  if (!found) throw new Error(`账号 ${username} 已存在但列表里找不到`);
+  r = await api(`/api/v1/auth/users/${found.id}`, {
+    method: 'PATCH', token: adminToken,
+    body: { password, role, is_active: true },
+  });
+  if (r.status !== 200) throw new Error(`改账号失败 ${username}: ${r.status} ${r.text}`);
+  return r.json;
+}
+
 async function setSetting(token, key, value) {
   const r = await api(`/api/v1/settings/${key}`, {
     method: 'PUT', token, body: { value },
@@ -580,10 +609,9 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
   const adminToken = await login(ADMIN, ADMIN_PW);
 
   // 发布者账号 + 白名单 (改设置前先存原值, 结束还原)
-  await api('/api/v1/auth/register', {
-    method: 'POST', token: adminToken,
-    body: { username: PUBLISHER.username, password: PUBLISHER.password, role: 'tester' },
-  });
+  // ⚠️ 2026-10-25: 建号端点从 /auth/register 换成了 /auth/users ——
+  //    账号必须管理员先建过才能登录, /auth/register 已下线.
+  await ensureUser(adminToken, PUBLISHER.username, PUBLISHER.password, 'tester');
   const pubToken = await login(PUBLISHER.username, PUBLISHER.password);
   check('P0 发布者账号就绪', !!pubToken);
 

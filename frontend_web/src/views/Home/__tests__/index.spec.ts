@@ -21,7 +21,10 @@ import { createPinia, setActivePinia } from 'pinia';
 import router from '@/router';
 import { useUserStore } from '@/stores/user';
 
-const { listCapabilities } = vi.hoisted(() => ({ listCapabilities: vi.fn() }));
+const { listCapabilities, getOverview } = vi.hoisted(() => ({
+  listCapabilities: vi.fn(),
+  getOverview: vi.fn(),
+}));
 
 vi.mock('@/api/capabilities', () => ({
   listCapabilities: (...a: any[]) => listCapabilities(...a),
@@ -30,12 +33,7 @@ vi.mock('@/api/capabilities', () => ({
 
 // 看板 / 目录 / 知识的 meta 取数 —— 桩掉, 只保留最小结构
 vi.mock('@/api/reviewagent', () => ({
-  getOverview: vi.fn(async () => ({
-    mrs: { total: 128, merged: 10, open: 20 },
-    suggestions: { total: 340, applied: 1, dismissed: 2, open: 3, adoption_rate: 0.5, dismissal_rate: 0.1 },
-    runs: { total: 1, failed: 0, success_rate: 1 },
-    severity_breakdown: [],
-  })),
+  getOverview: (...a: any[]) => getOverview(...a),
 }));
 
 vi.mock('@/api/assets', () => ({
@@ -96,6 +94,13 @@ async function mountHome(opts: { loggedIn?: boolean } = {}) {
 beforeEach(async () => {
   listCapabilities.mockReset();
   listCapabilities.mockResolvedValue({ items: CAPS, total: CAPS.length });
+  getOverview.mockReset();
+  getOverview.mockResolvedValue({
+    mrs: { total: 128, merged: 10, open: 20 },
+    suggestions: { total: 340, applied: 1, dismissed: 2, open: 3, adoption_rate: 0.5, dismissal_rate: 0.1 },
+    runs: { total: 1, failed: 0, success_rate: 1 },
+    severity_breakdown: [],
+  });
   pushSpy = vi.spyOn(router, 'push').mockResolvedValue(undefined as any);
 });
 
@@ -254,5 +259,44 @@ describe('首页 · 能力墙', () => {
     for (const n of ['home', 'tool-runner', 'code-review', 'market', 'kb-manage']) {
       expect(names).toContain(n);
     }
+  });
+});
+
+/**
+ * 加载失败 ≠ 没有能力 (2026-10-25 前端健壮性).
+ *
+ * ⚠️ 以前 /agents 一挂, store 清空 items 并记 error, 但 Home 模板只读
+ *    loading 和 filtered.length → 渲染成「没有匹配的能力」这个**假空态**,
+ *    而侧栏 CapabilityNav 同时显示「能力列表加载失败」—— 两边自相矛盾.
+ */
+describe('首页 · 加载失败', () => {
+  it('能力列表加载失败 → 错误态 + 重试入口 (不是假空态)', async () => {
+    listCapabilities.mockRejectedValue(new Error('后端挂了'));
+    const { w } = await mountHome();
+    expect(w.find('.state.err').exists()).toBe(true);
+    expect(w.find('.state.err').text()).toContain('能力列表加载失败');
+    expect(w.find('.retry-btn').exists()).toBe(true);
+    expect(w.text()).not.toContain('没有匹配的能力');
+    w.unmount();
+  });
+
+  it('点「重试」→ 重新拉一次列表, 恢复渲染能力卡', async () => {
+    listCapabilities.mockRejectedValueOnce(new Error('后端挂了'));
+    const { w } = await mountHome();
+    expect(w.find('.state.err').exists()).toBe(true);
+
+    listCapabilities.mockResolvedValue({ items: CAPS, total: CAPS.length });
+    await w.find('.retry-btn').trigger('click');
+    await flushPromises();
+    expect(w.find('.state.err').exists()).toBe(false);
+    expect(w.findAllComponents({ name: 'CapabilityCard' }).length).toBe(5);
+    w.unmount();
+  });
+
+  it('看板概览走静默 (ReviewAgent 没配时不该飘全局红条)', async () => {
+    const { w } = await mountHome();
+    await flushPromises();
+    expect(getOverview).toHaveBeenCalledWith(undefined, { silent: true });
+    w.unmount();
   });
 });

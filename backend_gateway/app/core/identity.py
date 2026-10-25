@@ -75,6 +75,12 @@ def lookup_candidates(raw: str | None) -> list[str]:
 
     ⚠️ 顺序不能乱: 'admin' 必须先按原样命中, 否则会被当成
        'admin@twsc.com.cn' 去命中另一个普通账号.
+
+    ⚠️ 撞名的边界情况: 管理员账号名是不含 @ 的短名 ('zhangsan'), 而普通用户的
+       邮箱前缀恰好也是短名 ('zhangsan') —— 两者撞名时, 用户用短名登录会
+       **先命中管理员账号** (精确匹配优先是合理的: 用户明明白白输的就是这个名字).
+       这种情况由**建号时的撞名校验**挡住 (app/api/auth.py 的 _check_name_collision),
+       登录侧不做特殊处理 —— 否则"精确匹配优先"这条普遍规则会被打破.
     """
     s = _norm(raw)
     out: list[str] = []

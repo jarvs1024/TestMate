@@ -203,11 +203,22 @@ async def seed_agents() -> None:
        - 不在 SEED_AGENTS 里的旧 agent → 标记 deprecated (首页不显示, 但 DB 里留痕可回滚)
        - 新增的 code → 插入
        这样切换能力路线图时, DB 自动收敛到 SEED_AGENTS 的状态.
+
+    ⚠️ 2026-10-25 改: **只废弃"曾经是 seed、后来被移出清单"的那些**,
+       不再把所有非 seed 行一律标 deprecated ——
+       管理员通过 POST /api/v1/agents 自己建的能力, 会在下次重启时凭空消失
+       (写操作当时没有任何提示, 重启后能力墙上就少了一张卡).
+       现在靠"这条行曾经被 seed 过"来区分 (created_by IS NULL = seed 建的老行).
     """
     async with AsyncSessionLocal() as session:
         seed_codes = {cfg["code"] for cfg in SEED_AGENTS}
-        # 1) 把不在 SEED 里的旧 agent 标 deprecated (广场列表会过滤掉)
-        old_stmt = select(Agent).where(Agent.code.notin_(seed_codes))
+        # 1) 把"曾经是 seed、现在被移出清单"的行标 deprecated
+        #    判据: created_by IS NULL (seed 建的老行) 且不在 SEED 清单里
+        #    —— 管理员自建的能力 created_by 是管理员 id, 不会被误伤.
+        old_stmt = select(Agent).where(
+            Agent.code.notin_(seed_codes),
+            Agent.created_by.is_(None),
+        )
         old_result = await session.execute(old_stmt)
         for old_agent in old_result.scalars().all():
             old_agent.status = AgentStatus.deprecated
@@ -246,6 +257,22 @@ async def seed_agents() -> None:
 
 
 # ===== API =====
+
+def _validate_enum(enum_cls, value: str, field: str) -> None:
+    """枚举值合法性校验 —— 不合法就 422, 别让它变成 500 的 LookupError.
+
+    ⚠️ 注意 API 出入参用的是**连字符 value** ('auto-code'), 而 DB ENUM 存的是
+    **下划线 name** ('auto_code'). 所以这里按 **value** 校验, 而不是 name.
+    """
+    try:
+        enum_cls(value)
+    except ValueError:
+        valid = ", ".join(e.value for e in enum_cls)
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown {field} '{value}' (可用: {valid})",
+        )
+
 
 @router.get("", response_model=AgentListOut)
 async def list_agents(
@@ -301,16 +328,17 @@ async def create_agent(
     """新建能力。admin only。"""
     if _user.role.value != "admin":
         raise HTTPException(status_code=403, detail="admin only")
-    # 引擎值先校验: 直接丢给 DB 的话, 传个已下线的值 (如 dify) 会变成 500 的
+    # 枚举值先校验: 直接丢给 DB 的话, 传个已下线的值 (如 dify) 会变成 500 的
     # LookupError, 调用方看不出是自己参数不对.
-    try:
-        AgentEngine(payload.engine)
-    except ValueError:
-        valid = ", ".join(e.value for e in AgentEngine)
-        raise HTTPException(
-            status_code=422,
-            detail=f"unknown engine '{payload.engine}' (可用: {valid})",
-        )
+    #
+    # ⚠️ category / kind / status 同样要校验 —— 而且它们有个**不对称**:
+    #    API 出参是**连字符**的 value ('auto-code'), DB ENUM 存的是**下划线**的
+    #    name ('auto_code'). 谁要是把 GET /agents 返回的 category 原样回传给
+    #    POST /agents, SQLAlchemy 按 name 找就找不到 → LookupError → 500.
+    _validate_enum(AgentEngine, payload.engine, "engine")
+    _validate_enum(AgentCategory, payload.category, "category")
+    _validate_enum(AgentKind, payload.kind, "kind")
+    _validate_enum(AgentStatus, payload.status, "status")
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Agent).where(Agent.code == payload.code))
         if result.scalar_one_or_none():

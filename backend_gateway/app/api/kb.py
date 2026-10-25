@@ -275,8 +275,18 @@ async def share_embed_proxy(path: str = "", theme: str = "light", shared_id: str
 
     RAGFlow HTML 里的 /entry/ /chunk/ /assets/ 静态资源由前端 nginx 在
     /api/v1/kb/share-embed/{path} 透传 (nginx 配 /share-embed/ 反代到 RAGFlow 端口 18080).
+
+    ⚠️ **theme 必须走白名单** —— 它会被拼进 <script> 里, 原样拼就是反射型 XSS:
+       nginx 把整个 /api/ 反代到后端 (与前端同源), 注入的脚本能直接读
+       localStorage['testmate:token'] 把登录态偷走. 白名单之外的值一律当 light.
     """
+    import json
+
     import httpx
+
+    # 白名单: 只有 light / dark 两种主题, 其他值(包括脚本片段)一律降级成 light
+    theme = theme if theme in ("light", "dark") else "light"
+
     # 透传到 RAGFlow
     if path:
         # 子资源: /entry/.../xxx.js, /chunk/.../xxx.js, /assets/.../xxx.css 等
@@ -293,9 +303,10 @@ async def share_embed_proxy(path: str = "", theme: str = "light", shared_id: str
     # 仅对 HTML 注入 localStorage 主题
     if "text/html" in content_type:
         html = content.decode("utf-8", errors="ignore")
+        # json.dumps 再包一层引号 —— 就算白名单以后被放宽, 也不会拼出可执行的 JS
         inject = (
             "<script>(function(){"
-            "try{var t='" + theme + "';"
+            "try{var t=" + json.dumps(theme) + ";"
             "localStorage.setItem('ragflow-ui-theme',t);"
             "localStorage.setItem('ragflow-ui-theme-mode',t);}catch(e){}"
             "})();</script>"

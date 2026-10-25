@@ -133,6 +133,11 @@ def main() -> int:
                 # 更新密码 + 角色
                 existing.password_hash = hash_password(password)
                 existing.role = UserRole(args.role)
+                # ⚠️ password_required 必须一起置 True ——
+                #    不然建的是 tester 角色 + 给了密码, 登录时密码会被**忽略**
+                #    (登录判定是 role==admin 或 password_required),
+                #    管理员明明设了密码, 这个号却是个免密账号.
+                existing.password_required = True
                 await session.commit()
                 print(f"✅ 已更新用户: {args.username} (role={args.role})")
                 return 0
@@ -141,6 +146,7 @@ def main() -> int:
                 username=args.username,
                 password_hash=hash_password(password),
                 role=UserRole(args.role),
+                password_required=True,
             )
             session.add(user)
             await session.commit()
@@ -151,7 +157,9 @@ def main() -> int:
     rc = asyncio.run(run())
     print()
     print(f"   账号: {args.username}")
-    print(f"   密码: {password if args.password else '(从文件/env 读)'}")
+    # ⚠️ **不要把明文口令回显到终端** —— 终端输出会进 CI 日志 / 终端历史 /
+    #    运维的屏幕截图里. 口令本身 admin 知道 (是他刚传进来的).
+    print(f"   密码: {'(见你传入的值)' if args.password else '(从文件/env 读)'}")
     print(f"   角色: {args.role}")
     print()
     print("⚠️  生产部署请立即改默认密码,设置 ADMIN_DEFAULT_PASSWORD 环境变量覆盖")

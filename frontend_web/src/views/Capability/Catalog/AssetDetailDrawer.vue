@@ -345,7 +345,11 @@ const syncLabel = computed(() => {
 });
 
 
+// 请求序号: 快速切资产时, 慢的旧文档响应会覆盖新文档 (抽屉里显示的是上一个资产的说明).
+// 另外两个 watch (切资产 / 开抽屉) 还会触发重复请求 —— 序号保证只有最后一次的结果算数.
+let docSeq = 0;
 async function loadDoc(code: string) {
+  const seq = ++docSeq;
   // ⚠️ 连接器没有文档 (只有一段 MCP 配置) —— 别去请求, 否则 404 会弹红条
   if (props.item?.kind === 'mcp') {
     doc.value = null;
@@ -357,11 +361,14 @@ async function loadDoc(code: string) {
   docError.value = '';
   doc.value = null;
   try {
-    doc.value = await getAssetDoc(code);
+    const d = await getAssetDoc(code);
+    if (seq !== docSeq) return;   // 已有更新的请求在飞, 丢弃本次
+    doc.value = d;
   } catch (e: any) {
+    if (seq !== docSeq) return;   // 过期请求的失败不该改页面
     docError.value = e?.response?.data?.detail || e?.message || '文档读取失败';
   } finally {
-    docLoading.value = false;
+    if (seq === docSeq) docLoading.value = false;
   }
 }
 

@@ -12,6 +12,17 @@
       </div>
     </div>
 
+    <!-- ⚠️ 配置拉失败 → 页面内明确提示 (不能只靠全局 toast:
+         页面上各 section 的计数会显示「0 项」, 用户会以为配置被清空了) -->
+    <div v-if="loadError" class="card err-card">
+      <div class="err-ic">⚠️</div>
+      <div class="err-body">
+        <div class="err-t">配置加载失败</div>
+        <div class="err-d">{{ loadError }} —— 配置<strong>没有被改动</strong>, 请检查后端服务后重试.</div>
+        <button class="err-btn" @click="load">重试</button>
+      </div>
+    </div>
+
     <div class="set-layout">
       <!-- 左 sticky 目录 -->
       <aside class="set-toc">
@@ -508,15 +519,29 @@ function toBool(v: any, def = false): boolean {
   return def;
 }
 
+/**
+ * 配置加载失败 —— 页面内提示用.
+ *
+ * ⚠️ 以前 load() 没有 catch: /settings/schema 挂了就变成 unhandled rejection,
+ *    页面照样渲染, 但知识库显示「0 项」—— 用户以为配置被清空了.
+ */
+const loadError = ref('');
+
 async function load() {
-  const resp = await getSchema();
-  groups.value = resp.groups;
-  for (const g of resp.groups) {
-    for (const it of g.items) {
-      const v = it.value_type === 'bool' ? toBool(it.value) : it.value;
-      drafts[it.key] = v;
-      originals[it.key] = v;
+  loadError.value = '';
+  try {
+    const resp = await getSchema();
+    groups.value = resp.groups;
+    for (const g of resp.groups) {
+      for (const it of g.items) {
+        const v = it.value_type === 'bool' ? toBool(it.value) : it.value;
+        drafts[it.key] = v;
+        originals[it.key] = v;
+      }
     }
+  } catch (e: any) {
+    // 失败不抛 —— 抛出去就是 unhandled rejection, 页面上什么都看不出来
+    loadError.value = e?.response?.data?.detail || e?.message || '配置加载失败';
   }
 }
 
@@ -678,6 +703,25 @@ onMounted(() => {
 .warn-ic { font-size: 24px; }
 .warn-t { font-weight: 600; color: var(--ink-900); }
 .warn-d { font-size: 12.5px; color: var(--ink-700); }
+
+/* 配置加载失败 —— 页面内提示 (别让用户以为配置被清空了) */
+.err-card {
+  display: flex; gap: 14px; align-items: flex-start;
+  margin-bottom: 16px;
+  background: rgba(239, 68, 68, 0.06);
+  border-color: var(--err);
+}
+.err-ic { font-size: 24px; }
+.err-body { display: flex; flex-direction: column; gap: 6px; }
+.err-t { font-weight: 600; color: var(--ink-900); }
+.err-d { font-size: 12.5px; color: var(--ink-700); }
+.err-btn {
+  align-self: flex-start;
+  background: transparent; border: 1px solid var(--err); color: var(--err);
+  padding: 4px 14px; border-radius: var(--radius-pill);
+  font-size: 12px; cursor: pointer; font-family: inherit;
+}
+.err-btn:hover { background: var(--err); color: #fff; }
 
 /* ====== 布局: 左 toc + 右 sections ====== */
 .set-layout {

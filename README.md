@@ -43,78 +43,88 @@
 
 ```
 TestMate/
-├── backend_gateway/           # FastAPI 后端
+├── backend_gateway/                # FastAPI 后端
 │   ├── app/
-│   │   ├── api/               # 8 个路由(health / auth / agents / kb / machines / diagnose / notify / settings)
-│   │   ├── core/              # config / security / logging / ragflow_client / review_agent_client / settings_store
-│   │   ├── db/                # SQLAlchemy async session
-│   │   ├── models/            # 4 张表(user / agent / machine / system_setting)
-│   │   ├── schemas/           # Pydantic 请求/响应
-│   │   ├── workers/           # (预留异步任务)
-│   │   └── main.py            # FastAPI 入口 + lifespan + structlog
-│   ├── alembic/               # 数据库迁移
-│   │   └── versions/0001_initial.py
-│   ├── Dockerfile             # multi-stage build
+│   │   ├── api/                    # 路由模块(全部路由见此目录:health / auth / agents / marketplace / kb / machines / notify / settings / pr_agent / review_agent)
+│   │   ├── core/                   # 配置 / 安全 / 日志 + 外部服务客户端 + 资产市场策略(全部见 app/core/)
+│   │   ├── db/                     # SQLAlchemy async session
+│   │   ├── models/                 # ORM 模型(表名见各文件的 __tablename__)
+│   │   ├── schemas/                # Pydantic 请求/响应(agent / asset / auth / system_setting)
+│   │   ├── workers/                # (预留异步任务)
+│   │   └── main.py                 # FastAPI 入口 + lifespan + structlog
+│   ├── alembic/versions/           # 数据库迁移(0001_initial ~ 0021_user_account_control)
+│   ├── tests/                      # pytest 用例(见 tests/ 目录)
+│   ├── Dockerfile                  # multi-stage build
 │   └── requirements.txt
-├── frontend_web/              # Vue 3 前端
+├── frontend_web/                   # Vue 3 前端
 │   ├── src/
-│   │   ├── api/               # axios 客户端
-│   │   ├── components/        # 通用组件
-│   │   ├── views/             # 路由页面
-│   │   │   ├── Home/         # 首页 · 能力墙 (CapabilityCard)
-│   │   │   └── Capability/   # 能力详情: ToolRunner / BoardView / Catalog / Library
-│   │   ├── layouts/           # MainLayout
-│   │   ├── router/            # 路由表
-│   │   ├── stores/            # pinia stores
-│   │   ├── styles/            # 全局 CSS + design tokens
-│   │   └── utils/             # request.ts(axios 拦截器)
-│   ├── Dockerfile             # node build → nginx 静态
+│   │   ├── api/                    # axios 客户端(assets / capabilities / kb / pragent / reviewagent / settings / users)
+│   │   ├── components/             # 通用组件
+│   │   ├── constants/              # 能力种类常量
+│   │   ├── layouts/                # MainLayout
+│   │   ├── router/                 # 路由表
+│   │   ├── stores/                 # pinia stores(capabilities / theme / user)
+│   │   ├── styles/                 # 全局 CSS + design tokens
+│   │   ├── types/                  # TS 类型
+│   │   ├── utils/                  # request.ts(axios 拦截器)+ 通用工具
+│   │   └── views/                  # 路由页面
+│   │       ├── Home/               # 首页 · 能力墙 (CapabilityCard)
+│   │       ├── Capability/         # 能力详情: ToolRunner / BoardView / Catalog / Library
+│   │       ├── Login/
+│   │       └── Settings/
+│   ├── e2e.mjs                     # playwright 冒烟脚本
+│   ├── Dockerfile                  # node build → nginx 静态
 │   └── package.json
-├── deploy/                    # 一键部署
-│   ├── docker-compose.yml     # 4 服务编排
-│   ├── deploy.sh              # 主入口(在线 / 离线 / JWT 校验 / admin 自动建)
-│   ├── offline-save.sh        # 离线镜像打包
-│   ├── offline-images.txt     # 离线镜像清单
-│   ├── backup.sh              # 数据备份(mysqldump + redis rdb)
-│   ├── restore.sh             # 数据恢复(配 backup.sh)
-│   └── README.md              # 部署文档
-├── scripts/                   # 辅助脚本
-│   ├── create_admin.py        # 手动建 admin(显式 --mysql-* + --password-file)
-│   ├── start.sh               # 本地开发一键起
-│   └── stop.sh
-└── docs/                      # 文档
-    └── specs/                 # 设计 / 方案 / 进度
-        ├── 2026-07-04-testmate-brief.md
-        ├── 2026-07-04-testmate-design.md
-        └── 2026-07-04-p0-progress.md
+├── deploy/                         # 一键部署
+│   ├── docker-compose.yml          # 4 服务编排
+│   ├── deploy.sh                   # 主入口(在线 / 离线 / JWT 校验 / admin 自动建)
+│   ├── offline-save.sh             # 离线镜像打包
+│   ├── offline-images.txt          # 离线镜像清单
+│   ├── backup.sh                   # 数据备份(mysqldump + redis rdb)
+│   ├── restore.sh                  # 数据恢复(配 backup.sh)
+│   └── README.md                   # 部署文档
+├── scripts/                        # 辅助脚本(开发 / 部署 / e2e / 种子数据)
+│   ├── check_deploy.sh             # 部署一致性自检(前端特征串 + 后端 sha256)
+│   ├── create_admin.py             # 手动建 admin(显式 --mysql-* + --password-file)
+│   ├── deploy.sh                   # 部署前端 / 后端
+│   ├── dev.sh                      # 本地开发
+│   ├── start.sh / stop.sh          # 本地一键起 / 停
+│   ├── seed_market.py              # 资产市场种子数据
+│   ├── make_real_packages.py       # 生成真实安装包(联调用)
+│   └── e2e_*.js                    # playwright 端到端脚本
+└── docs/                           # 文档
+    └── specs/                      # 设计 / 方案 / 进度(见 docs/specs/)
 ```
 
 ## 文档索引
 
 | 文档 | 用途 |
 |---|---|
-| `docs/specs/2026-07-04-testmate-brief.md` | 老板汇报 |
-| `docs/specs/2026-10-25-capability-wall-design.md` | 能力墙重构设计 (首页信息架构 / 角色模型 / 文案对照) |
-| `docs/specs/2026-07-04-testmate-design.md` | 完整技术方案 |
-| `docs/specs/2026-07-04-p0-progress.md` | P0 进度笔记(2026-07-04) |
+| `docs/specs/2026-07-04-testmate-brief.md` | 老板汇报(归档) |
+| `docs/specs/2026-07-04-testmate-design.md` | 完整技术方案(归档) |
+| `docs/specs/2026-07-04-p0-progress.md` | P0 进度笔记(2026-07-04,归档) |
+| `docs/specs/2026-07-07-p0-progress.md` | P0 进度笔记(2026-07-07,归档) |
+| `docs/specs/2026-08-18-issue-helper-design.md` | 辅助提单系统方案(P0 设计稿) |
+| `docs/specs/2026-10-14-agent-marketplace-design.md` | 智能体市场设计(执行注册表模型) |
+| `docs/specs/2026-10-22-ai-asset-market-overview.md` | AI 资产市场总览 |
+| `docs/specs/2026-10-23-asset-market-verification.md` | 资产市场验证记录 |
+| `docs/specs/2026-10-25-capability-wall-design.md` | 能力墙重构设计 (首页信息架构 / 角色模型 / 文案对照 / Dify 下线) |
 | `deploy/README.md` | 一键部署实操(在线 / 离线 / 备份 / 排错) |
-| `C:\Users\2268\testmate_stack.md` | 完整技术栈全景(本地笔记) |
-| `C:\Users\2268\testmate_docker_review.md` | Docker 化改进报告(本地笔记) |
 
 ## 快速部署
 
 ```bash
 cd deploy && cp .env.template .env && $EDITOR .env
-sudo ./deploy/deploy.sh        # 在线;离线见 deploy/README.md §3
+sudo ./deploy.sh              # 在线;离线见 deploy/README.md §3
 ```
 
 详见 `deploy/README.md`。
 
 ## 当前进度(2026-07-07)
 
-- ✅ P0 全栈可起 + 8 个 API 路由 + 4 张表 + monorepo 完整
-- ✅ 86 服务器部署上线(8090 前端 / 8000 后端 / 3306 MySQL / 6379 Redis)
-- ✅ admin 账号已建(admin / Admin@123)
+- ✅ P0 全栈可起 + API 路由(app/api/)+ ORM 模型(app/models/)+ monorepo 完整
+- ✅ 86 服务器部署上线(8080 前端 / 18000 后端 / 43060 MySQL / 63790 Redis,见 `deploy/.env.template`)
+- ✅ admin 账号已建(初始密码见 `deploy/.env` 的 `ADMIN_DEFAULT_PASSWORD`,生产部署后请立即修改)
 - ✅ Docker 化加固 12 项(commit f0ef182):compose v1/v2 兼容 / 密码强度 / offline-images 补全 / multi-stage build / alembic / health 分层 / structlog / restore.sh 等
 - ⏳ P1 核心场景(机台三道闸 / 协议检索 / 用例生成 / 钉钉通知)— 部分模块代码已有,待补外部 AI 推理接入 + 真实机台联调
 - ⏳ P1 前端 monaco 接入(包已装,组件未接)

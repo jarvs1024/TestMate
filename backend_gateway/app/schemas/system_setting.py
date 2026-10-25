@@ -26,7 +26,9 @@ class SettingGroupOut(BaseModel):
 
 class SettingUpdateIn(BaseModel):
     value: Any
-    update_secret: bool = True  # for secret key: 是否要更新 (空字符串代表不改)
+    # ⚠️ secret 项现在**空值一律当"不改"** (与前端"留空 = 不改"的契约一致),
+    #    这个开关已经不起作用了 —— 保留字段只是为了不破坏旧调用方的 payload.
+    update_secret: bool = True
 
 
 class SettingTestOut(BaseModel):

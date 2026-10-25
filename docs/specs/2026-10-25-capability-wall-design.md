@@ -488,3 +488,59 @@ frontend_web/src/
 登录页文案同步改成"账号需管理员提前开通"，后端回的 `account_not_found` / `account_disabled` 结构化错误直接透传给用户（不再退化成笼统的"登录失败"）。
 
 回归测试见 `backend_gateway/tests/test_login.py`（21 条）+ `backend_gateway/tests/test_user_admin.py`（31 条）+ `frontend_web/src/views/Settings/components/__tests__/UserManage.spec.ts`（12 条）+ `frontend_web/src/views/Login/__tests__/index.spec.ts`（14 条）。
+
+---
+
+## 十五、全面代码检视（2026-10-25 晚）
+
+对全仓做了一轮四路并行的静态检视（后端 API/鉴权层、后端市场核心、前端、工程卫生），逐条**复现验证**后按 P0/P1/P2 定级处置。
+
+### 已修（安全 / 功能阻断）
+
+| 问题 | 位置 | 性质 |
+|---|---|---|
+| 反射型 XSS：`theme` 参数原样拼进 `<script>`，端点无鉴权，nginx 全量反代 `/api/`（同源）→ 可偷 `localStorage['testmate:token']` | `app/api/kb.py` | 安全 |
+| **本地后端起不来**：`JWT_SECRET` 写在 `.env` **文件**里时，`os.getenv` 读不到（pydantic-settings 不写回 `os.environ`）→ `RuntimeError` | `app/core/config.py` | 功能阻断 |
+| 管理员可把账号改成"免密" → `need_password` 对 admin 恒为真 → 谁也进不去 | `app/api/auth.py` | 安全 |
+| 迁移版本查询 `except Exception` → 任何异常都被当成"老环境"→ `stamp head`，新迁移整段跳过 | `app/db/session.py` | 数据安全 |
+| 3 个 e2e 脚本调已下线的 `/auth/register` → 市场主流程回归验证失效 | `scripts/e2e_*.js` | 功能 |
+| secret 配置项传空值 → 把 RAGFlow api_key / 钉钉 webhook **直接清空**，接口还回"保存成功" | `app/api/settings.py` | 功能 |
+| 启动 seed 把管理员自建的能力全标 `deprecated` → 重启即消失 | `app/api/agents.py` | 功能 |
+| 口令建号时 strip、登录不 strip → 管理员给的密码永远登不上；全空白口令被当成"没给密码"→ 静默生成免密账号 | `app/api/auth.py` | 功能 |
+| bcrypt 只取前 72 **字节**且静默截断，schema 却允许 128 字符 | `app/schemas/auth.py` | 安全 |
+| `anonymous` 占位角色能被建号 → 数据库僵尸行 | `app/schemas/auth.py` | 数据 |
+| 管理员账号名与用户邮箱前缀撞名 → 用户用短名登录会撞到管理员 | `app/api/auth.py` | 功能 |
+| README 公开 admin 默认口令 `Admin@123`（正好卡在 9 字符弱密码门槛上）；4 个端口全错；部署命令路径错 | `README.md` / `deploy/.env.template` / `deploy/deploy.sh` | 安全 / 文档 |
+| `deploy.sh --status` 写死 8000/8080 → 永远报 DOWN | `deploy/deploy.sh` | 功能 |
+| compose 里残留 4 个 Dify 透传（引擎早已下线） | `deploy/docker-compose.yml` | 卫生 |
+
+### 已修（前端健壮性）
+
+- **登出不清"记住用户名"** → 共用机器上下一个人回车就进了上一个同事的号（免密账号尤其致命）。
+- `localStorage` 坏 JSON 裸解析 → 整站白屏。
+- `login()` 先写 token 再拉 `/me` → 失败留下"token 是新账号、user 还是上一个账号"的**半登录态**（顶栏名字、请求 token、isAdmin 三者错配）。
+- publicRead 路由上的 401 被完全吞掉 → token 过期后用户以为"今天没待办"。
+- 快速切 Tab / 分类 / 资产 / 分页时，旧响应覆盖新结果（Catalog、BoardView、AssetDetailDrawer 三处都缺请求序号）。
+- 加载失败被渲染成"没有匹配的能力"（假空态）；`loadError` 成功后不清 → 永久停在错误面板。
+- 轮询里的刷新走非静默 `load()` → 每 5 秒整页被 loading 替换；上传抽屉关了仍每秒轮询。
+- 搜索防抖定时器卸载时没清；`Settings.load()` 无 catch；自动刷新没传 `silent` → ReviewAgent 挂了每 30 秒弹一次红条。
+
+### 已做（目录结构与工程卫生）
+
+删掉：`ai_engine/`（Dify 下线后的空壳）、`docs/api/`、`docs/superpowers/`、`backend_gateway/app/workers/`、`backend_gateway/scripts/`（两个已执行完的一次性迁移脚本）、`app/schemas/log.py`（Dify 下线漏删的孤儿 schema）。
+
+清理：4 份 env 模板的 14 个 `DIFY_*` 死变量；README 结构树按实际代码重写（并去掉会再次过期的数字）；4 份 2026-07 归档文档加废弃标记（正文保留作历史记录）；`check_deploy.sh` 的后端比对清单从 6 个扩到 17 个（原来不含 `app/api/auth.py` —— 改了它完全查不出漂移）；`frontend_web/package.json` 补上一直靠根目录 `node_modules` 兜底的 `playwright` 依赖与 lockfile。
+
+### 已知未修（风险已评估，需专门排期）
+
+| 问题 | 位置 | 为什么不在这轮动 |
+|---|---|---|
+| 落盘与提交用两把不相交的锁（worker 的 `git add -A` 可能提交到半解包的目录） | `asset_jobs.py` / `marketplace.py` | 要改锁模型，涉及市场发布主链路，需要真实 GitLab 环境回归 |
+| `index.json` 全局读-改-写只受 per-code 锁保护 → 并发上传不同 code 会丢索引条目 | `market_catalog.py` | 同上，需要引入全局锁并验证不死锁 |
+| `sync_puller` / `undo_local_commit` / `marketplace.json` 在事件循环线程里跑同步 git I/O | `sync_puller.py` 等 | 改 `to_thread` 收益大但影响面广，需压测 |
+| `.git/index.lock` 残留不自愈 → 市场同步彻底死掉 | `git_sync.py` | 修法明确（lock 类错误前先清陈旧锁），但需要真实 git 仓库验证 |
+| `pkg.py` 解包预算信 zip 头声明的 `file_size`，实际写盘是完整解压流 | `pkg.py` | 改成边写边计费要重写解压路径 |
+| 登录接口用不同 detail code 区分失败原因 → 未鉴权账号枚举 | `app/api/auth.py` | 收紧错误码会牺牲「账号不存在，请联系管理员开通」的可读性，与 §十四的诉求冲突，需产品上再定 |
+| 匿名可达的探活端点会触发真实出网请求并回显内部错误串 | `health.py` | 需要区分「内网可信」与「对外暴露」两种部署形态 |
+
+回归测试见 `backend_gateway/tests/test_security_regressions.py`（19 条）+ `frontend_web/src/stores/__tests__/user.spec.ts`（6 条）。

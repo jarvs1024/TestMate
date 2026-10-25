@@ -1,5 +1,4 @@
 """Pydantic 强校验加载 .env,所有 .env key 必须在这里声明。"""
-import os
 import secrets
 from typing import List
 from urllib.parse import quote_plus
@@ -86,15 +85,20 @@ class Settings(BaseSettings):
 
 def _validate_jwt_secret(s: Settings) -> None:
     """生产环境强制要求 .env 注入 JWT_SECRET, 禁止使用动态默认值.
-    DEBUG=True 时跳过 (本地开发允许动态)."""
+    DEBUG=True 时跳过 (本地开发允许动态).
+
+    ⚠️ 判断"用户配了没有"**不能**用 os.getenv ——
+       pydantic-settings 会从 .env **文件**里读值, 但不会把它写回 os.environ,
+       于是 os.getenv("JWT_SECRET") 永远是 None, 本地按 README 用 uvicorn 起
+       后端会直接 RuntimeError (而 .env 里明明配了).
+       正确做法: 看 model_fields_set —— 显式提供的字段 (环境变量或 .env 文件)
+       才会出现在里面, 走 default_factory 的不会.
+    """
     if s.DEBUG:
         return
-    if not os.getenv("JWT_SECRET"):
-        # Pydantic 读到环境变量就用, 没读到走 default_factory (动态生成).
-        # 这里没法直接区分"用户配了"vs"用了默认", 用长度+非哨兵特征判定:
-        # secrets.token_urlsafe(48) 生成的串是 64 字符的 base64-url.
-        # 真正的生产 secret 一般是手动填的 hex/base64/任意字符串.
-        # 防御: 强制要求显式设置环境变量, 哪怕是动态生成也至少要 .env 里有占位.
+    if "JWT_SECRET" not in s.model_fields_set:
+        # 走的是 default_factory (每次进程启动随机生成) —— 生产环境不能这样,
+        # 重启一次所有已发 token 全废.
         raise RuntimeError(
             "JWT_SECRET 未在 .env 配置. 生产环境必须显式设置 JWT_SECRET "
             "(可用 `python -c 'import secrets;print(secrets.token_urlsafe(48))'` 生成)."

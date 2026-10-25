@@ -38,6 +38,15 @@
 
     <!-- ===== 能力网格 ===== -->
     <div v-if="loading" class="state">加载中…</div>
+    <!-- ⚠️ 加载失败 ≠ 没有能力 —— 以前这里只看 filtered.length, /agents 挂了就渲染成
+         「没有匹配的能力」(假空态), 而侧栏 CapabilityNav 同时显示「能力列表加载失败」,
+         两边自相矛盾. 现在把 store 的 error 摆出来, 并给个重试入口. -->
+    <div v-else-if="store.error" class="state err">
+      <div class="st-ic">⚠️</div>
+      <div>能力列表加载失败</div>
+      <div class="st-sub">{{ store.error }}</div>
+      <button class="retry-btn" @click="retryLoad">重试</button>
+    </div>
     <div v-else-if="filtered.length === 0" class="state">
       <div class="st-ic">🧭</div>
       <div>没有匹配的能力</div>
@@ -120,6 +129,16 @@ const filtered = computed(() => {
 
 function countBy(kind: string): number {
   return store.countByKind[kind] ?? 0;
+}
+
+/**
+ * 能力列表加载失败 → 重试.
+ *
+ * ⚠️ force=true: store 拉失败时 loaded 还是 false, 但显式 force 更保险
+ *    (万一上次是"拉到了但被清空", 也能真的重新拉一次).
+ */
+async function retryLoad() {
+  await store.load(true);
 }
 
 // ===== 卡片 meta: 按角色取真实数据 =====
@@ -213,7 +232,10 @@ async function loadTodos() {
 async function loadMetas() {
   // 看板: 评审概览 (匿名可读, 后端走 get_optional_user)
   try {
-    const ov = await getOverview();
+    // ⚠️ silent: ReviewAgent 没配 / 宕机时这个接口**本来就会失败**,
+    //    卡片已经按降级文案渲染好了 —— 按 request.ts 顶部的约定,
+    //    "调用方自己会兜底降级的请求不该弹全局错误", 否则首页一进来就飘红条.
+    const ov = await getOverview(undefined, { silent: true });
     if (ov?.mrs) {
       boardMeta.value = [
         { icon: '📈', text: `${ov.mrs.total} 个 MR` },
@@ -384,4 +406,12 @@ onMounted(async () => {
 }
 .st-ic { font-size: 32px; opacity: 0.4; }
 .st-sub { font-size: 12px; opacity: 0.8; }
+/* 加载失败 —— 跟"真的没有能力"必须区分开 */
+.state.err { color: var(--err); border-color: rgba(239, 68, 68, 0.3); }
+.retry-btn {
+  background: transparent; border: 1px solid var(--err); color: var(--err);
+  padding: 5px 16px; border-radius: var(--radius-pill);
+  font-size: 12.5px; cursor: pointer; font-family: inherit;
+}
+.retry-btn:hover { background: var(--err); color: #fff; }
 </style>

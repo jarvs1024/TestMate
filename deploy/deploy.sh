@@ -96,13 +96,19 @@ ensure_env() {
   fi
 
   # MYSQL_ROOT_PASSWORD / ADMIN_DEFAULT_PASSWORD 长度校验(弱密码不可接受)
+  # ⚠️ 门槛 12 字符 —— 原来只要 >=9, 而仓库里公开过的默认口令 "Admin@123"
+  #    正好 9 字符, 刚好卡在门槛上通过校验.
   for key in MYSQL_ROOT_PASSWORD ADMIN_DEFAULT_PASSWORD; do
     val="$(grep "^${key}=" .env | cut -d= -f2- | _strip_quotes )"
     if [[ -z "$val" ]]; then
       die "${key} 未设置"
     fi
-    if [[ ${#val} -lt 9 ]]; then
-      die "${key} 太短 (${#val} 字符),至少 9 字符"
+    if [[ ${#val} -lt 12 ]]; then
+      die "${key} 太短 (${#val} 字符),至少 12 字符,推荐: openssl rand -base64 18"
+    fi
+    # 占位符原样放行会让"忘了改"变成"带着占位符上线"
+    if echo "$val" | grep -qiE 'change-me|change_me|please-change|changeme'; then
+      die "${key} 还是占位符 (change-me...),必须换成自己的强口令"
     fi
   done
 }
@@ -273,7 +279,6 @@ then
 
   FE_PORT="$(grep '^FRONTEND_HOST_PORT=' .env | cut -d= -f2-)"
   FE_PORT="${FE_PORT:-8080}"
-  BE_PORT="$(grep -E '^\"?8000:?8000' docker-compose.yml >/dev/null 2>&1 && echo 8000 || echo 8000)"
 
   set -e
   echo
@@ -306,8 +311,15 @@ do_status() {
   compose_cmd ps
   echo
   echo "--- 健康检查 ---"
-  curl -fsS http://127.0.0.1:8000/api/v1/health 2>/dev/null && echo "  backend: OK" || echo "  backend: DOWN"
-  curl -fsS -o /dev/null -w "  frontend(Nginx): HTTP %{http_code}\n" http://127.0.0.1:8080/ 2>/dev/null || echo "  frontend: DOWN"
+  # ⚠️ 端口要从 .env 读 —— 原来写死 8000/8080, 而实际部署用的是
+  #    BACKEND_HOST_PORT / FRONTEND_HOST_PORT (本机是 18000 / 8090),
+  #    结果 --status 永远报 DOWN, 让人以为服务挂了.
+  BE_PORT="$(grep '^BACKEND_HOST_PORT=' .env 2>/dev/null | cut -d= -f2- || true)"
+  BE_PORT="${BE_PORT:-8000}"
+  FE_PORT="$(grep '^FRONTEND_HOST_PORT=' .env 2>/dev/null | cut -d= -f2- || true)"
+  FE_PORT="${FE_PORT:-8080}"
+  curl -fsS "http://127.0.0.1:${BE_PORT}/api/v1/health" 2>/dev/null && echo "  backend(${BE_PORT}): OK" || echo "  backend(${BE_PORT}): DOWN"
+  curl -fsS -o /dev/null -w "  frontend(${FE_PORT}, Nginx): HTTP %{http_code}\n" "http://127.0.0.1:${FE_PORT}/" 2>/dev/null || echo "  frontend(${FE_PORT}): DOWN"
 }
 
 do_logs() {

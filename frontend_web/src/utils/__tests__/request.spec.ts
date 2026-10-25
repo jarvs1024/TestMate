@@ -9,17 +9,21 @@
  *
  * 所以给"调用方自己会兜底"的请求加 `silent: true`: 失败**不弹**全局提示.
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 
 const { ElMessageError } = vi.hoisted(() => ({ ElMessageError: vi.fn() }));
-const { logout } = vi.hoisted(() => ({ logout: vi.fn() }));
+const { logout, userState } = vi.hoisted(() => ({ logout: vi.fn(), userState: { token: '' } }));
 
 vi.mock('element-plus', () => ({
   ElMessage: { error: ElMessageError },
 }));
 
 vi.mock('@/stores/user', () => ({
-  useUserStore: () => ({ token: '', logout }),
+  // token 可变 —— 要测"带着用户 token"和"匿名"两种 401
+  useUserStore: () => ({
+    get token() { return userState.token; },
+    logout,
+  }),
 }));
 
 import request from '../request';
@@ -48,6 +52,26 @@ function okWith(data: any) {
 beforeEach(() => {
   ElMessageError.mockClear();
   logout.mockClear();
+  userState.token = '';
+  jumpedTo = '';
+});
+
+// jsdom 不支持真跳转 —— 把 location 换成可写的桩 (顺便能断言跳去哪)
+const realLocation = window.location;
+let jumpedTo = '';
+beforeAll(() => {
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: {
+      // pathname 要留着 —— 拦截器靠它判断是不是 publicRead 路由
+      pathname: realLocation.pathname,
+      get href() { return jumpedTo; },
+      set href(v: string) { jumpedTo = v; },
+    },
+  });
+});
+afterAll(() => {
+  Object.defineProperty(window, 'location', { configurable: true, value: realLocation });
 });
 
 describe('axios 拦截器', () => {
@@ -73,5 +97,33 @@ describe('axios 拦截器', () => {
     const p = request.get('/x', { silent: true });
     await expect(p).rejects.toBeTruthy();
     await expect(p).rejects.toMatchObject({ response: { status: 404 } });
+  });
+});
+
+/**
+ * 401 的处理 (2026-10-25 前端健壮性).
+ *
+ * ⚠️ 以前 publicRead 路由 (首页 / 代码检视) 的 401 一律放行 ——
+ *    token 过期后用户停在首页, 首页的鉴权请求 401 被静默 catch,
+ *    页面仍显示"已登录", 待办静默消失, 用户以为"今天没待办".
+ *
+ * 现在: **带着用户 token** 的 401 → 清会话 + 跳登录;
+ *      匿名访问 (带 ANONYMOUS_TOKEN) 的 401 → 不处理 (那是后端配置问题).
+ */
+describe('axios 拦截器 · 401', () => {
+  it('publicRead 路由上带着用户 token 的 401 → 清会话 + 跳登录', async () => {
+    userState.token = 'user-token';
+    failWith(401, 'token 过期');
+    await expect(request.get('/x')).rejects.toBeTruthy();
+    expect(logout).toHaveBeenCalled();
+    expect(jumpedTo).toBe('/login');
+  });
+
+  it('匿名访问的 401 → 不清会话 (用户压根没登录, 跟用户无关)', async () => {
+    userState.token = '';
+    failWith(401, '后端没配好');
+    await expect(request.get('/x')).rejects.toBeTruthy();
+    expect(logout).not.toHaveBeenCalled();
+    expect(jumpedTo).toBe('');
   });
 });

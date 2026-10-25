@@ -352,15 +352,24 @@ function catCount(c: { by_kind?: Record<string, number>; total?: number }): numb
  *    不置 loading (免得整页闪一下 spinner), 失败也**不动页面** ——
  *    用户正在看的列表保留, 只在页脚提示一句.
  */
+// 请求序号: 快速切 Tab / 分类 chip 时, 慢的旧响应会覆盖新结果 ——
+// Tab 高亮已经是「技能」, 列表却还是「插件」. 只有最后一次请求的结果允许写回.
+// (跟 BoardView 的周报刷新 wrSeq 一个写法)
+let listSeq = 0;
+/** 最后一次**非静默**请求的序号 —— 只有它才有权关掉 loading,
+ *  否则旧的静默刷新会把新请求的 spinner 提前关掉 (或者永远关不掉). */
+let loadingSeq = 0;
 async function fetchList(opts: { silent?: boolean } = {}) {
+  const seq = ++listSeq;
   const silent = !!opts.silent;
   if (!silent) {
     loading.value = true;
+    loadingSeq = seq;
     loadError.value = '';
   }
   // 看门狗: 请求卡住 (网络中断 / 上游异常) 时给出可操作提示, 而不是无限转圈
   const watchdog = window.setTimeout(() => {
-    if (loading.value) loadError.value = '加载超时, 请检查后端服务后点「重试」';
+    if (seq === listSeq && loading.value) loadError.value = '加载超时, 请检查后端服务后点「重试」';
   }, LOAD_TIMEOUT_MS);
   try {
     // ⚠️ 「只看这些」时**只按状态过滤**, 别的筛选一律让路 ——
@@ -380,6 +389,7 @@ async function fetchList(opts: { silent?: boolean } = {}) {
       sort: sortBy.value,
       limit: 500,
     });
+    if (seq !== listSeq) return;   // 已有更新的请求在飞, 丢弃本次结果
     const rows = r?.items ?? [];
     rawItems.value = rows;
     items.value = (!mine && category.value === '__featured')
@@ -399,6 +409,10 @@ async function fetchList(opts: { silent?: boolean } = {}) {
     total.value = items.value.length;
     lastRefreshAt.value = new Date();
     refreshError.value = '';
+    // ⚠️ 成功后要**清掉看门狗置的 loadError** —— 以前只在请求开始时清,
+    //    看门狗超时置的错误会一直留着, 页面永远停在「加载超时」面板,
+    //    尽管数据早就加载好了.
+    loadError.value = '';
     // 抽屉里开着的资产同步一下 (静默刷新后抽屉别停在旧数据上).
     // ⚠️ 找不到**不关抽屉** —— 刷新期间资产可能被并发删掉, 关抽屉会打断用户.
     if (current.value) {
@@ -406,6 +420,7 @@ async function fetchList(opts: { silent?: boolean } = {}) {
       if (fresh) current.value = fresh;
     }
   } catch (e: any) {
+    if (seq !== listSeq) return;   // 过期请求的失败不该改页面
     const msg = e?.response?.data?.detail || e?.message || '未知错误';
     if (silent) {
       refreshError.value = msg;
@@ -416,7 +431,7 @@ async function fetchList(opts: { silent?: boolean } = {}) {
     }
   } finally {
     window.clearTimeout(watchdog);
-    if (!silent) loading.value = false;
+    if (!silent && loadingSeq === seq) loading.value = false;
   }
 }
 
@@ -463,7 +478,9 @@ async function pollJobs() {
     const r = await listJobs(20);
     failedJobs.value = r.items.filter((j) => j.status === 'failed');
     const active = r.items.some((j) => j.status === 'staged' || j.status === 'syncing');
-    if (active) await load();
+    // ⚠️ 轮询里的刷新走**静默**路径 —— 以前调的是 load(), 一遇到同步中的任务
+    //    就整页切 loading 态, 列表每 5s 消失一次, 闪得人眼睛疼.
+    if (active) await silentLoad();
     await loadSyncStatus();
   } catch {
     /* 轮询失败静默 */
@@ -587,6 +604,9 @@ onMounted(async () => {
 onUnmounted(() => {
   if (timer) window.clearInterval(timer);
   if (autoTimer) window.clearInterval(autoTimer);
+  // ⚠️ 搜索防抖的定时器也要清 —— 以前漏了它: 离开页面后这个定时器照样触发
+  //    load(), 请求失败时全局错误 toast 会弹在**别的页面**上.
+  if (searchTimer) { window.clearTimeout(searchTimer); searchTimer = null; }
   document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>

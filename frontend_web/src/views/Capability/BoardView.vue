@@ -661,12 +661,14 @@ async function refreshWrLatest(): Promise<WeeklyReport | null> {
   // 仅首次加载显示"加载中"; 后续后台刷新不闪, 避免每 30s 闪一下
   wrLoading.value = wrLatest.value === null;
   try {
-    const list = await getWeeklyReports(1);
+    // ⚠️ silent: 这个函数**每个自动刷新周期都跑** (30s 一次), 它自己的 catch
+    //    也是静默的 —— 但 axios 层还会照弹全局红条, ReviewAgent 一挂就是每 30s 飘一次.
+    const list = await getWeeklyReports(1, { silent: true });
     if (seq !== wrSeq) return wrLatest.value;   // 已有更新的请求在飞, 丢弃本次
     const first = list[0];
     if (!first) { wrLatest.value = null; return null; }
     // 拉全文 (主页用摘要, 抽屉复用同一份, 不二次请求)
-    const rep = await getWeeklyReport(first.name);
+    const rep = await getWeeklyReport(first.name, { silent: true });
     if (seq !== wrSeq) return wrLatest.value;
     wrLatest.value = rep;
     return rep;
@@ -861,12 +863,18 @@ async function reload() {
   await reloadKeepPage();
 }
 // 翻页 / 切 pageSize 时用: 不重置 mrPage, 走同样的并行加载.
+// 请求序号: 30s 自动刷新还在飞行中时用户点了「第 2 页」, 慢的旧响应会覆盖新页
+// (列表显示第 1 页的数据, 页码却写着 2). 只有最后一次请求的结果允许写回.
+let reloadSeq = 0;
 async function reloadKeepPage(opts: { silent?: boolean } = {}) {
+  const seq = ++reloadSeq;
   loading.value = true;
   loadError.value = '';
   try {
     const since = sinceFor(windowSel.value, customDays.value);
-    health.value = await getHealth();
+    const h = await getHealth({ silent: opts.silent });
+    if (seq !== reloadSeq) return;   // 已有更新的请求在飞, 丢弃本次
+    health.value = h;
     if (!health.value.configured) {
       overview.value = null; rules.value = []; authors.value = []; mrs.value = []; severities.value = [];
       dismissalsByRule.value = [];
@@ -876,15 +884,17 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
     }
     // severity 失败不应阻断其他 4 个, 单独 catch
     let sev: SeverityBucket[] = [];
-    try { sev = await getSeverity(since); } catch (e: any) { /* 忽略: 单独显示在严重等级卡 */ }
+    try { sev = await getSeverity(since, { silent: opts.silent }); } catch (e: any) { /* 忽略: 单独显示在严重等级卡 */ }
     const mrOffset = (mrPage.value - 1) * mrPageSize.value;
     const [ov, rl, au, mr, dbr] = await Promise.all([
-      getOverview(since),
-      getRules(since),
-      getAuthors(since),
-      listMrs({ limit: mrPageSize.value, offset: mrOffset, since }),
-      getDismissalsByRule(since).catch(() => [] as DismissalsByRuleItem[]),  // 单独失败不阻塞其他卡
+      getOverview(since, { silent: opts.silent }),
+      getRules(since, { silent: opts.silent }),
+      getAuthors(since, { silent: opts.silent }),
+      listMrs({ limit: mrPageSize.value, offset: mrOffset, since }, { silent: opts.silent }),
+      // 单独失败不阻塞其他卡
+      getDismissalsByRule(since, { silent: opts.silent }).catch(() => [] as DismissalsByRuleItem[]),
     ]);
+    if (seq !== reloadSeq) return;   // 已有更新的请求在飞, 丢弃本次
     overview.value = ov;
     rules.value = rl;
     authors.value = au;
@@ -904,6 +914,7 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
     severities.value = sev;
     dismissalsByRule.value = dbr || [];
   } catch (e: any) {
+    if (seq !== reloadSeq) return;   // 过期请求的失败不该改页面
     loadError.value = (e?.response?.data?.detail || e?.message || '未知错误');
     if (!opts.silent) {
       ElMessage.error('代码检视 V2 加载失败: ' + loadError.value);
@@ -912,9 +923,12 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
     // 周报独立刷新: 必须放 finally. 原来挂在 try 末尾, 上面任一接口抛错就整块跳过,
     // 而它自己又静默 catch —— 结果是别的接口一报错, 周报卡就永远停在旧周报且毫无提示.
     // 非阻塞 (上游超时 10s), 不拖住主视图 loading 收尾.
-    void refreshWrLatest();
-    loading.value = false;
-    lastUpdated.value = new Date();
+    // ⚠️ 只有最后一次请求才去刷周报 —— 过期请求再去刷一遍纯属浪费.
+    if (seq === reloadSeq) {
+      void refreshWrLatest();
+      loading.value = false;
+      lastUpdated.value = new Date();
+    }
   }
 }
 

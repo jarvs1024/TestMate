@@ -28,6 +28,25 @@ function isPublicReadRoute(): boolean {
 }
 
 /**
+ * 这个请求带的是**用户自己的 token** 吗?
+ *
+ * ⚠️ publicRead 路由 (首页 / 代码检视) 匿名访问时带的是 ANONYMOUS_TOKEN ——
+ *    那种 401 是后端/环境配置问题 (用户压根没登录), 不能把人踢去登录页.
+ *    只有"带着用户 token 还 401"才说明用户的 token 过期/失效 → 该清会话.
+ */
+function hasUserToken(config: any): boolean {
+  const headers = config?.headers;
+  if (!headers) return false;
+  const raw = typeof headers.get === 'function'
+    ? headers.get('Authorization')
+    : (headers.Authorization ?? headers.authorization);
+  if (typeof raw !== 'string' || !raw) return false;
+  const bearer = raw.startsWith('Bearer ') ? raw.slice(7).trim() : raw.trim();
+  if (!bearer) return false;
+  return bearer !== ANONYMOUS_TOKEN;
+}
+
+/**
  * axios 配置扩展: `silent: true` = 失败不弹全局错误提示.
  *
  * 用于**调用方自己会兜底降级**的请求 (首页给卡片取指标数字:
@@ -67,8 +86,14 @@ request.interceptors.response.use(
   (resp) => resp.data,
   (err) => {
     const status = err.response?.status;
-    // publicRead 路由的 401 不能踢去 /login (匿名访问本来就没登录, 401 是后端配置问题, 不是用户问题)
-    if (status === 401 && !isPublicReadRoute()) {
+    // ⚠️ 401 = 登录态失效.
+    //    · 非 publicRead 路由: 一律清会话 + 跳登录 (老行为).
+    //    · publicRead 路由 (首页 / 代码检视): **只有带着用户 token** 才处理 ——
+    //      匿名访问 (带 ANONYMOUS_TOKEN) 的 401 是后端配置问题, 跟用户无关.
+    //      以前这里对 publicRead 一律放行 → token 过期后用户停在首页,
+    //      首页的鉴权请求 401 被静默 catch, 页面仍显示"已登录",
+    //      待办静默消失, 用户以为"今天没待办".
+    if (status === 401 && (!isPublicReadRoute() || hasUserToken(err.config))) {
       const userStore = useUserStore();
       userStore.logout();
       window.location.href = '/login';

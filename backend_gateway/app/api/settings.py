@@ -115,8 +115,11 @@ async def update_setting(
     schema = next((s for s in SETTING_SCHEMA if s["key"] == key), None)
     if not schema:
         raise HTTPException(status_code=404, detail=f"unknown setting '{key}'")
-    if schema["is_secret"] and not payload.update_secret and (payload.value == "" or payload.value is None):
-        # 留空 = 不改
+    if schema["is_secret"] and (payload.value == "" or payload.value is None):
+        # ⚠️ secret 项**空值一律当"不改"** —— 跟前端"留空 = 不改"的契约一致.
+        #    原来只在 update_secret=false 时才保护, 而 update_secret 默认是 true,
+        #    于是 PUT {"value":""} 会把 RAGFlow api_key / 钉钉 webhook 直接**清空**,
+        #    接口还回"保存成功", 之后带空 Bearer 去打 RAGFlow 才报 502.
         async with AsyncSessionLocal() as session:
             row = await session.get(SystemSetting, key)
             return SettingOut.model_validate(row) if row else _empty_out(key, schema)

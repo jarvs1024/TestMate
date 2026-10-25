@@ -26,6 +26,28 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+def _is_missing_table(e: BaseException) -> bool:
+    """这个异常是不是"MySQL: 表不存在 (1146)"?
+
+    只有这种才允许走 stamp 兜底 (老环境用 create_all 建的, 没有版本历史).
+    其余异常 (连接断了 / 权限不足 / 上次 upgrade 中途失败) 一律抛出去 ——
+    宁可启动失败, 也不能把版本号盖到 head 把新迁移整段跳过.
+    """
+    seen = set()
+    cur: BaseException | None = e
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        # DBAPI 原始错误: args[0] 常常就是 errno (1146)
+        args = getattr(cur, "args", ())
+        if args and args[0] == 1146:
+            return True
+        msg = str(cur).lower()
+        if "1146" in msg or "doesn't exist" in msg or "unknown table" in msg:
+            return True
+        cur = getattr(cur, "orig", None) or cur.__cause__
+    return False
+
+
 async def init_db() -> None:
     """跑 alembic upgrade head — 数据库 schema 版本化管理。
 
@@ -65,7 +87,17 @@ async def init_db() -> None:
                 await conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
             ).first()
             current_rev = str(row[0]) if row and row[0] else None
-    except Exception:  # noqa: BLE001 — 表不存在即视为老环境
+    except Exception as e:  # noqa: BLE001
+        # ⚠️ **只有"版本表不存在"才能走 stamp 兜底**。
+        #    原来这里 except 的是所有异常 —— 于是"查询失败"(连接断了 / 权限不足 /
+        #    上一次 upgrade 中途失败留下半截状态) 也会被当成"老环境",
+        #    把版本号直接盖到 head: stamp 只写版本号不执行 DDL, 新迁移被整段跳过,
+        #    schema 与版本号静默不一致 (症状是运行期才报 Unknown column).
+        #    只有 MySQL 1146 (表不存在) 才是真的老环境.
+        if not _is_missing_table(e):
+            raise RuntimeError(
+                f"读取 alembic_version 失败, 拒绝 stamp 兜底 (可能是连接/权限问题): {e}"
+            ) from e
         current_rev = None
 
     if not current_rev:
