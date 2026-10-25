@@ -160,7 +160,7 @@
                         placeholder="展示名, 中文即可 (卡片上的标题), 如 SSD 日志医生" />
             </el-form-item>
             <el-form-item label="图标">
-              <div class="icon-pick">
+              <div ref="iconWrap" class="icon-pick">
                 <button type="button" class="icon-btn" @click="iconPanel = !iconPanel">
                   <span class="icon-cur">{{ form.icon || '🧩' }}</span>
                   <span class="icon-caret">▾</span>
@@ -299,7 +299,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
 import { getAsset, getJob, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind } from '@/api/assets';
@@ -366,6 +366,27 @@ watch(() => props.modelValue, (open) => {
 function splitList(s: string): string[] {
   return s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
 }
+
+/**
+ * 点图标面板**外面** → 收起面板.
+ *
+ * ⚠️ 跟市场页的形态菜单一个做法 (见 Market/index.vue 的 onDocClick):
+ *    面板连同按钮都在 .icon-pick 里, 点它不算"外面" ——
+ *    不然点一下按钮会被"外面点击"和"按钮自己"各处理一次, 面板开了又关。
+ *
+ * ⚠️⚠️ 必须用**捕获阶段** (第三个参数 true):
+ *    element-plus 的抽屉内容层带 `@click.stop` —— 冒泡阶段的事件根本到不了
+ *    document, 用默认的冒泡监听的话, 抽屉里点外面**永远收不到**,
+ *    面板就关不掉 (抽屉外反而能关 —— 更迷惑)。
+ */
+const iconWrap = ref<HTMLElement | null>(null);
+function onDocClick(e: MouseEvent) {
+  if (!iconPanel.value) return;
+  if (iconWrap.value && iconWrap.value.contains(e.target as Node)) return;
+  iconPanel.value = false;
+}
+onMounted(() => document.addEventListener('click', onDocClick, true));
+onUnmounted(() => document.removeEventListener('click', onDocClick, true));
 
 async function submit() {
   if (missing.value.length) {

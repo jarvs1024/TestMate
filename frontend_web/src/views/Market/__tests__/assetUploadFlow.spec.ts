@@ -50,10 +50,13 @@ const stubs = {
   'el-checkbox': { template: '<label><slot/></label>' },
 };
 
-async function open(props: Record<string, any> = {}) {
+async function open(props: Record<string, any> = {}, opts: { attach?: boolean } = {}) {
   const w = mount(AssetUploadDialog, {
     props: { modelValue: false, mode: 'create', ...props },
     global: { stubs },
+    // ⚠️ 默认 vue-test-utils 把组件挂在**脱离文档**的树上 —— 点它不会冒泡到
+    //    document, "点外面收起"这种用例必须真挂上去才测得出来.
+    ...(opts.attach ? { attachTo: document.body } : {}),
   });
   // 抽屉是 modelValue 从 false → true 时才初始化的 (watch)
   await w.setProps({ modelValue: true });
@@ -256,5 +259,62 @@ describe('上传抽屉: 没开始填时不该有红字', () => {
     expect(w.find('.pkg-req').text()).toContain('必须以 dml- 开头');
     const w2 = await open({ mode: 'update', asset: assetOf('mcp') });
     expect(w2.find('.pkg-req').text()).toContain('只能用小写字母/数字/连字符');
+  });
+});
+
+describe('上传抽屉: 图标面板', () => {
+  /**
+   * ⚠️ element-plus 的抽屉内容层带 `@click.stop` —— 冒泡阶段的事件到不了 document。
+   *    所以「点外面收起」必须用**捕获阶段**监听, 否则在抽屉里点外面永远收不到。
+   *    这个测试刻意模拟那层 stopPropagation, 防止有人改回冒泡阶段。
+   */
+  function stopPropagationLikeDrawer(w: any) {
+    const drawer = w.find('.up-drawer').element as HTMLElement;
+    drawer.addEventListener('click', (e) => e.stopPropagation());
+    return drawer;
+  }
+
+  it('点外面 → 收起面板 (用户 2026-10-25 提的)', async () => {
+    const w = await open({ initialKind: 'skill' });
+    await w.find('.icon-btn').trigger('click');
+    expect(w.find('.icon-panel').exists()).toBe(true);
+    // 点面板外面 (空白处) → 收起
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await w.vm.$nextTick();
+    expect(w.find('.icon-panel').exists()).toBe(false);
+  });
+
+  it('抽屉里点外面也能收起 (抽屉内容层有 @click.stop)', async () => {
+    const w = await open({ initialKind: 'skill' }, { attach: true });
+    try {
+      await w.find('.icon-btn').trigger('click');
+      expect(w.find('.icon-panel').exists()).toBe(true);
+      const drawer = stopPropagationLikeDrawer(w);
+      // 点抽屉里的空白处 (冒泡会被抽屉吞掉 → 只有捕获阶段才收得到)
+      drawer.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await w.vm.$nextTick();
+      expect(w.find('.icon-panel').exists()).toBe(false);
+    } finally {
+      w.unmount();
+    }
+  });
+
+  it('点面板**里面** → 不收起 (不然选图标选不中)', async () => {
+    const w = await open({ initialKind: 'skill' });
+    await w.find('.icon-btn').trigger('click');
+    const cell = w.findAll('.icon-cell')[0];
+    await cell.trigger('click');
+    await w.vm.$nextTick();
+    // 选了图标 → 面板自己收起
+    expect(w.find('.icon-panel').exists()).toBe(false);
+  });
+
+  it('点图标按钮本身 → 也能收起 (老行为别丢)', async () => {
+    const w = await open({ initialKind: 'skill' });
+    await w.find('.icon-btn').trigger('click');
+    expect(w.find('.icon-panel').exists()).toBe(true);
+    await w.find('.icon-btn').trigger('click');
+    await w.vm.$nextTick();
+    expect(w.find('.icon-panel').exists()).toBe(false);
   });
 });
