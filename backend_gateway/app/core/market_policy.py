@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 
+from app.core.identity import name_matches
 from app.core.settings_store import get
 from app.models.asset import Asset
 from app.models.user import User
@@ -92,7 +93,7 @@ async def is_reviewer(user: User) -> bool:
     if role == "anonymous":
         return False
     names = await reviewer_names()
-    return bool(names) and (user.username or "").strip().lower() in names
+    return name_matches(names, user.username)
 
 
 async def can_publish(user: User) -> bool:
@@ -104,7 +105,7 @@ async def can_publish(user: User) -> bool:
     if user.id in await publisher_ids():
         return True
     names = await publisher_names()
-    return bool(names) and (user.username or "").strip().lower() in names
+    return name_matches(names, user.username)
 
 
 def can_modify(asset: Asset, user: User) -> bool:
@@ -115,4 +116,6 @@ def can_modify(asset: Asset, user: User) -> bool:
     """
     if is_admin(user):
         return True
-    return (asset.author or "").strip().lower() == (user.username or "").strip().lower()
+    # ⚠️ 容错: 白名单/作者名可能是短名 ('zhangsan'), 用户名是邮箱形式
+    #    ('zhangsan@twsc.com.cn') —— 两种写法都算命中 (见 identity.name_matches)
+    return name_matches({(asset.author or "").strip().lower()}, user.username)

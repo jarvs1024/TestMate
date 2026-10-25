@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
 
+    # ===== 登录身份 =====
+    # 普通用户 = 公司邮箱 (后缀固定), 免密登录; 管理员 = 不含 @ 的账号名, 必须密码.
+    AUTH_EMAIL_DOMAIN: str = "@twsc.com.cn"
+    # 首次登录自动开通: 公司邮箱即身份, 不用管理员先建号 (后端 app/api/auth.py)
+    AUTH_AUTO_PROVISION: bool = True
+
     # RAGFlow
     # 默认空:本工程不打包 RAGFlow,需要时由用户在 Settings 页或 .env 填真值
     # 填的时候注意:从 backend 容器内访问 host 用 host.docker.internal,不要用 127.0.0.1

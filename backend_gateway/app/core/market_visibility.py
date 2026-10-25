@@ -14,12 +14,14 @@ from __future__ import annotations
 from sqlalchemy import or_
 from sqlalchemy import Select
 
+from app.core.identity import author_forms
 from app.core.market_state import ON_SHELF_STATES, PUBLISHED
 from app.models.asset import Asset
 
 
 def _same_author(asset: Asset, username: str) -> bool:
-    return (asset.author or "").strip().lower() == (username or "").strip().lower()
+    """作者是不是这个人 —— 短名 / 全邮箱都认 (见 identity.author_forms)."""
+    return (asset.author or "").strip().lower() in set(author_forms(username))
 
 
 def visible_to(
@@ -52,15 +54,18 @@ def apply_visibility(
 ) -> Select:
     """给列表查询加可见性条件 (SQL 版).
 
-    ⚠️ 作者比较用 `==` (DB 里 author 存的就是登录用户名) —— 与历史行为一致,
-       别改成大小写不敏感, 否则和详情层的判断会不一致.
+    ⚠️ 作者比较用 `IN (原样, 本地部分)` —— DB 里 author 存的就是登录用户名,
+       但存量数据可能是短名 ('zhangsan') 而用户名已是邮箱形式
+       ('zhangsan@twsc.com.cn'). 两种都带上, 免得"我的资产"整片消失.
+       ⚠️ 别改成大小写不敏感, 否则和详情层的判断会不一致.
     """
     if is_reviewer or is_admin:
         return stmt
+    forms = author_forms(username)
     return stmt.where(
         or_(
             Asset.publish_status.in_(ON_SHELF_STATES),
-            Asset.author == username,
+            Asset.author.in_(forms) if forms else Asset.author == username,
         )
     )
 

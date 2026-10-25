@@ -6,8 +6,14 @@ from app.models.user import UserRole
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=1, max_length=128)
+    """登录请求.
+
+    ⚠️ password 可空 —— 普通用户是**免密登录** (公司邮箱即身份),
+       管理员才必须给密码. 前端据此展开密码框.
+    """
+
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(default="", max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -26,6 +32,12 @@ class UserOut(BaseModel):
 
 
 class UserCreate(BaseModel):
-    username: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=8, max_length=128)
+    """管理员建号.
+
+    ⚠️ password 可空: 普通用户免密登录, 用不上密码.
+       username 建议填邮箱 (填短名后端会自动补 @twsc.com.cn).
+    """
+
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(default="", max_length=128)
     role: UserRole = UserRole.viewer

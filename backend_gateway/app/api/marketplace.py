@@ -40,6 +40,7 @@ from app.core import (
     market_projects,
     market_state,
 )
+from app.core.identity import author_forms
 from app.core.market_visibility import assert_visible, apply_visibility
 from app.core.market_catalog import (
     CATEGORY_SLUGS,
@@ -366,13 +367,13 @@ async def list_assets(
                 stmt = stmt.where(or_(Asset.project == project, Asset.project == ""))
 
         if status == "mine":
-            stmt = stmt.where(Asset.author == username)
+            stmt = stmt.where(Asset.author.in_(author_forms(username)))
         elif status in ("pending", "rejected", "unpublished", "unpublish_pending", "published"):
             stmt = stmt.where(Asset.publish_status == status)
             if not (is_admin or is_reviewer) and status != "published":
                 # 别人只能看自己的未发布资产 —— 别人的待审/被驳回内容不该被列出来.
                 # 审核人例外: 他要处理的就是这一批.
-                stmt = stmt.where(Asset.author == username)
+                stmt = stmt.where(Asset.author.in_(author_forms(username)))
         elif status == "all" or include_unpublished:
             # 不限上架状态 —— 但只对管理员/审核人开放
             # (include_unpublished 是旧参数, 语义等同 all)
@@ -380,7 +381,7 @@ async def list_assets(
                 stmt = stmt.where(
                     or_(
                         Asset.publish_status.in_(("published", "unpublish_pending")),
-                        Asset.author == username,
+                        Asset.author.in_(author_forms(username)),
                     )
                 )
         elif is_admin or is_reviewer:
@@ -396,7 +397,7 @@ async def list_assets(
             stmt = stmt.where(
                 or_(
                     Asset.publish_status.in_(("published", "unpublish_pending")),
-                    Asset.author == username,
+                    Asset.author.in_(author_forms(username)),
                 )
             )
         if q:

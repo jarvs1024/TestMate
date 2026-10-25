@@ -17,8 +17,17 @@ export const useUserStore = defineStore('user', {
     isAdmin: (state) => state.user?.role === 'admin',
   },
   actions: {
-    async login(username: string, password: string) {
-      const { data } = await axios.post('/api/v1/auth/login', { username, password });
+    /**
+     * 登录.
+     *
+     * ⚠️ password 可以为空 —— 普通用户是**免密登录** (公司邮箱即身份),
+     *    管理员才必须给密码. 空密码走后端就是免密那条路.
+     */
+    async login(username: string, password?: string) {
+      const { data } = await axios.post('/api/v1/auth/login', {
+        username,
+        password: password ?? '',
+      });
       this.token = data.access_token;
       localStorage.setItem('testmate:token', this.token);
       // 拉 me
