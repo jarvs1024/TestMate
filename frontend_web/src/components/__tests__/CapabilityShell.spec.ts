@@ -6,7 +6,9 @@
  *   ① 角色徽标 + 状态徽标都在 (角色说"扮演什么", 状态说"能不能用");
  *   ② 状态词按角色换 (看板说"正常", 不说"稳定");
  *   ③ 「← 返回工作台」回到首页, 不是回旧的"广场";
- *   ④ actions 插槽给页面放自己的操作区 (看板的时间窗 / 刷新).
+ *   ④ actions 插槽给页面放自己的操作区 (看板的时间窗 / 刷新);
+ *   ⑤ **外壳里没有描述行** (2026-10-25 第四轮): 页头已经有 lede,
+ *      外壳再写一遍就是同一句话说两遍 —— 描述归位到正文.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mount } from '@vue/test-utils';
@@ -18,21 +20,38 @@ beforeEach(async () => {
 });
 
 describe('能力详情外壳', () => {
-  it('渲染名称 / 图标 / 角色 / 状态 / 摘要', () => {
+  it('渲染名称 / 图标 / 角色 / 状态', () => {
     const w = mount(CapabilityShell, {
       props: {
         name: '代码检视', icon: '🧬', kind: 'board', status: 'stable',
-        summary: 'MR 生命周期 / 建议采纳率', version: 'v0.2.0', category: 'auto-code',
+        version: 'v0.2.0', category: 'auto-code',
       },
       global: { plugins: [router] },
     });
     expect(w.find('.sh-icon').text()).toBe('🧬');
     expect(w.find('.sh-name').text()).toContain('代码检视');
-    expect(w.find('.sh-name').text()).toContain('v0.2.0');
+    expect(w.find('.sh-ver').text()).toContain('v0.2.0');
     expect(w.find('.sh-kind').text()).toContain('看板');
     expect(w.find('.sh-cat').text()).toContain('自动化代码');
     expect(w.find('.sh-badge').text()).toContain('正常');
-    expect(w.find('.sh-summary').text()).toContain('MR 生命周期');
+    w.unmount();
+  });
+
+  /**
+   * 外壳不再有描述行 —— 页头 (AppHeader) 的 lede 已经承担了这句描述.
+   * 留着就是同一句话说两遍 (用户反馈"描述重复了").
+   */
+  it('外壳里没有描述行 (描述归位到正文, 不跟页头重复)', () => {
+    const w = mount(CapabilityShell, {
+      props: {
+        name: '代码检视', icon: '🧬', kind: 'board', status: 'stable',
+        version: 'v0.2.0', category: 'auto-code',
+      },
+      global: { plugins: [router] },
+    });
+    expect(w.find('.sh-summary').exists()).toBe(false);
+    // 身份信息压在一行上 —— 没有第二个行块
+    expect(w.find('.sh-title').exists()).toBe(false);
     w.unmount();
   });
 
@@ -73,15 +92,6 @@ describe('能力详情外壳', () => {
       global: { plugins: [router] },
     });
     expect(w.find('.sh-actions .my-act').exists()).toBe(true);
-    w.unmount();
-  });
-
-  it('没传摘要时不渲染摘要行', () => {
-    const w = mount(CapabilityShell, {
-      props: { name: 'x', icon: '🛠', kind: 'tool', status: 'stable' },
-      global: { plugins: [router] },
-    });
-    expect(w.find('.sh-summary').exists()).toBe(false);
     w.unmount();
   });
 });

@@ -7,8 +7,7 @@
       kind="platform"
       status="stable"
       version="v0.1.0"
-      category="ssd-kb"
-      summary="团队知识库 —— 数据集 / 文档 / 检索，已对接 RAGFlow" />
+      category="ssd-kb" />
 
     <!-- 概览 -->
     <div class="card card-overview">

@@ -1,14 +1,13 @@
 <template>
   <div class="cr">
-    <!-- 顶栏: 能力详情统一外壳 (返回工作台 + icon + 名称/形态/状态 + 时间窗/刷新) -->
+    <!-- 顶栏: 能力详情统一外壳 (返回工作台 + icon + 名称/角色/状态 + 时间窗/刷新) -->
     <CapabilityShell
       name="代码检视"
       icon="🧬"
       kind="board"
       status="stable"
       version="v0.2.0"
-      category="auto-code"
-      summary="MR 生命周期 / 建议采纳率 / 规则命中 / 作者分布">
+      category="auto-code">
       <template #actions>
       <div class="hd-r">
         <select v-model="windowSel" class="win-sel" @change="reload">

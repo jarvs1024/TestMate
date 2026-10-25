@@ -1,13 +1,12 @@
 <template>
   <div class="runner">
-    <!-- 顶栏: 能力详情统一外壳 (跟看板 / 目录 / 知识 一致) -->
+    <!-- 顶栏: 能力详情统一外壳 (跟看板 / 底座 一致) -->
     <CapabilityShell
       v-if="agent"
       :name="agent.name"
       :icon="agent.icon"
       :kind="agent.kind"
       :status="agent.status"
-      :summary="agent.summary"
       :version="agent.version"
       :category="agent.category"
     />
@@ -42,6 +41,9 @@
       <!-- 左:参数配置 -->
       <div class="run-form card">
         <h2>📋 参数配置</h2>
+        <!-- 能力描述归位到正文: 外壳不再带 summary (页头对工具型也没有 lede),
+             描述跟着它描述的参数走 —— 看完一句话就知道该填什么 -->
+        <p v-if="agent.summary" class="run-lead">{{ agent.summary }}</p>
 
         <div v-for="f in agent.input_schema" :key="f.key" class="field">
           <label>
@@ -524,6 +526,11 @@ onMounted(async () => {
 @media (max-width: 1024px) { .run-body { grid-template-columns: 1fr; } }
 
 .run-form h2, .run-output h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900); }
+/* 能力描述 (从外壳移到这里) */
+.run-lead {
+  margin: -8px 0 14px; font-size: 12.5px; color: var(--ink-500);
+  line-height: 1.55;
+}
 
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .field label { font-size: 12.5px; color: var(--ink-700); font-weight: 500; }

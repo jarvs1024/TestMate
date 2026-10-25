@@ -7,8 +7,7 @@
       kind="platform"
       status="beta"
       version="v0.1.0"
-      category="ai-market"
-      summary="团队共享的插件 / 技能 / 连接器 —— 浏览、下载、装进你的环境" />
+      category="ai-market" />
 
     <!-- ===== 动作条: 类型 Tab + 搜索 + 主操作 (一栏装下) ===== -->
     <div class="mk-actions">

@@ -35,7 +35,7 @@ export const routes: RouteRecordRaw[] = [
         // 以前知识库是侧栏跟「广场」平级的顶级项, 现在它是能力墙上的一张卡.
         { path: 'kb-manage', name: 'kb-manage', meta: { title: '知识库', lede: 'RAG 知识源 —— 数据集 / 文档 / 分段, 检索即用' }, component: () => import('@/views/Capability/Library/index.vue') },
 
-        { path: 'settings', name: 'settings', meta: { title: '设置', lede: '平台配置 · RAGFlow / Dify / 用户管理' }, component: () => import('@/views/Settings/index.vue') },
+        { path: 'settings', name: 'settings', meta: { title: '设置', lede: '平台配置 · RAGFlow / Dify / 用户管理 · 改完立刻生效, 不需重启' }, component: () => import('@/views/Settings/index.vue') },
       ],
     },
 ];

@@ -1,7 +1,8 @@
 <template>
   <div class="set">
     <h1 class="title" style="display:none">⚙️ 设置</h1>
-    <p class="lede">平台运行配置 · 改了立刻生效, 不需重启</p>
+    <!-- 描述只在页头说一次 (AppHeader 的 lede) —— 原来页头下面又跟一行灰字,
+         两行说的是同一件事, 白占一行的正文空间. "改完立刻生效" 已经并进页头 lede. -->
 
     <div v-if="!isAdmin" class="card warn-card">
       <div class="warn-ic">🔒</div>
@@ -624,8 +625,6 @@ onMounted(load);
   margin-top: 4px;
 }
 .set { padding: 4px 4px 40px; }
-.lede { color: var(--ink-500); font-size: 13px; margin: 0 0 18px; }
-
 .card {
   background: var(--surface);
   border: 1px solid var(--border);

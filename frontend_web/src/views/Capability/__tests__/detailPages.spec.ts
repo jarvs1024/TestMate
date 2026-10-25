@@ -60,4 +60,24 @@ describe('能力详情页 · 装配冒烟', () => {
     expect(library).toContain('kind="platform"');
     expect(library).not.toContain('kind="library"');
   });
+
+  /**
+   * 描述不许重复 (2026-10-25 第四轮):
+   *   页头 (AppHeader) 已经有 lede, 外壳再挂一个 summary 就是同一句话说两遍.
+   *   四个详情页一律不许再往外壳传 summary —— 描述归位到正文.
+   */
+  it('四个详情页都不往外壳传 summary (描述归位到正文, 不跟页头重复)', () => {
+    for (const v of VIEWS) {
+      const src = readFileSync(resolve(process.cwd(), v.path), 'utf8');
+      const tag = src.match(/<CapabilityShell[\s\S]*?\/>/)?.[0] ?? '';
+      expect(tag, `${v.name} 没找到 CapabilityShell 标签`).toContain('CapabilityShell');
+      expect(tag, `${v.name} 还在往外壳传 summary`).not.toContain('summary');
+    }
+  });
+
+  it('工具型把描述放进正文 (它的页头没有 lede)', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/views/Capability/ToolRunner.vue'), 'utf8');
+    expect(src).toContain('run-lead');
+    expect(src).toContain('agent.summary');
+  });
 });
