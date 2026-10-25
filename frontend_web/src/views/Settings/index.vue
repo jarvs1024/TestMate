@@ -54,7 +54,7 @@
               :saving="saving === it.key" :secret-display="getInputValue(it)"
               @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
             <div class="hint">
-              💡 这组控制 <code>/kb</code> 页"知识检索"卡片的嵌入 URL. 换 RAGFlow 共享 Search App / Dify chatbot / 任意可嵌入页面都改这里, 不需要改代码.
+              💡 这组控制 <code>/kb</code> 页"知识检索"卡片的嵌入 URL. 换 RAGFlow 共享 Search App 或任意可嵌入页面都改这里, 不需要改代码.
             </div>
           </div>
 
@@ -127,7 +127,7 @@
           </div>
 
           <div class="hint">
-            💡 所有外部数据源 (RAGFlow / Dify / ReviewAgent / 后续接入) 统一在 <strong>通用 → 📡 数据源</strong> 配置.
+            💡 所有外部数据源 (RAGFlow / ReviewAgent / 后续接入) 统一在 <strong>通用 → 📡 数据源</strong> 配置.
           </div>
         </section><section v-if="activeTop === 'sec-general'" :id="'sec-general'" class="card grp">
           <h2>
@@ -178,7 +178,7 @@
             </div>
           </div>
 
-          <!-- 📡 数据源 (RAGFlow / Dify / ReviewAgent 统一配置入口, 按 prefix 分组) -->
+          <!-- 📡 数据源 (RAGFlow / ReviewAgent 统一配置入口, 按 prefix 分组) -->
           <div id="sec-general-data-source" class="sub-grp">
             <h3>📡 数据源 <span class="sub-cnt">{{ dataSourceItems.length }} 项</span></h3>
             <div class="hint">
@@ -289,7 +289,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { getSchema, updateSetting, testRagflow, testDify, testReviewAgent, testDingTalk, testGitLab, type SettingItem, type TestResult } from '@/api/settings';
+import { getSchema, updateSetting, testRagflow, testReviewAgent, testDingTalk, testGitLab, type SettingItem, type TestResult } from '@/api/settings';
 import { getMarketConfig, listNotifications, type AssetNotification } from '@/api/assets';
 import SettingRow from './components/SettingRow.vue';
 import { useUserStore } from '@/stores/user';
@@ -366,7 +366,7 @@ function fmtTime(iso: string | null): string {
 }
 
 // ===== 智能体 section: 业务配置 (引擎 / 模型 / 工具等) =====
-// 数据源 (RAGFlow / Dify / ReviewAgent) 统一在 '通用 → 数据源' sub-group 配置
+// 数据源 (RAGFlow / ReviewAgent) 统一在 '通用 → 数据源' sub-group 配置
 // AGENT_PREFIXES: 智能体业务配置 key 前缀, 后续加新智能体就在这里 append
 const AGENT_PREFIXES: string[] = [];
 
@@ -380,7 +380,7 @@ function itemsByPrefix(prefix: string): SettingItem[] {
   return out;
 }
 
-// ===== 数据源 sub-group: 按 prefix 拆子组 (RAGFlow / Dify / ReviewAgent) =====
+// ===== 数据源 sub-group: 按 prefix 拆子组 (RAGFlow / ReviewAgent) =====
 // 配置项都标 category='data-source', 这里按 key 前缀再细分, 让"测试连接"按钮紧贴对应配置.
 // 后续接新数据源: 在 SOURCE_GROUPS 数组里加一项即可.
 const dataSourceItems = computed(() => itemsByCategory('data-source'));
@@ -398,7 +398,6 @@ interface DataSourceGroup {
 type SourceGroupDef = Omit<DataSourceGroup, 'items'>;
 const SOURCE_GROUPS: SourceGroupDef[] = [
   { id: 'ragflow',  prefix: 'ragflow.',  icon: '📚', label: 'RAGFlow (知识库 API)', testKey: 'ragflow',  hint: 'KB 知识库 · 数据集 / 文档 / chunking API' },
-  { id: 'dify',     prefix: 'dify.',     icon: '🤖', label: 'Dify (Workflow API)',   testKey: 'dify',     hint: '能力墙 · workflow / 对话 API' },
   { id: 'review-agent', prefix: 'review_agent.', icon: '🧬', label: 'ReviewAgent (代码检视)', testKey: 'review-agent', hint: '代码检视 · HTTP / 健康检查' },
 ];
 const sourceGroups = computed<DataSourceGroup[]>(() =>
@@ -534,10 +533,9 @@ async function onSave(it: SettingItem) {
 }
 
 // ===== 数据源连接测试 =====
-// testKey 跟 SOURCE_GROUPS[i].testKey 对齐: 'ragflow' / 'dify' / 'review-agent'.
+// testKey 跟 SOURCE_GROUPS[i].testKey 对齐: 'ragflow' / 'review-agent'.
 const _testClients: Record<string, () => Promise<TestResult>> = {
   'ragflow':  testRagflow,
-  'dify':     testDify,
   'review-agent': testReviewAgent,
   // 钉钉分两个频道 (市场群 / 审核群), 各配各的 webhook → 也要分别自检
   'dingtalk-market': () => testDingTalk('market'),

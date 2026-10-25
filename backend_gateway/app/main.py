@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, kb, diagnose, machines, notify, health, agents, settings as settings_api, pr_agent, review_agent, marketplace
+from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, pr_agent, review_agent, marketplace
 from app.api.agents import seed_agents
 from app.core.settings_store import seed_defaults
 from app.db.session import init_db
@@ -72,7 +72,6 @@ app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(machines.router, prefix="/api/v1/machines", tags=["machines"])
 app.include_router(kb.router, prefix="/api/v1/kb", tags=["kb"])
-app.include_router(diagnose.router, prefix="/api/v1/diagnose", tags=["diagnose"])
 app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(settings_api.router, prefix="/api/v1/settings", tags=["settings"])

@@ -34,7 +34,7 @@ SEED_AGENTS: list[dict] = [
         "version": "v0.1.0-demo",
         "status": AgentStatus.beta.value,
         "summary": "SSD 测试日志分析: 贴 kernel ring buffer / 应用日志, 自动分段 + 异常标注 + 错误分类",
-        "use_when": "SSD 测试中产生的 syslog / dmesg / FW log 需要结构化解读 (demo 模式: 客户端规则分类, 真实 AI 推理待接 Dify workflow)",
+        "use_when": "SSD 测试中产生的 syslog / dmesg / FW log 需要结构化解读 (demo 模式: 客户端规则分类)",
         "not_for": "NVMe pcap trace 请用 Trace 医生",
         "tags": ["日志", "诊断", "Demo"],
         "engine": AgentEngine.builtin.value,
@@ -86,7 +86,7 @@ SEED_AGENTS: list[dict] = [
         "use_when": "(规划中) 客户新功能上线前要出测试方案",
         "not_for": "(规划中) 已有 case 模板请用模板库 (后续接入)",
         "tags": ["测试方案", "Spec", "规划中"],
-        "engine": AgentEngine.dify.value,
+        "engine": AgentEngine.builtin.value,
         "engine_config": {},
         "input_schema": [
             {"key": "spec_doc", "label": "Spec / 需求描述", "type": "text", "required": True,
@@ -109,7 +109,7 @@ SEED_AGENTS: list[dict] = [
         "use_when": "(规划中) QA 拿到方案要快速落 case",
         "not_for": "(规划中) 已有 case 库请用 case 库 (后续接入)",
         "tags": ["用例", "Spec", "规划中"],
-        "engine": AgentEngine.dify.value,
+        "engine": AgentEngine.builtin.value,
         "engine_config": {},
         "input_schema": [
             {"key": "test_plan", "label": "测试方案", "type": "text", "required": True,
@@ -301,6 +301,16 @@ async def create_agent(
     """新建能力。admin only。"""
     if _user.role.value != "admin":
         raise HTTPException(status_code=403, detail="admin only")
+    # 引擎值先校验: 直接丢给 DB 的话, 传个已下线的值 (如 dify) 会变成 500 的
+    # LookupError, 调用方看不出是自己参数不对.
+    try:
+        AgentEngine(payload.engine)
+    except ValueError:
+        valid = ", ".join(e.value for e in AgentEngine)
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown engine '{payload.engine}' (可用: {valid})",
+        )
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Agent).where(Agent.code == payload.code))
         if result.scalar_one_or_none():

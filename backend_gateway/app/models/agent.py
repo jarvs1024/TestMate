@@ -69,9 +69,14 @@ class AgentKind(str, enum.Enum):
 
 
 class AgentEngine(str, enum.Enum):
-    """后端执行引擎。"""
+    """后端执行引擎。
 
-    dify = "dify"                     # Dify workflow (主)
+    ⚠️ 2026-10-25 去掉 dify: 平台**不再接入 Dify** ——
+       它一直是 mock 模式 (env 里没配 base_url/api_key), 前端也从没调用过它的推理接口,
+       只是个"看起来存在"的外部依赖. 能力卡上的引擎标识改走内置引擎,
+       真要接外部 AI 推理时再加新枚举值 (别再加回 dify 这个名字).
+    """
+
     n8n = "n8n"                       # n8n flow
     builtin = "builtin"               # 平台内置 (不依赖外部 AI)
 
@@ -108,7 +113,7 @@ class Agent(Base):
 
     # ===== 后端执行 =====
     engine: Mapped[AgentEngine] = mapped_column(
-        Enum(AgentEngine), nullable=False, default=AgentEngine.dify
+        Enum(AgentEngine), nullable=False, default=AgentEngine.builtin
     )
     engine_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 

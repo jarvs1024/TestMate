@@ -42,13 +42,6 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
 
-    # Dify
-    # 默认 DIFY_MOCK=True:沙箱/无 Dify 环境跑得起来;生产想接真 Dify 时改 .env DIFY_MOCK=false 并填 DIFY_BASE_URL/DIFY_API_KEY
-    DIFY_MOCK: bool = True
-    DIFY_BASE_URL: str = ""
-    DIFY_API_KEY: str = ""
-    DIFY_TIMEOUT_SECONDS: int = 120
-
     # RAGFlow
     # 默认空:本工程不打包 RAGFlow,需要时由用户在 Settings 页或 .env 填真值
     # 填的时候注意:从 backend 容器内访问 host 用 host.docker.internal,不要用 127.0.0.1

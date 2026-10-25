@@ -1,6 +1,6 @@
 """系统设置表 — DB 优先, .env 兜底。
 
-存"运营/业务"配置: RAGFlow/Dify 连接、钉钉 webhook、平台名、mock 开关等。
+存"运营/业务"配置: RAGFlow / ReviewAgent 连接、钉钉 webhook、平台名、开关等。
 不属于: 部署层的 host/port/credentials(mysql password / jwt secret) — 这些还在 .env。
 """
 from datetime import datetime

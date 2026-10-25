@@ -19,6 +19,8 @@
  *   拆开之后各自职责单一, 服务状态这块以后加监控指标也不用碰导航.
  *
  * ⚠️ ReviewAgent 默认隐藏 —— 没配 base_url 时显示"未配置"会误导人.
+ *
+ * ⚠️ 2026-10-25: Dify 已整个下线 (平台不再接入), 面板里不再有它那一行.
  */
 import { onMounted, onUnmounted, ref } from 'vue';
 import axios from 'axios';
@@ -33,7 +35,6 @@ interface ServiceHealth {
 
 const services = ref<ServiceHealth[]>([
   { key: 'ragflow', label: 'RAGFlow', status: 'unknown', statusText: '...' },
-  { key: 'dify', label: 'Dify', status: 'unknown', statusText: '...' },
   // ReviewAgent (代码检视唯一后端) — 默认隐藏, 配过 base_url 才显示
   { key: 'review_agent', label: 'ReviewAgent', status: 'off', statusText: '未配置', visible: false },
 ]);
@@ -52,7 +53,6 @@ async function poll() {
   try {
     const { data } = await axios.get('/api/v1/health/services');
     setSvc('ragflow', data.ragflow);
-    setSvc('dify', data.dify);
     // ReviewAgent (代码检视): 服务未返回字段 → 视为未配置
     const ra = data.review_agent || 'off';
     const raMap: Record<string, string> = { ok: '正常', warn: '部分', off: '未配置' };
@@ -65,7 +65,6 @@ async function poll() {
     }
   } catch {
     setSvc('ragflow', 'off');
-    setSvc('dify', 'off');
   }
   const d = new Date();
   lastCheck.value = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;

@@ -3,13 +3,12 @@
 分层:
   /health         liveness — 进程活着
   /health/ready   readiness — 依赖(MySQL / Redis)全就绪, 任一不通返 503
-  /health/services 聚合外部服务(RAGFlow / Dify)可达性,前端顶栏 30s 轮询
+  /health/services 聚合外部服务(RAGFlow / ReviewAgent)可达性,前端顶栏 30s 轮询
 """
 import asyncio
 import time
 from typing import Tuple
 
-import httpx
 from fastapi import APIRouter, Response, status
 
 from app.core.config import settings
@@ -174,66 +173,21 @@ async def _check_marketplace() -> dict:
 
 # ---------------- external services ----------------
 
-# 30s TTL 缓存 — 避免前端 30s 轮询 + 多副本时疯狂打 Dify / RAGFlow
-_probe_cache: dict = {}
-_probe_cache_ttl = 30.0
-_probe_cache_lock = asyncio.Lock()
-
-
-async def _probe(name: str, base_url: str, api_key: str, timeout: float = 1.5) -> str:
-    """P0 简化:发一个最小请求,2s 内通就 ok,否则 off. 带 30s 缓存。
-
-    返回 'ok' | 'warn' | 'off'
-    """
-    if not base_url or "xxxxx" in api_key or "mock" in api_key:
-        return "off"
-
-    # 缓存命中直接返
-    cache_key = f"{name}:{base_url}"
-    now = time.monotonic()
-    cached = _probe_cache.get(cache_key)
-    if cached and now - cached["ts"] < _probe_cache_ttl:
-        return cached["status"]
-
-    async with _probe_cache_lock:
-        # 双检:锁内再确认一次
-        cached = _probe_cache.get(cache_key)
-        if cached and now - cached["ts"] < _probe_cache_ttl:
-            return cached["status"]
-
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                r = await client.get(
-                    base_url.rstrip("/").replace("/v1", "/").replace("/api/v1", "/")
-                )
-                if r.status_code < 500:
-                    result = "ok"
-                else:
-                    result = "warn"
-        except Exception:
-            result = "off"
-
-        _probe_cache[cache_key] = {"status": result, "ts": now}
-        return result
+# ⚠️ 2026-10-25: Dify 下线后, 这个通用探针没人用了 —— 各服务自己带缓存
+#    (RAGFlow 见 ragflow_client.probe, ReviewAgent 见 review_agent_client.probe).
+#    真要加新的外部服务, 用各服务自己的探针, 别在这儿再堆一个通用的.
 
 
 @router.get("/health/services")
 async def health_services() -> dict:
-    """聚合 RAGFlow / Dify 的可达性,前端顶栏 30s 轮询一次。
+    """聚合 RAGFlow / ReviewAgent 的可达性,前端顶栏 30s 轮询一次。
 
-    RAGFlow / Dify 探针都走 30s 缓存(见 _probe),不会真打外网 30 次/秒。
+    RAGFlow 探针走 30s 缓存(见 _probe),不会真打外网 30 次/秒。
+
+    ⚠️ 2026-10-25: Dify 已整个下线 (平台不再接入), 这里不再返回 dify 字段.
     """
     from app.core.ragflow_client import probe as rf_probe
-    from app.core.settings_store import get, to_bool
     rf_status, _ = await rf_probe()
-
-    dify_mock = to_bool(await get("dify.mock_mode", False))
-    if dify_mock:
-        dify = "ok"
-    else:
-        dify_base = (await get("dify.base_url", "")) or ""
-        dify_key = (await get("dify.api_key", "")) or ""
-        dify = await _probe("dify", dify_base, dify_key)
 
     # 代码检视侧栏心跳: pr-agent 版已下线, 改探 ReviewAgent (代码检视唯一后端).
     # 只在配过 base_url 时探, 没配就 off.
@@ -243,4 +197,4 @@ async def health_services() -> dict:
     else:
         ra_status = "off"
 
-    return {"ragflow": rf_status, "dify": dify, "review_agent": ra_status}
+    return {"ragflow": rf_status, "review_agent": ra_status}

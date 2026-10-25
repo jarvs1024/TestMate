@@ -1,6 +1,6 @@
 # TestMate · SSD 测试伙伴
 
-> SSD 测试组的内网 AI 工作平台,基于 Vue 3 + FastAPI + Dify + RAGFlow。
+> SSD 测试组的内网 AI 工作平台,基于 Vue 3 + FastAPI + RAGFlow。
 
 ## 项目状态
 
@@ -12,7 +12,7 @@
 
 ## 一句话
 
-前店后厂:Vue 3 **能力墙**前端(一张卡 = 一项能力,分工具/看板/底座三种角色)+ FastAPI 中台(完全包裹 AI 引擎 + 触达硬件)+ Dify agent 编排 + RAGFlow 知识库,部署在内网,服务 SSD 测试组日常工作。
+前店后厂:Vue 3 **能力墙**前端(一张卡 = 一项能力,分工具/看板/底座三种角色)+ FastAPI 中台(完全包裹 AI 引擎 + 触达硬件)+ 内置 AI 引擎 + RAGFlow 知识库,部署在内网,服务 SSD 测试组日常工作。
 
 > 2026-10-25 起首页不再是「智能体广场」——卡片不全是智能体(代码检视是看板、资产市场与知识库是底座),统一叫「能力」;角色只回答「干活 / 看数 / 供料」,细分信息由业务域标签承担,详见 [能力墙重构设计](docs/specs/2026-10-25-capability-wall-design.md)。
 
@@ -22,7 +22,7 @@
 - **log 诊断**:上传 PCIe / 串口 log,AI 提取 assert,对比历史缺陷图谱
 - **用例生成**:输入需求,自动生成符合 `import ssd_tool` 规范的 pytest 脚本
 - **机台三道闸**:互斥锁 + 指令白名单 + 二次确认,防止 AI 幻觉炸机
-- **钉钉通知**:Dify 触发 → 中台转发 → 群机器人单向推送
+- **钉钉通知**:能力跑完 → 中台转发 → 群机器人单向推送
 - **PM dashboard**:Token 漏斗、Prompt 灰度、团队时间线
 
 ## 技术栈
@@ -30,7 +30,7 @@
 **前端**: Vue 3.5 + Vite 5.4 + TypeScript 5.5 + Element Plus 2.8 + Tailwind 3.4 + Pinia 2.2 + monaco-editor 0.50
 **后端**: Python 3.11 + FastAPI 0.115 + SQLAlchemy 2.0(async) + alembic 1.13 + aiomysql + redis.asyncio
 **认证**: python-jose JWT + passlib/bcrypt,7 天 token,RBAC 三级(admin / tester / viewer)
-**AI 集成**: httpx 调 Dify / RAGFlow,DIFY_MOCK 沙箱降级
+**AI 集成**: httpx 调 RAGFlow / ReviewAgent / GitLab,外部服务不可达时降级
 **硬件触达**: paramiko SSH 2.x
 **数据**: MySQL 8.0(主数据)+ Redis 7-alpine(缓存 / 互斥锁)
 **可观测性**: structlog 24.1 JSON 日志
@@ -43,7 +43,7 @@ TestMate/
 ├── backend_gateway/           # FastAPI 后端
 │   ├── app/
 │   │   ├── api/               # 8 个路由(health / auth / agents / kb / machines / diagnose / notify / settings)
-│   │   ├── core/              # config / security / logging / dify_client / ragflow_client / settings_store
+│   │   ├── core/              # config / security / logging / ragflow_client / review_agent_client / settings_store
 │   │   ├── db/                # SQLAlchemy async session
 │   │   ├── models/            # 4 张表(user / agent / machine / system_setting)
 │   │   ├── schemas/           # Pydantic 请求/响应
@@ -113,6 +113,6 @@ sudo ./deploy/deploy.sh        # 在线;离线见 deploy/README.md §3
 - ✅ 86 服务器部署上线(8090 前端 / 8000 后端 / 3306 MySQL / 6379 Redis)
 - ✅ admin 账号已建(admin / Admin@123)
 - ✅ Docker 化加固 12 项(commit f0ef182):compose v1/v2 兼容 / 密码强度 / offline-images 补全 / multi-stage build / alembic / health 分层 / structlog / restore.sh 等
-- ⏳ P1 核心场景(机台三道闸 / 协议检索 / 用例生成 / 钉钉通知)— 部分模块代码已有,待补 Dify workflow 配置 + 真实机台联调
+- ⏳ P1 核心场景(机台三道闸 / 协议检索 / 用例生成 / 钉钉通知)— 部分模块代码已有,待补外部 AI 推理接入 + 真实机台联调
 - ⏳ P1 前端 monaco 接入(包已装,组件未接)
 - ⏳ P1 真实 SSD 测试机台联调(paramiko 已接,机台字典已建)

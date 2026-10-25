@@ -78,11 +78,11 @@ describe('能力卡片', () => {
 
   it('meta 行按角色渲染传入的真实指标', () => {
     const w = mount(CapabilityCard, {
-      props: { capability: cap(), meta: [{ icon: '🔧', text: 'Dify' }, { icon: '🕐', text: '3 小时前' }] },
+      props: { capability: cap(), meta: [{ icon: '🔧', text: '平台内置' }, { icon: '🕐', text: '3 小时前' }] },
     });
     const items = w.findAll('.meta-item').map((i) => i.text());
     expect(items).toHaveLength(2);
-    expect(items[0]).toContain('Dify');
+    expect(items[0]).toContain('平台内置');
     expect(items[1]).toContain('3 小时前');
   });
 

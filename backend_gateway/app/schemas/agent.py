@@ -54,7 +54,7 @@ class AgentCreateIn(BaseModel):
     use_when: str = ""
     not_for: str = ""
     tags: list[str] = []
-    engine: str = "dify"
+    engine: str = "builtin"
     engine_config: dict[str, Any] = {}
     input_schema: list[dict[str, Any]] = []
     data_sources: list[str] = []

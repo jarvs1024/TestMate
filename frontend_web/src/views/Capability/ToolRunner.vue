@@ -182,7 +182,7 @@ const events = ref<Array<{ type: string; title?: string; content: string }>>([])
 const embedLabel = computed(() => {
   if (!agent.value?.embed_url) return '内嵌外部应用';
   const u = agent.value.embed_url.toLowerCase();
-  if (u.includes('chatbot') || u.includes('dify')) return '内嵌 Dify Chatbot';
+  if (u.includes('chatbot')) return '内嵌 Chatbot';
   if (u.includes('search/share') || u.includes('ragflow')) return '内嵌 RAGFlow 共享搜索';
   return '内嵌外部应用';
 });
@@ -374,7 +374,7 @@ async function runLogAnalysis() {
   events.value.push({
     type: r.stats.err > 0 ? 'warn' : 'ok',
     title: r.stats.err > 0 ? `✓ 完成 · 发现 ${r.stats.err} 个错误` : '✓ 完成 · 日志干净',
-    content: `本次为客户端规则 demo, 真实 AI 推理待接入 Dify workflow (engine_config.demo=true).`,
+    content: `本次为客户端规则 demo (engine_config.demo=true).`,
   });
 }
 
@@ -425,9 +425,9 @@ async function onRun() {
   // 4. 模拟流式输出
   const sections = [
     { type: 'section', title: '▣ 事件时间线', content: '暂无异常事件' },
-    { type: 'section', title: '💡 AI 推测根因', content: '(demo 模式) 请在 .env 配置 DIFY_BASE_URL + DIFY_API_KEY 启用真实 AI 推理' },
+    { type: 'section', title: '💡 AI 推测根因', content: '(demo 模式) 本次为本地规则演示, 未调用外部 AI 服务' },
     { type: 'section', title: '📑 关联历史', content: '无 (RAGFlow 未配置)' },
-    { type: 'ok', title: '✓ 运行完成', content: '本次为 mock 演示, 真实 AI 输出需要配置 Dify workflow' },
+    { type: 'ok', title: '✓ 运行完成', content: '本次为本地演示输出' },
   ];
 
   for (const s of sections) {
@@ -471,7 +471,7 @@ onMounted(async () => {
 <style scoped>
 .runner { display: flex; flex-direction: column; gap: 16px; }
 
-/* 嵌入模式 (Dify / RAGFlow iframe) */
+/* 嵌入模式 (外部页面 iframe) */
 .run-embed {
   display: flex;
   flex-direction: column;

@@ -25,7 +25,7 @@ router = APIRouter()
 
 # ===== 分组显示 =====
 CATEGORY_LABELS: dict[str, str] = {
-    "agents":     "🤖 智能体 / Dify",
+    "agents":     "🤖 智能体",
     "knowledge":       "📚 知识库 / RAGFlow",
     "notification": "🔔 通知 / 钉钉",
     "general":    "⚙️ 通用",
@@ -189,33 +189,6 @@ async def test_ragflow(user: User = Depends(get_current_user)) -> SettingTestOut
                 return SettingTestOut(ok=False, status="warn", message=data.get("message", "RAGFlow 返回错误"), detail=data)
             total = len(data.get("data") or [])
             return SettingTestOut(ok=True, status="ok", message=f"连通 · 可访问 {total} 个数据集", detail={"datasets": total})
-    except Exception as e:
-        return SettingTestOut(ok=False, status="off", message=f"不可达: {type(e).__name__}: {e}", detail=None)
-
-
-@router.post("/test/dify", response_model=SettingTestOut)
-async def test_dify(user: User = Depends(get_current_user)) -> SettingTestOut:
-    """用当前 DB (或 fallback env) 的 dify 配置测 mock 模式 + URL 可达."""
-    if user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
-    from app.core.settings_store import _rewrite_loopback
-    raw_url = (await get("dify.base_url", "")) or ""
-    base_url = _rewrite_loopback(raw_url).rstrip("/")
-    api_key = await get("dify.api_key", "") or ""
-    mock = to_bool(await get("dify.mock_mode", False))
-    if mock:
-        return SettingTestOut(ok=True, status="ok", message="mock 模式开启 · 不连外部 Dify", detail={"mode": "mock"})
-    if not base_url or "xxxxx" in api_key or "mock" in api_key:
-        return SettingTestOut(ok=False, status="off", message="未配置或仍在 mock 占位", detail=None)
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(
-                base_url.rstrip("/").replace("/v1", "/"),
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            if r.status_code < 500:
-                return SettingTestOut(ok=True, status="ok", message=f"连通 · HTTP {r.status_code}", detail=None)
-            return SettingTestOut(ok=False, status="warn", message=f"HTTP {r.status_code}", detail=None)
     except Exception as e:
         return SettingTestOut(ok=False, status="off", message=f"不可达: {type(e).__name__}: {e}", detail=None)
 

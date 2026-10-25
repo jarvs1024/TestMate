@@ -108,9 +108,18 @@ describe('能力工具函数', () => {
   });
 
   it('引擎名: 短名可读', () => {
-    expect(engineLabel('dify')).toBe('Dify');
     expect(engineLabel('n8n')).toBe('n8n');
     expect(engineLabel('builtin')).toBe('平台内置');
     expect(engineLabel('')).toBe('—');
+  });
+
+  /**
+   * Dify 2026-10-25 已整个下线 (平台不再接入) —— 界面上不能再出现这个词.
+   * 存量行由迁移 0019 改成 builtin, engineLabel 再兜一层, 万一有环境漏跑迁移
+   * 也不能让 "Dify" 漏到卡片上.
+   */
+  it('引擎名里不再有 Dify (下线了, 存量值也不许露出来)', () => {
+    expect(engineLabel('dify')).not.toContain('Dify');
+    expect(engineLabel('dify')).toBe('AI 引擎');
   });
 });

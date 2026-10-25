@@ -89,9 +89,11 @@ export function relativeTime(iso: string | null | undefined): string {
 /** 引擎名 —— 卡上显示用的短名 */
 export function engineLabel(engine: string | undefined | null): string {
   switch (engine) {
-    case 'dify': return 'Dify';
     case 'n8n': return 'n8n';
     case 'builtin': return '平台内置';
+    // Dify 2026-10-25 已整个下线. 存量行由迁移 0019 改成 builtin,
+    // 这里再兜一层 —— 万一有环境漏跑迁移, 也不能让 "Dify" 这个词漏到界面上.
+    case 'dify': return 'AI 引擎';
     default: return engine || '—';
   }
 }

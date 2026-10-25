@@ -94,30 +94,6 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": True,
     },
     {
-        "key": "dify.base_url",
-        "category": "data-source",
-        "value_type": "url",
-        "default": settings.DIFY_BASE_URL,
-        "description": "Dify API 基础地址",
-        "is_secret": False,
-    },
-    {
-        "key": "dify.api_key",
-        "category": "data-source",
-        "value_type": "secret",
-        "default": settings.DIFY_API_KEY,
-        "description": "Dify API Key (app-xxxxx)",
-        "is_secret": True,
-    },
-    {
-        "key": "dify.mock_mode",
-        "category": "data-source",
-        "value_type": "bool",
-        "default": settings.DIFY_MOCK,
-        "description": "Dify mock 模式: 开则不调外部 Dify, 用 demo 流式返回 (沙箱环境用)",
-        "is_secret": False,
-    },
-    {
         "key": "general.platform_name",
         "category": "general",
         "value_type": "string",
@@ -127,13 +103,13 @@ SETTING_SCHEMA: list[dict] = [
     },
 
     # ===== 知识检索源 (知识库页 KB 嵌入的 iframe URL) =====
-    # 设计: 任意 URL 都能塞, 换 RAGFlow / Dify / 其他都不需要改代码
+    # 设计: 任意 URL 都能塞, 换 RAGFlow 或其他都不需要改代码
     {
         "key": "search.engine",
         "category": "search",
         "value_type": "string",
         "default": "ragflow-share",
-        "description": "检索源引擎: ragflow-share (RAGFlow 共享 Search App) / dify-chatbot / custom-url / none (显示建设中)",
+        "description": "检索源引擎: ragflow-share (RAGFlow 共享 Search App) / custom-url / none (显示建设中)",
         "is_secret": False,
     },
     {
@@ -141,7 +117,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "search",
         "value_type": "url",
         "default": "http://127.0.0.1:18080/search/share?shared_id=ea62499872bb11f1a82f771aafbe4f81&from=search&auth=ir7sYP4h2kMSxcjSi2IfailLxbATmCdm&tenantId=7ddaa0b472b511f1a82f771aafbe4f81&visible_avatar=1&locale=zh-Hans",
-        "description": "iframe 直接嵌入的 URL (RAGFlow 共享 search app / Dify chatbot / 任意可嵌入 URL)",
+        "description": "iframe 直接嵌入的 URL (RAGFlow 共享 search app / 任意可嵌入 URL)",
         "is_secret": False,
     },
     {
@@ -497,6 +473,11 @@ DEPRECATED_KEYS = (
     "marketplace.install.skill_dir",
     "marketplace.install.plugin_dir",
     "marketplace.install.enabled",
+    # Dify 数据源整个下线 (2026-10-25): 平台不再接入 Dify,
+    # 这三项从 SCHEMA 移除后, DB 里的残留行在启动时一并清掉.
+    "dify.base_url",
+    "dify.api_key",
+    "dify.mock_mode",
 )
 
 # 默认值改版 —— DB 里还留着**旧默认值**的行, 启动时跟着改成新默认值.

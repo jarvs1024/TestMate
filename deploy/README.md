@@ -1,6 +1,6 @@
 # TestMate Linux 一键部署
 
-> 内网 SSD 测试组 AI 工作平台。Vue 3 + FastAPI + Dify + RAGFlow。
+> 内网 SSD 测试组 AI 工作平台。Vue 3 + FastAPI + RAGFlow。
 
 ## 1. 服务器最低配置
 
@@ -40,7 +40,7 @@ python3 scripts/create_admin.py --username admin --password '<强密码>' --role
 - 健康检查:
   - `GET /api/v1/health` — liveness, 进程活着
   - `GET /api/v1/health/ready` — readiness, MySQL + Redis 全通才 200
-  - `GET /api/v1/health/services` — 外部服务(RAGFlow / Dify)状态, 30s 缓存
+  - `GET /api/v1/health/services` — 外部服务(RAGFlow / ReviewAgent)状态, 30s 缓存
 
 ## 3. 离线一键部署(内网,无外网)
 

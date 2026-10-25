@@ -47,7 +47,6 @@ async def test_normal_user_cannot_read_credentials(client, stranger_user):
         "dingtalk.market_webhook",     # URL 里带 access_token
         "dingtalk.review_webhook",
         "ragflow.api_key",
-        "dify.api_key",
         "review_agent.api_token",
         "dingtalk.market_secret",
         "dingtalk.review_secret",
@@ -90,11 +89,11 @@ async def test_normal_user_cannot_change_settings(client, stranger_user):
 # ---------- 设置: 测试连接端点只给管理员 ----------
 
 @pytest.mark.parametrize("path", [
-    "/test/ragflow", "/test/dify", "/test/pr_agent",
+    "/test/ragflow", "/test/pr_agent",
     "/test/review_agent", "/test/gitlab", "/test/dingtalk",
 ])
 async def test_normal_user_cannot_run_connection_tests(client, stranger_user, path):
-    """「测试连接」全是 admin only (以前 ragflow/dify/pr_agent/review_agent 漏了)."""
+    """「测试连接」全是 admin only (以前 ragflow/pr_agent/review_agent 漏了)."""
     r = await client.post(f"{SETTINGS}{path}", headers=_stranger_headers(stranger_user))
     assert r.status_code == 403, f"{path} 应该 403, 实际 {r.status_code}: {r.text}"
 

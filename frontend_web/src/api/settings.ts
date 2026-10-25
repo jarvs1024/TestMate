@@ -38,9 +38,6 @@ export interface TestResult {
 export async function testRagflow(): Promise<TestResult> {
   return (await request.post('/settings/test/ragflow')) as TestResult;
 }
-export async function testDify(): Promise<TestResult> {
-  return (await request.post('/settings/test/dify')) as TestResult;
-}
 export async function testPrAgent(): Promise<TestResult> {
   return (await request.post('/settings/test/pr_agent')) as TestResult;
 }
