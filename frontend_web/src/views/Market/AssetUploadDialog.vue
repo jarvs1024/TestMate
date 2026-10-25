@@ -209,7 +209,7 @@
         <section class="up-sec">
           <button type="button" class="sec-toggle" @click="advOpen = !advOpen">
             <span class="sec-no">3</span>进阶信息
-            <span class="sec-hint">可展开 · 补充适用场景与检索词</span>
+            <span class="sec-hint">可展开 · 补充标签与检索词</span>
             <span class="sec-caret">{{ advOpen ? '▾' : '▸' }}</span>
           </button>
           <div v-show="advOpen" class="adv-body">
