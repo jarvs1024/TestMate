@@ -16,6 +16,7 @@ const { execFileSync } = require('child_process');
 require('./e2e_lock').acquire(__filename);
 // 上传入口: 点「上传资产」→ 选形态 → 进对应表单 (2026-10-24)
 const { openUpload } = require('./e2e_upload');
+const { deleteTestUsers } = require('./e2e_cleanup');
 
 
 const CHROME = process.env.CHROME_PATH
@@ -426,16 +427,9 @@ async function openPage(browser, token, user) {
   // 还原白名单原值 (不是清空 —— 清空会把真实配置也抹掉)
   await restoreSetting(adminToken, 'marketplace.publisher_usernames', savedPublisherSetting);
   // 删掉测试账号 —— 别留一个已知口令的账号在库里
-  try {
-    const env = fs.readFileSync(path.join(__dirname, '..', 'deploy', '.env'), 'utf8');
-    const pw = (env.match(/^MYSQL_ROOT_PASSWORD=(.*)$/m) || [])[1]?.trim().replace(/^["']|["']$/g, '');
-    if (pw) {
-      execFileSync('docker', ['exec', 'test-mate-mysql-1', 'mysql', '-uroot', `-p${pw}`,
-        'testmate', '-e', `DELETE FROM users WHERE username='${PUB}';`], { stdio: 'ignore' });
-    }
-  } catch (e) {
-    console.log('  [提示] 测试账号清理跳过: ' + e.message.split('\n')[0]);
-  }
+  // ⚠️ 用共享清理器: 按**前缀**删 (库里存的是邮箱形式 'e2e_publisher@twsc.com.cn',
+  //    按短名精确删会删 0 行却照样不报错) + 删完**回读核对**.
+  deleteTestUsers([PUB]);
 
   await browser.close();
   const failed = results.filter((r) => !r.ok);

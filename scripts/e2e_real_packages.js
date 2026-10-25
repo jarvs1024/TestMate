@@ -26,6 +26,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 // ⚠️ 互斥锁: 并行跑 e2e 会互相改生产设置/删资产 (见 e2e_lock.js)
 require('./e2e_lock').acquire(__filename);
+const { deleteTestUsers } = require('./e2e_cleanup');
 
 
 const CHROME = process.env.CHROME_PATH
@@ -726,18 +727,9 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
       console.log('  [清理] 生产设置已全部还原');
     }
     // 删测试账号
-    try {
-      const env = fs.readFileSync(path.join(__dirname, '..', 'deploy', '.env'), 'utf8');
-      const pw = (env.match(/^MYSQL_ROOT_PASSWORD=(.*)$/m) || [])[1]?.trim().replace(/^["']|["']$/g, '');
-      if (pw) {
-        execFileSync('docker', ['exec', 'test-mate-mysql-1', 'mysql', '-uroot', `-p${pw}`,
-          'testmate', '-e',
-          `DELETE FROM users WHERE username='${PUBLISHER.username}';`], { stdio: 'ignore' });
-        console.log('  [清理] 测试账号已删除');
-      }
-    } catch (e) {
-      console.log('  [清理] 账号清理跳过: ' + String(e.message).split('\n')[0]);
-    }
+    // ⚠️ 用共享清理器: 按**前缀**删 (库里存的是邮箱形式 'e2e_real_pub@twsc.com.cn',
+    //    按短名精确删会删 0 行却照样报"已删除") + 删完**回读核对**.
+    deleteTestUsers([PUBLISHER.username]);
   }
 
   const failed = results.filter((r) => !r.ok);

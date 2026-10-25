@@ -84,6 +84,8 @@ function check(name, ok, detail) {
     'marketplace.sync.interval_seconds', 'marketplace.max_package_mb',
     'marketplace.marketplace_name', 'marketplace.public_base_url',
     'marketplace.projects',   // 项目列表 (资产的适用项目)
+    // 2026-10-26: 新增的权限/暴露策略项 (admin only —— 非管理员的 schema 里没有)
+    'marketplace.publisher_roles', 'marketplace.public_download',
   ];
   const missing = expect.filter((k) => !keys.includes(k));
   check('A2 资产市场配置项全部渲染出来', missing.length === 0,
