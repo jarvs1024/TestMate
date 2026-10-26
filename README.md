@@ -82,6 +82,11 @@ TestMate/
 │   ├── offline-images.txt          # 离线镜像清单
 │   ├── backup.sh                   # 数据备份(mysqldump + redis rdb)
 │   ├── restore.sh                  # 数据恢复(配 backup.sh)
+│   ├── native/                     # 裸机模式 (systemd, 不走 Docker)
+│   │   ├── tmctl.sh                # 运维唯一入口(check/install/start/stop/restart/…)
+│   │   ├── preflight.sh            # 环境体检
+│   │   ├── selftest.sh             # 部署资产自检(模板 + systemd + nginx)
+│   │   └── units/                  # systemd 单元 + nginx 配置模板
 │   └── README.md                   # 部署文档
 ├── scripts/                        # 辅助脚本(开发 / 部署 / e2e / 种子数据)
 │   ├── check_deploy.sh             # 部署一致性自检(前端特征串 + 后端 sha256)
@@ -109,16 +114,37 @@ TestMate/
 | `docs/specs/2026-10-22-ai-asset-market-overview.md` | AI 资产市场总览 |
 | `docs/specs/2026-10-23-asset-market-verification.md` | 资产市场验证记录 |
 | `docs/specs/2026-10-25-capability-wall-design.md` | 能力墙重构设计 (首页信息架构 / 角色模型 / 文案对照 / Dify 下线) |
-| `deploy/README.md` | 一键部署实操(在线 / 离线 / 备份 / 排错) |
+| `deploy/README.md` | 一键部署实操(在线 / 离线 / 备份 / 排错) — Docker 模式 |
+| `deploy/native/README.md` | 一键部署实操 — 裸机 systemd 模式 (环境体检 / 开机自启 / 一键启停 / 升级 / 备份) |
 
 ## 快速部署
 
+两种模式, 都一键, 互不干扰:
+
 ```bash
+# ===== 模式 A: Docker (默认, 生产在跑) =====
 cd deploy && cp .env.template .env && $EDITOR .env
 sudo ./deploy.sh              # 在线;离线见 deploy/README.md §3
+
+# ===== 模式 B: 裸机 (Linux 直接跑进程, systemd 管) =====
+sudo ./deploy/native/tmctl.sh install --auto
 ```
 
-详见 `deploy/README.md`。
+裸机模式**运维只记一个命令** `deploy/native/tmctl.sh`:
+
+```bash
+sudo ./deploy/native/tmctl.sh check      # 环境体检 (只读)
+sudo ./deploy/native/tmctl.sh install    # 一键部署 (含开机自启)
+sudo ./deploy/native/tmctl.sh restart    # 一键重启
+sudo ./deploy/native/tmctl.sh stop       # 一键停止
+sudo ./deploy/native/tmctl.sh enable     # 开机自启
+sudo ./deploy/native/tmctl.sh status     # 状态
+sudo ./deploy/native/tmctl.sh doctor     # 深度排障
+sudo ./deploy/native/tmctl.sh update     # 升级
+sudo ./deploy/native/tmctl.sh backup     # 备份
+```
+
+详见 `deploy/native/README.md`。
 
 ## 当前进度(2026-07-07)
 

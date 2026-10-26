@@ -6,6 +6,7 @@
 #   sudo ./deploy/deploy.sh --offline              # 离线模式(从本地镜像包 load)
 #   sudo ./deploy/deploy.sh --offline-dir /tmp/imgs # 离线镜像包目录
 #   sudo ./deploy/deploy.sh --down                 # 停止整栈
+#   sudo ./deploy/deploy.sh --restart              # 重启整栈(改完代码后用这个)
 #   sudo ./deploy/deploy.sh --status               # 查看状态
 #   sudo ./deploy/deploy.sh --logs [service]       # 跟踪日志
 #
@@ -23,10 +24,11 @@ while [[ $# -gt 0 ]]; do
     --offline)        MODE="offline"; shift ;;
     --offline-dir)    OFFLINE_DIR="$2"; shift 2 ;;
     --down)           ACTION="down"; shift ;;
+    --restart)        ACTION="restart"; shift ;;
     --status)         ACTION="status"; shift ;;
     --logs)           ACTION="logs"; shift; LOG_TARGET="${1:-}"; [[ -n "${LOG_TARGET:-}" ]] && shift ;;
     -h|--help)
-      sed -n '2,16p' "$0"; exit 0 ;;
+      sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "未知参数: $1"; exit 1 ;;
   esac
 done
@@ -307,6 +309,27 @@ do_down() {
   ok "已停止(数据卷保留)"
 }
 
+do_restart() {
+  log "重启 TestMate 整栈..."
+  compose_cmd restart
+  ok "已重启"
+  # 重启完顺手看一眼健康 —— 不然"重启成功"和"服务能用"是两回事
+  local be_port
+  be_port="$(grep '^BACKEND_HOST_PORT=' .env 2>/dev/null | cut -d= -f2- || true)"
+  be_port="${be_port:-18000}"
+  local i
+  for i in $(seq 1 30); do
+    if curl -fsS "http://127.0.0.1:${be_port}/api/v1/health" >/dev/null 2>&1; then
+      ok "backend healthy (耗时 ${i}s)"
+      break
+    fi
+    sleep 2
+    if [[ $i -eq 30 ]]; then
+      warn "backend 30s 还没 health,看一眼日志: $0 --logs backend"
+    fi
+  done
+}
+
 do_status() {
   compose_cmd ps
   echo
@@ -332,8 +355,9 @@ do_logs() {
 
 # ---------- 入口 ----------
 case "$ACTION" in
-  up)     require_root; do_up ;;
-  down)   require_root; do_down ;;
-  status) do_status ;;
-  logs)   do_logs ;;
+  up)      require_root; do_up ;;
+  down)    require_root; do_down ;;
+  restart) require_root; do_restart ;;
+  status)  do_status ;;
+  logs)    do_logs ;;
 esac

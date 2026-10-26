@@ -2,6 +2,24 @@
 
 > 内网 SSD 测试组 AI 工作平台。Vue 3 + FastAPI + RAGFlow。
 
+## 0. 两种模式,先选一个
+
+| | Docker(本文件) | 裸机 systemd |
+|---|---|---|
+| 入口 | `deploy/deploy.sh` | `deploy/native/tmctl.sh` |
+| 隔离 | 容器级 | 进程级,装在宿主上 |
+| MySQL / Redis | 容器里跑 | 复用宿主机服务 |
+| 开机自启 | 靠 docker daemon | `systemctl enable`,独立可控 |
+| 文档 | 本文件 | `deploy/native/README.md` |
+
+**两套并存,互不干扰。** 不让装 Docker / 资源紧张 / 运维只认 systemctl → 走裸机模式:
+
+```bash
+sudo ./deploy/native/tmctl.sh install --auto
+```
+
+---
+
 ## 1. 服务器最低配置
 
 | 角色 | CPU | 内存 | 磁盘 | 备注 |
@@ -104,9 +122,10 @@ sudo ./deploy/deploy.sh
 
 ```bash
 sudo ./deploy/deploy.sh --status         # 状态
+sudo ./deploy/deploy.sh --restart        # 重启整栈(改完代码后用这个, 带健康校验)
+sudo ./deploy/deploy.sh --down           # 停整栈(数据卷保留)
 sudo ./deploy/deploy.sh --logs           # 跟踪所有容器日志
 sudo ./deploy/deploy.sh --logs backend   # 单容器
-sudo ./deploy/deploy.sh --down           # 停整栈(数据卷保留)
 
 # 进入某容器
 docker compose -f deploy/docker-compose.yml exec backend bash

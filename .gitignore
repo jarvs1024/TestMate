@@ -46,3 +46,6 @@ coverage/
 
 # e2e 截图输出
 .e2e-out/
+
+# 裸机部署运行时产物 (venv / 前端产物 / 数据 / 日志 / 配置)
+deploy/native/runtime/
