@@ -618,10 +618,24 @@ async function pollJobs() {
 async function retryFailed() {
   retrying.value = true;
   try {
+    let okCount = 0;
+    let failCount = 0;
     for (const j of failedJobs.value) {
-      try { await retryJob(j.id); } catch { /* 单个失败不中断 */ }
+      try {
+        await retryJob(j.id);
+        okCount++;
+      } catch {
+        // 单个失败不中断, 但**要记数** —— 全失败也弹"已重新排队"是谎报军情
+        failCount++;
+      }
     }
-    ElMessage.success('已重新排队, 正在重试同步');
+    if (failCount === 0) {
+      ElMessage.success(`已重新排队 ${okCount} 个任务, 正在重试同步`);
+    } else if (okCount > 0) {
+      ElMessage.warning(`重试完成: ${okCount} 个已排队, ${failCount} 个失败 (刷新列表查看原因)`);
+    } else {
+      ElMessage.error(`重试失败: ${failCount} 个任务都没排上, 刷新列表查看原因`);
+    }
     await pollJobs();
   } finally {
     retrying.value = false;

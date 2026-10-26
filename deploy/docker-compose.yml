@@ -132,11 +132,14 @@ services:
       # 里面就是一个 root/testmate-market 的 git working copy, 上传先落这里, 后台再 push
       - ${DATA_ROOT:-/opt/testmate/data}/market:/workspace
       # SSH 身份: 私钥 + known_hosts 只读挂载. 私钥不进镜像, 容器内 StrictHostKeyChecking=yes
-      - ${GITLAB_SSH_KEY:-/Users/jarvs/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
-      - ${GITLAB_KNOWN_HOSTS:-/Users/jarvs/.ssh/known_hosts}:/root/.ssh/known_hosts:ro
+      # ⚠️ 默认值是 Linux 部署的典型位置; mac 本地模式请务必在 .env 里显式覆盖
+      #    (以前默认值是某个人的 mac 路径 —— 没覆盖时 docker 会静默建空目录挂载,
+      #     SSH 身份失效还不报错, 极难排查)
+      - ${GITLAB_SSH_KEY:-/root/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
+      - ${GITLAB_KNOWN_HOSTS:-/root/.ssh/known_hosts}:/root/.ssh/known_hosts:ro
       # 宿主 Qoder 安装目录 — 服务端通道安装时写这里 (容器内 /host-home 前缀对应宿主 ~).
       # 只写目标子目录, 不动用户已有的其它 skill / plugin.
-      - ${HOST_QODER_HOME:-/Users/jarvs/.qoder-cn}:/host-home/.qoder-cn
+      - ${HOST_QODER_HOME:-/root/.qoder-cn}:/host-home/.qoder-cn
     ports:
       - "${BACKEND_HOST_PORT:-18000}:8000"
     healthcheck:

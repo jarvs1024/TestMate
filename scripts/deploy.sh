@@ -35,8 +35,6 @@ if [ "$do_backend" -eq 1 ]; then
   (cd backend_gateway && docker build -f Dockerfile -t test-mate-backend:official .)
   docker tag test-mate-backend:official test-mate-backend:latest
   docker compose -f deploy/docker-compose.yml up -d --no-build backend
-  echo "=== 后端: 补测试依赖 (镜像里没带 pytest) ==="
-  docker exec test-mate-backend-1 pip install -q pytest pytest-asyncio || true
 fi
 
 echo

@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from app.core import git_sync
 from app.core import market_categories
+from app.core import market_state
 from app.core.mcp_config import validate_mcp_config
 from app.models.asset import Asset
 
@@ -377,12 +378,33 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         a.bindings = dict(e.get("bindings") or {})
         a.git_path = safe_git_path
         # 上下架状态: 索引里没有这一项的旧数据按 published 处理
-        a.publish_status = e.get("publish_status") or "published"
+        # ⚠️ 远端 index.json 谁有仓库写权限谁就能改 —— 垃圾状态 (手滑/换过枚举名)
+        #    会让资产在所有列表里不可见且极难排查. 不在白名单的一律归 unpublished
+        #    (宁可不展示, 也不错误上架), 同时记日志给运维留线索.
+        raw_status = e.get("publish_status") or "published"
+        if raw_status not in market_state.ALL_STATES:
+            logger.warning(
+                "index.json 里的 publish_status 不合法, 已按 unpublished 处理: "
+                "code=%s status=%r",
+                code, str(raw_status)[:40],
+            )
+            raw_status = market_state.UNPUBLISHED
+        a.publish_status = raw_status
         # 审核意见 (索引里没有这一项的旧数据 = 没有意见)
         a.review_note = e.get("review_note") or ""
         a.mcp_config = e.get("mcp_config") if (a.kind or "") == "mcp" else None
         if e.get("download_count") is not None:
-            a.download_count = int(e["download_count"])
+            # ⚠️ 坏值 (字符串/浮点/负数) 会让 int() 抛异常 → sync_puller 循环吞掉
+            #     → POST /sync 500. 坏值按 0 处理并记日志, 别让一条脏数据打死整轮同步.
+            try:
+                a.download_count = max(0, int(e["download_count"]))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "index.json 里的 download_count 不是整数, 已按 0 处理: "
+                    "code=%s value=%r",
+                    code, str(e["download_count"])[:40],
+                )
+                a.download_count = 0
         if e.get("updated_at"):
             from datetime import datetime
 

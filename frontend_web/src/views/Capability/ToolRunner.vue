@@ -167,7 +167,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { getCapability, type Capability, type AgentInputField } from '@/api/capabilities';
 import request from '@/utils/request';
@@ -451,7 +451,7 @@ async function onRun() {
   }
 
   // 2. 模拟引擎调用
-  events.value.push({ type: 'log', content: `调用 ${agent.value.engine} 引擎: ${agent.value.engine_config.workflow_id || 'default'}` });
+  events.value.push({ type: 'log', content: `调用 ${agent.value.engine} 引擎: ${agent.value.engine_config?.workflow_id || 'default'}` });
   await sleep(400);
 
   // 3. 模拟数据源拉取
@@ -504,6 +504,13 @@ onMounted(async () => {
     // ⚠️ 页面里要能看到失败 (见 loadError 的说明), 不能只 console.error
     loadError.value = errText(e, '未知错误');
   }
+});
+
+// ⚠️ 运行中离开页面必须停表 —— setInterval 不清理会一直跑 (组件都销毁了
+//     elapsed 还在写), 同时把 running 置 false 让 onRun 的 sleep 链提前退出.
+onUnmounted(() => {
+  running.value = false;
+  stopTimer();
 });
 
 /** 后端的 detail 可能是字符串也可能是对象 —— 取不到就退化到 message */

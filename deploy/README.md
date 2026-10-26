@@ -138,14 +138,17 @@ echo "0 3 * * * root /opt/testmate/deploy/backup.sh /var/backups/testmate" | sud
 
 ```bash
 # 1. 先演练(不真改数据)
-sudo ./deploy/restore.sh /var/backups/testmate/2026-07-07-0300 --dry-run
+sudo ./deploy/restore.sh /var/backups/testmate --dry-run
 
-# 2. 真恢复 — 会 FLUSHALL redis, 然后把 mysql dump 灌回去
-sudo ./deploy/restore.sh /var/backups/testmate/2026-07-07-0300
+# 2. 真恢复 — 停 redis 换 RDB(并清 AOF), 再把 mysql dump 灌回去
+sudo ./deploy/restore.sh /var/backups/testmate
 
 # 3. 重新拉起应用栈(后端 alembic upgrade head 是幂等的)
 sudo ./deploy/deploy.sh
 ```
+
+> restore.sh 传的是**备份目录本身**(backup.sh 的产物直接平铺在目录里,
+> 不带日期子目录), 脚本会在目录里挑 `mysql-*` / `redis-*` 最新的那份恢复。
 
 恢复脚本会自动验证:
 - MySQL 4 张核心表(users/agents/machines/system_settings)的 row count

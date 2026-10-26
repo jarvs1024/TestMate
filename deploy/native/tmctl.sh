@@ -2185,7 +2185,7 @@ cmd_update() {
   build_frontend
 
   log "4/5 重启服务"
-  render_configs
+  render_app_configs
   systemctl restart "$BACKEND_UNIT" "$FRONTEND_UNIT"
 
   log "5/5 健康校验"
@@ -2216,6 +2216,7 @@ cmd_backup() {
   if have_cmd mysqldump; then
     if mysqldump --defaults-extra-file="$defaults" \
         --single-transaction --routines --triggers "$db" 2>/dev/null | gzip > "$dest/mysql-${stamp}.sql.gz"; then
+      chmod 600 "$dest/mysql-${stamp}.sql.gz"
       ok "MySQL -> $dest/mysql-${stamp}.sql.gz"
     else
       rm -f "$dest/mysql-${stamp}.sql.gz"
@@ -2231,9 +2232,12 @@ cmd_backup() {
     local rc=(redis-cli -h "$host" -p "$(cfg REDIS_PORT 6379)")
     [[ -n "$(cfg REDIS_PASSWORD)" ]] && rc+=(-a "$(cfg REDIS_PASSWORD)" --no-auth-warning)
     "${rc[@]}" save >/dev/null 2>&1 || warn "redis save 没成功"
-    "${rc[@]}" --rdb "$dest/redis-${stamp}.rdb" >/dev/null 2>&1 \
-      && ok "Redis -> $dest/redis-${stamp}.rdb" \
-      || warn "redis --rdb 导出失败"
+    if "${rc[@]}" --rdb "$dest/redis-${stamp}.rdb" >/dev/null 2>&1; then
+      chmod 600 "$dest/redis-${stamp}.rdb"
+      ok "Redis -> $dest/redis-${stamp}.rdb"
+    else
+      warn "redis --rdb 导出失败"
+    fi
   else
     warn "没有 redis-cli —— 跳过 Redis 备份"
   fi
@@ -2244,10 +2248,56 @@ cmd_backup() {
   cp -f "$RUNTIME_DIR/config/backend.env" "$dest/backend-${stamp}.env" 2>/dev/null || true
   ok "配置 -> $dest/env-${stamp}.txt"
 
-  find "$dest" -type f -mtime +14 -name '*testmate*' -delete 2>/dev/null || true
+  # 保留 14 天 —— 按**真实产物命名**清 (mysql-*/redis-*/env-*/backend-*),
+  # 旧 glob '*testmate*' 一个都匹配不上, 清理形同虚设
+  find "$dest" -type f -mtime +14 \
+    \( -name 'mysql-*' -o -name 'redis-*' -o -name 'env-*' -o -name 'backend-*' \) \
+    -delete 2>/dev/null || true
   echo
   ok "备份完成: $dest"
   ls -lh "$dest"/*"${stamp}"* 2>/dev/null || true
+}
+
+# Redis 恢复: 备份是 RDB 快照, 必须**停服换文件** —— 不能 `redis-cli --pipe` 喂,
+# 那是 RESP 协议, RDB 是二进制, 喂进去必失败 (旧实现就是错的).
+# 两条路: ① 宿主机 redis 服务 (systemd 管) ② Docker 容器 (mac local 复用容器那套)
+restore_redis() {
+  local redisfile="$1"
+  local host port rc rdir svc
+  host="$(cfg REDIS_HOST 127.0.0.1)"
+  port="$(cfg REDIS_PORT 6379)"
+  rc=(redis-cli -h "$host" -p "$port")
+  [[ -n "$(cfg REDIS_PASSWORD)" ]] && rc+=(-a "$(cfg REDIS_PASSWORD)" --no-auth-warning)
+
+  # 路径 ①: 宿主机 redis —— 停服前先问出数据目录, 停服后换 RDB + 清 AOF 再起
+  #   ⚠️ AOF 优先于 RDB: 不清 AOF 的话重启加载的是旧 AOF, 刚拷进去的 RDB 被无视
+  svc="$(redis_service_name)"
+  rdir="$("${rc[@]}" CONFIG GET dir 2>/dev/null | tail -1 || true)"
+  if [[ -n "$rdir" && -d "$rdir" ]] && systemctl stop "$svc" 2>/dev/null; then
+    cp -f "$redisfile" "$rdir/dump.rdb"
+    rm -rf "$rdir/appendonlydir" "$rdir/appendonly.aof"
+    if systemctl start "$svc" 2>/dev/null; then
+      return 0
+    fi
+    warn "Redis 已换 RDB 但起不来 —— 手工: systemctl start $svc"
+    return 1
+  fi
+
+  # 路径 ②: Docker 容器 (mac local 复用 deploy/ 那套容器)
+  if have_cmd docker && [[ -f "$REPO_ROOT/deploy/docker-compose.yml" ]]; then
+    if docker compose -f "$REPO_ROOT/deploy/docker-compose.yml" ps -q redis >/dev/null 2>&1; then
+      docker compose -f "$REPO_ROOT/deploy/docker-compose.yml" stop redis >/dev/null 2>&1 || true
+      docker compose -f "$REPO_ROOT/deploy/docker-compose.yml" cp "$redisfile" redis:/data/dump.rdb >/dev/null 2>&1 \
+        && docker compose -f "$REPO_ROOT/deploy/docker-compose.yml" run --rm --no-deps \
+             --entrypoint sh redis -c "rm -rf /data/appendonlydir /data/appendonly.aof" >/dev/null 2>&1
+      docker compose -f "$REPO_ROOT/deploy/docker-compose.yml" start redis >/dev/null 2>&1 && return 0
+      warn "Redis 容器已换 RDB 但起不来 —— 手工: cd deploy && docker compose start redis"
+      return 1
+    fi
+  fi
+
+  warn "找不到能安全停服的 Redis (既不是宿主机服务也不是 docker 容器) —— 跳过"
+  return 1
 }
 
 cmd_restore() {
@@ -2289,10 +2339,7 @@ cmd_restore() {
 
   log "恢复 Redis"
   if [[ -n "$redisfile" ]] && have_cmd redis-cli; then
-    local rc=(redis-cli -h "$host" -p "$(cfg REDIS_PORT 6379)")
-    [[ -n "$(cfg REDIS_PASSWORD)" ]] && rc+=(-a "$(cfg REDIS_PASSWORD)" --no-auth-warning)
-    "${rc[@]}" FLUSHALL >/dev/null 2>&1 || true
-    "${rc[@]}" --pipe < "$redisfile" >/dev/null 2>&1 && ok "Redis 恢复完成" || warn "Redis 恢复失败 (不影响主流程)"
+    restore_redis "$redisfile" && ok "Redis 恢复完成" || warn "Redis 恢复失败 (不影响主流程)"
   fi
 
   log "起服务"

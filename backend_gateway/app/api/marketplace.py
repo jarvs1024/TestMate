@@ -1000,7 +1000,9 @@ async def preview_package(
     走的是**和真正上传完全相同的解包路径** (pkg.extract_package), 所以体检结论
     就是提交后的结论 —— 不会出现"体检说没问题, 提交才被拒".
     """
-    data = await package.read()
+    data = await _read_upload_limited(
+        package, await _max_package_bytes(), package.filename or "package.zip",
+    )
     filename = package.filename or "package.zip"
     out = PackagePreviewOut(filename=filename, size_bytes=len(data), kind=kind)
 
@@ -1299,20 +1301,15 @@ async def review_unpublish_asset(
                 detail=f"该资产当前状态是「{a.publish_status}」, 没有待审的下架申请",
             )
 
-    if decision != "approve":
-        # ⚠️ 下架审核**没有"驳回"这个场景** (2026-10-24):
-        #    管理员不点头的话, 申请就一直挂着, 作者可以自己撤销 —— 不需要"驳回"。
-        raise HTTPException(
-            status_code=400,
-            detail="下架审核只支持 approve (不通过的话不处理即可, 作者可自行撤销申请)",
-        )
-
     out = await _hard_delete_asset(
         code=code, user=user,
         comment=comment or "管理员通过下架申请, 资产已删除",
         audit_action="unpublish_approve",
         # ⚠️ 下架通知只在这时候发 —— 资产**彻底下架**了才通知 (@所有人)
         event="unpublish",
+        # ⚠️ 锁外检查只是快失败; 真正的状态裁决在锁内 (见 _hard_delete_asset),
+        #    否则与 unpublish-cancel 并发时, 已撤销的资产会被误删.
+        expected_status="unpublish_pending",
     )
     return {
         "ok": True, "code": code, "decision": "approve",
@@ -1410,9 +1407,9 @@ async def submit_for_review(
         ).scalar_one_or_none()
         if a is None:
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
-        role = _user.role.value if hasattr(_user.role, "value") else str(_user.role)
-        is_author = (a.author or "").strip().lower() == (_user.username or "").strip().lower()
-        if role != "admin" and not is_author:
+        # ⚠️ 作者判断用统一口径 can_modify (短名/全邮箱都认, 见 identity.name_matches).
+        #    以前这里精确串比较 —— 存量短名作者的资产永远被判"不是本人", 提交审核 403.
+        if not market_policy.can_modify(a, _user):
             raise HTTPException(status_code=403, detail="只有资产作者本人可以提交审核")
         if a.publish_status == "published":
             raise HTTPException(status_code=409, detail="资产已在架, 无需重复提交审核")
@@ -1474,6 +1471,7 @@ async def _hard_delete_asset(
     audit_action: str = "delete",
     event: str = "delete",
     notify: bool = True,
+    expected_status: str | None = None,
 ) -> AssetDeleteOut:
     """彻底删除一个资产 (GitLab 文件 + 索引 + DB 记录一起没).
 
@@ -1509,6 +1507,24 @@ async def _hard_delete_asset(
         raise HTTPException(status_code=409, detail="资产没有 git 路径, 无法安全删除")
 
     async with code_lock(code):
+        # ⚠️ 锁内**复核状态** —— 调用方 (下架审批) 的状态检查在锁外:
+        #    检查通过后、拿到锁之前, 作者可能已经把申请撤销了 (unpublish-cancel
+        #    走 _set_publish_state, 同样拿这把锁). 不复核的话, 已撤销的资产
+        #    照样被彻底删除, 不可逆.
+        if expected_status:
+            async with AsyncSessionLocal() as session:
+                current = (
+                    await session.execute(select(Asset).where(Asset.code == code))
+                ).scalar_one_or_none()
+            if current is None or current.publish_status != expected_status:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"该资产当前状态是「{current.publish_status if current else '不存在'}」, "
+                        f"已不是「{expected_status}」—— 操作已过期, 请刷新后重试"
+                    ),
+                )
+
         # 1) 索引剔除 + 删工作区目录
         async with AsyncSessionLocal() as session:
             await stage_index(session, exclude={code})
@@ -1664,18 +1680,42 @@ def _parse_mcp_form(mcp_config: str, kind: str) -> dict | None:
         raise HTTPException(status_code=422, detail=f"MCP 配置不合法: {e}") from e
 
 
+async def _read_upload_limited(upload: UploadFile, max_bytes: int | None, label: str) -> bytes:
+    """分块读上传内容, 边读边限量.
+
+    ⚠️ 以前是 `await upload.read()` 全量进内存后才校验大小 —— 任何人
+    (白名单 tester 也算) 传一个超大包就能把服务端内存打爆. 这里超限立即 413,
+    读多少收多少, 不无限吃内存. max_bytes=None 表示不限制.
+    """
+    if max_bytes is None:
+        return await upload.read()
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(1024 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"{label} 超过大小上限 ({max_bytes // 1024 // 1024} MB)",
+            )
+        chunks.append(chunk)
+
+
+async def _max_package_bytes() -> int | None:
+    """安装包大小上限 (设置页可配, 默认 50MB). 配 0/负数 = 不限制."""
+    try:
+        max_mb = int(await _setting("marketplace.max_package_mb", "50") or 50)
+    except (TypeError, ValueError):
+        max_mb = 50
+    return max_mb * 1024 * 1024 if max_mb > 0 else None
+
+
 async def _parse_uploads(files: list[UploadFile] | None) -> dict[str, str]:
     if not files:
         return {}
-    collected: dict[str, str] = {}
-    for f in files:
-        name = (f.filename or "").strip()
-        if not name:
-            continue
-        try:
-            collected[name] = (await f.read()).decode("utf-8")
-        except UnicodeDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"{name} 不是 UTF-8 文本: {e}") from e
     # 限额来自设置页 (可在前端改), 传 None 则用模块默认值
     try:
         max_files = int(await _setting("marketplace.upload.max_files", "") or 0) or None
@@ -1686,6 +1726,21 @@ async def _parse_uploads(files: list[UploadFile] | None) -> dict[str, str]:
     except (TypeError, ValueError):
         max_mb = None
     max_bytes = max_mb * 1024 * 1024 if max_mb else None
+    if max_files and len(files) > max_files:
+        raise HTTPException(status_code=422, detail=f"文件数超过上限 ({max_files} 个)")
+    collected: dict[str, str] = {}
+    remaining = max_bytes
+    for f in files:
+        name = (f.filename or "").strip()
+        if not name:
+            continue
+        try:
+            raw = await _read_upload_limited(f, remaining, name)
+            if remaining is not None:
+                remaining -= len(raw)
+            collected[name] = raw.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"{name} 不是 UTF-8 文本: {e}") from e
     try:
         return validate_files(collected, max_files=max_files, max_total_bytes=max_bytes)
     except ManifestError as e:
@@ -2003,6 +2058,12 @@ async def _stage_asset_locked(
             a.review_note = ""
         elif existing is None:
             a.publish_status = "published"
+        elif existing.publish_status in (market_state.REJECTED, market_state.UNPUBLISHED):
+            # ⚠️ 更新**没在架**的资产 (被驳回 / 已下架) 且免审 → 重新上架.
+            #    以前这里不动状态: 驳回的资产作者改了重新传, 状态还是 rejected,
+            #    审核人那边却没有任何待审项 → 资产永远不可见, 还查不出原因.
+            a.publish_status = "published"
+            a.review_note = ""
 
         # ⚠️ manifest.json 是**权威** —— 必须带上 publish_status.
         #    少了它, 同步器 (sync_puller) 读到 None 会当成 published →
@@ -2172,7 +2233,9 @@ async def upload_asset(
     pkg_bytes: bytes | None = None
     pkg_name = ""
     if package is not None:
-        pkg_bytes = await package.read()
+        pkg_bytes = await _read_upload_limited(
+            package, await _max_package_bytes(), package.filename or "package.zip",
+        )
         pkg_name = package.filename or "package.zip"
     else:
         file_map = await _parse_uploads(files)
@@ -2270,7 +2333,9 @@ async def update_asset(
     pkg_bytes: bytes | None = None
     pkg_name = ""
     if package is not None:
-        pkg_bytes = await package.read()
+        pkg_bytes = await _read_upload_limited(
+            package, await _max_package_bytes(), package.filename or "package.zip",
+        )
         pkg_name = package.filename or "package.zip"
     else:
         file_map = await _parse_uploads(files)

@@ -29,13 +29,17 @@ $COMPOSE exec -T mysql mysqldump \
   -uroot -p"${MYSQL_ROOT_PASSWORD}" \
   --single-transaction --routines --triggers \
   "${MYSQL_DATABASE}" | gzip > "$BACKUP_DIR/mysql-${DATE}.sql.gz"
+# 备份里有密码哈希 —— 只让 root 读
+chmod 600 "$BACKUP_DIR/mysql-${DATE}.sql.gz"
 
 log "2/2 Redis snapshot..."
 $COMPOSE exec -T redis sh -c "redis-cli save && cat /data/dump.rdb" \
   > "$BACKUP_DIR/redis-${DATE}.rdb"
+chmod 600 "$BACKUP_DIR/redis-${DATE}.rdb"
 
-# 保留最近 14 天,清理旧的
-find "$BACKUP_DIR" -type f -mtime +14 -name 'testmate-*' -delete 2>/dev/null || true
+# 保留最近 14 天,清理旧的 —— 按真实产物命名 (mysql-/redis-), 旧 glob 'testmate-*' 匹配不到任何东西
+find "$BACKUP_DIR" -type f -mtime +14 \
+  \( -name 'mysql-*' -o -name 'redis-*' \) -delete 2>/dev/null || true
 
 ls -lh "$BACKUP_DIR"/*"${DATE}"*
 log "备份完成 -> $BACKUP_DIR"

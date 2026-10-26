@@ -1192,19 +1192,29 @@ const tlBarRemainder = computed(() => {
 const tlAdoptionRate = computed(() => tlTotal.value > 0 ? Math.round(tlApplied.value / tlTotal.value * 100) + '%' : '—');
 const tlLastRun = computed(() => (timeline.value?.runs || [])[0]);
 const tlHealthTitle = computed(() => '采纳率 ' + tlAdoptionRate.value + ' / ' + tlApplied.value + '/' + tlTotal.value);
+// 时间线请求序号 —— 快速切换 MR 时, 旧请求的响应**晚到**会覆盖新 MR 的时间线
+// (没序号保护时: 开 MR-A → 立刻开 MR-B → A 的响应后到 → 抽屉里显示的是 A 的数据).
+// 所有写 timeline.value 的地方 (openTimeline / refreshTimeline) 写完前都比对序号.
+let _tlReqSeq = 0;
+
 async function openTimeline(m: MrRow) {
   const key = `${m.project_id}/${m.mr_id}`;
+  const seq = ++_tlReqSeq;
+  _tlCurrent = null;   // 旧 MR 的在途轮询结果作废
   tlLoading.value = key;
   tlTitle.value = `!${m.mr_id} · ${m.title || ''}`;
   timeline.value = null;
   tlOpen.value = true;
   try {
-    timeline.value = await getTimeline(m.project_id, m.mr_id);
+    const t = await getTimeline(m.project_id, m.mr_id);
+    if (seq !== _tlReqSeq) return;   // 期间用户又开了别的 MR —— 这次响应作废
+    timeline.value = t;
   } catch (e: any) {
+    if (seq !== _tlReqSeq) return;
     ElMessage.error('时间线加载失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
     tlOpen.value = false;
   } finally {
-    tlLoading.value = '';
+    if (seq === _tlReqSeq) tlLoading.value = '';
   }
 }
 // 时间线抽屉自动刷新: 进行中 (started) 每 5s, 已结束每 15s, 抽屉关闭即停.
@@ -1214,8 +1224,11 @@ let _tlTimer: number | null = null;
 let _tlCurrent: { pid: number; mid: number } | null = null;
 async function refreshTimeline() {
   if (!tlOpen.value || !_tlCurrent) return;
+  const seq = _tlReqSeq;
   try {
-    timeline.value = await getTimeline(_tlCurrent.pid, _tlCurrent.mid);
+    const t = await getTimeline(_tlCurrent.pid, _tlCurrent.mid);
+    if (seq !== _tlReqSeq) return;   // 期间切了 MR / 关了抽屉 —— 旧数据别写进去
+    timeline.value = t;
   } catch { /* 静默: 网络抖动不打扰用户, 下次 tick 再试 */ }
   scheduleNextTlTick();   // 不论成败都排下一次, 避免一次失败就停轮询
 }
@@ -1236,7 +1249,10 @@ function startTlTimer() {
   scheduleNextTlTick();
 }
 // 抽屉开关 + 当前 MR 变化都重排 timer
-watch(tlOpen, (open) => { if (open) startTlTimer(); else { stopTlTimer(); _tlCurrent = null; } });
+watch(tlOpen, (open) => {
+  if (open) startTlTimer();
+  else { _tlReqSeq++; stopTlTimer(); _tlCurrent = null; }  // 关抽屉: 在途响应一并作废
+});
 // 抽屉标题对应的 MR 变化时 (用户在不同 MR 间切), 同步 _tlCurrent 并重排
 watch(() => timeline.value?.mr?.mr_id, () => {
   if (tlOpen.value) startTlTimer();

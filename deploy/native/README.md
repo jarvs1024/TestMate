@@ -394,9 +394,11 @@ echo "0 3 * * * root /opt/testmate/deploy/native/tmctl.sh backup /var/backups/te
 ### 恢复
 
 ```bash
-sudo ./deploy/native/tmctl.sh restore /var/backups/testmate/2026-07-07-0300
+sudo ./deploy/native/tmctl.sh restore /var/backups/testmate
 ```
 
+传的是**备份目录本身**(backup 的产物平铺在目录里, 不带日期子目录),
+restore 会在目录里挑 `mysql-*` / `redis-*` 最新的那份恢复。
 会停服务 → 灌 MySQL → 灌 Redis → 起服务 → 健康校验。
 
 ### 排障

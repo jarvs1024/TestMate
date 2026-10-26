@@ -15,6 +15,7 @@
         </div>
 
         <div v-if="loading" class="state">读取中…</div>
+        <div v-else-if="loadError" class="state err">取数失败: {{ loadError }}</div>
         <div v-else-if="!rows.length" class="state">还没有操作记录</div>
         <ul v-else class="log-list">
           <li v-for="r in rows" :key="r.id" :class="['log-item', r.action]">
@@ -42,6 +43,7 @@
         </div>
 
         <div v-if="notifyLoading" class="state">读取中…</div>
+        <div v-else-if="notifyError" class="state err">取数失败: {{ notifyError }}</div>
         <div v-else-if="!notifies.length" class="state">还没有通知记录</div>
         <ul v-else class="log-list">
           <li v-for="n in notifies" :key="n.id" :class="['log-item', n.status]">
@@ -99,6 +101,8 @@ const tab = ref('audit');
 const actFilter = ref('all');
 const loading = ref(false);
 const notifyLoading = ref(false);
+const loadError = ref('');
+const notifyError = ref('');
 const audits = ref<AssetAudit[]>([]);
 const notifies = ref<AssetNotification[]>([]);
 
@@ -143,11 +147,15 @@ function fmt(iso: string | null): string {
 
 async function load() {
   loading.value = true;
+  loadError.value = '';
   try {
     const r = await listAudits();
     audits.value = r.items || [];
-  } catch {
+  } catch (e: any) {
+    // ⚠️ 取数失败不能伪装成「还没有操作记录」—— 那会误导审计结论
+    //    (旧实现 catch 里清空数组, 后端挂了抽屉里也显示"没有记录")
     audits.value = [];
+    loadError.value = e?.response?.data?.detail || e?.message || '未知错误';
   } finally {
     loading.value = false;
   }
@@ -155,11 +163,13 @@ async function load() {
 
 async function loadNotify() {
   notifyLoading.value = true;
+  notifyError.value = '';
   try {
     const r = await listNotifications();
     notifies.value = r.items || [];
-  } catch {
+  } catch (e: any) {
     notifies.value = [];
+    notifyError.value = e?.response?.data?.detail || e?.message || '未知错误';
   } finally {
     notifyLoading.value = false;
   }
@@ -203,6 +213,7 @@ watch(tab, (t) => {
 .muted-note { font-size: 11.5px; color: var(--ink-500); flex: 1; min-width: 200px; }
 
 .state { padding: 40px 0; text-align: center; color: var(--ink-500); font-size: 13px; }
+.state.err { color: var(--err); }
 
 .log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .log-item {

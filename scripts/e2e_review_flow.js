@@ -143,6 +143,35 @@ async function restoreSetting(token, key, value) {
 let cleanupToken = null;
 let savedPublisherSetting;
 
+/**
+ * 收尾清理 —— 成功/失败路径**共用**.
+ * ⚠️ 以前只有成功路径会删资产+删账号, 错误路径只还原白名单 ——
+ *    流程中途抛错时, 测试资产和已知口令的测试账号就留在库里.
+ * 三项各自 try/catch: 一项失败不挡其它清理 (比如资产早被删了, 别因此漏掉删账号).
+ */
+async function cleanup() {
+  const t = cleanupToken;
+  try {
+    if (t) {
+      await api(`/api/v1/assets/${CODE}`, {
+        method: 'DELETE', headers: { Authorization: 'Bearer ' + t },
+      });
+    }
+  } catch (e) {
+    console.error(`  [清理] ⚠️ 资产删除失败: ${String(e.message).split('\n')[0]}`);
+  }
+  // 还原白名单原值 (不是清空 —— 清空会把真实配置也抹掉)
+  try {
+    if (t) await restoreSetting(t, 'marketplace.publisher_usernames', savedPublisherSetting);
+  } catch (e) {
+    console.error(`  [清理] ⚠️ 白名单还原失败: ${String(e.message).split('\n')[0]}`);
+  }
+  // 删掉测试账号 —— 别留一个已知口令的账号在库里
+  // ⚠️ 用共享清理器: 按**前缀**删 (库里存的是邮箱形式 'e2e_publisher@twsc.com.cn',
+  //    按短名精确删会删 0 行却照样不报错) + 删完**回读核对**.
+  deleteTestUsers([PUB]);
+}
+
 /** 等上传任务跑到终态 (推送要几秒, 固定 sleep 不可靠) */
 async function waitJobDone(page, timeoutMs = 45000) {
   const t0 = Date.now();
@@ -421,15 +450,7 @@ async function openPage(browser, token, user) {
     [...pub.errors, ...adm.errors].slice(0, 3).join(' ; '));
 
   // ---------- 清理 ----------
-  await api(`/api/v1/assets/${CODE}`, {
-    method: 'DELETE', headers: { Authorization: 'Bearer ' + adminToken },
-  });
-  // 还原白名单原值 (不是清空 —— 清空会把真实配置也抹掉)
-  await restoreSetting(adminToken, 'marketplace.publisher_usernames', savedPublisherSetting);
-  // 删掉测试账号 —— 别留一个已知口令的账号在库里
-  // ⚠️ 用共享清理器: 按**前缀**删 (库里存的是邮箱形式 'e2e_publisher@twsc.com.cn',
-  //    按短名精确删会删 0 行却照样不报错) + 删完**回读核对**.
-  deleteTestUsers([PUB]);
+  await cleanup();
 
   await browser.close();
   const failed = results.filter((r) => !r.ok);
@@ -438,11 +459,7 @@ async function openPage(browser, token, user) {
   process.exit(failed.length ? 1 : 0);
 })().catch(async (e) => {
   console.error('FATAL', e);
-  // 错误路径也要还原白名单 —— 主体中途抛错时清理段根本执行不到
-  try {
-    if (cleanupToken) {
-      await restoreSetting(cleanupToken, 'marketplace.publisher_usernames', savedPublisherSetting);
-    }
-  } catch { /* 尽力而为 */ }
+  // 错误路径也要走完整清理 —— 资产/白名单/测试账号一个都不能留在库里
+  try { await cleanup(); } catch (e2) { console.error('清理异常:', e2); }
   process.exit(2);
 });
