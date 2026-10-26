@@ -118,7 +118,7 @@ function check(name, ok, detail) {
   });
   await sleep(6000);
   const probe = await page.evaluate(() => {
-    const el = document.querySelector('#sec-agents .test-result');
+    const el = document.querySelector('#sec-capability .test-result');
     return el ? { cls: el.className, msg: el.textContent.replace(/\s+/g, ' ').trim() } : null;
   });
   check('B1 「测试仓库连接」有结果', clicked && !!probe, probe ? probe.msg : '(无结果)');
