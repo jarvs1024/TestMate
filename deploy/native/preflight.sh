@@ -474,10 +474,14 @@ preflight_run() {
       fi
     done
     if [[ -n "$broken_alias" ]]; then
-      chk_fail "这些名字在宿主上连不通:$broken_alias —— 它们是容器里访问宿主用的名字"
-      echo "        本地部署的进程跑在宿主上, 必须让它指回 127.0.0.1, 否则:"
-      echo "        代码检视连不上 / 资产市场推不到 GitLab / 设置页里填的这类地址都连不上"
-      echo "        修: sudo $0 local hosts fix   (只改宿主的 /etc/hosts, 容器不受影响)"
+      # ⚠️ 2026-10-27: 这项从 FAIL 降成 WARN ——
+      #    后端现在自己把 host.docker.internal ↔ 127.0.0.1 双向改写
+      #    (settings_store._rewrite_loopback / git_sync._rewrite_remote),
+      #    平台功能不再依赖 /etc/hosts.
+      #    只有别的工具 (curl / ssh / 浏览器直接访问) 也想用这个别名时才需要修.
+      chk_warn "这些名字在宿主上连不通:$broken_alias —— 它们是容器里访问宿主用的名字"
+      echo "        后端会**自动改写**这类地址, 平台功能不受影响 —— 不用改 /etc/hosts 也能用."
+      echo "        别的工具也想用这个别名时才修: sudo $0 local hosts fix"
     fi
   fi
 }

@@ -2,7 +2,7 @@
 /**
  * 资产市场设置 —— 前端端到端验收.
  *
- * 覆盖: 设置页「智能体 → 🧩 资产市场」子分组 / GitLab 仓库连接测试 /
+ * 覆盖: 设置页「能力墙 → 🧩 资产市场」子分组 / GitLab 仓库连接测试 /
  *       工作区与远端只读展示 / 市场页「在 GitLab 查看」链接.
  *
  * 用法: node scripts/e2e_market_settings.js
@@ -62,22 +62,22 @@ function check(name, ok, detail) {
     localStorage.setItem('testmate:user', JSON.stringify(u));
   }, login.token, login.user);
 
-  // ---------- A. 设置页「智能体 → 资产市场」 ----------
+  // ---------- A. 设置页「能力墙 → 资产市场」 ----------
   await page.goto(BASE + '/settings', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.set-layout', { timeout: 15000 });
   await sleep(1500);
   const picked = await page.evaluate(() => {
     const el = [...document.querySelectorAll('.set-toc *')]
-      .find((x) => x.textContent.trim().startsWith('智能体'));
+      .find((x) => x.textContent.trim().startsWith('能力墙'));
     if (!el) return false;
     el.click();
     return true;
   });
   await sleep(1800);
-  check('A1 设置页能进入「智能体」区', picked);
+  check('A1 设置页能进入「能力墙」区', picked);
 
   const keys = await page.evaluate(() =>
-    [...document.querySelectorAll('#sec-agents code')].map((c) => c.textContent.trim()));
+    [...document.querySelectorAll('#sec-capability code')].map((c) => c.textContent.trim()));
   const expect = [
     'marketplace.git.remote', 'marketplace.git.branch', 'marketplace.git.web_url',
     'marketplace.publisher_ids',
@@ -102,7 +102,7 @@ function check(name, ok, detail) {
     stillThere.length ? '还在: ' + stillThere.join(',') : '三项均已移除');
 
   const ws = await page.evaluate(() => {
-    const el = document.querySelector('#sec-agents .workdir');
+    const el = document.querySelector('#sec-capability .workdir');
     return el ? el.textContent.replace(/\s+/g, ' ').trim() : '';
   });
   check('A3 展示当前生效的工作区与远端', /工作区/.test(ws) && /远端/.test(ws), ws.slice(0, 110));
@@ -110,7 +110,7 @@ function check(name, ok, detail) {
 
   // ---------- B. 测试仓库连接 ----------
   const clicked = await page.evaluate(() => {
-    const b = [...document.querySelectorAll('#sec-agents button')]
+    const b = [...document.querySelectorAll('#sec-capability button')]
       .find((x) => x.textContent.includes('测试仓库连接'));
     if (!b) return false;
     b.click();

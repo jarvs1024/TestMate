@@ -39,17 +39,16 @@ sudo ./deploy/native/tmctl.sh install --auto
 **macOS (local + launchd)**:
 
 ```bash
-brew install nginx                        # 前端静态托管
-./deploy/native/tmctl.sh local install     # 装 + 起
-sudo ./deploy/native/tmctl.sh local hosts fix   # 修宿主名(代码检视 / 市场推送要用, 见 §5)
-./deploy/native/tmctl.sh launchd install   # 再加开机自启 + 崩溃自愈
+brew install nginx                              # 前端静态托管
+./deploy/native/tmctl.sh local install --auto  # 装 + 起 (--auto 连本机 MySQL/Redis 一起装)
+./deploy/native/tmctl.sh launchd install       # 再加开机自启 + 崩溃自愈
 ```
 
 `install` 会依次做完:
 
 ```
 1/9 环境体检      → 缺什么装什么 (--auto)
-2/9 宿主名解析    → 检查 host.docker.internal 在宿主上通不通 (macOS 专属, 见 §5)
+2/9 宿主名解析    → 看一眼 host.docker.internal 在宿主上的状态 (不用管, 后端会自己改写, 见 §5)
 3/9 生成配置      → JWT_SECRET / MySQL 口令 / admin 口令 随机生成, 不用手抄
 4/9 数据库        → 装 + 起**本机** MySQL 和 Redis, 建 testmate 库 + 用户 (不用任何容器)
 5/9 Python 依赖   → 建 venv, 按 requirements.lock 装
@@ -187,52 +186,43 @@ brew install nginx            # 前端静态托管
 
 跑起来后: `http://localhost:8081` (端口被占会自动换, 见下)。
 
-### ⚠️ 装完先修一下宿主名 (host.docker.internal)
+### 宿主名 (`host.docker.internal`) —— 后端会自己改写, 不用改 /etc/hosts
 
 Docker 模式里, 后端跑在容器里, 访问宿主用的是 `host.docker.internal` —— 这个名字
 在**容器里**指向宿主, 通得很。但 local 模式的进程跑在**宿主上**, 同一个名字在宿主上
-解析到的是 Docker 的虚拟网卡 (macOS 上是 `198.18.x.x`), 从宿主侧**连不通**。
+解析到的是 Docker 的虚拟网卡 (macOS 上是 `198.18.x.x`), 从宿主侧**连不通**
+(TCP 能连上, 但没有服务应答)。
 
-结果就是"看着配了, 就是连不上":
+**现在的解法是后端自己改写 (2026-10-27)** —— 按"自己跑在哪"把地址换成能连上的那个:
 
-| 链路 | 配的地址 | 不修的后果 |
+| 后端在哪 | 填 `127.0.0.1` / `localhost` | 填 `host.docker.internal` |
 |---|---|---|
-| 代码检视 (ReviewAgent) | `http://host.docker.internal:3000` | 代码检视页一直报错 |
-| 资产市场推送到 GitLab | `ssh://git@host.docker.internal:8922/...` | 上架卡在推送, 仓库推不上去 |
-| 设置页里手填的任何这类地址 | `http://host.docker.internal:xxxx` | 同上 |
+| 容器里 (Docker 模式) | 自动改成 `host.docker.internal` | 原样保留 |
+| 宿主上 (裸机 local / systemd) | 原样保留 | 自动改成 `127.0.0.1` |
 
-修法是**一行** —— 让宿主机的 `/etc/hosts` 里它指回自己:
+覆盖两类地址:
 
-```bash
-sudo ./deploy/native/tmctl.sh local hosts fix
-```
+- **HTTP** —— 设置页里的代码检视 / RAGFlow 等 (`settings_store.py` 的 `_rewrite_loopback`)
+- **git 远端 (SSH)** —— 资产市场的仓库地址 (`git_sync.py` 的 `_rewrite_remote`)
 
-- 只改**宿主**的 `/etc/hosts`, **容器完全不受影响** (容器有自己的 hosts, 走 Docker 内嵌 DNS)
-- 改之前会自动备份到 `deploy/native/runtime/hosts.backup.<时间戳>`
-- 幂等 —— 已经指回 127.0.0.1 就什么都不做
-- 想先看看状态: `./deploy/native/tmctl.sh local hosts check`
-- `local install` / `local status` / `local check` 都会报这一项, 体检不过会被点名
+所以**同一个设置值在两种部署模式下都通**: 填 `127.0.0.1` 或填 `host.docker.internal`
+都行, 切部署模式不用改设置, 也不用改 `/etc/hosts` (那要 root)。
 
-> 为什么不让脚本自己改? 因为 `/etc/hosts` 是系统文件, 得 root。
-> `local install --auto` 会试着自动修 (要输一次 sudo 口令); 没给 `--auto` 就只提示,
-> 你自己挑时机执行上面那条命令。
+> ⚠️ 以前这一步必须 `sudo ./deploy/native/tmctl.sh local hosts fix` (往宿主
+> `/etc/hosts` 加一行 `127.0.0.1 host.docker.internal`) —— 现在**不再是必需的**。
+> 那条命令保留着, 是给"别的工具也要用这个别名"用的 (curl / ssh / 浏览器直接访问):
+>
+> ```bash
+> ./deploy/native/tmctl.sh local hosts check   # 看状态
+> sudo ./deploy/native/tmctl.sh local hosts fix # 要修才修 (只改宿主, 容器不受影响)
+> ```
+>
+> 体检里这一项现在只是 **WARN** —— 不修不影响平台功能。
 
-### 另一种走法: 设置页里直接填 `127.0.0.1`
+### 设置页里填哪个都行
 
-设置页的「代码检视 / ReviewAgent」这类**指向宿主服务**的地址, 在裸机模式下
-**填 `http://127.0.0.1:3000` 就能通**, 不必等 `hosts fix` 生效。
-
-因为后端跑在宿主上, 它的 `127.0.0.1` 就是宿主本身 —— 后端**不会**把这个地址
-改写成 `host.docker.internal`（那个改写只在后端跑在**容器里**时才做，
-见 `backend_gateway/app/core/settings_store.py` 的 `_rewrite_loopback`）。
-
-| 后端在哪 | `http://127.0.0.1:3000` 被怎么处理 | 结果 |
-|---|---|---|
-| 容器里 (Docker 模式) | 自动改成 `host.docker.internal:3000` | 通 ✅ |
-| 宿主上 (裸机 local / systemd) | 原样保留 | 通 ✅ |
-
-所以设置页里填 `127.0.0.1` 是**通用写法** —— 两种模式都不用改。
-资产市场的 git 远端是 SSH 地址, 不走这套, 仍然要靠 `hosts fix`。
+既然两个方向都自动改写, 设置页里的地址**填 `127.0.0.1` 或 `host.docker.internal`
+都能通**。历史数据里两种写法都有, 不用去统一 —— 后端会按当前部署模式处理。
 
 ### 数据库和 Redis 都是**本机**的 (不用任何容器)
 
@@ -470,8 +460,9 @@ sudo ./deploy/native/tmctl.sh install --offline
   (mac 上的 local driver **已真机验证过**: 装完能访问 / 启停 / launchd 自启 / 崩溃自愈 / 端口冲突自动让路, 全过。)
 - **macOS 上 `check` 报「systemd 不可用」是正常的** —— local driver 不需要 systemd, 体检里那一项会标成「不需要」。
 - **macOS: `host.docker.internal` 在宿主上默认是不通的** —— 那是容器里访问宿主用的名字。
-  本地部署的进程跑在宿主上, 必须先跑一次 `sudo ./deploy/native/tmctl.sh local hosts fix`
-  (往宿主 `/etc/hosts` 加一行), 否则代码检视连不上、资产市场也推不到 GitLab。见 §5。
+  但**不用管它**: 后端会按"自己跑在哪"自动把 `host.docker.internal` ↔ `127.0.0.1`
+  双向改写 (HTTP 与 git 远端都算), 所以代码检视、资产市场推送在两种模式下都能用同一个值。
+  别的工具 (curl / ssh) 想用这个别名才需要 `sudo ./deploy/native/tmctl.sh local hosts fix`。见 §5。
 - **macOS: launchd 的 agent 只能以当前登录用户身份跑** —— 没有 root 版用户 agent, 所以没有 systemd 那层"专用系统用户 + 沙箱加固"。见 §6.2。
 - 宿主机自带的 nginx 若也监听 8080, 端口体检会报占用 —— install 会**自动换端口**, 不用手工改。
 - `update` 用的是 `git pull --ff-only` —— 生产目录有本地改动时会拒绝, 这是故意的(别让人在生产目录乱改)。
@@ -479,6 +470,7 @@ sudo ./deploy/native/tmctl.sh install --offline
 - `admin` / `backup` / `restore` / `logs` 这几个命令的**参数要写在命令后面**(`tmctl.sh admin --username x`), 其余命令的选项前后都行(`tmctl.sh check --auto` 和 `tmctl.sh --auto check` 等价)。
 - **两个后端不能同时跑**(Docker 的 + 本地的) —— 见 §5「两个后端不能同时跑」。
 - **裸机模式的数据库是本机的, 跟 Docker 模式各存各的** —— 换模式**不会**自动把数据带过去。
+  老环境的库要搬过来: `mysqldump` 出来, 再 `./deploy/native/tmctl.sh local db import <dump.sql>`。
   要带就手工 `mysqldump` / `mysql < dump` (或用 `tmctl.sh backup` 出一份)。
   共享的只有**资产市场工作区** (git 仓库), 见 §5。
 

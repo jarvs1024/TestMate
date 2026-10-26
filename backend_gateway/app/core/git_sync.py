@@ -33,6 +33,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.file_lock import file_lock
+from app.core.settings_store import _in_container
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +51,52 @@ _git_cfg: dict[str, str] = {
 }
 
 
+def _rewrite_remote(url: str) -> str:
+    """把远端地址里的"本机"改成**当前这个进程能连上的那个本机** —— 两个方向都改.
+
+    ⚠️ 为什么 git 远端要单独改写, 不能直接套 settings_store 的那套:
+       git 远端是 **SSH URL** (`ssh://git@host:port/path`), 不是 HTTP ——
+       正则不一样, 而且 SSH 的 "本机" 有两层含义:
+         · 容器里的 127.0.0.1 是容器自己 → 要走 host.docker.internal 才到得了宿主
+         · 宿主上的 host.docker.internal 解析到 Docker 虚拟网卡 (198.18.x.x),
+           从宿主侧 TCP 能连上但**没有服务应答** → 要换回 127.0.0.1
+       (GitLab 的 SSH 端口是 Docker 映射出来的, 宿主上 127.0.0.1:8922 就是它.)
+
+    好处跟 HTTP 那套一样: **同一个设置值在两种部署模式下都通** ——
+    裸机部署 (deploy/native) 的后端在宿主上跑, 不用改 /etc/hosts (那要 root),
+    也不用为了切模式去改设置页里的仓库地址.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return url
+    m = re.match(
+        r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)"
+        r"(?:(?P<user>[^@/]+)@)?"
+        r"(?P<host>[^:/]+)"
+        r"(?P<tail>.*)$",
+        raw,
+    )
+    if not m:
+        return url
+    host = m.group("host")
+    if _in_container():
+        if host in ("127.0.0.1", "localhost", "::1"):
+            host = "host.docker.internal"
+    elif host == "host.docker.internal":
+        host = "127.0.0.1"
+    if host == m.group("host"):
+        return url
+    user = m.group("user")
+    return (
+        f"{m.group('scheme')}"
+        f"{user + '@' if user else ''}"
+        f"{host}{m.group('tail')}"
+    )
+
+
 def git_remote() -> str:
-    """当前生效的 GitLab 远端地址."""
-    return _git_cfg["remote"]
+    """当前生效的 GitLab 远端地址 (已按当前部署模式改写过 host)."""
+    return _rewrite_remote(_git_cfg["remote"])
 
 
 def git_branch() -> str:

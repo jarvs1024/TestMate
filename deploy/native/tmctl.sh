@@ -1318,6 +1318,17 @@ local_launchd_loaded() {
 # 资产市场推不到 GitLab、设置页里填的这类地址也全连不上.
 #
 # 解法: 宿主的 /etc/hosts 里让它指回 127.0.0.1. 容器不受影响 (容器有自己的 hosts).
+#
+# ⚠️ **2026-10-27 起, 这件事后端自己能做了** ——
+#    后端按"自己跑在哪"自动改写地址:
+#      · 在容器里 → 127.0.0.1 / localhost 换成 host.docker.internal
+#      · 在宿主上 → host.docker.internal 换成 127.0.0.1
+#    (见 backend_gateway/app/core/settings_store.py 的 _rewrite_loopback
+#      与 app/core/git_sync.py 的 _rewrite_remote)
+#    所以**改 /etc/hosts 已经不再是必需的** —— 代码检视、资产市场推送、
+#    设置页里的地址, 两种部署模式下都能用同一个值.
+#
+#    这条命令保留下来是给"别的工具也要用这个别名"用的 (curl / ssh / 浏览器直接访问).
 hosts_do_check() {
   local name broken=0 cur
   echo "${C_BOLD}宿主名解析${C_OFF}  ${C_BLUE}(local driver —— 进程跑在宿主上)${C_OFF}"
@@ -1335,9 +1346,10 @@ hosts_do_check() {
   echo
   if [[ $broken -eq 1 ]]; then
     warn "这些名字是**容器里**访问宿主用的 —— 本地部署的进程在宿主上, 用它们连不通."
-    echo "    后果: 代码检视连不上 / 资产市场推不到 GitLab / 设置页里填的这类地址都连不上"
+    echo "    但后端会**自动改写**这类地址 (host.docker.internal ↔ 127.0.0.1),"
+    echo "    所以平台功能不受影响 —— 不用改 /etc/hosts 也能用."
     echo
-    echo "    修 (只改宿主的 /etc/hosts, 容器不受影响):"
+    echo "    只有别的工具 (curl / ssh / 浏览器直接访问) 也想用这个别名时才需要修:"
     echo "      sudo $0 local hosts fix"
     echo
     return 1
@@ -1359,15 +1371,20 @@ hosts_do_fix() {
 
   have_cmd sudo || { fail "没有 sudo 命令 —— 请手工编辑 $hosts_file, 加这几行:"; printf '127.0.0.1 %s\n' "${need[@]}"; return 1; }
 
+  # ⚠️ 非交互环境 (CI / agent / 管道) 里 sudo 会**卡在要口令上** ——
+  #    加 -n 让它没缓存的口令就直接失败, 而不是干等着.
+  local SUDO="sudo"
+  [[ -t 0 ]] || SUDO="sudo -n"
+
   log "往 $hosts_file 里加 ${#need[@]} 条映射 (需要 sudo)"
 
   # 先备份 —— hosts 文件是系统文件, 改坏了得能退回去
   mkdir -p "$RUNTIME_DIR"
   bak="$RUNTIME_DIR/hosts.backup.$(date +%Y%m%d-%H%M%S)"
-  sudo cp "$hosts_file" "$bak" || { fail "备份 $hosts_file 失败 (权限?)"; return 1; }
+  $SUDO cp "$hosts_file" "$bak" || { fail "备份 $hosts_file 失败 (权限? 口令?)"; return 1; }
   ok "已备份: $bak"
 
-  hosts_aliases_block "${need[@]}" | sudo tee -a "$hosts_file" >/dev/null || { fail "写 $hosts_file 失败"; return 1; }
+  hosts_aliases_block "${need[@]}" | $SUDO tee -a "$hosts_file" >/dev/null || { fail "写 $hosts_file 失败"; return 1; }
 
   ok "已写入 /etc/hosts"
   echo
@@ -1628,17 +1645,12 @@ local_install() {
     fi
   fi
 
-  # ⚠️ 这一步不是"可选" —— 不修的话, 代码检视连不上、资产市场也推不到 GitLab
+  # ⚠️ 这一步**不再阻塞安装** (2026-10-27) ——
+  #    后端现在自己改写地址 (host.docker.internal ↔ 127.0.0.1), 代码检视、
+  #    资产市场推送、设置页里的地址两种模式下都能用同一个值.
+  #    /etc/hosts 那条路是给"别的工具也要用这个别名"准备的.
   log "2/9 宿主名解析"
-  if ! hosts_do_check; then
-    if [[ $OPT_AUTO -eq 1 ]]; then
-      echo
-      hosts_do_fix || warn "没能自动修好 —— 手工加一行就行 (见上面的命令)"
-    else
-      echo
-      warn "这一步建议先修掉 —— 不修的话代码检视和资产市场推送都用不了"
-    fi
-  fi
+  hosts_do_check || true
   echo
 
   log "3/9 生成配置"

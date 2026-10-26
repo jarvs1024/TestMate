@@ -125,7 +125,7 @@
             </div>
             <div class="workdir mono">
               <div>工作区 <code>{{ marketWorkspace }}</code>
-                <span class="muted">（容器内路径, 运行时不可改 —— 换了会丢掉现有工作副本）</span>
+                <span class="muted">（运行时不可改 —— 换了会丢掉现有工作副本）</span>
               </div>
               <div>远端 <code>{{ marketRemote }}</code>
                 <span class="muted">（当前生效值, 改上面的「GitLab 仓库地址」后立即生效）</span>

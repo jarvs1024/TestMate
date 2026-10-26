@@ -138,7 +138,6 @@ sudo ./deploy/native/tmctl.sh install --auto
 # ===== 模式 C: 裸机 local (macOS, 无 systemd) =====
 brew install nginx
 ./deploy/native/tmctl.sh local install --auto  # 装 + 起 (--auto 连本机 MySQL/Redis 一起装)
-sudo ./deploy/native/tmctl.sh local hosts fix  # 让容器里的地址在宿主上也能用
 ./deploy/native/tmctl.sh launchd install       # 开机自启 + 崩溃自愈
 ```
 
@@ -146,8 +145,10 @@ sudo ./deploy/native/tmctl.sh local hosts fix  # 让容器里的地址在宿主�
 > (macOS 走 `brew services`, Linux 走 `systemd`)。所以 Docker Desktop 崩了、
 > 机器重启都不影响它。详见 [deploy/native/README.md §5](deploy/native/README.md)。
 
-> 模式 C 为什么多一条 `local hosts fix`？`host.docker.internal` 是**容器里**访问宿主用的名字，
-> 本地部署的进程跑在**宿主**上，不修的话代码检视连不上、资产市场也推不到 GitLab。详见 [deploy/native/README.md §5](deploy/native/README.md)。
+> 模式 C 不需要改 `/etc/hosts` —— 后端会按"自己跑在哪"自动把
+> `host.docker.internal` ↔ `127.0.0.1` 双向改写（HTTP 与 git 远端都算），
+> 所以代码检视、资产市场推送在两种模式下都能用同一个地址。
+> 详见 [deploy/native/README.md §5](deploy/native/README.md)。
 
 裸机模式**运维只记一个命令** `deploy/native/tmctl.sh`（有 systemd 走 systemd，没有自动走 local）：
 

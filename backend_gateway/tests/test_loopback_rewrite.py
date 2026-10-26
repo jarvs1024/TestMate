@@ -1,13 +1,17 @@
-"""loopback 地址改写的单测 —— **只在容器里改**.
+"""「本机地址」改写的单测 —— **双向**改 (容器 ↔ 宿主).
 
 背景 (2026-10-26): 裸机部署 (deploy/native 的 systemd 与 macOS local 两种 driver)
 的后端**跑在宿主上**, 而 `_rewrite_loopback` 以前是**无条件**把
 `127.0.0.1` / `localhost` 改写成 `host.docker.internal` —— 那个名字在宿主上
-解析到 Docker 虚拟网卡, 从宿主侧连不通.
+解析到 Docker 虚拟网卡 (198.18.x.x), 从宿主侧 TCP 能连上但**没有服务应答**.
 
 症状: 用户在设置页把 ReviewAgent 地址填成 `http://127.0.0.1:3000`,
 "测试连接"却报 HTTP 502, 而且**改不回来** —— 改完又被后端改写掉.
 根因就在这个函数.
+
+2026-10-27 补上**反方向**: 宿主上把 `host.docker.internal` 换回 `127.0.0.1`.
+这样**同一个设置值在两种部署模式下都通** —— 填 127.0.0.1 或填
+host.docker.internal 都行, 切部署模式不用改设置, 也不用改 /etc/hosts (那要 root).
 """
 from __future__ import annotations
 
@@ -37,14 +41,16 @@ def on_host(monkeypatch):
         ("http://127.0.0.1:3000", "http://host.docker.internal:3000"),
         ("http://127.0.0.1:3000/api/v1", "http://host.docker.internal:3000/api/v1"),
         ("http://localhost:18080/api/v1", "http://host.docker.internal:18080/api/v1"),
-        ("https://127.0.0.1:8443", "http://host.docker.internal:8443"),
+        # ⚠️ 协议要**原样保留** —— 以前硬写成 http://, https 的服务会被降级成明文,
+        #    TLS 握手直接失败.
+        ("https://127.0.0.1:8443", "https://host.docker.internal:8443"),
     ],
 )
 def test_容器里_loopback_被改成宿主可达地址(raw, expected, in_container):
     assert _rewrite_loopback(raw) == expected
 
 
-# ---------- 宿主上: 绝不能改 ----------
+# ---------- 宿主上: loopback 原样保留 ----------
 
 @pytest.mark.parametrize(
     "raw",
@@ -55,8 +61,27 @@ def test_容器里_loopback_被改成宿主可达地址(raw, expected, in_contai
     ],
 )
 def test_宿主上_loopback_原样保留(raw, on_host):
-    """⚠️ 这条是本次修复的核心 —— 宿主上 127.0.0.1 就是宿主自己, 改了就连不通."""
+    """⚠️ 这条是核心 —— 宿主上 127.0.0.1 就是宿主自己, 改了就连不通."""
     assert _rewrite_loopback(raw) == raw
+
+
+# ---------- 宿主上: host.docker.internal 要换回 127.0.0.1 ----------
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("http://host.docker.internal:3000", "http://127.0.0.1:3000"),
+        ("http://host.docker.internal:5050/api", "http://127.0.0.1:5050/api"),
+        ("https://host.docker.internal:8443", "https://127.0.0.1:8443"),
+    ],
+)
+def test_宿主上_host_docker_internal_换回_127_0_0_1(raw, expected, on_host):
+    """⚠️ 宿主上 host.docker.internal 解析到 Docker 虚拟网卡, 从宿主侧连不通.
+
+    以前这条是"不改" —— 于是设置页里填了 host.docker.internal 的地址
+    (UI 的示例值就是它!) 在裸机部署下必然连不上.
+    """
+    assert _rewrite_loopback(raw) == expected
 
 
 # ---------- 两种情况下都不该动的 ----------
@@ -64,13 +89,13 @@ def test_宿主上_loopback_原样保留(raw, on_host):
 @pytest.mark.parametrize(
     "raw",
     [
-        "http://host.docker.internal:3000",   # 已经是宿主可达地址
         "http://review-agent.internal:3000",  # 另一个容器 (service name)
         "http://10.0.0.5:3000",               # 具体 IP
+        "https://gitlab.example.com:8922",    # 真实域名
         "",
     ],
 )
-def test_非_loopback_地址_任何情况下都不改(raw, in_container):
+def test_别的地址_任何情况下都不改(raw, in_container):
     assert _rewrite_loopback(raw) == raw
     settings_store._IN_CONTAINER = False
     assert _rewrite_loopback(raw) == raw

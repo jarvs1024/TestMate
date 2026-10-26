@@ -50,7 +50,7 @@ def _in_container() -> bool:
 
 
 def _rewrite_loopback(base: str) -> str:
-    """把 loopback 地址改成"能到宿主"的那个 —— **只在容器里改**.
+    """把地址里的"本机"改成**当前这个进程能连上的那个本机** —— 两个方向都改.
 
     为什么要有这层: 用户在设置页填 `http://127.0.0.1:3000` 指的是**宿主上**
     跑着的服务 (ReviewAgent / RAGFlow 都是宿主进程). 后端在容器里时, 容器的
@@ -59,18 +59,35 @@ def _rewrite_loopback(base: str) -> str:
     ⚠️ **以前是无条件改写的, 那是错的** ——
     裸机部署 (deploy/native 的 systemd 与 macOS local 两种 driver) 的后端
     就跑在宿主上, 此时的 127.0.0.1 正是宿主自己; 再改写成 host.docker.internal
-    就连不通了 (宿主上那个名字解析到 Docker 虚拟网卡, 从宿主侧连不通).
+    就连不通了 (宿主上那个名字解析到 Docker 虚拟网卡 198.18.x.x, 从宿主侧
+    TCP 能连上但**没有服务应答** —— 症状是"测试连接"超时/502).
     症状: 设置页里把 ReviewAgent 地址填成 127.0.0.1, "测试连接"却报 HTTP 502,
     而且**用户改不回来** —— 改完还是被改写掉.
 
+    所以现在是**双向**的:
+      · 后端在容器里 → 127.0.0.1 / localhost  换成  host.docker.internal
+      · 后端在宿主上 → host.docker.internal 换成  127.0.0.1
+
+    好处: **同一个设置值在两种部署模式下都通** —— 填 127.0.0.1 或填
+    host.docker.internal 都行, 不用为了切部署模式去改设置, 也不用改
+    /etc/hosts (那要 root).
+
     生产环境如果服务在另一个 docker 容器里 (用 service name), 保持原样;
-    只在 URL 用了 loopback 时改写.
+    只在 URL 用了 loopback / host.docker.internal 时改写.
     """
-    if not base or not _in_container():
+    if not base:
         return base
+    if _in_container():
+        # 容器里的 127.0.0.1 是容器自己 → 换成宿主名 (保留原协议!)
+        return re.sub(
+            r"(https?)://(?:127\.0\.0\.1|localhost)(?=[:/])",
+            r"\1://host.docker.internal",
+            base,
+        )
+    # 裸机部署: 后端就在宿主上, host.docker.internal 从宿主侧连不通 → 换回 127.0.0.1
     return re.sub(
-        r"https?://(?:127\.0\.0\.1|localhost)(?=[:/])",
-        "http://host.docker.internal",
+        r"(https?)://host\.docker\.internal(?=[:/])",
+        r"\1://127.0.0.1",
         base,
     )
 
