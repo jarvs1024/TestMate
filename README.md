@@ -126,11 +126,21 @@ TestMate/
 cd deploy && cp .env.template .env && $EDITOR .env
 sudo ./deploy.sh              # 在线;离线见 deploy/README.md §3
 
-# ===== 模式 B: 裸机 (Linux 直接跑进程, systemd 管) =====
+# ===== 模式 B: 裸机 systemd (Linux 直接跑进程) =====
 sudo ./deploy/native/tmctl.sh install --auto
+
+# ===== 模式 C: 裸机 local (macOS, 无 systemd) =====
+brew install nginx
+./deploy/native/tmctl.sh local install      # 装 + 起
+sudo ./deploy/native/tmctl.sh local hosts fix   # 让容器里的地址在宿主上也能用
+./deploy/native/tmctl.sh launchd install    # 开机自启 + 崩溃自愈
 ```
 
-裸机模式**运维只记一个命令** `deploy/native/tmctl.sh`:
+> 模式 C 为什么要多一条 `local hosts fix`? 因为 `host.docker.internal` 是**容器里**
+> 访问宿主用的名字 —— 本地部署的进程跑在**宿主**上, 不修的话代码检视连不上、
+> 资产市场也推不到 GitLab。详见 `deploy/native/README.md` §5。
+
+裸机模式**运维只记一个命令** `deploy/native/tmctl.sh`（有 systemd 走 systemd, 没有自动走 local）:
 
 ```bash
 sudo ./deploy/native/tmctl.sh check      # 环境体检 (只读)

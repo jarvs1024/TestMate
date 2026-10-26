@@ -162,6 +162,9 @@ preflight_run() {
 
   if systemd_available; then
     chk_pass "systemd: 可用 (开机自启动靠它)"
+  elif [[ "${PREFLIGHT_DRIVER:-systemd}" == "local" ]]; then
+    # local driver: 进程用 PID 文件管, 开机自启靠 launchd —— systemd 本来就不需要
+    chk_pass "systemd: 不需要 (local 模式 —— 进程用 PID 文件管, 开机自启用 launchd)"
   else
     chk_fail "systemd 不可用 —— 裸机模式靠 systemd 管进程和开机自启; 容器里 PID1 不是 systemd 时请用 Docker 模式 (deploy/deploy.sh)"
   fi
@@ -314,10 +317,12 @@ preflight_run() {
     return 1
   }
 
-  check_port_free "$fe_port" "FRONTEND" "no"
-  check_port_free "$be_port" "BACKEND" "no"
-  check_port_free "$my_port" "MYSQL" "yes"
-  check_port_free "$rd_port" "REDIS" "yes"
+  # ⚠️ 每项都要 `|| true` —— 脚本开着 set -e, 一项没过就把体检掐断,
+  #    后面的章节压根不跑. 体检的价值是"一次跑完, 列出所有问题 + 怎么修".
+  check_port_free "$fe_port" "FRONTEND" "no" || true
+  check_port_free "$be_port" "BACKEND" "no" || true
+  check_port_free "$my_port" "MYSQL" "yes" || true
+  check_port_free "$rd_port" "REDIS" "yes" || true
 
   # ============ 五、资源 ============
   section "五、机器资源"
@@ -411,5 +416,27 @@ preflight_run() {
     fi
   else
     chk_warn "没有 curl —— 装: $(pkg_name curl "$PKG_MGR")"
+  fi
+
+  # ============ 九、Docker 主机名 (仅 local driver) ============
+  # local driver 的进程跑在**宿主**上, 而 host.docker.internal 是**容器里**访问宿主用的名字.
+  # 在宿主上它解析到 Docker 的虚拟网卡 (macOS 上 198.18.x.x), 从宿主侧连不通 ——
+  # 于是代码检视连不上、资产市场推不到 GitLab.
+  if [[ "${PREFLIGHT_DRIVER:-systemd}" == "local" ]]; then
+    section "九、Docker 主机名 (local 模式专属)"
+    local alias broken_alias=""
+    for alias in "${DOCKER_HOST_ALIASES[@]}"; do
+      if host_alias_broken "$alias"; then
+        broken_alias="$broken_alias $alias"
+      else
+        chk_pass "$alias: 在宿主上指回 127.0.0.1"
+      fi
+    done
+    if [[ -n "$broken_alias" ]]; then
+      chk_fail "这些名字在宿主上连不通:$broken_alias —— 它们是容器里访问宿主用的名字"
+      echo "        本地部署的进程跑在宿主上, 必须让它指回 127.0.0.1, 否则:"
+      echo "        代码检视连不上 / 资产市场推不到 GitLab / 设置页里填的这类地址都连不上"
+      echo "        修: sudo $0 local hosts fix   (只改宿主的 /etc/hosts, 容器不受影响)"
+    fi
   fi
 }
