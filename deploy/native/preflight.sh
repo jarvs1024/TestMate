@@ -338,6 +338,12 @@ preflight_run() {
       chk_pass "$label 端口 $p: 空闲"
       return 0
     fi
+    # ⚠️ 自己占的端口**不是问题** —— 那是服务正在跑.
+    #    以前一律报 "被占用, 换端口", 让人以为装不了 (其实服务跑得好好的).
+    if port_owned_by_ours "$p"; then
+      chk_pass "$label 端口 $p: 被**本部署自己**占用 (服务在跑 —— 预期内)"
+      return 0
+    fi
     local owner
     owner="$(port_owner "$p")"
     if [[ "$reuse" == "yes" ]]; then

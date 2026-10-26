@@ -1538,11 +1538,11 @@ local_do_status() {
   fi
 
   echo
-  echo "  宿主名解析 (代码检视 / 资产市场推送要用):"
+  echo "  宿主名解析 (后端会自动双向改写, 这几项只影响别的工具):"
   local alias
   for alias in "${DOCKER_HOST_ALIASES[@]}"; do
     if host_alias_broken "$alias"; then
-      printf "    %-26s %b %s\n" "$alias" "${C_RED}✗${C_OFF}" "不通 (修: sudo $0 local hosts fix)"
+      printf "    %-26s %b %s\n" "$alias" "${C_YELLOW}!${C_OFF}" "不通 (别的工具要用才修: sudo $0 local hosts fix)"
     else
       printf "    %-26s %b %s\n" "$alias" "${C_GREEN}✓${C_OFF}" "正常"
     fi

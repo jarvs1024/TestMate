@@ -183,10 +183,18 @@ brew_formula_name() {
 }
 
 # brew formula 装没装
+#
+# ⚠️ `brew list --formula` 有时候会因为 brew 自己在后台更新而**偶发失败**
+#    (输出空 → grep 不中 → 误判成"没装"). 拿不到结果时再问一次
+#    `brew list --versions <formula>` —— 那个不做更新, 稳得多.
 brew_formula_installed() {
   local f="$1"
   have_cmd brew || return 1
-  brew list --formula 2>/dev/null | grep -qx "$f"
+  if brew list --formula 2>/dev/null | grep -qx "$f"; then
+    return 0
+  fi
+  brew list --versions "$f" 2>/dev/null | grep -q "^$f " && return 0
+  return 1
 }
 
 # 装一个 brew formula —— 日志留在 PKG_LOG 里, 由调用方打出来
@@ -508,6 +516,25 @@ native_mysql_on() { port_owned_by "$1" 'mysql|maria'; }
 
 # 本机 Redis 在这个端口上?
 native_redis_on() { port_owned_by "$1" 'redis'; }
+
+# 这个端口后面是不是**本部署自己**的进程?
+#
+# 用途: 体检时别把"服务正在跑"当成"端口被别人占了" ——
+# 自己的 nginx (runtime/config/nginx.conf) 与自己的 uvicorn (runtime/venv)
+# 当然是该占着的, 报 FAIL 会让人以为装不了.
+#
+# 判据: 监听进程的**命令行**里带着 RUNTIME_DIR —— 只认自己 runtime 目录下的进程,
+# 别的 nginx / 别的 python 一律不算.
+port_owned_by_ours() {
+  local port="$1" pid cmd
+  have_cmd lsof || return 1
+  pid="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1)"
+  [[ -n "$pid" ]] || return 1
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null)"
+  [[ -n "$cmd" ]] || return 1
+  [[ -n "$RUNTIME_DIR" ]] || return 1
+  [[ "$cmd" == *"$RUNTIME_DIR"* ]]
+}
 
 # 端口占用者的 PID (拿不到就空)
 port_owner_pid() {

@@ -222,6 +222,9 @@ mkdir -p "$FIXTEST_DIR/bin"
 cat > "$FIXTEST_DIR/bin/sudo" <<'EOF'
 #!/bin/sh
 # 假 sudo —— 直接执行 (自检不该真去改 /etc/hosts)
+# ⚠️ 忽略 "-n" (非交互标记): 真的 sudo 认它, 假的把它当噪声丢掉 ——
+#    hosts_do_fix 在非交互环境里会用 `sudo -n` (免得卡在要口令上).
+[ "$1" = "-n" ] && shift
 exec "$@"
 EOF
 chmod +x "$FIXTEST_DIR/bin/sudo"

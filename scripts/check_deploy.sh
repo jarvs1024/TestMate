@@ -51,14 +51,32 @@ fi
 
 echo
 echo "=== 线上 bundle 里有没有 (确认部署跟上了源码) ==="
-if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-  echo "❌ 容器 $CONTAINER 不在跑"
+#
+# ⚠️ 两种部署模式都要能用 (2026-10-27):
+#   · Docker 模式 —— bundle 在容器里 (/usr/share/nginx/html)
+#   · 裸机模式   —— bundle 在 deploy/native/runtime/frontend (nginx 独立实例的 root)
+# 两个后端**不能同时跑**, 所以线上只可能有一种 —— 按实际在跑的那个查.
+HTML_DIR=""
+if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+  HTML_DIR="/usr/share/nginx/html"
+  CHECK_KIND="docker"
+elif [ -d "$(dirname "$0")/../deploy/native/runtime/frontend/assets" ]; then
+  HTML_DIR="$(cd "$(dirname "$0")/../deploy/native/runtime/frontend" && pwd)"
+  CHECK_KIND="native"
+else
+  echo "❌ 找不到在跑的部署 —— Docker 容器 $CONTAINER 没跑, 也没有裸机模式的构建产物"
   exit 2
 fi
+echo "  (检查对象: $CHECK_KIND 模式, $HTML_DIR)"
 
 missing=0
 for f in "${FEATURES[@]}"; do
-  if docker exec "$CONTAINER" sh -lc "grep -rl '$f' $HTML_DIR/assets/*.js >/dev/null 2>&1"; then
+  if [ "$CHECK_KIND" = "docker" ]; then
+    hit="$(docker exec "$CONTAINER" sh -lc "grep -rl '$f' $HTML_DIR/assets/*.js 2>/dev/null | head -1")"
+  else
+    hit="$(grep -rl "$f" "$HTML_DIR"/assets/*.js 2>/dev/null | head -1)"
+  fi
+  if [ -n "$hit" ]; then
     printf "  ✓ %s\n" "$f"
   else
     printf "  ✗ %s  ← 线上 bundle 里没有! 该重新部署\n" "$f"
@@ -68,7 +86,11 @@ done
 
 echo
 if [ "$missing" -ne 0 ]; then
-  echo "❌ 线上 bundle 与源码漂移 —— 跑 scripts/deploy.sh frontend 再验证"
+  if [ "$CHECK_KIND" = "docker" ]; then
+    echo "❌ 线上 bundle 与源码漂移 —— 跑 scripts/deploy.sh frontend 再验证"
+  else
+    echo "❌ 线上 bundle 与源码漂移 —— 跑 ./deploy/native/tmctl.sh local install --auto 重建前端"
+  fi
   exit 1
 fi
 echo "✅ 线上 bundle 与源码一致"
@@ -90,6 +112,7 @@ BACKEND_FILES=(
   app/core/market_state.py
   app/core/market_notify.py
   app/core/mcp_config.py
+  app/db/session.py
   app/models/user.py
   app/models/agent.py
   app/models/asset.py
@@ -97,24 +120,31 @@ BACKEND_FILES=(
   app/schemas/auth.py
 )
 echo
-echo "=== 后端: 容器里的代码跟源码对得上吗 ==="
-if ! docker ps --format '{{.Names}}' | grep -qx "$BACKEND_CONTAINER"; then
-  echo "❌ 容器 $BACKEND_CONTAINER 不在跑"
-  exit 2
-fi
-drift=0
-for f in "${BACKEND_FILES[@]}"; do
-  local_sum=$(shasum -a 256 "backend_gateway/$f" | cut -d' ' -f1)
-  ctr_sum=$(docker exec "$BACKEND_CONTAINER" sh -lc "sha256sum /app/$f 2>/dev/null | cut -d' ' -f1")
-  if [ "$local_sum" = "$ctr_sum" ]; then
-    printf "  ✓ %s\n" "$f"
-  else
-    printf "  ✗ %s  ← 容器里跟源码不一样! 该重新部署后端\n" "$f"
-    drift=1
+echo "=== 后端: 跑着的代码跟源码对得上吗 ==="
+if docker ps --format '{{.Names}}' | grep -qx "$BACKEND_CONTAINER"; then
+  drift=0
+  for f in "${BACKEND_FILES[@]}"; do
+    local_sum=$(shasum -a 256 "backend_gateway/$f" | cut -d' ' -f1)
+    ctr_sum=$(docker exec "$BACKEND_CONTAINER" sh -lc "sha256sum /app/$f 2>/dev/null | cut -d' ' -f1")
+    if [ "$local_sum" = "$ctr_sum" ]; then
+      printf "  ✓ %s\n" "$f"
+    else
+      printf "  ✗ %s  ← 容器里跟源码不一样! 该重新部署后端\n" "$f"
+      drift=1
+    fi
+  done
+  if [ "$drift" -ne 0 ]; then
+    echo "❌ 后端容器与源码漂移 —— 跑 scripts/deploy.sh backend 再验证"
+    exit 1
   fi
-done
-if [ "$drift" -ne 0 ]; then
-  echo "❌ 后端容器与源码漂移 —— 跑 scripts/deploy.sh backend 再验证"
-  exit 1
+  echo "✅ 后端容器与源码一致"
+else
+  # 裸机模式: uvicorn 直接从 backend_gateway/ 跑 (没有"镜像里的副本") ——
+  # 源码改了重启就生效, 不存在漂移. 但要确认跑着的确实是这份源码.
+  if pgrep -f "uvicorn app.main:app" >/dev/null 2>&1; then
+    echo "  ✓ 裸机模式: 后端直接从 backend_gateway/ 跑, 改源码重启即生效 (无镜像副本, 不会漂移)"
+  else
+    echo "❌ 后端没在跑 —— Docker 容器 $BACKEND_CONTAINER 没跑, 裸机模式也没起后端"
+    exit 2
+  fi
 fi
-echo "✅ 后端容器与源码一致"
