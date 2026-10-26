@@ -115,6 +115,33 @@ esac
 
 ACTION=""
 declare -a REST=()
+
+# 第二遍: 从"命令自己的一堆参数"里把**全局选项**挑出来
+#
+# ⚠️ 为什么要有第二遍 —— `local` / `launchd` 是个**前缀**, 它们后面的第一个词
+#    才是命令. 第一遍解析时还不知道后面是什么, 只能把后面的一律留给命令 ——
+#    结果 `tmctl.sh local install --auto` 里的 --auto 被当成了 install 的参数,
+#    **静默失效** (看着像"自动装依赖没生效", 实际是没解析到).
+#    mac 上大家都写 `local install --auto`, 这个坑必须堵上.
+parse_global_opts() {
+  local -a rest=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --auto)      OPT_AUTO=1; shift ;;
+      --offline)   OPT_OFFLINE=1; shift ;;
+      --yes|-y)    OPT_YES=1; shift ;;
+      --no-start)  OPT_NO_START=1; shift ;;
+      --force)     OPT_FORCE=1; shift ;;
+      --from)      OPT_FROM="${2:-}"; shift 2 ;;
+      -f|--follow) OPT_FOLLOW=1; shift ;;
+      --target)    OPT_TARGET="${2:-}"; shift 2 ;;
+      -h|--help)   usage; exit 0 ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+  REST=(${rest[@]+"${rest[@]}"})
+}
+
 while [[ $# -gt 0 ]]; do
   # 命令之后的参数 → 原样留给命令自己
   if [[ "$CMD_TAKES_ARGS" == "yes" && -n "$ACTION" ]]; then
@@ -144,10 +171,14 @@ ACTION="${ACTION:-help}"
 # ---- 前缀处理 ----
 # `local <命令>`   强制走 local driver (mac 等没有 systemd 的机器)
 # `launchd <命令>` launchd 管理 (mac 开机自启 + 崩溃自愈)
-if [[ "$ACTION" == "local" ]]; then
-  DRIVER="local"
-  ACTION="${REST[0]:-help}"
-  if [[ ${#REST[@]} -gt 0 ]]; then REST=("${REST[@]:1}"); else REST=(); fi
+if [[ "$ACTION" == "local" || "$ACTION" == "launchd" ]]; then
+  # ⚠️ 先把全局选项从这一段里挑出来 (见 parse_global_opts 的说明)
+  parse_global_opts ${REST[@]+"${REST[@]}"}
+  if [[ "$ACTION" == "local" ]]; then
+    DRIVER="local"
+    ACTION="${REST[0]:-help}"
+    if [[ ${#REST[@]} -gt 0 ]]; then REST=("${REST[@]:1}"); else REST=(); fi
+  fi
 fi
 
 detect_driver
@@ -325,69 +356,176 @@ ensure_run_user() {
   fi
 }
 
+# ==================== MySQL / Redis: 一律本机服务 ====================
+#
+# ⚠️ 裸机部署**不依赖任何容器** —— MySQL 和 Redis 都必须是这台机器自己的服务.
+#    以前这里会退回去复用 Docker 模式那套 mysql/redis 容器: 容器一停
+#    (Docker Desktop 崩了 / 机器重启 / 有人 docker compose down),
+#    裸机部署的后端就再也连不上库 —— "非容器部署" 名不副实.
+#    (真踩过: Docker Desktop 重启把 mysql 容器 SIGKILL 掉, 裸机后端直接起不来)
+#
+#   macOS : brew services (launchd 托管, 登录自启)
+#   Linux : systemd (enable --now, 开机自启)
+#
+# 详见 lib.sh 里 "本机服务管理 (systemd / brew 双通道)" 一节.
+
 # ---- MySQL ----
-ensure_mysql() {
-  local host port db user pass root_user root_pass svc
-  host="$(cfg MYSQL_HOST 127.0.0.1)"
+
+# 装 + 起本机 MySQL, 等端口有人听 —— 返回 0 = 服务就绪
+ensure_mysql_service() {
+  local port
   port="$(cfg MYSQL_PORT 3306)"
-  db="$(cfg MYSQL_DATABASE testmate)"
-  user="$(cfg MYSQL_USER testmate)"
-  pass="$(cfg MYSQL_PASSWORD)"
-  root_user="$(cfg MYSQL_ROOT_USER root)"
-  root_pass="$(cfg MYSQL_ROOT_PASSWORD)"
+  case "$(service_backend)" in
+    brew)    ensure_mysql_brew ;;
+    systemd) ensure_mysql_systemd ;;
+    *) warn "这台机器既没有 systemd 也没有 brew —— 没法自动装本机 MySQL"; return 1 ;;
+  esac || return 1
+  # 等端口真的有人 listen (MySQL 起来要几十秒)
+  local i
+  for i in $(seq 1 60); do
+    port_in_use "$port" && return 0
+    sleep 1
+  done
+  return 1
+}
 
-  local mycli
-  mycli="$(mysql_client_cmd)"
-  if [[ -z "$mycli" && $OPT_AUTO -eq 1 && -n "$PKG_MGR" ]]; then
-    log "装 MySQL 客户端 ..."
-    if ! pkg_install mysql "$PKG_MGR"; then
-      warn "自动装 MySQL 客户端失败 —— 安装日志尾部:"
-      pkg_log_tail
+# macOS: brew install mysql + brew services start mysql
+ensure_mysql_brew() {
+  local f bindir datadir
+  f="$(brew_formula_name mysql)"
+  if ! brew_formula_installed "$f"; then
+    if [[ $OPT_AUTO -eq 1 ]]; then
+      log "装 MySQL (brew install $f) —— 要下几百 MB, 等一会儿"
+      if ! brew_install_formula "$f"; then
+        warn "brew install $f 失败 —— 日志尾部:"
+        pkg_log_tail
+        return 1
+      fi
+    else
+      warn "本机没装 MySQL —— 装: brew install $f   (或加 --auto 让脚本自己装)"
+      return 1
     fi
-    mycli="$(mysql_client_cmd)"
-  fi
-  if [[ -z "$mycli" ]]; then
-    die "没有 mysql 客户端 —— 装: ${PKG_MGR:-apt-get} install $(pkg_name mysql "${PKG_MGR:-apt-get}") (或 mariadb-server), 然后重跑 install"
   fi
 
-  # 1. 服务在跑吗
+  # ⚠️ 数据目录没初始化过就自己初始化 ——
+  #    brew 的 mysql 公式在新版本里**不一定**自动初始化数据目录,
+  #    没初始化的话 mysqld 直接起不来 (datadir 报错) —— 容器里没这问题.
+  bindir="$(brew --prefix)/opt/mysql/bin"
+  [[ -x "$bindir/mysqld" ]] || bindir="$(brew --prefix)/bin"
+  datadir="$(brew --prefix)/var/mysql"
+  if [[ ! -d "$datadir/mysql" ]]; then
+    log "初始化 MySQL 数据目录: $datadir"
+    mkdir -p "$datadir" || return 1
+    if ! "$bindir/mysqld" --initialize-insecure --datadir="$datadir" \
+         --basedir="$(brew --prefix)/opt/mysql" >/dev/null 2>&1; then
+      warn "初始化数据目录失败 —— 手工跑:"
+      echo "      $bindir/mysqld --initialize-insecure --datadir=$datadir --basedir=$(brew --prefix)/opt/mysql"
+      return 1
+    fi
+  fi
+
+  if ! brew_service_running "$f"; then
+    log "启动 MySQL (brew services start $f) ..."
+    brew_service_start "$f" || { warn "brew services start $f 失败 —— 手工看看: brew services list"; return 1; }
+  fi
+  ok "MySQL 服务: $(brew_service_status "$f") (brew services, 登录自启)"
+  return 0
+}
+
+# Linux: 装 MySQL/MariaDB + systemctl enable --now
+ensure_mysql_systemd() {
+  local svc
   svc="$(mysql_service_name)"
+  if ! unit_exists "${svc}.service"; then
+    if [[ $OPT_AUTO -eq 1 ]]; then
+      log "装 MySQL (${PKG_MGR:-apt-get} install $(pkg_name mysql "${PKG_MGR:-apt-get}")) ..."
+      if ! pkg_install mysql "$PKG_MGR"; then
+        # RHEL 系没有 mysql-server, 只有 mariadb-server
+        warn "装 $(pkg_name mysql "$PKG_MGR") 失败 —— 试 mariadb-server"
+        if ! pkg_install mariadb "$PKG_MGR"; then
+          warn "装 MariaDB 也失败 —— 日志尾部:"
+          pkg_log_tail
+          return 1
+        fi
+        svc="$(mysql_service_name)"
+      fi
+    else
+      warn "宿主机没装 MySQL —— 装: ${PKG_MGR:-apt-get} install $(pkg_name mysql "${PKG_MGR:-apt-get}")"
+      return 1
+    fi
+  fi
+
   if ! unit_active "${svc}.service"; then
     log "启动 MySQL (${svc}.service) ..."
     systemctl enable --now "${svc}.service" >/dev/null 2>&1 \
       || warn "启动 ${svc}.service 失败 —— 手动看看: systemctl status ${svc}"
-    # 等它起来
     local i
     for i in $(seq 1 30); do
       unit_active "${svc}.service" && break
       sleep 1
     done
   fi
-  unit_active "${svc}.service" && ok "MySQL 服务: 运行中" || warn "MySQL 服务没起来 —— 装 MySQL: ${PKG_MGR:+$(pkg_name mysql "$PKG_MGR")}"
-
-  # 2. 能连上吗 —— 先试免密, 再试带口令
-  local root_cmd=("$mycli" "-u" "$root_user" "--protocol=TCP" "-h" "127.0.0.1" "-P" "$port")
-  if [[ -n "$root_pass" ]]; then
-    root_cmd+=("-p${root_pass}")
-  fi
-  if "${root_cmd[@]}" -e "SELECT 1" >/dev/null 2>&1; then
-    ok "MySQL 连接: 正常 (用户 $root_user)"
+  if unit_active "${svc}.service"; then
+    ok "MySQL 服务: 运行中 (systemd, 开机自启)"
   else
-    # 退一步: socket 连接 (Linux 上 root 常走 socket 免密)
-    if "$mycli" -u "$root_user" -e "SELECT 1" >/dev/null 2>&1; then
-      root_cmd=("$mycli" "-u" "$root_user")
-      ok "MySQL 连接: 正常 (socket)"
-    else
-      die "连不上 MySQL —— 填 .env 里的 MYSQL_ROOT_PASSWORD, 或先用 '$mycli -u $root_user' 手工连一次"
-    fi
+    warn "MySQL 服务没起来 —— 装 MySQL: ${PKG_MGR:+$(pkg_name mysql "$PKG_MGR")}"
+    return 1
   fi
+  return 0
+}
 
-  # 3. 建库建用户
-  # 口令转义成 SQL 字面量 (单引号要翻倍)
-  local pass_sql
+# 装 MySQL 客户端 (brew 的 mysql 公式自带客户端; Linux 用包管理器)
+ensure_mysql_client() {
+  case "$(service_backend)" in
+    brew)    brew_install_formula mysql ;;
+    systemd) pkg_install mysql "$PKG_MGR" ;;
+    *) return 1 ;;
+  esac
+}
+
+# 找一条能连上 root 的 mysql 命令 —— 结果放进全局 MYSQL_ROOT_CMD
+#
+# 依次试四种连法:
+#   ① TCP   + .env 里的 root 口令
+#   ② socket + .env 里的 root 口令
+#   ③ socket 免密          ← mac 的 brew MySQL 就是这种 (root 没口令)
+#   ④ TCP   免密
+#
+# ⚠️ 每条都接 /dev/null —— mysql 连不上要口令时会等键盘输入, 脚本会卡死.
+# ⚠️ 用哪种连上的记在 MYSQL_ROOT_AUTH 里 —— 用来决定 .env 里的
+#    MYSQL_ROOT_PASSWORD 该不该清空 (别让配置写着口令, 实际却没这回事).
+MYSQL_ROOT_CMD=()
+MYSQL_ROOT_AUTH=""
+mysql_root_cmd() {
+  local mycli port user pass c
+  mycli="$(mysql_client_cmd)"
+  [[ -n "$mycli" ]] || return 1
+  port="$(cfg MYSQL_PORT 3306)"
+  user="$(cfg MYSQL_ROOT_USER root)"
+  pass="$(cfg MYSQL_ROOT_PASSWORD)"
+  MYSQL_ROOT_CMD=(); MYSQL_ROOT_AUTH=""
+  if [[ -n "$pass" ]]; then
+    c=("$mycli" -u "$user" --protocol=TCP -h 127.0.0.1 -P "$port" "-p${pass}")
+    "${c[@]}" -e "SELECT 1" >/dev/null 2>&1 </dev/null && { MYSQL_ROOT_CMD=("${c[@]}"); MYSQL_ROOT_AUTH="password"; return 0; }
+    c=("$mycli" -u "$user" "-p${pass}")
+    "${c[@]}" -e "SELECT 1" >/dev/null 2>&1 </dev/null && { MYSQL_ROOT_CMD=("${c[@]}"); MYSQL_ROOT_AUTH="password"; return 0; }
+  fi
+  c=("$mycli" -u "$user")
+  "${c[@]}" -e "SELECT 1" >/dev/null 2>&1 </dev/null && { MYSQL_ROOT_CMD=("${c[@]}"); MYSQL_ROOT_AUTH="socket"; return 0; }
+  c=("$mycli" -u "$user" --protocol=TCP -h 127.0.0.1 -P "$port")
+  "${c[@]}" -e "SELECT 1" >/dev/null 2>&1 </dev/null && { MYSQL_ROOT_CMD=("${c[@]}"); MYSQL_ROOT_AUTH="tcp-nopass"; return 0; }
+  return 1
+}
+
+# 建库建用户 (走 MYSQL_ROOT_CMD)
+mysql_provision_db() {
+  local db user pass pass_sql
+  db="$(cfg MYSQL_DATABASE testmate)"
+  user="$(cfg MYSQL_USER testmate)"
+  pass="$(cfg MYSQL_PASSWORD)"
   pass_sql="$(printf '%s' "$pass" | sed "s/'/''/g")"
   log "建库建用户: $db / $user"
-  "${root_cmd[@]}" <<SQL
+  "${MYSQL_ROOT_CMD[@]}" <<SQL
 CREATE DATABASE IF NOT EXISTS \`${db}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${user}'@'localhost' IDENTIFIED BY '${pass_sql}';
 CREATE USER IF NOT EXISTS '${user}'@'127.0.0.1' IDENTIFIED BY '${pass_sql}';
@@ -400,46 +538,204 @@ SQL
   ok "数据库就绪: $db (用户 $user)"
 }
 
-# ---- Redis ----
-ensure_redis() {
-  local host port pass svc
-  host="$(cfg REDIS_HOST 127.0.0.1)"
-  port="$(cfg REDIS_PORT 6379)"
-  pass="$(cfg REDIS_PASSWORD)"
-  svc="$(redis_service_name)"
+# MySQL 全套: 服务 + 客户端 + 建库建用户
+mysql_setup() {
+  local mycli
+  ensure_mysql_service || { warn "本机 MySQL 服务没起来"; return 1; }
 
+  mycli="$(mysql_client_cmd)"
+  if [[ -z "$mycli" && $OPT_AUTO -eq 1 ]]; then
+    log "装 MySQL 客户端 ..."
+    ensure_mysql_client || warn "装 MySQL 客户端失败"
+    mycli="$(mysql_client_cmd)"
+  fi
+  if [[ -z "$mycli" ]]; then
+    warn "没有 mysql 客户端 —— 装: mac: brew install mysql  (Linux: ${PKG_MGR:-apt-get} install $(pkg_name mysql "${PKG_MGR:-apt-get}"))"
+    return 1
+  fi
+
+  mysql_root_cmd || {
+    warn "连不上 MySQL (root) —— 填 .env 里的 MYSQL_ROOT_PASSWORD, 或先用 'mysql -u root' 手工连一次"
+    return 1
+  }
+
+  # ⚠️ .env 里的 MYSQL_ROOT_PASSWORD 别撒谎 ——
+  #    root 其实是免密的话, 把口令清掉 (免得下次跑脚本时先拿错口令试一圈).
+  if [[ "$MYSQL_ROOT_AUTH" != "password" && -n "$(cfg MYSQL_ROOT_PASSWORD)" ]]; then
+    env_set "$ENV_FILE" "MYSQL_ROOT_PASSWORD" ""
+    ok "本机 MySQL 的 root 免密 ($MYSQL_ROOT_AUTH) —— .env 里的 MYSQL_ROOT_PASSWORD 已清空"
+  fi
+
+  mysql_provision_db
+  return 0
+}
+
+# systemd driver 的入口 (Linux)
+ensure_mysql() {
+  mysql_setup || die "MySQL 没准备好 —— 上面的提示就是原因"
+}
+
+# ---- Redis ----
+#
+# ⚠️ 必须是**本机**的 Redis (理由同 MySQL).
+#
+# 口令: 裸机模式默认**不设** Redis 口令 —— 本机 Redis 只监听 127.0.0.1, 外网够不着.
+#   · .env 里 REDIS_PASSWORD 为空 → 按无口令连
+#   · .env 里 REDIS_PASSWORD 有值 → 按口令连
+#     (想让本机 Redis 真的带口令: 在 Redis 自己的配置里加 requirepass,
+#      再把同一个口令填回 .env)
+
+redis_ping_ok() {
+  local host="$1" port="$2" pass="$3"
+  local rc=(redis-cli -h "$host" -p "$port")
+  [[ -n "$pass" ]] && rc+=(-a "$pass" --no-auth-warning)
+  "${rc[@]}" ping 2>/dev/null | grep -q PONG
+}
+
+# 装 + 起本机 Redis —— 返回 0 = 服务就绪
+ensure_redis_service() {
+  case "$(service_backend)" in
+    brew)    ensure_redis_brew ;;
+    systemd) ensure_redis_systemd ;;
+    *) warn "这台机器既没有 systemd 也没有 brew —— 没法自动装本机 Redis"; return 1 ;;
+  esac || return 1
+  local port i
+  port="$(cfg REDIS_PORT 6379)"
+  for i in $(seq 1 30); do
+    port_in_use "$port" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+ensure_redis_brew() {
+  local f
+  f="$(brew_formula_name redis)"
+  if ! brew_formula_installed "$f"; then
+    if [[ $OPT_AUTO -eq 1 ]]; then
+      log "装 Redis (brew install $f) ..."
+      if ! brew_install_formula "$f"; then
+        warn "brew install $f 失败 —— 日志尾部:"
+        pkg_log_tail
+        return 1
+      fi
+    else
+      warn "本机没装 Redis —— 装: brew install $f   (或加 --auto 让脚本自己装)"
+      return 1
+    fi
+  fi
+  if ! brew_service_running "$f"; then
+    log "启动 Redis (brew services start $f) ..."
+    brew_service_start "$f" || { warn "brew services start $f 失败 —— 手工看看: brew services list"; return 1; }
+  fi
+  ok "Redis 服务: $(brew_service_status "$f") (brew services, 登录自启)"
+  return 0
+}
+
+ensure_redis_systemd() {
+  local svc
+  svc="$(redis_service_name)"
+  if ! unit_exists "${svc}.service"; then
+    if [[ $OPT_AUTO -eq 1 ]]; then
+      log "装 Redis (${PKG_MGR:-apt-get} install $(pkg_name redis "${PKG_MGR:-apt-get}")) ..."
+      pkg_install redis "$PKG_MGR" || { warn "装 Redis 失败 —— 日志尾部:"; pkg_log_tail; return 1; }
+    else
+      warn "宿主机没装 Redis —— 装: ${PKG_MGR:-apt-get} install $(pkg_name redis "${PKG_MGR:-apt-get}")"
+      return 1
+    fi
+  fi
   if ! unit_active "${svc}.service"; then
     log "启动 Redis (${svc}.service) ..."
     systemctl enable --now "${svc}.service" >/dev/null 2>&1 \
-      || warn "启动 ${svc}.service 失败 —— 装 Redis: ${PKG_MGR:+$(pkg_name redis "$PKG_MGR")}"
+      || warn "启动 ${svc}.service 失败 —— 手动看看: systemctl status ${svc}"
     local i
     for i in $(seq 1 15); do
       unit_active "${svc}.service" && break
       sleep 1
     done
   fi
+  if unit_active "${svc}.service"; then
+    ok "Redis 服务: 运行中 (systemd, 开机自启)"
+  else
+    warn "Redis 服务没起来 —— 装 Redis: ${PKG_MGR:+$(pkg_name redis "$PKG_MGR")}"
+    return 1
+  fi
+  return 0
+}
+
+# 装 redis-cli
+ensure_redis_client() {
+  case "$(service_backend)" in
+    brew)    brew_install_formula redis ;;
+    systemd) pkg_install redis "$PKG_MGR" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Redis 全套: 客户端 + 服务 + 连通性
+ensure_redis() {
+  local host port pass i
+  host="$(cfg REDIS_HOST 127.0.0.1)"
+  port="$(cfg REDIS_PORT 6379)"
+  pass="$(cfg REDIS_PASSWORD)"
 
   if ! have_cmd redis-cli; then
-    if [[ $OPT_AUTO -eq 1 && -n "$PKG_MGR" ]]; then
-      log "装 redis-cli ..."
-      if ! pkg_install redis "$PKG_MGR"; then
-        warn "自动装 redis-cli 失败 —— 安装日志尾部:"
-        pkg_log_tail
-      fi
+    if [[ $OPT_AUTO -eq 1 ]]; then
+      log "装 Redis 客户端 ..."
+      ensure_redis_client || warn "装 Redis 客户端失败"
     fi
   fi
   if ! have_cmd redis-cli; then
-    warn "没有 redis-cli —— 装: ${PKG_MGR:+$(pkg_name redis "$PKG_MGR")}; 服务可能仍然正常跑着"
+    warn "没有 redis-cli —— 装: mac: brew install redis  (Linux: ${PKG_MGR:-apt-get} install $(pkg_name redis "${PKG_MGR:-apt-get}")); 服务可能仍然正常跑着"
     return 0
   fi
 
-  local rc=(redis-cli -h "$host" -p "$port")
-  [[ -n "$pass" ]] && rc+=(-a "$pass" --no-auth-warning)
-  if "${rc[@]}" ping 2>/dev/null | grep -q PONG; then
-    ok "Redis 连接: 正常"
-  else
-    warn "Redis 连不上 ($host:$port) —— 装/起: systemctl enable --now ${svc}.service"
+  # 指到远程库就不动配置 —— 那是运维自己安排的
+  if [[ "$host" != "127.0.0.1" && "$host" != "localhost" && "$host" != "::1" ]]; then
+    if redis_ping_ok "$host" "$port" "$pass"; then
+      ok "远程 Redis 连得上 ($host:$port)"
+      return 0
+    fi
+    warn "远程 Redis 连不上 ($host:$port) —— 查 .env 的 REDIS_HOST/PORT/PASSWORD"
+    return 1
   fi
+
+  # 本机 Redis 在哪个端口?
+  # ⚠️ 判据是"监听进程是不是 redis", 不是"端口有没有被占" ——
+  #    Docker 模式映射出来的端口**也**有人听, 连上去的是容器里的 Redis.
+  local def_port=6379
+  if ! native_redis_on "$port"; then
+    if [[ "$port" != "$def_port" ]]; then
+      warn ".env 里的 Redis 端口 $port 后面不是本机 Redis —— 换回本机默认端口 $def_port"
+    fi
+    port="$def_port"
+    env_set "$ENV_FILE" "REDIS_PORT" "$port"
+  fi
+
+  # 已经连得上 → 什么都不用做
+  if redis_ping_ok "$host" "$port" "$pass"; then
+    ok "Redis 连接: 正常 ($host:$port)"
+    return 0
+  fi
+
+  log "准备本机 Redis (不用任何容器) ..."
+  ensure_redis_service || warn "Redis 服务没起来"
+
+  for i in $(seq 1 30); do
+    redis_ping_ok "$host" "$port" "$pass" && { ok "Redis 连接: 正常 ($host:$port)"; return 0; }
+    sleep 1
+  done
+
+  # ⚠️ 口令对不上 —— 本机 Redis 其实没设口令, 但 .env 里写着
+  if [[ -n "$pass" ]] && redis_ping_ok "$host" "$port" ""; then
+    warn "本机 Redis 没设口令, 但 .env 里写着 REDIS_PASSWORD —— 已清空"
+    env_set "$ENV_FILE" "REDIS_PASSWORD" ""
+    ok "Redis 连接: 正常 ($host:$port, 无口令)"
+    return 0
+  fi
+
+  warn "Redis 连不上 ($host:$port) —— 装/起: mac: brew services start redis  (Linux: systemctl enable --now redis-server)"
+  return 1
 }
 
 # ---- Python venv ----
@@ -970,7 +1266,7 @@ warn_concurrent_backend() {
   warn "⚠️ Docker 模式的 backend 容器也在跑 —— 两个后端会**同时**消费资产市场的 job 队列"
   warn "   (队列是进程内的, 不跨进程) → 同一个 job 被两个进程抢 → git index.lock 冲突 / 重复推 GitLab."
   warn "   建议先停它:  cd deploy && docker compose --env-file .env stop backend"
-  warn "   (mysql/redis 容器别停 —— 本地模式要连它们)"
+  warn "   (mysql/redis 容器跟本地模式无关 —— 本地模式连的是**本机**的 MySQL/Redis)"
   echo
 }
 
@@ -1101,7 +1397,13 @@ local_do_start() {
   # 两条路径都要提醒 (launchd 接管 / PID 模式) —— 端口用错是本地部署最容易踩的坑
   warn_docker_frontend
   if local_launchd_loaded; then
-    log "服务由 launchd 接管 —— 已经在跑了"
+    # ⚠️ 要**重启**, 不能只看"已经在跑了" ——
+    #    install / update 刚重新渲染了 backend.env (端口、口令都可能变了),
+    #    进程还拿着老环境变量跑 → 连不上新库, readiness 一直不过.
+    #    (真踩过: 换到本机 MySQL 后后端还指着老端口, readiness 503, admin 建不上.)
+    log "服务由 launchd 接管 —— 重启它 (让新配置生效)"
+    launchctl kickstart -k "$(launchd_domain)/com.testmate.backend" >/dev/null 2>&1 || true
+    launchctl kickstart -k "$(launchd_domain)/com.testmate.frontend" >/dev/null 2>&1 || true
     wait_healthy
     return 0
   fi
@@ -1250,129 +1552,63 @@ local_do_logs() {
   fi
 }
 
-# mac 上没有 mysql/redis 服务时, 复用 Docker 模式那套 mysql/redis 容器
-# —— 好处是**数据是同一份** (同一个 DATA_ROOT 下的卷), 两种模式随时切.
-ensure_docker_db() {
-  local compose_file="$REPO_ROOT/deploy/docker-compose.yml"
-  local deploy_env="$REPO_ROOT/deploy/.env"
-  if [[ ! -f "$compose_file" || ! -f "$deploy_env" ]]; then
-    return 1
-  fi
-  have_cmd docker || return 1
-
-  local root_pwd my_port rd_port
-  root_pwd="$(env_get "$deploy_env" "MYSQL_ROOT_PASSWORD" || true)"
-  my_port="$(env_get "$deploy_env" "MYSQL_HOST_PORT" || true)"; my_port="${my_port:-43060}"
-  rd_port="$(env_get "$deploy_env" "REDIS_HOST_PORT" || true)"; rd_port="${rd_port:-63790}"
-  [[ -n "$root_pwd" ]] || return 1
-
-  log "复用 Docker 模式的 MySQL/Redis (数据跟 Docker 模式共享)"
-  docker compose -f "$compose_file" --env-file "$deploy_env" up -d mysql redis >/dev/null 2>&1 \
-    || { warn "起 mysql/redis 容器失败"; return 1; }
-
-  # ⚠️⚠️ 共享数据库 = **必须沿用 Docker 模式的账号和口令**, 不能各用各的 ——
-  #    MySQL 的 testmate 用户和 users 表里的 admin 是**同一个**:
-  #      · 口令不一样 → 改密码会把 Docker 模式的 backend 顶掉 (它连不上库了)
-  #      · admin 口令不一样 → create_admin 会把现有 admin 的密码改掉, 运维当场登不进去
-  #    所以这里把凭据一起对齐 —— 两种模式共用同一套账号.
-  local d_user d_pass d_db d_admin
-  d_user="$(env_get "$deploy_env" "MYSQL_USER" || true)"; d_user="${d_user:-testmate}"
-  d_pass="$(env_get "$deploy_env" "MYSQL_PASSWORD" || true)"
-  d_db="$(env_get "$deploy_env" "MYSQL_DATABASE" || true)"; d_db="${d_db:-testmate}"
-  d_admin="$(env_get "$deploy_env" "ADMIN_DEFAULT_PASSWORD" || true)"
-  if [[ -n "$d_pass" ]]; then
-    env_set "$ENV_FILE" "MYSQL_USER" "$d_user"
-    env_set "$ENV_FILE" "MYSQL_PASSWORD" "$d_pass"
-    env_set "$ENV_FILE" "MYSQL_DATABASE" "$d_db"
-    ok "沿用 Docker 模式的数据库账号 ($d_user) 与口令 —— 两种模式共用同一套凭据"
-  fi
-  if [[ -n "$d_admin" ]]; then
-    env_set "$ENV_FILE" "ADMIN_DEFAULT_PASSWORD" "$d_admin"
-    ok "沿用 Docker 模式的 admin 口令 —— **不会**改动现有 admin 的密码"
-  fi
-
-  # 把 native 的 .env 对齐到容器暴露的端口
-  env_set "$ENV_FILE" "MYSQL_HOST" "127.0.0.1"
-  env_set "$ENV_FILE" "MYSQL_PORT" "$my_port"
-  env_set "$ENV_FILE" "REDIS_HOST" "127.0.0.1"
-  env_set "$ENV_FILE" "REDIS_PORT" "$rd_port"
-
-  # ⚠️ 资产市场的 git 工作区也要跟 Docker 模式**同一个** ——
-  #    两个后端各推各的仓库到同一个 GitLab 远端 → 互相覆盖 / index.lock 冲突.
-  #    compose 里容器路径 /workspace 对应宿主 ${DATA_ROOT}/market.
-  local data_root market_host
-  data_root="$(env_get "$deploy_env" "DATA_ROOT" || true)"
-  if [[ -n "$data_root" ]]; then
-    market_host="$data_root/market"
-    if [[ -d "$market_host" ]]; then
-      env_set "$ENV_FILE" "MARKET_DIR" "$market_host"
-      ok "资产市场工作区跟 Docker 模式共用: $market_host"
-    else
-      warn "Docker 模式的市场工作区还没建 ($market_host) —— 本地模式用自己的 runtime/market"
-    fi
-  fi
-
-  # 等 MySQL 起来
-  local i
-  for i in $(seq 1 30); do
-    if mysql_ping "$my_port" "$root_pwd"; then
-      break
-    fi
-    sleep 1
-  done
-
-  # 建库建用户 (口令取 native .env 的 MYSQL_PASSWORD)
-  local db user pass pass_sql
-  db="$(cfg MYSQL_DATABASE testmate)"
-  user="$(cfg MYSQL_USER testmate)"
-  pass="$(cfg MYSQL_PASSWORD)"
-  pass_sql="$(printf '%s' "$pass" | sed "s/'/''/g")"
-  if ! mysql_exec "$my_port" "$root_pwd" <<SQL
-CREATE DATABASE IF NOT EXISTS \`${db}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '${user}'@'localhost' IDENTIFIED BY '${pass_sql}';
-CREATE USER IF NOT EXISTS '${user}'@'127.0.0.1' IDENTIFIED BY '${pass_sql}';
-ALTER USER '${user}'@'localhost' IDENTIFIED BY '${pass_sql}';
-ALTER USER '${user}'@'127.0.0.1' IDENTIFIED BY '${pass_sql}';
-GRANT ALL PRIVILEGES ON \`${db}\`.* TO '${user}'@'localhost';
-GRANT ALL PRIVILEGES ON \`${db}\`.* TO '${user}'@'127.0.0.1';
-FLUSH PRIVILEGES;
-SQL
-  then
-    warn "建库建用户失败 —— 手工执行:"
-    echo "      CREATE DATABASE IF NOT EXISTS \`${db}\`;"
-    echo "      CREATE USER '${user}'@'127.0.0.1' IDENTIFIED BY '<口令>';"
-    return 1
-  fi
-  ok "MySQL 就绪 (127.0.0.1:${my_port}, 库 $db)"
-  ok "Redis 就绪 (127.0.0.1:${rd_port})"
-  return 0
-}
-
-# local 模式的数据库准备: 先试 .env 里的, 连不上再试 Docker, 都没有就报错
+# local 模式的数据库准备 —— **全本机**, 不碰 Docker
+#
+# 流程:
+#   1. .env 里配的地址能连上 → 直接用 (这台机器已经有自己的 MySQL 了)
+#   2. 连不上 → 装 + 起**本机** MySQL (brew / systemd);
+#      端口还指着 Docker 模式那个 (43060) 的, 就调回本机默认端口 (3306)
+#   3. 建库建用户
+#   4. Redis 同理
+#
+# ⚠️ 以前这里是"连不上就复用 Docker 模式的容器" —— 现在没有了.
+#    裸机部署要的是"这台机器自己就能跑", 挂着容器就不是裸机部署:
+#    容器一停 (Docker Desktop 崩了 / 机器重启 / 有人 docker compose down),
+#    后端立刻连不上库 —— 非容器部署名不副实.
 ensure_db_local() {
   local host port mycli
   host="$(cfg MYSQL_HOST 127.0.0.1)"
   port="$(cfg MYSQL_PORT 3306)"
   mycli="$(mysql_client_cmd)"
 
-  if [[ -n "$mycli" ]] && "$mycli" -h "$host" -P "$port" -u "$(cfg MYSQL_USER testmate)" \
-       "-p$(cfg MYSQL_PASSWORD)" -e "SELECT 1" "$(cfg MYSQL_DATABASE testmate)" >/dev/null 2>&1; then
-    ok "MySQL 连得上 ($host:$port)"
-    return 0
+  # 指到远程库就不动配置 —— 那是运维自己安排的
+  if [[ "$host" != "127.0.0.1" && "$host" != "localhost" && "$host" != "::1" ]]; then
+    info "MySQL 指的是远程库 ($host) —— 按配置来"
+    if [[ -n "$mycli" ]] && "$mycli" -h "$host" -P "$port" -u "$(cfg MYSQL_USER testmate)" \
+         "-p$(cfg MYSQL_PASSWORD)" -e "SELECT 1" "$(cfg MYSQL_DATABASE testmate)" >/dev/null 2>&1 </dev/null; then
+      ok "远程 MySQL 连得上 ($host:$port)"
+      return 0
+    fi
+    warn "远程 MySQL 连不上 ($host:$port) —— 查 .env 的 MYSQL_HOST/PORT/USER/PASSWORD"
+    return 1
   fi
 
-  if [[ -z "$mycli" ]]; then
-    log "宿主机上没有 mysql 客户端 —— 试 Docker 模式的容器..."
+  # 本机 MySQL 在哪个端口?
+  # ⚠️ 判据是"监听进程是不是 mysqld", 不是"端口有没有被占" ——
+  #    Docker 模式映射出来的端口**也**有人听 (监听者是 docker-proxy),
+  #    连上去的是容器里的 MySQL —— 容器一停, 裸机后端就废了.
+  local def_port=3306
+  if ! native_mysql_on "$port"; then
+    if [[ "$port" != "$def_port" ]]; then
+      warn ".env 里的 MySQL 端口 $port 后面不是本机 MySQL —— 换回本机默认端口 $def_port"
+    fi
+    port="$def_port"
+    env_set "$ENV_FILE" "MYSQL_PORT" "$port"
+  fi
+
+  # 能用应用账号连上吗 → 这台机器已经有本机 MySQL 了
+  if [[ -n "$mycli" ]] && "$mycli" -h "$host" -P "$port" -u "$(cfg MYSQL_USER testmate)" \
+       "-p$(cfg MYSQL_PASSWORD)" -e "SELECT 1" "$(cfg MYSQL_DATABASE testmate)" >/dev/null 2>&1 </dev/null; then
+    ok "MySQL 连得上 ($host:$port)"
   else
-    log "MySQL 连不上 ($host:$port) —— 试 Docker 模式的容器..."
+    log "准备本机 MySQL (不用任何容器) ..."
+    mysql_setup || { warn "本机 MySQL 没准备好 —— 上面的提示就是原因"; return 1; }
   fi
-  if ensure_docker_db; then
-    return 0
-  fi
-  die "没有可用的 MySQL. 三选一:
-  ① 装本机服务: brew install mysql redis && brew services start mysql && brew services start redis
-  ② 复用 Docker 模式的容器 (需要 deploy/.env 里有 MYSQL_ROOT_PASSWORD)
-  ③ 手工起一个 MySQL, 然后把 deploy/native/.env 的 MYSQL_HOST/PORT/USER/PASSWORD 填对"
+
+  # 3. Redis —— 后端的 readiness 探针里 MySQL 和 Redis 缺一不可 (down → 503),
+  #    所以这里装不上就直接停, 别留个永远 degraded 的平台给运维.
+  ensure_redis || { warn "本机 Redis 没准备好 —— 上面的提示就是原因"; return 1; }
+  return 0
 }
 
 local_install() {
@@ -1409,8 +1645,8 @@ local_install() {
   ensure_env_file
   resolve_port_conflicts
 
-  log "4/9 数据库"
-  ensure_db_local
+  log "4/9 数据库 (本机 MySQL + 本机 Redis —— 不用任何容器)"
+  ensure_db_local || die "数据库没准备好 —— 上面的提示就是原因"
 
   log "5/9 Python 依赖"
   build_venv
@@ -1454,7 +1690,7 @@ local_install() {
 }
 
 local_update() {
-  log "1/4 拉新代码"
+  log "1/5 拉新代码"
   cd "$REPO_ROOT"
   local before after
   before="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
@@ -1468,13 +1704,18 @@ local_update() {
   after="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
   [[ "$before" == "$after" ]] && info "代码没变 ($after)" || ok "代码: $before -> $after"
 
-  log "2/4 重建依赖"
+  # ⚠️ 升级前先确认库还在 —— 库没了还重启后端, 只会得到一个连不上库的进程,
+  #    运维还得回头查为什么. 这里顺手把本机 MySQL/Redis 拉起来.
+  log "2/5 数据库检查 (本机 MySQL + 本机 Redis)"
+  ensure_db_local || warn "数据库没准备好 —— 后端可能起不来, 看上面的提示"
+
+  log "3/5 重建依赖"
   build_venv
 
-  log "3/4 重建前端"
+  log "4/5 重建前端"
   build_frontend
 
-  log "4/4 重启"
+  log "5/5 重启"
   render_app_configs
   local_do_restart
   ok "升级完成"
@@ -1673,11 +1914,11 @@ cmd_install() {
   log "3/9 服务用户"
   ensure_run_user
 
-  log "4/9 数据库"
+  log "4/9 数据库 (本机 MySQL)"
   ensure_mysql
 
-  log "5/9 Redis"
-  ensure_redis
+  log "5/9 Redis (本机 Redis)"
+  ensure_redis || die "Redis 没准备好 —— 上面的提示就是原因"
 
   log "6/9 Python 依赖"
   build_venv
@@ -2000,7 +2241,9 @@ cmd_backup() {
 cmd_restore() {
   local src="$1"
   [[ -n "$src" ]] || die "用法: $0 restore <备份目录或文件前缀>"
-  need_root
+  # ⚠️ root 只有 systemd 那套要 —— local driver 用的是当前用户 + PID 文件,
+  #    拿 sudo 反而会因为权限把运行时目录的属主搞乱.
+  [[ "$DRIVER" == "local" ]] || need_root
   confirm "这会**覆盖**现有数据, 确定?" || die "已中止"
 
   local myfile redisfile
@@ -2009,7 +2252,7 @@ cmd_restore() {
   [[ -n "$myfile" ]] || die "在 $src 里找不到 mysql-*.sql.gz"
 
   log "停服务"
-  systemctl stop "$FRONTEND_UNIT" "$BACKEND_UNIT"
+  if [[ "$DRIVER" == "local" ]]; then local_do_stop; else systemctl stop "$FRONTEND_UNIT" "$BACKEND_UNIT"; fi
 
   log "恢复 MySQL"
   local mycli host port db user pass
@@ -2041,9 +2284,90 @@ cmd_restore() {
   fi
 
   log "起服务"
-  systemctl start "$BACKEND_UNIT" "$FRONTEND_UNIT"
-  wait_healthy
+  if [[ "$DRIVER" == "local" ]]; then
+    local_do_start
+  else
+    systemctl start "$BACKEND_UNIT" "$FRONTEND_UNIT"
+    wait_healthy
+  fi
   ok "恢复完成"
+}
+
+cmd_db() {
+  local sub="${1:-help}"
+  case "$sub" in
+    import) cmd_db_import "${2:-}" ;;
+    *) die "db 子命令: import <dump.sql>   (用法: $0 local db import <文件>)" ;;
+  esac
+}
+
+# 把一份 SQL dump 灌进**本机** MySQL 的 testmate 库
+#
+# 为什么需要这个命令 —— 裸机模式的库是**本机**的, 跟 Docker 模式各存各的
+# (见 README §5). 原来一直用 Docker 那套库的老机器, 升级到"零容器"之后
+# 数据不会自动跟过来 —— 得自己搬.
+#
+# ⚠️ 这是**覆盖**操作: 现有的表会被 dump 里的同名表替换.
+#    所以先停后端 (别让它在导入的半截状态里读库), 导完再起.
+cmd_db_import() {
+  local file="$1"
+  [[ -n "$file" ]] || die "用法: $0 local db import <dump.sql>"
+  [[ -f "$file" ]] || die "文件不存在: $file"
+
+  local mycli host port db user pass
+  mycli="$(mysql_client_cmd)"
+  [[ -n "$mycli" ]] || die "没有 mysql 客户端 —— 装: mac: brew install mysql  (Linux: ${PKG_MGR:-apt-get} install $(pkg_name mysql "${PKG_MGR:-apt-get}"))"
+  host="$(cfg MYSQL_HOST 127.0.0.1)"
+  port="$(cfg MYSQL_PORT 3306)"
+  db="$(cfg MYSQL_DATABASE testmate)"
+  user="$(cfg MYSQL_USER testmate)"
+  pass="$(cfg MYSQL_PASSWORD)"
+
+  # 先确认连得上 —— 不然灌到一半才发现库都没建
+  if ! "$mycli" -h "$host" -P "$port" -u "$user" "-p${pass}" -e "SELECT 1" "$db" >/dev/null 2>&1 </dev/null; then
+    die "连不上本机 MySQL ($host:$port, 库 $db) —— 先跑 '$0 local install --auto' 把库建起来"
+  fi
+
+  log "停后端 (导入期间不让它读库)"
+  if [[ "$DRIVER" == "local" ]]; then
+    if launchd_loaded "com.testmate.backend"; then
+      # ⚠️ launchd 接管的话不能只 kill 进程 —— KeepAlive 会立刻把它拉起来.
+      #    得先 bootout (从 launchd 域里摘掉), 导完再 bootstrap 回去.
+      launchd_unload "com.testmate.backend"
+    else
+      local_kill backend
+    fi
+  else
+    systemctl stop "$BACKEND_UNIT" 2>/dev/null || true
+  fi
+
+  log "导入: $file → $host:$port/$db"
+  # 口令走 defaults 文件, 不进命令行 (ps 里谁都能看见)
+  local defaults
+  defaults="$(mktemp)"; chmod 600 "$defaults"
+  printf '[client]\nuser=%s\npassword=%s\nhost=%s\nport=%s\n' \
+    "$user" "$pass" "$host" "$port" > "$defaults"
+  if "$mycli" --defaults-extra-file="$defaults" "$db" < "$file"; then
+    ok "导入完成"
+  else
+    rm -f "$defaults"
+    die "导入失败 —— 库可能处于半截状态, 手工检查一下"
+  fi
+  rm -f "$defaults"
+
+  log "起后端"
+  if [[ "$DRIVER" == "local" ]]; then
+    if launchd_loaded "com.testmate.backend"; then
+      launchd_load "$(launchd_plist_path "com.testmate.backend")" \
+        || warn "后端没装回 launchd —— 手工起: $0 local start"
+    else
+      local_start_backend || warn "后端没起来 —— 手工起: $0 local start"
+    fi
+  else
+    systemctl start "$BACKEND_UNIT"
+  fi
+  wait_healthy
+  ok "完成"
 }
 
 cmd_doctor() {
@@ -2193,6 +2517,7 @@ case "$ACTION" in
       *) die "launchd 子命令: install | uninstall | status" ;;
     esac ;;
   hosts)   cmd_hosts ${REST[@]+"${REST[@]}"} ;;
+  db)      cmd_db ${REST[@]+"${REST[@]}"} ;;
   help|-h|--help) usage ;;
   *)        die "未知命令: $ACTION (用 --help 看用法)" ;;
 esac
