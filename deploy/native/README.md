@@ -16,7 +16,7 @@ Docker 那套仍然保留 (`deploy/deploy.sh`), 三套并存, 互不影响。见
 | 崩溃自愈 | systemd `Restart=always` | launchd `KeepAlive` |
 | 配置 / venv / 构建 / 健康检查 / doctor / backup | ✅ | ✅ **完全共用** |
 | 前端托管 | nginx 独立实例 | nginx 独立实例（同一份模板） |
-| MySQL / Redis | 宿主机服务 | 宿主机服务，没有就复用 Docker 那套容器 |
+| MySQL / Redis | 宿主机服务 (脚本装) | 宿主机服务 (brew services / systemd) |
 | 运行身份 | 专用系统用户 `testmate` | 当前登录用户（launchd 无 root 版用户 agent） |
 
 自动选择, 也可以显式指定:
@@ -51,7 +51,7 @@ sudo ./deploy/native/tmctl.sh local hosts fix   # 修宿主名(代码检视 / �
 1/9 环境体检      → 缺什么装什么 (--auto)
 2/9 宿主名解析    → 检查 host.docker.internal 在宿主上通不通 (macOS 专属, 见 §5)
 3/9 生成配置      → JWT_SECRET / MySQL 口令 / admin 口令 随机生成, 不用手抄
-4/9 数据库        → 建 testmate 库 + 用户 (mac 上优先复用 Docker 模式那套容器)
+4/9 数据库        → 装 + 起**本机** MySQL 和 Redis, 建 testmate 库 + 用户 (不用任何容器)
 5/9 Python 依赖   → 建 venv, 按 requirements.lock 装
 6/9 前端构建      → npm ci + vite build, 产物落到 runtime/frontend
 7/9 资产市场 SSH  → 拷私钥进 runtime/ssh
@@ -226,8 +226,6 @@ sudo ./deploy/native/tmctl.sh local hosts fix
 改写成 `host.docker.internal`（那个改写只在后端跑在**容器里**时才做，
 见 `backend_gateway/app/core/settings_store.py` 的 `_rewrite_loopback`）。
 
-而且**数据库是两种模式共用的**, 同一个值两边都对:
-
 | 后端在哪 | `http://127.0.0.1:3000` 被怎么处理 | 结果 |
 |---|---|---|
 | 容器里 (Docker 模式) | 自动改成 `host.docker.internal:3000` | 通 ✅ |
@@ -236,15 +234,41 @@ sudo ./deploy/native/tmctl.sh local hosts fix
 所以设置页里填 `127.0.0.1` 是**通用写法** —— 两种模式都不用改。
 资产市场的 git 远端是 SSH 地址, 不走这套, 仍然要靠 `hosts fix`。
 
-### 数据跟 Docker 模式是同一份
+### 数据库和 Redis 都是**本机**的 (不用任何容器)
 
-mac 上通常没有本机的 MySQL/Redis, 这时 local 模式会**复用 Docker 模式那套容器**:
+裸机模式 = 这台机器自己就能跑起来。所以 MySQL 和 Redis 也必须是**本机服务**:
 
-- 数据库、Redis、市场工作区 —— **跟 Docker 模式同一份**, 随时来回切
-- **数据库账号和口令也沿用** `deploy/.env` 里的 —— 不沿用的话, 改口令会把 Docker
-  模式的 backend 顶掉 (它连不上库), 改 admin 口令更是当场让运维登不进去
-- 资产市场工作区也指向同一个 `DATA_ROOT/market` —— 两个后端各推各的仓库到同一个
-  GitLab 远端会互相覆盖
+| | macOS (local driver) | Linux (systemd driver) |
+|---|---|---|
+| MySQL | `brew install mysql` + `brew services start mysql` | `systemctl enable --now mysqld` |
+| Redis | `brew install redis` + `brew services start redis` | `systemctl enable --now redis-server` |
+| 默认端口 | MySQL `3306` / Redis `6379` | 同左 |
+| 自启 | brew services (登录自启) | systemd (开机自启) |
+
+`local install --auto` 会自己装、自己起、自己建库建用户。
+
+> ⚠️ **以前这里是"本机没 MySQL 就复用 Docker 模式那套容器"** —— 现在没有了。
+> 容器不是本机服务: Docker Desktop 崩了 / 机器重启 / 有人 `docker compose down`,
+> 裸机部署的后端立刻连不上库 —— "非容器部署"名不副实。
+> (真踩过: Docker Desktop 重启把 mysql 容器 SIGKILL 掉, 裸机后端直接起不来。)
+
+几个随之而来的变化, 心里有数就行:
+
+- **两种模式的库是各的**。裸机模式有自己的一份 MySQL / Redis, 数据在
+  `$(brew --prefix)/var/mysql` (mac) 或系统数据目录 (Linux);
+  Docker 模式的数据还在 `deploy/.env` 的 `DATA_ROOT` 卷里。两边互不影响。
+- **装的时候会自动把端口调回本机默认端口**。旧配置里可能还指着 Docker 模式
+  映射出来的端口 (如 `43060` / `63790`) —— 脚本认得出"监听进程是 docker-proxy
+  而不是 mysqld", 会改回 `3306` / `6379` 并写回 `.env`。
+- **MySQL 的 root 免密** (brew / socket 认证)。`.env` 里 `MYSQL_ROOT_PASSWORD`
+  留空即可 —— 脚本发现 root 其实是免密的, 会把这里清空, 别让配置撒谎。
+- **Redis 默认不设口令** (只监听 `127.0.0.1`, 外网够不着)。想让本机 Redis
+  真的带口令: 在 Redis 自己的配置里加 `requirepass`, 再把同一个口令填回
+  `.env` 的 `REDIS_PASSWORD`。
+- **资产市场工作区仍然跟 Docker 模式共用** (`DATA_ROOT/market`) —— 那是 git
+  工作区, 共用才能保证两种模式推的是同一个仓库。
+  但**两种模式的数据库是分开的**, 所以"已上架的资产"记录各存各的。
+
 
 ### ⚠️ 两个后端不能同时跑
 
@@ -405,7 +429,7 @@ sudo ./deploy/native/tmctl.sh install    # 重跑一遍 = 重新生成配置 + �
 | | Docker (`deploy/deploy.sh`) | 裸机 systemd (Linux) | 裸机 local (mac) |
 |---|---|---|---|
 | 隔离 | 容器级, 不碰宿主 | 进程级, 装在宿主上 | 进程级, 装在宿主上 |
-| MySQL / Redis | 容器里跑, 数据在卷 | 复用宿主机服务 (或脚本装) | 复用宿主机 / Docker 那套容器 |
+| MySQL / Redis | 容器里跑, 数据在卷 | 本机服务 (脚本装: systemctl) | 本机服务 (脚本装: brew services) |
 | 开机自启 | 靠 docker daemon 自启 | `systemctl enable` | `launchd` (RunAtLoad) |
 | 崩溃自愈 | docker 的 restart policy | systemd `Restart=always` | launchd `KeepAlive` |
 | 资源占用 | 4 个容器 | 2 个进程 + 宿主机 DB | 2 个进程 + 宿主机 DB |
@@ -419,7 +443,9 @@ sudo ./deploy/native/tmctl.sh install    # 重跑一遍 = 重新生成配置 + �
 | Docker | `deploy/.env` | `deploy/docker-compose.yml` + 数据卷 |
 | 裸机 (两种 driver 共用) | `deploy/native/.env` | `deploy/native/runtime/` |
 
-**mac 上的 local 模式默认跟 Docker 模式共享数据库和资产市场工作区**(见 §5), 切模式不用搬数据。
+**mac 上的 local 模式跟 Docker 模式各用各的数据库** (见 §5「数据库和 Redis 都是本机的」) ——
+裸机模式用本机的 MySQL/Redis, 不碰任何容器; 两者只是**资产市场工作区**共用,
+保证两种模式推的是同一个仓库。
 
 ---
 
@@ -452,6 +478,9 @@ sudo ./deploy/native/tmctl.sh install --offline
 - **源码目录建议放 `/opt/testmate`**。放 `/root` 下的话, 后端单元的 `ProtectHome=read-only` 会挡住运行时目录(`/root` 下) —— 虽然 `ReadWritePaths` 实测能覆盖, 但别赌。
 - `admin` / `backup` / `restore` / `logs` 这几个命令的**参数要写在命令后面**(`tmctl.sh admin --username x`), 其余命令的选项前后都行(`tmctl.sh check --auto` 和 `tmctl.sh --auto check` 等价)。
 - **两个后端不能同时跑**(Docker 的 + 本地的) —— 见 §5「两个后端不能同时跑」。
+- **裸机模式的数据库是本机的, 跟 Docker 模式各存各的** —— 换模式**不会**自动把数据带过去。
+  要带就手工 `mysqldump` / `mysql < dump` (或用 `tmctl.sh backup` 出一份)。
+  共享的只有**资产市场工作区** (git 仓库), 见 §5。
 
 ---
 
@@ -490,6 +519,7 @@ docker run --rm -v "$PWD:/repo" ubuntu:22.04 bash -c \
 deploy/native/
 ├── tmctl.sh                          # 唯一入口 (运维只记这一个)
 ├── lib.sh                            # 公共函数: 日志/系统探测/版本比较/端口/包管理器
+│                                    #   + 本机服务管理 (systemd / brew 双通道)
 │                                    #   + local driver 的 PID 进程管理 + launchd 封装
 │                                    #   + Docker 宿主名映射 (host.docker.internal)
 ├── preflight.sh                      # 环境体检 (check 的实现, install 也复用)

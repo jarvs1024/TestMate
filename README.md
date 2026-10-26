@@ -44,8 +44,8 @@
 **可观测性**：structlog JSON 日志
 **部署**：三种模式并存，互不干扰
   · **Docker**（`deploy/deploy.sh`，生产在跑）—— 4 容器：mysql / redis / backend / frontend
-  · **裸机 systemd**（`deploy/native/tmctl.sh`，Linux）
-  · **裸机 local**（`deploy/native/tmctl.sh`，macOS，launchd 管开机自启与崩溃自愈）
+  · **裸机 systemd**（`deploy/native/tmctl.sh`，Linux）—— 零容器：本机 MySQL/Redis + 本机进程
+  · **裸机 local**（`deploy/native/tmctl.sh`，macOS，launchd 管开机自启与崩溃自愈）—— 零容器：本机 MySQL/Redis + 本机进程
 
 ## 目录结构
 
@@ -137,10 +137,14 @@ sudo ./deploy/native/tmctl.sh install --auto
 
 # ===== 模式 C: 裸机 local (macOS, 无 systemd) =====
 brew install nginx
-./deploy/native/tmctl.sh local install         # 装 + 起
+./deploy/native/tmctl.sh local install --auto  # 装 + 起 (--auto 连本机 MySQL/Redis 一起装)
 sudo ./deploy/native/tmctl.sh local hosts fix  # 让容器里的地址在宿主上也能用
 ./deploy/native/tmctl.sh launchd install       # 开机自启 + 崩溃自愈
 ```
+
+> 裸机模式**不碰任何容器** —— MySQL 和 Redis 也是这台机器自己的服务
+> (macOS 走 `brew services`, Linux 走 `systemd`)。所以 Docker Desktop 崩了、
+> 机器重启都不影响它。详见 [deploy/native/README.md §5](deploy/native/README.md)。
 
 > 模式 C 为什么多一条 `local hosts fix`？`host.docker.internal` 是**容器里**访问宿主用的名字，
 > 本地部署的进程跑在**宿主**上，不修的话代码检视连不上、资产市场也推不到 GitLab。详见 [deploy/native/README.md §5](deploy/native/README.md)。

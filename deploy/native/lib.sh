@@ -152,6 +152,93 @@ systemd_available() {
   return 1
 }
 
+# ==================== 本机服务管理 (systemd / brew 双通道) ====================
+#
+# 裸机部署的 MySQL / Redis 必须是**本机服务** —— 不能靠容器.
+#   macOS  : brew services (launchd 托管, 登录自启, 崩了会被拉起来)
+#   Linux  : systemd (enable --now, 开机自启)
+#
+# 为什么不复用 Docker 模式那套 mysql/redis 容器:
+#   ① 容器不是"本机服务" —— Docker Desktop 崩了 / 机器重启 / 有人 docker compose down,
+#      裸机部署的后端就再也连不上库 (真踩过: Docker Desktop 重启把 mysql 容器
+#      SIGKILL 掉, 裸机后端直接起不来).
+#   ② 两种模式共用一份库 = 改密码 / 改数据会互相顶掉, 运维分不清是谁的锅.
+#   ③ 裸机模式的意义就是"这台机器自己就能跑" —— 挂着容器就名不副实.
+
+# 用哪套服务管理 (systemd / brew / 都没有)
+service_backend() {
+  if systemd_available; then echo systemd; return 0; fi
+  if have_cmd brew; then echo brew; return 0; fi
+  echo ""
+}
+
+# 逻辑服务名 -> brew formula 名
+brew_formula_name() {
+  case "$1" in
+    mysql) echo "mysql" ;;
+    mariadb) echo "mariadb" ;;
+    redis) echo "redis" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# brew formula 装没装
+brew_formula_installed() {
+  local f="$1"
+  have_cmd brew || return 1
+  brew list --formula 2>/dev/null | grep -qx "$f"
+}
+
+# 装一个 brew formula —— 日志留在 PKG_LOG 里, 由调用方打出来
+# ⚠️ 别把输出丢了 —— brew 装不上的时候, 用户需要看到真实报错
+brew_install_formula() {
+  local f="$1"
+  have_cmd brew || return 1
+  PKG_LOG="$(mktemp)"
+  brew install "$f" >"$PKG_LOG" 2>&1
+}
+
+# brew 服务在跑吗
+#
+# ⚠️ 要看**状态列**, 不能只看名字在不在列表里 ——
+#    `brew services list` 里 "none" 表示"已注册但没跑", 只比名字会误判成在跑.
+#    (真踩过: 装完第一次 start 没成功, 脚本却以为服务在跑, 结果后端连不上库.)
+#
+# `brew services list` 的输出:
+#   Name        Status   User  File
+#   mysql       started  user  ~/Library/LaunchAgents/sh.brew.mysql.plist
+brew_service_running() {
+  local f="$1"
+  have_cmd brew || return 1
+  brew services list 2>/dev/null | awk -v n="$f" 'NR>1 && $1==n {print $2; exit}' | grep -qx "started"
+}
+
+# brew 服务状态 (started / stopped / none / error)
+brew_service_status() {
+  local f="$1"
+  have_cmd brew || return 1
+  brew services list 2>/dev/null | awk -v n="$f" 'NR>1 && $1==n {print $2; exit}'
+}
+
+# 起一个 brew 服务 (登录自启)
+# ⚠️ 失败时把 brew 的原话打出来 —— 吞掉的话只剩一句"启动失败", 没法查
+brew_service_start() {
+  local f="$1" out
+  have_cmd brew || return 1
+  out="$(brew services start "$f" 2>&1)" || { printf '%s\n' "$out" >&2; return 1; }
+  printf '%s\n' "$out" >/dev/null
+  return 0
+}
+
+brew_service_restart() {
+  local f="$1" out
+  have_cmd brew || return 1
+  out="$(brew services restart "$f" 2>&1)" || { printf '%s\n' "$out" >&2; return 1; }
+  printf '%s\n' "$out" >/dev/null
+  return 0
+}
+
+
 # ---------- 系统识别 ----------
 
 detect_os() {
@@ -306,27 +393,26 @@ mysql_service_name() {
   echo "mysqld"
 }
 
-# ===== MySQL 调用: 宿主机没客户端就进容器里跑 =====
+# ===== MySQL 调用: 一律走**本机**客户端 =====
 #
-# mac 上默认**没有** mysql 客户端 (brew 装的是 mysql-client, 而且不是必须).
-# 但既然 mysql 跑在 Docker 容器里, 直接 `docker compose exec` 进去执行更省事 ——
-# 不用为了建个库在宿主机上再装一套客户端.
+# ⚠️ 这里以前有个"宿主机没客户端就 docker compose exec 进容器里跑"的兜底 ——
+#    那等于把裸机部署吊在 Docker 上: 容器一停 (Docker Desktop 崩了 / 机器重启 /
+#    有人 docker compose down) , 裸机部署的后端就再也连不上库.
+#    裸机模式必须是**自己的一套**: 本机 MySQL + 本机 Redis + 本机进程.
+#    所以这里没有 Docker 兜底 —— 没客户端就装客户端, 装不上就报错.
 
 # 在 MySQL 上执行 SQL (从 stdin 读)
 # 用法: mysql_exec <端口> <root口令> <<SQL ... SQL
+# ⚠️ stdin 接 /dev/null —— 万一 root 要口令, mysql 会等着敲键盘, 脚本就卡死了.
 mysql_exec() {
   local port="$1" root_pwd="$2"
   local mycli
   mycli="$(mysql_client_cmd)"
-  if [[ -n "$mycli" ]]; then
-    "$mycli" -h 127.0.0.1 -P "$port" -u root "-p${root_pwd}" 2>/dev/null
+  [[ -n "$mycli" ]] || return 1
+  if [[ -n "$root_pwd" ]]; then
+    "$mycli" -h 127.0.0.1 -P "$port" -u root "-p${root_pwd}" 2>/dev/null </dev/null
   else
-    local compose_file="$REPO_ROOT/deploy/docker-compose.yml"
-    local deploy_env="$REPO_ROOT/deploy/.env"
-    [[ -f "$compose_file" && -f "$deploy_env" ]] || return 1
-    have_cmd docker || return 1
-    docker compose -f "$compose_file" --env-file "$deploy_env" exec -T mysql \
-      mysql -uroot "-p${root_pwd}" 2>/dev/null
+    "$mycli" -h 127.0.0.1 -P "$port" -u root 2>/dev/null </dev/null
   fi
 }
 
@@ -335,15 +421,11 @@ mysql_ping() {
   local port="$1" root_pwd="$2"
   local mycli
   mycli="$(mysql_client_cmd)"
-  if [[ -n "$mycli" ]]; then
-    mysqladmin -h 127.0.0.1 -P "$port" -u root "-p${root_pwd}" ping >/dev/null 2>&1
+  [[ -n "$mycli" ]] || return 1
+  if [[ -n "$root_pwd" ]]; then
+    mysqladmin -h 127.0.0.1 -P "$port" -u root "-p${root_pwd}" ping >/dev/null 2>&1 </dev/null
   else
-    local compose_file="$REPO_ROOT/deploy/docker-compose.yml"
-    local deploy_env="$REPO_ROOT/deploy/.env"
-    [[ -f "$compose_file" && -f "$deploy_env" ]] || return 1
-    have_cmd docker || return 1
-    docker compose -f "$compose_file" --env-file "$deploy_env" exec -T mysql \
-      mysqladmin ping -uroot "-p${root_pwd}" >/dev/null 2>&1
+    mysqladmin -h 127.0.0.1 -P "$port" -u root ping >/dev/null 2>&1 </dev/null
   fi
 }
 
@@ -395,15 +477,37 @@ nearest_writable_ancestor() {
 
 # 端口占用者 (给人看的: 进程名)
 port_owner() {
-  local port="$1"
+  local port="$1" owner=""
   if have_cmd ss; then
-    ss -ltnp "sport = :$port" 2>/dev/null | tail -n +2 | sed -E 's/.*users:\(\("([^"]+)".*/\1/' | head -1
-  elif have_cmd lsof; then
-    lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1}'
-  else
-    echo ""
+    owner="$(ss -ltnp "sport = :$port" 2>/dev/null | tail -n +2 \
+             | sed -E 's/.*users:\(\("([^"]+)".*/\1/' | head -1)"
+    # ⚠️ 抠不出进程名时 sed 会**原样输出整行** (没权限看别人的进程时就是那样)
+    #    —— 那不是进程名, 得当"没查到".
+    [[ "$owner" == *"users:"* || "$owner" == *"LISTEN"* ]] && owner=""
   fi
+  if [[ -z "$owner" ]] && have_cmd lsof; then
+    owner="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1}')"
+  fi
+  printf '%s' "$owner"
 }
+
+# 端口后面是不是这个进程 (按进程名匹配)
+#
+# ⚠️ 不能只看"端口有没有被占" —— Docker 模式映射出来的端口**也**有人听
+#    (监听者是 docker-proxy / com.docker.backend), 但那不是本机 MySQL.
+#    判断"这台机器自己有没有 MySQL"只能看监听进程是谁.
+port_owned_by() {
+  local port="$1" pattern="$2" owner
+  owner="$(port_owner "$port")"
+  [[ -n "$owner" ]] || return 1
+  echo "$owner" | grep -qiE "$pattern"
+}
+
+# 本机 MySQL (或 MariaDB) 在这个端口上?
+native_mysql_on() { port_owned_by "$1" 'mysql|maria'; }
+
+# 本机 Redis 在这个端口上?
+native_redis_on() { port_owned_by "$1" 'redis'; }
 
 # 端口占用者的 PID (拿不到就空)
 port_owner_pid() {

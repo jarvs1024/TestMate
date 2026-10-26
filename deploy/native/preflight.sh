@@ -264,28 +264,64 @@ preflight_run() {
   if [[ -n "$mycli" ]]; then
     chk_pass "MySQL/MariaDB 客户端: $mycli $(cmd_version "$mycli")"
   else
-    chk_warn "没有 mysql/mariadb 客户端 —— 装一个: $(pkg_name mysql "$PKG_MGR") (或 mariadb-server)"
+    chk_warn "没有 mysql/mariadb 客户端 —— 装一个: mac: brew install mysql  (Linux: $(pkg_name mysql "$PKG_MGR"))"
   fi
 
-  if unit_exists "mysqld.service" || unit_exists "mariadb.service" || unit_exists "mysql.service"; then
-    chk_pass "MySQL 服务: 宿主机已装 (unit: $(mysql_service_name))"
-  elif have_cmd mysqld || have_cmd mariadbd; then
-    chk_warn "有 mysqld 二进制但没有 systemd 服务 —— 装: $(pkg_name mysql "$PKG_MGR")"
-  else
-    chk_warn "宿主机没有 MySQL —— 装: $(pkg_name mysql "$PKG_MGR") (或 $(pkg_name mariadb "$PKG_MGR"))"
-  fi
+  # MySQL 服务 —— 按这台机器用哪套服务管理来判 (systemd / brew)
+  case "$(service_backend)" in
+    brew)
+      if brew_formula_installed mysql; then
+        local my_st
+        my_st="$(brew_service_status mysql)"
+        if [[ "$my_st" == "started" ]]; then
+          chk_pass "MySQL 服务: brew services ($my_st)"
+        else
+          chk_warn "MySQL 装好了但没在跑 ($my_st) —— 起: brew services start mysql"
+        fi
+      else
+        chk_warn "本机没有 MySQL —— 装: brew install mysql   (加 --auto 让脚本自己装)"
+      fi ;;
+    systemd)
+      if unit_exists "mysqld.service" || unit_exists "mariadb.service" || unit_exists "mysql.service"; then
+        chk_pass "MySQL 服务: 宿主机已装 (unit: $(mysql_service_name))"
+      elif have_cmd mysqld || have_cmd mariadbd; then
+        chk_warn "有 mysqld 二进制但没有 systemd 服务 —— 装: $(pkg_name mysql "$PKG_MGR")"
+      else
+        chk_warn "宿主机没有 MySQL —— 装: $(pkg_name mysql "$PKG_MGR") (或 $(pkg_name mariadb "$PKG_MGR"))"
+      fi ;;
+    *)
+      chk_fail "这台机器既没有 systemd 也没有 brew —— 装不了本机 MySQL (裸机部署不用容器, 必须本机服务)" ;;
+  esac
 
   if have_cmd redis-cli; then
     chk_pass "Redis 客户端: $(cmd_version redis-cli)"
   else
-    chk_warn "没有 redis-cli —— 装: $(pkg_name redis "$PKG_MGR")"
+    chk_warn "没有 redis-cli —— 装: mac: brew install redis  (Linux: $(pkg_name redis "$PKG_MGR"))"
   fi
 
-  if unit_exists "redis.service" || unit_exists "redis-server.service"; then
-    chk_pass "Redis 服务: 宿主机已装 (unit: $(redis_service_name))"
-  else
-    chk_warn "宿主机没有 Redis —— 装: $(pkg_name redis "$PKG_MGR")"
-  fi
+  # Redis 服务 —— 同样分 systemd / brew
+  case "$(service_backend)" in
+    brew)
+      if brew_formula_installed redis; then
+        local rd_st
+        rd_st="$(brew_service_status redis)"
+        if [[ "$rd_st" == "started" ]]; then
+          chk_pass "Redis 服务: brew services ($rd_st)"
+        else
+          chk_warn "Redis 装好了但没在跑 ($rd_st) —— 起: brew services start redis"
+        fi
+      else
+        chk_warn "本机没有 Redis —— 装: brew install redis   (加 --auto 让脚本自己装)"
+      fi ;;
+    systemd)
+      if unit_exists "redis.service" || unit_exists "redis-server.service"; then
+        chk_pass "Redis 服务: 宿主机已装 (unit: $(redis_service_name))"
+      else
+        chk_warn "宿主机没有 Redis —— 装: $(pkg_name redis "$PKG_MGR")"
+      fi ;;
+    *)
+      chk_fail "这台机器既没有 systemd 也没有 brew —— 装不了本机 Redis (裸机部署不用容器, 必须本机服务)" ;;
+  esac
 
   # ============ 四、端口 ============
   section "四、端口占用"
@@ -308,6 +344,11 @@ preflight_run() {
       # MySQL/Redis 本来就该在监听 —— 但要确认占着的确实是它, 不是别的程序
       if [[ -n "$owner" ]] && echo "$owner" | grep -qiE 'mysql|maria|redis'; then
         chk_pass "$label 端口 $p: 已被 $owner 占用 (预期内, 复用它)"
+      elif [[ -n "$owner" ]] && echo "$owner" | grep -qiE 'docker'; then
+        # ⚠️ 这是 Docker 模式映射出来的**容器**端口 ——
+        #    裸机部署不能连它 (容器一停, 裸机后端就废了).
+        chk_warn "$label 端口 $p: 是 Docker 模式映射出来的容器端口 ($owner) —— 裸机部署要用**本机**服务"
+        chk_warn "  装的时候会自动换回本机默认端口 (MySQL 3306 / Redis 6379); 想自己指定就改 .env 的 $label 端口"
       else
         chk_warn "$label 端口 $p: 被别的程序占用${owner:+ (PID $owner)} —— 装完连不上, 改 .env 的 $label 端口"
       fi

@@ -9,7 +9,7 @@
 | 入口 | `deploy/deploy.sh` | `deploy/native/tmctl.sh` | `deploy/native/tmctl.sh local …` |
 | 跑在哪 | Linux 服务器 | Linux 服务器 | macOS |
 | 隔离 | 容器级 | 进程级,装在宿主上 | 进程级,装在宿主上 |
-| MySQL / Redis | 容器里跑 | 复用宿主机服务 | 复用宿主机 / Docker 那套容器 |
+| MySQL / Redis | 容器里跑 | 本机服务（脚本装） | 本机服务（脚本装） |
 | 开机自启 | 靠 docker daemon | `systemctl enable` | `launchd` (RunAtLoad) |
 | 崩溃自愈 | docker restart policy | systemd `Restart=always` | launchd `KeepAlive` |
 | 文档 | 本文件 | `deploy/native/README.md` | `deploy/native/README.md` |
@@ -18,8 +18,14 @@
 
 ```bash
 sudo ./deploy/native/tmctl.sh install --auto    # Linux
-./deploy/native/tmctl.sh local install           # macOS
+./deploy/native/tmctl.sh local install --auto   # macOS
 ```
+
+> `--auto` 会把缺的依赖**连同本机的 MySQL / Redis 一起装上**（Linux 用 systemd，
+> macOS 用 brew services）—— 裸机模式**不碰任何容器**，库和缓存都是这台机器自己的服务。
+> 不加 `--auto` 就只提示，不动手装。
+> 两种模式的库是**各的**：Docker 模式的数据在 `DATA_ROOT` 的卷里，裸机模式在
+> 本机 MySQL / Redis 里，互不影响。详见 [native/README.md §5](native/README.md)。
 
 ### ⚠️ 同一台机器上切模式
 

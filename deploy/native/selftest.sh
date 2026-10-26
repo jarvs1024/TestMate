@@ -272,8 +272,108 @@ else
 fi
 echo
 
-# ==================== 7. shellcheck ====================
-echo "── 7. shellcheck ──"
+# ==================== 7. 裸机模式零容器 ====================
+echo "── 7. 裸机模式零容器 ──"
+#
+# 裸机部署的前提: MySQL / Redis 都是**本机服务**, 不用任何容器.
+# 以前这里是"连不上就 docker compose exec 进容器里跑" / "复用 Docker 模式的
+# mysql/redis 容器" —— 容器一停 (Docker Desktop 崩了 / 机器重启), 裸机后端
+# 就再也连不上库 —— "非容器部署" 名不副实.
+#
+# 这里用断言守住: 以后谁再往数据库路径里塞 docker, 自检立刻红.
+
+# 7.1 lib.sh 的 mysql 调用里不能再有 docker
+mysql_funcs="$(sed -n '/^mysql_exec() {/,/^}/p;/^mysql_ping() {/,/^}/p' "$SCRIPT_DIR/lib.sh")"
+if echo "$mysql_funcs" | grep -qi 'docker'; then
+  failing "lib.sh 的 mysql 调用里还有 docker —— 裸机部署不能靠容器"
+else
+  pass "lib.sh 的 mysql 调用不碰 docker"
+fi
+
+# 7.2 tmctl.sh 里不能再有 ensure_docker_db
+if grep -q 'ensure_docker_db' "$SCRIPT_DIR/tmctl.sh"; then
+  failing "tmctl.sh 里还有 ensure_docker_db —— 裸机部署不能复用 Docker 模式的库"
+else
+  pass "tmctl.sh 没有 ensure_docker_db"
+fi
+
+# 7.3 不能有 "docker compose exec/run mysql|redis" 这类兜底
+if grep -nE 'docker[^#]*(exec|run)[^#]*(mysql|redis)' "$SCRIPT_DIR/tmctl.sh" "$SCRIPT_DIR/lib.sh" >/dev/null 2>&1; then
+  failing "还有 docker exec/run mysql/redis 的兜底 —— 裸机部署不能靠容器"
+else
+  pass "没有 docker exec/run mysql/redis 的兜底"
+fi
+
+# 7.4 本机服务的双通道助手得在 (mac 走 brew, Linux 走 systemd)
+for fn in service_backend brew_formula_name brew_formula_installed brew_service_running brew_service_start brew_install_formula; do
+  if grep -q "^${fn}()" "$SCRIPT_DIR/lib.sh"; then
+    pass "lib.sh 有 $fn"
+  else
+    failing "lib.sh 缺 $fn —— mac 上装不了本机 MySQL/Redis"
+  fi
+done
+
+# 7.5 端口判定: 能分清"本机 mysqld"和"别的进程"
+#     (Docker 模式映射出来的端口**也**有人听, 但监听者是 docker-proxy —— 不能当成本机 MySQL)
+FAKE_PORT=""
+if command -v python3 >/dev/null 2>&1; then
+  FAKE_PORT="$(python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
+fi
+if [[ -n "$FAKE_PORT" ]]; then
+  python3 -c "
+import socket, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', $FAKE_PORT)); s.listen(1); time.sleep(20)
+" &
+  FAKE_PID=$!
+  sleep 1
+  if port_in_use "$FAKE_PORT"; then
+    pass "port_in_use: 认出端口 $FAKE_PORT 有人在听"
+  else
+    failing "port_in_use: 没认出端口 $FAKE_PORT"
+  fi
+  if native_mysql_on "$FAKE_PORT"; then
+    failing "native_mysql_on: 把普通进程当成了 MySQL"
+  else
+    pass "native_mysql_on: 普通进程不算本机 MySQL"
+  fi
+  if native_redis_on "$FAKE_PORT"; then
+    failing "native_redis_on: 把普通进程当成了 Redis"
+  else
+    pass "native_redis_on: 普通进程不算本机 Redis"
+  fi
+  kill "$FAKE_PID" 2>/dev/null || true
+  wait "$FAKE_PID" 2>/dev/null || true
+else
+  skip "python3 没装 —— 端口判定没实测"
+fi
+
+# 7.6 .env 模板里的 MySQL/Redis 必须是本机默认端口 (不是 Docker 映射的那些)
+TPL_PORT_MY="$(env_get "$SCRIPT_DIR/.env.template" "MYSQL_PORT" || echo "")"
+TPL_PORT_RD="$(env_get "$SCRIPT_DIR/.env.template" "REDIS_PORT" || echo "")"
+if [[ "$TPL_PORT_MY" == "3306" && "$TPL_PORT_RD" == "6379" ]]; then
+  pass ".env 模板用的是本机默认端口 (MySQL 3306 / Redis 6379)"
+else
+  failing ".env 模板的端口不对 (MySQL=$TPL_PORT_MY Redis=$TPL_PORT_RD) —— 应该用本机默认端口"
+fi
+
+# 7.7 装的时候要把"指着容器端口"的配置改回本机端口
+if grep -q 'native_mysql_on' "$SCRIPT_DIR/tmctl.sh" && grep -q 'native_redis_on' "$SCRIPT_DIR/tmctl.sh"; then
+  pass "tmctl.sh 按监听进程判断本机 MySQL/Redis (不会误连容器端口)"
+else
+  failing "tmctl.sh 没按监听进程判断 —— 端口被 Docker 映射时会把容器当本机库"
+fi
+echo
+
+# ==================== 8. shellcheck ====================
+echo "── 8. shellcheck ──"
 if command -v shellcheck >/dev/null 2>&1; then
   for f in lib.sh preflight.sh tmctl.sh selftest.sh sandbox-probe.sh; do
     if out="$(shellcheck -S warning -e SC1091 "$SCRIPT_DIR/$f" 2>&1)"; then
