@@ -327,7 +327,12 @@ systemd 单元开了 `NoNewPrivileges` / `ProtectSystem` / `ProtectHome` / `Priv
 
 install 第一次跑自动生成 `.env`, 并把 `JWT_SECRET` / `MySQL_PASSWORD` / `ADMIN_DEFAULT_PASSWORD` 填成随机值。
 
-强度校验跟 Docker 版**同一口径**: JWT_SECRET ≥ 32 字节且不含 change/placeholder/dev/test 字样; 口令 ≥ 12 字符且不是占位符。
+强度校验跟 Docker 版**同一口径**: JWT_SECRET ≥ 32 字节且不含 change/placeholder/dev/test 字样; 口令 ≥ 9 字符且不是占位符。
+
+> ⚠️ 口令门槛 2026-10-27 从 12 降到 9(运维决定保留 `Admin@123`)。
+> 代价: 弱口令能过检查, 而它还在仓库历史里出现过 —— 想收紧就把
+> `deploy/native/lib.sh` 的 `MIN_PASSWORD_LEN` 改回 12, 同时换掉两个 `.env`
+> 里的口令(裸机模式还要 `tmctl.sh admin` 改库里那个账号)。
 
 ### 6.4 admin 口令走临时文件
 

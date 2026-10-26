@@ -338,6 +338,16 @@ env_set() {
   fi
 }
 
+# 口令最小长度 (跟 Docker 版 deploy.sh 同一口径)
+#
+# ⚠️ 2026-10-27: **12 → 9** (运维决定)。
+#    背景: 门槛原本是 12, 正是因为仓库里公开过的默认口令 "Admin@123" 正好 9 字符。
+#    现在这台机器**就用**这个口令, 运维明确要求保留 (记着省事) → 门槛降到 9。
+#    代价说清楚: 这个口令强度弱, 而且它在仓库历史里出现过 —— 谁拿到仓库谁就知道。
+#    想收紧: 把下面的 9 改回 12, 同时把 .env 里的口令换掉 (两个 .env 都要换,
+#    还要用 `tmctl.sh admin` 改库里那个账号, 否则登不进去)。
+MIN_PASSWORD_LEN=9
+
 # 口令强度检查 (跟 Docker 版 deploy.sh 同一口径)
 # 用法: pw_check "<值>" "<键名>"  -> 返回 0 通过
 pw_check() {
@@ -346,8 +356,8 @@ pw_check() {
     echo "${key} 未设置"
     return 1
   fi
-  if [[ ${#val} -lt 12 ]]; then
-    echo "${key} 太短 (${#val} 字符), 至少 12 字符, 推荐: openssl rand -base64 18"
+  if [[ ${#val} -lt $MIN_PASSWORD_LEN ]]; then
+    echo "${key} 太短 (${#val} 字符), 至少 $MIN_PASSWORD_LEN 字符, 推荐: openssl rand -base64 18"
     return 1
   fi
   if echo "$val" | grep -qiE 'change-me|change_me|please-change|changeme|please-generate'; then

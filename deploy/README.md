@@ -74,7 +74,7 @@ cd /opt/testmate
 cp deploy/.env.template deploy/.env
 $EDITOR deploy/.env   # 必改:MYSQL_ROOT_PASSWORD / JWT_SECRET / ADMIN_DEFAULT_PASSWORD
 
-# 3. 一键起(deploy.sh 强制要求:JWT_SECRET ≥ 32 字节,密码 ≥ 12 字符,不能含占位符)
+# 3. 一键起(deploy.sh 强制要求:JWT_SECRET ≥ 32 字节,密码 ≥ 9 字符,不能含占位符)
 sudo ./deploy/deploy.sh
 
 # 4. 建 admin 账号(deploy.sh 会自动建,失败再手动)
@@ -223,7 +223,7 @@ deploy/
 ## 9. 安全检查清单(部署完跑一遍)
 
 - [ ] `JWT_SECRET` 至少 32 字节,不是 `change-me` / `dev-secret`
-- [ ] `MYSQL_ROOT_PASSWORD` / `ADMIN_DEFAULT_PASSWORD` 至少 12 字符
+- [ ] `MYSQL_ROOT_PASSWORD` / `ADMIN_DEFAULT_PASSWORD` 至少 9 字符
 - [ ] `docker-compose.yml` 里 backend 的 `extra_hosts` 段是注释掉的(只开发场景启用)
 - [ ] MySQL 容器的 3306 端口**没暴露到 0.0.0.0**(默认 `MYSQL_HOST_PORT=43060`,改 127.0.0.1 限定)
 - [ ] `.env` 不在 git 仓库里(`.gitignore` 已默认忽略,但 double-check)

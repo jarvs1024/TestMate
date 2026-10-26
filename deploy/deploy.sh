@@ -98,15 +98,18 @@ ensure_env() {
   fi
 
   # MYSQL_ROOT_PASSWORD / ADMIN_DEFAULT_PASSWORD 长度校验(弱密码不可接受)
-  # ⚠️ 门槛 12 字符 —— 原来只要 >=9, 而仓库里公开过的默认口令 "Admin@123"
-  #    正好 9 字符, 刚好卡在门槛上通过校验.
+  # ⚠️ 门槛 **9** 字符 —— 2026-10-27 从 12 降下来的 (运维决定保留已知的
+  #    "Admin@123", 正好 9 字符). 跟 deploy/native/lib.sh 的 MIN_PASSWORD_LEN 同一口径.
+  #    代价: 弱口令能过检查, 而它还在仓库历史里出现过. 想收紧就把这里改回 12
+  #    并把两个 .env 里的口令换掉 (裸机模式还要 `tmctl.sh admin` 改库里那个账号).
+  MIN_PASSWORD_LEN=9
   for key in MYSQL_ROOT_PASSWORD ADMIN_DEFAULT_PASSWORD; do
     val="$(grep "^${key}=" .env | cut -d= -f2- | _strip_quotes )"
     if [[ -z "$val" ]]; then
       die "${key} 未设置"
     fi
-    if [[ ${#val} -lt 12 ]]; then
-      die "${key} 太短 (${#val} 字符),至少 12 字符,推荐: openssl rand -base64 18"
+    if [[ ${#val} -lt $MIN_PASSWORD_LEN ]]; then
+      die "${key} 太短 (${#val} 字符),至少 $MIN_PASSWORD_LEN 字符,推荐: openssl rand -base64 18"
     fi
     # 占位符原样放行会让"忘了改"变成"带着占位符上线"
     if echo "$val" | grep -qiE 'change-me|change_me|please-change|changeme'; then
