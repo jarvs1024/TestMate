@@ -7,19 +7,66 @@
 """
 from __future__ import annotations
 import logging
+import os
 import re
 from typing import Any
 
 from app.core.config import settings
 
 
-def _rewrite_loopback(base: str) -> str:
-    """用户在容器外用 127.0.0.1/localhost 配的地址,在容器内改成 host.docker.internal 才能到 host.
+# 容器判定结果缓存 —— 只算一次, 进程生命周期内不会变
+_IN_CONTAINER: bool | None = None
 
-    生产环境如果服务在另一个 docker 容器里(用 service name),保持原样;
+
+def _detect_container() -> bool:
+    """后端是不是跑在容器里.
+
+    ⚠️ 这个判断决定 `_rewrite_loopback` 改不改写地址, 搞错会让"能连的服务"
+       连不上 —— 所以宁可多判几个信号.
+    """
+    if os.path.exists("/.dockerenv"):
+        return True
+    if os.environ.get("KUBERNETES_SERVICE_HOST"):
+        return True
+    try:
+        with open("/proc/1/cgroup", "r", encoding="utf-8") as f:
+            cgroup = f.read()
+    except OSError:
+        return False
+    return any(k in cgroup for k in ("docker", "containerd", "kubepods", "podman", "lxc"))
+
+
+def _in_container() -> bool:
+    """后端是不是跑在容器里 (带缓存).
+
+    容器里的 127.0.0.1 是**容器自己**, 要到宿主得用 host.docker.internal;
+    而**裸机部署**(systemd / macOS local)的后端就在宿主上跑, 这时 127.0.0.1
+    正是宿主自己 —— 所以改写必须只在容器里做.
+    """
+    global _IN_CONTAINER
+    if _IN_CONTAINER is None:
+        _IN_CONTAINER = _detect_container()
+    return _IN_CONTAINER
+
+
+def _rewrite_loopback(base: str) -> str:
+    """把 loopback 地址改成"能到宿主"的那个 —— **只在容器里改**.
+
+    为什么要有这层: 用户在设置页填 `http://127.0.0.1:3000` 指的是**宿主上**
+    跑着的服务 (ReviewAgent / RAGFlow 都是宿主进程). 后端在容器里时, 容器的
+    127.0.0.1 是容器自己, 必须换成 host.docker.internal 才到得了宿主.
+
+    ⚠️ **以前是无条件改写的, 那是错的** ——
+    裸机部署 (deploy/native 的 systemd 与 macOS local 两种 driver) 的后端
+    就跑在宿主上, 此时的 127.0.0.1 正是宿主自己; 再改写成 host.docker.internal
+    就连不通了 (宿主上那个名字解析到 Docker 虚拟网卡, 从宿主侧连不通).
+    症状: 设置页里把 ReviewAgent 地址填成 127.0.0.1, "测试连接"却报 HTTP 502,
+    而且**用户改不回来** —— 改完还是被改写掉.
+
+    生产环境如果服务在另一个 docker 容器里 (用 service name), 保持原样;
     只在 URL 用了 loopback 时改写.
     """
-    if not base:
+    if not base or not _in_container():
         return base
     return re.sub(
         r"https?://(?:127\.0\.0\.1|localhost)(?=[:/])",

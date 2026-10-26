@@ -217,6 +217,25 @@ sudo ./deploy/native/tmctl.sh local hosts fix
 > `local install --auto` 会试着自动修 (要输一次 sudo 口令); 没给 `--auto` 就只提示,
 > 你自己挑时机执行上面那条命令。
 
+### 另一种走法: 设置页里直接填 `127.0.0.1`
+
+设置页的「代码检视 / ReviewAgent」这类**指向宿主服务**的地址, 在裸机模式下
+**填 `http://127.0.0.1:3000` 就能通**, 不必等 `hosts fix` 生效。
+
+因为后端跑在宿主上, 它的 `127.0.0.1` 就是宿主本身 —— 后端**不会**把这个地址
+改写成 `host.docker.internal`（那个改写只在后端跑在**容器里**时才做，
+见 `backend_gateway/app/core/settings_store.py` 的 `_rewrite_loopback`）。
+
+而且**数据库是两种模式共用的**, 同一个值两边都对:
+
+| 后端在哪 | `http://127.0.0.1:3000` 被怎么处理 | 结果 |
+|---|---|---|
+| 容器里 (Docker 模式) | 自动改成 `host.docker.internal:3000` | 通 ✅ |
+| 宿主上 (裸机 local / systemd) | 原样保留 | 通 ✅ |
+
+所以设置页里填 `127.0.0.1` 是**通用写法** —— 两种模式都不用改。
+资产市场的 git 远端是 SSH 地址, 不走这套, 仍然要靠 `hosts fix`。
+
 ### 数据跟 Docker 模式是同一份
 
 mac 上通常没有本机的 MySQL/Redis, 这时 local 模式会**复用 Docker 模式那套容器**:
