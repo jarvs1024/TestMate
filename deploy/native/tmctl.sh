@@ -558,10 +558,21 @@ render_app_configs() {
 
 # 往 backend.env 写一行 —— ⚠️ 值里有空格就必须加引号
 #    (`APP_NAME=TestMate Gateway` 不加引号, 被 bash source 时会把 Gateway 当命令执行)
+#
+# ⚠️ 值里**已经有双引号**的 (比如 CORS_ORIGINS 这个 JSON 数组) 必须用**单引号**包 ——
+#    用双引号包会写出 CORS_ORIGINS="["http://a","http://b"]",
+#    bash source 时解析出来是乱的 (被切成好几段), pydantic 读的时候直接
+#    SettingsError → 后端起不来.
+#    (单引号 bash / systemd EnvironmentFile / 脚本里剥引号 三种读法都认)
 emit_env() {
   local k="$1" v="$2"
   case "$v" in
-    *[[:space:]]*|*'"'*|*"'"*)
+    *'"'*)
+      case "$v" in
+        *"'"*) printf '%s="%s"\n' "$k" "$v" ;;   # 又有双引号又有单引号: 没辙, 只能双引号
+        *)     printf "%s='%s'\n" "$k" "$v" ;;
+      esac ;;
+    *[[:space:]]*|*"'"*)
       printf '%s="%s"\n' "$k" "$v" ;;
     *)
       printf '%s=%s\n' "$k" "$v" ;;
