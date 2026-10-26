@@ -1,11 +1,9 @@
-# TestMate 裸机部署 (native / systemd)
+# TestMate 裸机部署 (native)
 
-> 不走 Docker, 直接在 Linux 上跑进程。用 systemd 管生命周期和开机自启。
-> 适合: 内网服务器不让装 Docker / 机器资源紧张 / 运维只认 systemctl。
+> 不走 Docker, 直接在机器上跑进程。Linux 用 systemd 管生命周期和开机自启, macOS 用 launchd。
+> 适合: 内网服务器不让装 Docker / 机器资源紧张 / 运维只认 systemctl / mac 上要本地跑。
 
-**macOS 也能用** —— mac 没有 systemd, 但有 launchd。这套脚本会自动识别: 有 systemd 走 systemd, 没有走 local driver (PID 文件管进程 + launchd 管开机自启)。**运维不用记两套命令。**
-
-Docker 那套仍然保留 (`deploy/deploy.sh`), 三套并存, 互不影响。见文末「几种模式怎么选」。
+Docker 那套仍然保留 (`deploy/deploy.sh`), 三套并存, 互不影响。见 §8「几种模式怎么选」。
 
 ---
 
@@ -19,6 +17,7 @@ Docker 那套仍然保留 (`deploy/deploy.sh`), 三套并存, 互不影响。见
 | 配置 / venv / 构建 / 健康检查 / doctor / backup | ✅ | ✅ **完全共用** |
 | 前端托管 | nginx 独立实例 | nginx 独立实例（同一份模板） |
 | MySQL / Redis | 宿主机服务 | 宿主机服务，没有就复用 Docker 那套容器 |
+| 运行身份 | 专用系统用户 `testmate` | 当前登录用户（launchd 无 root 版用户 agent） |
 
 自动选择, 也可以显式指定:
 
@@ -40,21 +39,24 @@ sudo ./deploy/native/tmctl.sh install --auto
 **macOS (local + launchd)**:
 
 ```bash
-./deploy/native/tmctl.sh local install          # 装 + 起
-./deploy/native/tmctl.sh launchd install        # 再加开机自启 + 崩溃自愈
+brew install nginx                        # 前端静态托管
+./deploy/native/tmctl.sh local install     # 装 + 起
+sudo ./deploy/native/tmctl.sh local hosts fix   # 修宿主名(代码检视 / 市场推送要用, 见 §5)
+./deploy/native/tmctl.sh launchd install   # 再加开机自启 + 崩溃自愈
 ```
 
 `install` 会依次做完:
 
 ```
-1/8 环境体检      → 缺什么装什么 (--auto)
-2/8 生成配置      → JWT_SECRET / MySQL 口令 / admin 口令 随机生成, 不用手抄
-3/8 数据库        → 建 testmate 库 + 用户 (mac 上优先复用 Docker 模式那套容器)
-4/8 Python 依赖   → 建 venv, 按 requirements.lock 装
-5/8 前端构建      → npm ci + vite build, 产物落到 runtime/frontend
-6/8 资产市场 SSH  → 拷私钥进 runtime/ssh
-7/8 应用配置      → backend.env + nginx.conf (独立实例)
-8/8 启动          → 起进程 + 健康校验 + 建 admin
+1/9 环境体检      → 缺什么装什么 (--auto)
+2/9 宿主名解析    → 检查 host.docker.internal 在宿主上通不通 (macOS 专属, 见 §5)
+3/9 生成配置      → JWT_SECRET / MySQL 口令 / admin 口令 随机生成, 不用手抄
+4/9 数据库        → 建 testmate 库 + 用户 (mac 上优先复用 Docker 模式那套容器)
+5/9 Python 依赖   → 建 venv, 按 requirements.lock 装
+6/9 前端构建      → npm ci + vite build, 产物落到 runtime/frontend
+7/9 资产市场 SSH  → 拷私钥进 runtime/ssh
+8/9 应用配置      → backend.env + nginx.conf (独立实例)
+9/9 启动          → 起进程 + 健康校验 + 建 admin
 ```
 
 ---
@@ -118,7 +120,7 @@ sudo ./deploy/native/tmctl.sh local hosts fix
 
 体检是**只读**的 —— 不装东西、不改文件、不建目录。可以随时跑。
 
-分八组, 每项都给出「怎么修」:
+分九组, 每项都给出「怎么修」:
 
 | 组 | 检查什么 |
 |---|---|
@@ -130,8 +132,11 @@ sudo ./deploy/native/tmctl.sh local hosts fix
 | 六、目录与权限 | 源码可读 / 运行时目录可写 |
 | 七、部署配置 | `.env` 在不在 / JWT_SECRET 与两个口令的强度 |
 | 八、网络 | pypi / npm registry 通不通 |
+| 九、Docker 主机名 | **仅 local 模式** —— `host.docker.internal` 在宿主上通不通 (见 §5) |
 
 退出码: 有 FAIL 项 → 1, 否则 0。适合挂到巡检脚本里。
+
+> 体检会**跑完全部组**再汇总 —— 一项不过不会中途掐断。体检的价值就是"一次跑完, 把所有不行的地方和怎么修都列出来"。
 
 ---
 
@@ -144,7 +149,7 @@ sudo ./deploy/native/tmctl.sh local hosts fix
     └── runtime/                    ← 所有运行时产物 (不入 git)
         ├── venv/                   ← Python 虚拟环境
         ├── frontend/               ← 前端构建产物 (nginx 的 root)
-        ├── market/                 ← 资产市场 git 工作区
+        ├── market/                 ← 资产市场 git 工作区 (默认位置; mac 上通常指向共享目录, 见 §5)
         ├── logs/                   ← nginx 日志
         ├── run/                    ← nginx pid / 临时目录
         ├── config/
@@ -154,12 +159,14 @@ sudo ./deploy/native/tmctl.sh local hosts fix
         └── ssh/                    ← 资产市场用的 SSH 私钥 (600)
 ```
 
-两个 systemd 服务:
+两种 driver 的服务:
 
-| 单元 | 干什么 | 端口 |
-|---|---|---|
-| `testmate-backend.service` | uvicorn 跑 FastAPI | `127.0.0.1:8000` (只监听本机) |
-| `testmate-frontend.service` | nginx 托管前端 + 反代 `/api/` | `0.0.0.0:8080` (对外) |
+| driver | 单元 | 干什么 | 端口 |
+|---|---|---|---|
+| systemd | `testmate-backend.service` | uvicorn 跑 FastAPI | `127.0.0.1:8000` (只监听本机) |
+| systemd | `testmate-frontend.service` | nginx 托管前端 + 反代 `/api/` | `0.0.0.0:8080` (对外) |
+| launchd | `com.testmate.backend` | 同上, 后端 | `127.0.0.1:8000` |
+| launchd | `com.testmate.frontend` | 同上, nginx | `0.0.0.0:8080` |
 
 后端端口**默认只绑 127.0.0.1** —— 外部只能走 nginx, 直连不了后端。要改 `.env` 的 `BIND_ADDR`。
 
@@ -254,7 +261,7 @@ cd deploy && docker compose --env-file .env start backend
 
 ## 6. 关键设计决定
 
-### 5.1 后端**只能一个 worker**
+### 6.1 后端**只能一个 worker**
 
 `BACKEND_WORKERS=1`, 不是保守, 是**必须**:
 
@@ -265,31 +272,36 @@ cd deploy && docker compose --env-file .env start backend
 
 要提吞吐请加机器, 不要加 worker。
 
-### 5.2 服务用专用系统用户, 不用 root
+### 6.2 服务用专用系统用户, 不用 root
 
-install 会建 `testmate` 系统用户(nologin, 无 home), 服务以它运行, 运行时目录归它。想换改 `.env` 的 `RUN_USER`。
+**systemd driver**: install 会建 `testmate` 系统用户(nologin, 无 home), 服务以它运行, 运行时目录归它。想换改 `.env` 的 `RUN_USER`。
 
 systemd 单元开了 `NoNewPrivileges` / `ProtectSystem` / `ProtectHome` / `PrivateDevices` 等加固项。
 
-### 5.3 口令自动生成, 不让人手抄
+**local driver**(macOS)没有这一层 —— launchd 的用户级 agent 只能以**当前登录用户**身份跑。
+这是 launchd 的机制决定的(没有 root 版的用户 agent), 不是没做加固。
+
+### 6.3 口令自动生成, 不让人手抄
 
 install 第一次跑自动生成 `.env`, 并把 `JWT_SECRET` / `MySQL_PASSWORD` / `ADMIN_DEFAULT_PASSWORD` 填成随机值。
 
 强度校验跟 Docker 版**同一口径**: JWT_SECRET ≥ 32 字节且不含 change/placeholder/dev/test 字样; 口令 ≥ 12 字符且不是占位符。
 
-### 5.4 admin 口令走临时文件
+### 6.4 admin 口令走临时文件
 
 `create_admin.py` 用 `--password-file` 传口令, **不进命令行** —— `ps aux` 里别人看不见。
 
-### 5.5 迁移自动跑
+### 6.5 迁移自动跑
 
 后端启动时 `init_db()` 会 `alembic upgrade head`。**只有**「版本表不存在 / 没记录」(老环境用 `create_all` 建的) 才 stamp 兜底 —— 绝不会把版本号盖到 head 把新迁移整段跳过。
 
-### 5.6 资产市场工作区
+### 6.6 资产市场工作区
 
 裸机模式下 `MARKET_DIR` (默认 `runtime/market`) 是**宿主机上的一个目录**, 后端启动时会自己 `git init + remote add + fetch + checkout` 建好仓库 —— 不用脚本预先 clone。
 
 但 SSH 身份必须先备好: install 会把你 `~/.ssh/id_ed25519` 拷进 `runtime/ssh/` (权限 600) 并在 `backend.env` 里配好 `GIT_SSH_COMMAND`。没配 SSH 的话, 仓库能建起来但拉不到远端, 上传推送会失败 —— `tmctl.sh doctor` 能看出来。
+
+mac 上 install 会**优先把 `MARKET_DIR` 对齐到 Docker 模式那份**(同一个 `DATA_ROOT/market`), 这样切模式不用搬数据。
 
 ---
 
@@ -303,6 +315,18 @@ sudo ./deploy/native/tmctl.sh update
 ```
 
 `update` = 拉代码 → 重装依赖 → 重建前端 → 重新生成配置 → 重启 → 健康校验。
+
+### 开机自启 (macOS)
+
+```bash
+./deploy/native/tmctl.sh launchd install     # 装 launchd (开机自启 + 崩溃自愈)
+./deploy/native/tmctl.sh launchd status      # 看状态
+./deploy/native/tmctl.sh launchd uninstall   # 卸载 (服务也一并停)
+```
+
+> launchd 与 PID 模式是**互斥**的: 装了 launchd 之后, `local stop` 会转成 `launchctl bootout`
+> (RunAtLoad+KeepAlive 的服务停不掉只能卸载), `local start` / `restart` 也转去走 launchctl。
+> 想回到纯 PID 模式: `launchd uninstall` 再 `local start`。
 
 ### 备份
 
@@ -391,14 +415,15 @@ sudo ./deploy/native/tmctl.sh install --offline
 - **systemd driver 没有在生产环境验证过** —— 这套脚本是照着 Docker 版的行为写的(Docker 版在生产跑着), 但真机首次部署建议先在测试机走一遍 `check` + `install`。
   (mac 上的 local driver **已真机验证过**: 装完能访问 / 启停 / launchd 自启 / 崩溃自愈 / 端口冲突自动让路, 全过。)
 - **macOS 上 `check` 报「systemd 不可用」是正常的** —— local driver 不需要 systemd, 体检里那一项会标成「不需要」。
+- **macOS: `host.docker.internal` 在宿主上默认是不通的** —— 那是容器里访问宿主用的名字。
+  本地部署的进程跑在宿主上, 必须先跑一次 `sudo ./deploy/native/tmctl.sh local hosts fix`
+  (往宿主 `/etc/hosts` 加一行), 否则代码检视连不上、资产市场也推不到 GitLab。见 §5。
+- **macOS: launchd 的 agent 只能以当前登录用户身份跑** —— 没有 root 版用户 agent, 所以没有 systemd 那层"专用系统用户 + 沙箱加固"。见 §6.2。
 - 宿主机自带的 nginx 若也监听 8080, 端口体检会报占用 —— install 会**自动换端口**, 不用手工改。
 - `update` 用的是 `git pull --ff-only` —— 生产目录有本地改动时会拒绝, 这是故意的(别让人在生产目录乱改)。
 - **源码目录建议放 `/opt/testmate`**。放 `/root` 下的话, 后端单元的 `ProtectHome=read-only` 会挡住运行时目录(`/root` 下) —— 虽然 `ReadWritePaths` 实测能覆盖, 但别赌。
 - `admin` / `backup` / `restore` / `logs` 这几个命令的**参数要写在命令后面**(`tmctl.sh admin --username x`), 其余命令的选项前后都行(`tmctl.sh check --auto` 和 `tmctl.sh --auto check` 等价)。
 - **两个后端不能同时跑**(Docker 的 + 本地的) —— 见 §5「两个后端不能同时跑」。
-- **macOS: `host.docker.internal` 在宿主上默认是不通的** —— 那是容器里访问宿主用的名字。
-  本地部署的进程跑在宿主上, 必须先跑一次 `sudo ./deploy/native/tmctl.sh local hosts fix`
-  (往宿主 `/etc/hosts` 加一行), 否则代码检视连不上、资产市场也推不到 GitLab。见 §5。
 
 ---
 
@@ -438,8 +463,10 @@ deploy/native/
 ├── tmctl.sh                          # 唯一入口 (运维只记这一个)
 ├── lib.sh                            # 公共函数: 日志/系统探测/版本比较/端口/包管理器
 │                                    #   + local driver 的 PID 进程管理 + launchd 封装
+│                                    #   + Docker 宿主名映射 (host.docker.internal)
 ├── preflight.sh                      # 环境体检 (check 的实现, install 也复用)
-├── selftest.sh                       # 部署资产自检 (模板 + systemd + nginx + shellcheck + .env 解析)
+├── selftest.sh                       # 部署资产自检 (模板 + systemd + nginx + shellcheck
+│                                    #   + .env 解析 + 宿主名映射)
 ├── sandbox-probe.sh                  # systemd 沙箱回归 (单元真能起来吗)
 ├── .env.template                     # 部署配置模板
 ├── units/

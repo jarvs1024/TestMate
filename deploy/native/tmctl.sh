@@ -30,6 +30,8 @@
 #   launchd install     macOS: 装 launchd (开机自启 + 崩溃自愈)
 #   launchd uninstall   macOS: 卸载 launchd
 #   launchd status      macOS: 看 launchd 状态
+#   local hosts check   macOS: 看 host.docker.internal 在宿主上通不通
+#   local hosts fix     macOS: 往宿主 /etc/hosts 加映射 (代码检视 / 市场推送要用)
 #
 # 选项:
 #   --auto        install/check 时自动装缺失的依赖

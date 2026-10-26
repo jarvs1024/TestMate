@@ -1,21 +1,24 @@
-# TestMate Linux 一键部署
+# TestMate Docker 一键部署
 
 > 内网 SSD 测试组 AI 工作平台。Vue 3 + FastAPI + RAGFlow。
 
-## 0. 两种模式,先选一个
+## 0. 三种模式,先选一个
 
-| | Docker(本文件) | 裸机 systemd |
-|---|---|---|
-| 入口 | `deploy/deploy.sh` | `deploy/native/tmctl.sh` |
-| 隔离 | 容器级 | 进程级,装在宿主上 |
-| MySQL / Redis | 容器里跑 | 复用宿主机服务 |
-| 开机自启 | 靠 docker daemon | `systemctl enable`,独立可控 |
-| 文档 | 本文件 | `deploy/native/README.md` |
+| | Docker(本文件) | 裸机 systemd | 裸机 local |
+|---|---|---|---|
+| 入口 | `deploy/deploy.sh` | `deploy/native/tmctl.sh` | `deploy/native/tmctl.sh local …` |
+| 跑在哪 | Linux 服务器 | Linux 服务器 | macOS |
+| 隔离 | 容器级 | 进程级,装在宿主上 | 进程级,装在宿主上 |
+| MySQL / Redis | 容器里跑 | 复用宿主机服务 | 复用宿主机 / Docker 那套容器 |
+| 开机自启 | 靠 docker daemon | `systemctl enable` | `launchd` (RunAtLoad) |
+| 崩溃自愈 | docker restart policy | systemd `Restart=always` | launchd `KeepAlive` |
+| 文档 | 本文件 | `deploy/native/README.md` | `deploy/native/README.md` |
 
-**两套并存,互不干扰。** 不让装 Docker / 资源紧张 / 运维只认 systemctl → 走裸机模式:
+**三套并存,互不干扰。** 不让装 Docker / 资源紧张 / 运维只认 systemctl → 走裸机 systemd;mac 上要本地跑 → 走裸机 local:
 
 ```bash
-sudo ./deploy/native/tmctl.sh install --auto
+sudo ./deploy/native/tmctl.sh install --auto    # Linux
+./deploy/native/tmctl.sh local install           # macOS
 ```
 
 ---
@@ -24,7 +27,7 @@ sudo ./deploy/native/tmctl.sh install --auto
 
 | 角色 | CPU | 内存 | 磁盘 | 备注 |
 |---|---|---|---|---|
-| P0(仅 TestMate 主栈) | 4 核 | 8 GB | 50 GB | MySQL/Redis 跑本机 |
+| TestMate 主栈 | 4 核 | 8 GB | 50 GB | MySQL/Redis 跑本机 |
 
 - OS:Ubuntu 22.04 LTS / Debian 12 / RHEL 9 / Anolis 23 均可,内核 ≥ 5.4
 - Docker ≥ 24.0,**Compose v2 优先**(脚本同时兼容 v1)
@@ -48,7 +51,10 @@ $EDITOR deploy/.env   # 必改:MYSQL_ROOT_PASSWORD / JWT_SECRET / ADMIN_DEFAULT_
 sudo ./deploy/deploy.sh
 
 # 4. 建 admin 账号(deploy.sh 会自动建,失败再手动)
-python3 scripts/create_admin.py --username admin --password '<强密码>' --role admin
+#    口令走文件传, 不进命令行 —— ps aux 里别人看不见
+printf '%s' '<强密码>' > /tmp/tm-admin-pw && chmod 600 /tmp/tm-admin-pw
+python3 scripts/create_admin.py --username admin --password-file /tmp/tm-admin-pw --role admin
+rm -f /tmp/tm-admin-pw
 ```
 
 启动后:
@@ -171,12 +177,19 @@ docker compose -f deploy/docker-compose.yml exec backend alembic revision --auto
 ```
 deploy/
 ├── .env.template             # 环境模板(cp 出 .env)
+├── .env.example              # 示例配置(只给变量名和用途, 不含任何口令)
 ├── docker-compose.yml        # 主栈(mysql / redis / backend / frontend)
-├── deploy.sh                 # Linux 一键部署脚本(在线/离线, 含 JWT/密码强度校验)
+├── deploy.sh                 # 一键部署脚本(在线/离线, 含 JWT/密码强度校验)
 ├── offline-save.sh           # 离线镜像打包
 ├── offline-images.txt        # 离线镜像清单(5 个 base + 2 个业务)
 ├── backup.sh                 # 数据备份(mysqldump + redis rdb)
 ├── restore.sh                # 数据恢复(配 backup.sh,含 dry-run 模式)
+├── native/                   # 裸机模式(不走 Docker) —— 见 native/README.md
+│   ├── tmctl.sh              # 运维唯一入口
+│   ├── lib.sh / preflight.sh # 公共函数 / 环境体检
+│   ├── selftest.sh           # 部署资产自检
+│   ├── sandbox-probe.sh      # systemd 沙箱回归
+│   └── units/                # systemd 单元 + nginx 配置 + launchd 单元模板
 └── README.md                 # 本文件
 ```
 
