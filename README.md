@@ -159,4 +159,8 @@ sudo ./deploy/native/tmctl.sh local hosts fix  # 让容器里的地址在宿主�
 ./deploy/native/tmctl.sh backup     # 备份
 ```
 
+> **同一台机器上 Docker 模式和裸机 local 不能同时跑**（两个后端会抢同一批资产市场 job），
+> 切模式要把另一套停干净——**包括 frontend 容器**，否则那个端口会变成「页面能开、接口全 502」的假象。
+> 具体命令见 [deploy/README.md §0](deploy/README.md)。
+
 详见 [deploy/native/README.md](deploy/native/README.md)。

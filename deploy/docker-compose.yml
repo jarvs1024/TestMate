@@ -170,7 +170,12 @@ services:
     ports:
       - "${FRONTEND_HOST_PORT:-8080}:80"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      # ⚠️ 必须探 **API**, 不能只探静态页 ——
+      #    只探 / 的话, backend 容器一停, frontend 照样 healthy,
+      #    而它的 /api/ 全是 502 —— "页面能开但接口全挂" 的状态在
+      #    docker ps 里完全看不出来, 运维只能靠用户报障才发现.
+      #    探 /api/v1/health (liveness, 不碰数据库) 能如实反映"能不能用".
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/api/v1/health"]
       interval: 30s
       timeout: 5s
       retries: 3

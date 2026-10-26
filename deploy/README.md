@@ -21,6 +21,27 @@ sudo ./deploy/native/tmctl.sh install --auto    # Linux
 ./deploy/native/tmctl.sh local install           # macOS
 ```
 
+### ⚠️ 同一台机器上切模式
+
+Docker 模式和裸机 local **不能同时跑**——两个后端会抢同一批资产市场 job(队列在进程内, 不跨进程) → git `index.lock` 冲突 / 重复推 GitLab。所以切模式要把另一套的**后端停掉**:
+
+```bash
+# 切到本地部署 (macOS)
+cd deploy && docker compose --env-file .env stop backend frontend
+./deploy/native/tmctl.sh local start
+
+# 切回 Docker 模式
+./deploy/native/tmctl.sh local stop
+cd deploy && docker compose --env-file .env start backend frontend
+```
+
+> **frontend 容器也要停**, 不只是 backend ——
+> backend 停了但 frontend 还在跑的话, 那个端口的**页面能打开, 但所有接口都是 502**
+> (nginx 代理不到后端), 看着像平台坏了, 其实是端口用错了。
+> `tmctl.sh local status` 会主动提醒这件事。
+>
+> 两个模式的端口不同 (Docker 用 `FRONTEND_HOST_PORT`, 本地用 `FRONTEND_PORT`), 切换后入口地址会变。
+
 ---
 
 ## 1. 服务器最低配置

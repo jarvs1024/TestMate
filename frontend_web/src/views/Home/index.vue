@@ -87,6 +87,7 @@ import type { Capability } from '@/api/capabilities';
 import { getOverview } from '@/api/reviewagent';
 import { getSyncStatus, listAssets } from '@/api/assets';
 import { kbHealth, listDatasets } from '@/api/kb';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 interface Todo {
   key: string;
@@ -261,12 +262,11 @@ async function loadTodos() {
   todos.value = list;
 }
 
-/** 后端的 detail 可能是字符串也可能是对象 —— 取不到就退化到 message */
+/** 后端的 detail 可能是字符串也可能是对象 —— 取不到就退化到 message
+ *  ⚠️ 状态码也一并翻译 —— 502/503 的原始报文 ("Request failed with status code 502")
+ *    对用户是天书, 而这恰恰是本地部署最常见的故障 (后端没在跑). */
 function errText(e: any, fallback: string): string {
-  const d = e?.response?.data?.detail;
-  if (typeof d === 'string' && d) return d;
-  if (d && typeof d === 'object' && d.message) return String(d.message);
-  return e?.message || fallback;
+  return httpErrorText(errorStatus(e), errorDetail(e), fallback);
 }
 
 // ===== 角色 meta 取数 =====

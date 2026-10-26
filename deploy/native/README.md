@@ -238,14 +238,23 @@ Docker 模式的 backend 和 local 模式的 backend **同时跑**会出事:
 所以切模式要**二选一**:
 
 ```bash
-cd deploy && docker compose --env-file .env stop backend   # 停 Docker 的
+cd deploy && docker compose --env-file .env stop backend frontend   # 停 Docker 的
 ./deploy/native/tmctl.sh local start                        # 起本地的
 # 反过来:
 ./deploy/native/tmctl.sh local stop
-cd deploy && docker compose --env-file .env start backend
+cd deploy && docker compose --env-file .env start backend frontend
 ```
 
 `local start` 会检查并提醒你 Docker 的 backend 还在跑。
+
+> ⚠️ **Docker 的 frontend 容器也要一起停** —— 只停 backend 的话, 那个端口的
+> **页面能打开, 但所有接口都是 502** (nginx 代理不到已经停掉的 backend),
+> 看着像"平台坏了", 其实是访问错了端口。
+> `tmctl.sh local status` 会主动提醒; Docker 那边 frontend 容器的 healthcheck
+> 也已经改成探 `/api/v1/health`, 所以后端一停它就会变成 unhealthy, `docker ps` 里看得见。
+>
+> 两个模式的端口不同 (Docker 用 `FRONTEND_HOST_PORT`, 本地用 `FRONTEND_PORT`),
+> 切换后入口地址会变 —— 以 `tmctl.sh local status` 打印的地址为准。
 
 ### 端口冲突自动让路
 

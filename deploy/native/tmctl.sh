@@ -963,6 +963,40 @@ warn_concurrent_backend() {
   echo
 }
 
+# Docker 模式的 frontend 容器还在跑, 但它的 backend 停了 → 那个端口的接口全是 502.
+#
+# ⚠️ 这个状态特别有迷惑性: 页面能打开 (静态文件在容器里), 但所有接口 502
+#    (nginx 代理不到已经停掉的 backend) —— 看起来像"平台坏了", 实际是端口用错了.
+#    本地模式下 Docker 的 backend **必须**停 (两个后端不能同时跑), 所以要提醒.
+warn_docker_frontend() {
+  local compose_file="$REPO_ROOT/deploy/docker-compose.yml"
+  local deploy_env="$REPO_ROOT/deploy/.env"
+  [[ -f "$compose_file" && -f "$deploy_env" ]] || return 0
+  have_cmd docker || return 0
+
+  local fe_cid fe_running be_cid be_running fe_port local_port
+  fe_cid="$(docker compose -f "$compose_file" --env-file "$deploy_env" ps -q frontend 2>/dev/null || true)"
+  [[ -n "$fe_cid" ]] || return 0
+  fe_running="$(docker inspect -f '{{.State.Running}}' "$fe_cid" 2>/dev/null || echo false)"
+  [[ "$fe_running" == "true" ]] || return 0
+
+  # backend 也在跑 → Docker 模式是完整的一套, 不用管
+  be_cid="$(docker compose -f "$compose_file" --env-file "$deploy_env" ps -q backend 2>/dev/null || true)"
+  if [[ -n "$be_cid" ]]; then
+    be_running="$(docker inspect -f '{{.State.Running}}' "$be_cid" 2>/dev/null || echo false)"
+    [[ "$be_running" == "true" ]] && return 0
+  fi
+
+  fe_port="$(env_get "$deploy_env" "FRONTEND_HOST_PORT" || echo 8080)"
+  local_port="$(cfg FRONTEND_PORT 8080)"
+  warn "⚠️ Docker 模式的 frontend 容器还在跑 (端口 $fe_port), 但它的 backend 容器没在跑"
+  warn "   → 那个地址的**页面能打开, 但所有接口都是 502** (nginx 代理不到后端), 看着像平台坏了"
+  warn "   本地模式的入口是: http://localhost:$local_port"
+  warn "   想让 $fe_port 那个端口也别报错, 停掉它:"
+  warn "     cd deploy && docker compose --env-file .env stop frontend"
+  echo
+}
+
 # 服务是不是由 launchd 接管了
 local_launchd_loaded() {
   launchd_loaded "com.testmate.backend" 2>/dev/null && return 0
@@ -1053,6 +1087,8 @@ cmd_hosts() {
 }
 
 local_do_start() {
+  # 两条路径都要提醒 (launchd 接管 / PID 模式) —— 端口用错是本地部署最容易踩的坑
+  warn_docker_frontend
   if local_launchd_loaded; then
     log "服务由 launchd 接管 —— 已经在跑了"
     wait_healthy
@@ -1132,6 +1168,11 @@ local_do_status() {
       printf "    %-20s %b %s (没监听)\n" "$label" "${C_RED}✗${C_OFF}" "$port"
     fi
   done
+
+  # Docker 的 frontend 容器还在跑 → 那个端口的页面能开, 但接口全 502.
+  # 不说的话用户一定会去访问那个地址, 然后以为平台坏了.
+  echo
+  warn_docker_frontend
 
   echo
   echo "  健康检查:"

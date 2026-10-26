@@ -1,6 +1,7 @@
 import axios, { InternalAxiosRequestConfig } from 'axios';
 import { ElMessage } from 'element-plus';
 import { useUserStore } from '@/stores/user';
+import { httpErrorText } from '@/utils/httpError';
 
 // 公共只读路由 (publicRead) 的 anonymous JWT.
 // 后端 get_optional_user 接受任意有效 JWT; sub=0 查不到 user → 返回 anonymous 占位 User.
@@ -101,7 +102,9 @@ request.interceptors.response.use(
       // ⚠️ silent: 调用方自己会兜底降级的请求 (比如首页给卡片取指标数字),
       //    失败时**不要**弹全局错误 —— 否则首页一进来就弹一个"ragflow error",
       //    卡片却好好地显示着降级文案, 像是出了故障.
-      ElMessage.error(err.response?.data?.detail || err.message);
+      // ⚠️ 502/503 这类必须翻成人话 —— 原始报文是 "Request failed with status code 502",
+      //    用户完全看不出"页面能开但后端没跑"这个关键信息.
+      ElMessage.error(httpErrorText(status, err.response?.data?.detail));
     }
     return Promise.reject(err);
   }
