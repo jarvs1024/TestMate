@@ -9,6 +9,7 @@
 import { defineStore } from 'pinia';
 import { listCapabilities, type Capability } from '@/api/capabilities';
 import { CAPABILITY_KINDS, type CapabilityKind } from '@/constants/capabilityKinds';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 export const useCapabilityStore = defineStore('capabilities', {
   state: () => ({
@@ -64,7 +65,10 @@ export const useCapabilityStore = defineStore('capabilities', {
         this.items = data.items || [];
         this.loaded = true;
       } catch (e: any) {
-        this.error = e?.message || '能力列表加载失败';
+        // ⚠️ 别直接把 axios 的 message 甩出去 —— 502 时是
+        //    "Request failed with status code 502", 对用户等于天书,
+        //    而 502 最常见的原因是"后端没在跑", 不说清楚用户只会以为平台坏了.
+        this.error = httpErrorText(errorStatus(e), errorDetail(e), '能力列表加载失败');
         this.items = [];
       } finally {
         this.loading = false;

@@ -583,6 +583,7 @@ import {
 import ErrorView from '@/components/ErrorView.vue';
 import CapabilityShell from '@/components/CapabilityShell.vue';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 const loading = ref(false);
 const loadError = ref('');
 const health = ref<HealthResp | null>(null);
@@ -915,7 +916,7 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
     dismissalsByRule.value = dbr || [];
   } catch (e: any) {
     if (seq !== reloadSeq) return;   // 过期请求的失败不该改页面
-    loadError.value = (e?.response?.data?.detail || e?.message || '未知错误');
+    loadError.value = (httpErrorText(errorStatus(e), errorDetail(e), '未知错误'));
     if (!opts.silent) {
       ElMessage.error('代码检视 V2 加载失败: ' + loadError.value);
     }
@@ -1200,7 +1201,7 @@ async function openTimeline(m: MrRow) {
   try {
     timeline.value = await getTimeline(m.project_id, m.mr_id);
   } catch (e: any) {
-    ElMessage.error('时间线加载失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('时间线加载失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
     tlOpen.value = false;
   } finally {
     tlLoading.value = '';

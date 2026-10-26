@@ -311,6 +311,7 @@ import { listUsers, type ManagedUser } from '@/api/users';
 import SettingRow from './components/SettingRow.vue';
 import UserManage from './components/UserManage.vue';
 import { useUserStore } from '@/stores/user';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 const userStore = useUserStore();
 const isAdmin = computed(() => userStore.user?.role === 'admin');
@@ -343,10 +344,9 @@ async function loadUsers() {
 
 /** 后端 422 的 detail 是字符串, 403/409 也是 —— 统一取出来给人看 (对象 detail 退化到 message) */
 function errText(e: any, fallback: string): string {
-  const d = e?.response?.data?.detail;
-  if (typeof d === 'string' && d) return d;
-  if (d && typeof d === 'object' && d.message) return String(d.message);
-  return e?.message || fallback;
+  // ⚠️ 状态码也要翻译 —— 502/503 的原始报文 ("Request failed with status code 502")
+  //    对用户是天书, 而这恰恰是本地部署最常见的故障 (后端没在跑).
+  return httpErrorText(errorStatus(e), errorDetail(e), fallback);
 }
 
 const groups = ref<{ category: string; label: string; items: SettingItem[] }[]>([]);
@@ -554,7 +554,7 @@ async function load() {
     }
   } catch (e: any) {
     // 失败不抛 —— 抛出去就是 unhandled rejection, 页面上什么都看不出来
-    loadError.value = e?.response?.data?.detail || e?.message || '配置加载失败';
+    loadError.value = httpErrorText(errorStatus(e), errorDetail(e), '配置加载失败');
   }
 }
 
@@ -598,7 +598,7 @@ async function onSave(it: SettingItem) {
     drafts[it.key] = v;
     ElMessage.success(`已保存: ${it.key}`);
   } catch (e: any) {
-    ElMessage.error(`保存失败: ${e?.message || e}`);
+    ElMessage.error(`保存失败: ${httpErrorText(errorStatus(e), errorDetail(e))}`);
   } finally {
     saving.value = null;
   }
@@ -621,7 +621,7 @@ async function onTest(testKey: string) {
   try {
     testResults[testKey] = await fn();
   } catch (e: any) {
-    testResults[testKey] = { ok: false, status: 'off', message: e?.message || '请求失败', detail: null };
+    testResults[testKey] = { ok: false, status: 'off', message: httpErrorText(errorStatus(e), errorDetail(e), '请求失败'), detail: null };
   } finally {
     testing.value = null;
   }

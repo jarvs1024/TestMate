@@ -261,6 +261,7 @@ import {
   fmtSize, fmtTime, fmtChunkMethod, docIcon,
   runStatusClass, runStatusLabel, fmtDuration, sourceLabel,
 } from '@/utils/format';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
@@ -389,7 +390,7 @@ async function loadDocs(datasetId: string) {
     }
     docsByDataset.value[datasetId] = all;
   } catch (e: any) {
-    ElMessage.error('加载文档失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('加载文档失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
     docsByDataset.value[datasetId] = [];
   } finally {
     docLoadingByDs.value[datasetId] = false;
@@ -436,7 +437,7 @@ async function openChunks(d: KbDataset, doc: KbDocument) {
     chunksList.value = r.chunks;
     chunksTotal.value = r.total;
   } catch (e: any) {
-    ElMessage.error('加载分段失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('加载分段失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     chunksLoading.value = false;
   }
@@ -460,7 +461,7 @@ async function loadAll() {
   } catch (e: any) {
     rfStatus.value = 'off'; rfMsg.value = '加载失败';
     // ⚠️ 失败 ≠ 空列表 —— 表格里要单独说 (别再显示「暂无数据集」)
-    dsError.value = e?.response?.data?.detail || e?.message || '数据集加载失败';
+    dsError.value = httpErrorText(errorStatus(e), errorDetail(e), '数据集加载失败');
     ElMessage.error('知识库加载失败: ' + dsError.value);
   } finally { loading.value = false; }
 }

@@ -22,6 +22,7 @@ import {
 } from './assetForm';
 import { kindMeta } from './kindMeta';
 import { MCP_TEMPLATE, formatMcpConfig, parseMcpConfig } from './mcpConfig';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 export interface UseAssetUploadFormOptions {
   /** 新建还是更新版本 */
@@ -341,7 +342,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
         kind: form.kind, total_files: 0, files: [], doc_file: '',
         has_skill_md: false, has_plugin_manifest: false, has_mcp_config: false,
         installable: false, block_reason: '',
-        issues: ['体检失败: ' + (e?.response?.data?.detail || e?.message)],
+        issues: ['体检失败: ' + (httpErrorText(errorStatus(e), errorDetail(e)))],
         warnings: [],
       };
     } finally {

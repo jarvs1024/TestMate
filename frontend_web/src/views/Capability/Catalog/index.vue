@@ -208,6 +208,7 @@ import {
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
 } from '@/api/assets';
 import { isAuthor } from './identity';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 /**
  * 从 Git 远端地址里取出**给人看的仓库路径** (如 root/testmate-market).
@@ -310,10 +311,9 @@ const syncError = ref('');
 
 /** 后端的 detail 可能是字符串也可能是对象 —— 取不到就退化到 message */
 function errText(e: any, fallback: string): string {
-  const d = e?.response?.data?.detail;
-  if (typeof d === 'string' && d) return d;
-  if (d && typeof d === 'object' && d.message) return String(d.message);
-  return e?.message || fallback;
+  // ⚠️ 状态码也要翻译 —— 502/503 的原始报文 ("Request failed with status code 502")
+  //    对用户是天书, 而这恰恰是本地部署最常见的故障 (后端没在跑).
+  return httpErrorText(errorStatus(e), errorDetail(e), fallback);
 }
 
 /**
@@ -512,7 +512,7 @@ async function fetchList(opts: { silent?: boolean } = {}) {
     }
   } catch (e: any) {
     if (seq !== listSeq) return;   // 过期请求的失败不该改页面
-    const msg = e?.response?.data?.detail || e?.message || '未知错误';
+    const msg = httpErrorText(errorStatus(e), errorDetail(e), '未知错误');
     if (silent) {
       refreshError.value = msg;
     } else {
@@ -642,7 +642,7 @@ async function doSync() {
     await loadKindCounts();
     await loadSyncStatus();
   } catch (e: any) {
-    ElMessage.error('同步失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('同步失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     syncing.value = false;
   }

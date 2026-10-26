@@ -221,6 +221,7 @@ import { renderMarkdown } from '@/utils/markdown';
 import { downloadBlob } from '@/utils/download';
 import { kindMeta } from './kindMeta';
 import { isAuthor } from './identity';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -317,7 +318,7 @@ async function doDiscard() {
     emit('deleted');
     emit('changed');
   } catch (e: any) {
-    ElMessage.error('删除失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('删除失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     busy.value = false;
   }
@@ -367,7 +368,7 @@ async function loadDoc(code: string) {
     doc.value = d;
   } catch (e: any) {
     if (seq !== docSeq) return;   // 过期请求的失败不该改页面
-    docError.value = e?.response?.data?.detail || e?.message || '文档读取失败';
+    docError.value = httpErrorText(errorStatus(e), errorDetail(e), '文档读取失败');
   } finally {
     if (seq === docSeq) docLoading.value = false;
   }
@@ -421,7 +422,7 @@ async function doDownload() {
       `已下载 ${it.code}-${it.version}.zip —— 在 Agent 里导入这个压缩包即可安装`,
     );
   } catch (e: any) {
-    ElMessage.error('下载失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('下载失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     busy.value = false;
   }
@@ -464,7 +465,7 @@ async function doApplyUnpublish() {
     ElMessage.success('下架申请已提交, 等管理员确认');
     emit('changed');
   } catch (e: any) {
-    ElMessage.error('申请失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('申请失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     busy.value = false;
   }
@@ -499,7 +500,7 @@ async function doReviewUnpublish() {
     emit('deleted');
     emit('changed');
   } catch (e: any) {
-    ElMessage.error('审核失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('审核失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     busy.value = false;
   }
@@ -524,7 +525,7 @@ async function doCancelUnpublish() {
     ElMessage.success('已撤销, 资产保持上架');
     emit('changed');
   } catch (e: any) {
-    ElMessage.error('撤销失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('撤销失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     busy.value = false;
   }
@@ -540,7 +541,7 @@ async function doRepublish() {
     ElMessage.success('已重新上架');
     emit('changed');
   } catch (e: any) {
-    ElMessage.error('操作失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('操作失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     busy.value = false;
   }
@@ -584,7 +585,7 @@ async function doReview(decision: 'approve' | 'reject') {
     ElMessage.success(decision === 'approve' ? '已通过审核, 资产已上架' : '已驳回, 理由已通知发布者');
     emit('changed');
   } catch (e: any) {
-    ElMessage.error('审核失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('审核失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     busy.value = false;
   }
@@ -599,7 +600,7 @@ async function doSubmit() {
     ElMessage.success('已重新提交, 等待管理员审核');
     emit('changed');
   } catch (e: any) {
-    ElMessage.error('提交失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('提交失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     busy.value = false;
   }

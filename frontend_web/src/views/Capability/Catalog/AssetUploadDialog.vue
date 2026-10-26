@@ -308,6 +308,7 @@ import { getAsset, getJob, retryJob, uploadAsset, updateAsset, type AssetItem, t
 import { KIND_META } from './kindMeta';
 import { MCP_TEMPLATE } from './mcpConfig';
 import { useAssetUploadForm } from './useAssetUploadForm';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -451,7 +452,7 @@ async function submit() {
     job.value = created;
     await poll(created.id);
   } catch (e: any) {
-    ElMessage.error('提交失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('提交失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
     submitting.value = false;
   }
 }
@@ -507,7 +508,7 @@ async function doRetry() {
     job.value = await retryJob(job.value.id);
     await poll(job.value.id);
   } catch (e: any) {
-    ElMessage.error('重试失败: ' + (e?.response?.data?.detail || e?.message));
+    ElMessage.error('重试失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
     submitting.value = false;
   }
 }

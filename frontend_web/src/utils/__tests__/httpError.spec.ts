@@ -12,7 +12,8 @@ describe('httpErrorText', () => {
 
   it('503 / 504 / 500 也得说清楚是哪一环坏了', () => {
     expect(httpErrorText(503)).toContain('数据库');
-    expect(httpErrorText(504)).toContain('超时');
+    // ⚠️ nginx 上游不可达时有时返 504 不是 502 —— 译文也得覆盖"后端没在跑"
+    expect(httpErrorText(504)).toContain('后端');
     expect(httpErrorText(500)).toContain('500');
   });
 

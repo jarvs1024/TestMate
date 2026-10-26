@@ -5,6 +5,7 @@
  * 真正的拦截在后端 —— 两边规则要一样, 不然会出现"前端说行、后端说不行".
  */
 import { CODE_PATTERN, SEGMENT_PATTERN } from './assetForm';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 export interface McpParseOk {
   ok: true;
   config: Record<string, any>;
@@ -37,7 +38,7 @@ export function parseMcpConfig(
   try {
     cfg = JSON.parse(raw);
   } catch (e: any) {
-    const msg = e?.message || String(e);
+    const msg = httpErrorText(errorStatus(e), errorDetail(e), String(e));
     const pos = /position (\d+)/i.exec(msg);
     if (pos) {
       const at = Number(pos[1]);

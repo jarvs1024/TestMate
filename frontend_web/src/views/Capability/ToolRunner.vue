@@ -172,6 +172,7 @@ import { useRoute } from 'vue-router';
 import { getCapability, type Capability, type AgentInputField } from '@/api/capabilities';
 import request from '@/utils/request';
 import CapabilityShell from '@/components/CapabilityShell.vue';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 const route = useRoute();
 const code = String(route.params.code);
@@ -474,7 +475,7 @@ async function onRun() {
   }
 
   } catch (e: any) {
-    events.value.push({ type: 'err', title: '运行出错', content: e?.message || String(e) });
+    events.value.push({ type: 'err', title: '运行出错', content: httpErrorText(errorStatus(e), errorDetail(e), String(e)) });
     console.error('onRun error', e);
   } finally {
     running.value = false;
@@ -507,10 +508,9 @@ onMounted(async () => {
 
 /** 后端的 detail 可能是字符串也可能是对象 —— 取不到就退化到 message */
 function errText(e: any, fallback: string): string {
-  const d = e?.response?.data?.detail;
-  if (typeof d === 'string' && d) return d;
-  if (d && typeof d === 'object' && d.message) return String(d.message);
-  return e?.message || fallback;
+  // ⚠️ 状态码也要翻译 —— 502/503 的原始报文 ("Request failed with status code 502")
+  //    对用户是天书, 而这恰恰是本地部署最常见的故障 (后端没在跑).
+  return httpErrorText(errorStatus(e), errorDetail(e), fallback);
 }
 </script>
 
