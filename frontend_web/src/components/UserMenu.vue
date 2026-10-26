@@ -15,8 +15,15 @@
             <div class="dd-role">{{ roleText(userStore.user?.role) }}</div>
           </div>
         </el-dropdown-item>
-        <el-dropdown-item divided command="settings">设置</el-dropdown-item>
-        <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+        <!-- ⚠️ 未登录时这两条都不能留 ——
+             · 「退出登录」: 你本来就没登录, "退出"谁去? 点了还会弹一句
+               "已退出登录" (假的), 纯属误导.
+             · 「设置」: 设置页所有接口都要登录, 未登录点进去必然被踢回登录页.
+             跟 2026-10-25 那次删死路一个道理 —— 点了没用的菜单项比没有更糟.
+             所以未登录时这一格只留「登录」, 登录完菜单自然变成 设置 + 退出登录. -->
+        <el-dropdown-item v-if="loggedIn" divided command="settings">设置</el-dropdown-item>
+        <el-dropdown-item v-if="loggedIn" command="logout">退出登录</el-dropdown-item>
+        <el-dropdown-item v-else divided command="login">登录</el-dropdown-item>
       </el-dropdown-menu>
     </template>
   </el-dropdown>
@@ -31,6 +38,16 @@ import { useUserStore } from '@/stores/user';
 const router = useRouter();
 const userStore = useUserStore();
 const initial = computed(() => (userStore.user?.username || '?')[0]?.toUpperCase() || '?');
+
+/**
+ * 是否已登录 —— 顶栏下拉靠它切菜单.
+ *
+ * 取 store 的 getter (!!token), 不看 user 对象:
+ *   登录动作是"先拿 token 再拉 /me", 半登录态下 token 有、user 可能还没落,
+ *   反过来 clearSession 只清两者, 不会出现"有 user 没 token"的假登录态.
+ *   跟 views/Home/index.vue 的 loggedIn 同一口径.
+ */
+const loggedIn = computed(() => userStore.isLoggedIn);
 
 function roleText(r?: string) {
   if (r === 'admin') return '管理员';
@@ -47,6 +64,8 @@ function roleText(r?: string) {
  *   · 「主题 · ☀ / 🌙 / 自动」→ 只让用户自己去按那个主题按钮, 而它就在旁边
  *   死路菜单项比没有更糟 —— 用户以为有功能, 点一下才发现是空头支票.
  *   主题切换走 AppHeader 的 ThemeSwitcher, 那里一颗按钮就够了.
+ *
+ * 未登录时菜单只剩「登录」一条 (2026-10-25 补) —— 详见模板里的注释.
  */
 function onCommand(cmd: string) {
   if (cmd === 'logout') {
@@ -55,6 +74,13 @@ function onCommand(cmd: string) {
     router.push('/login');
   } else if (cmd === 'settings') {
     router.push('/settings');
+  } else if (cmd === 'login') {
+    // ⚠️ 带 redirect —— 用户可能是在某个页面发现没登录才点菜单进来的,
+    //    登录完应该回原来那一页, 而不是被丢回首页.
+    //    已经在登录页时不重复跳 (会白白把 query 里的 redirect 冲掉).
+    if (router.currentRoute.value.path !== '/login') {
+      router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } });
+    }
   }
 }
 </script>
