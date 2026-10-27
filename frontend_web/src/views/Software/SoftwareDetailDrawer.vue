@@ -127,7 +127,17 @@ import { useUserStore } from '@/stores/user';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { formatSize } from './softwareForm';
 
-const props = defineProps<{ modelValue: boolean; code: string | null }>();
+const props = defineProps<{
+  modelValue: boolean;
+  code: string | null;
+  /**
+   * 刷新计数 —— 外面改了数据就 +1, 抽屉重新读一次.
+   *
+   * ⚠️ 为什么需要它: 抽屉是**常驻**的 (v-model 一直开着), 路由/抽屉都不会重建它.
+   *    在抽屉里发完新版本, 抽屉里的版本历史还是旧的 —— 用户会以为"新版本没传上去".
+   */
+  refreshKey?: number;
+}>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void;
   (e: 'changed'): void;
@@ -161,6 +171,11 @@ async function load() {
 
 watch(() => [props.modelValue, props.code], ([open]) => {
   if (open) load();
+});
+
+// ⚠️ 外面说"数据变了" → 重新读一次 (发完新版本 / 删完之后)
+watch(() => props.refreshKey, () => {
+  if (props.modelValue) load();
 });
 
 async function doDownload(version: string) {

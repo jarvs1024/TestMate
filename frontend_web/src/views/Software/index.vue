@@ -76,7 +76,7 @@
 
     <!-- ===== 详情抽屉 ===== -->
     <SoftwareDetailDrawer
-      v-model="drawerOpen" :code="currentCode"
+      v-model="drawerOpen" :code="currentCode" :refresh-key="detailRefreshKey"
       @changed="load" @new-version="openVersion" />
 
     <!-- ===== 上传 / 发版本 ===== -->
@@ -122,6 +122,8 @@ const configLoaded = ref(false);
 
 const drawerOpen = ref(false);
 const currentCode = ref<string | null>(null);
+/** 详情抽屉的刷新计数 —— 发完新版本/删完之后 +1, 让抽屉重读一次 */
+const detailRefreshKey = ref(0);
 const currentItem = ref<SoftwareDetail | null>(null);
 const uploadOpen = ref(false);
 const uploadMode = ref<'create' | 'version'>('create');
@@ -209,6 +211,7 @@ async function onDone() {
   await load();
   await loadCategories();
   // 详情抽屉开着的话, 刷新一下它 (版本历史变了)
+  detailRefreshKey.value += 1;
   if (drawerOpen.value && currentCode.value) {
     try {
       currentItem.value = await getSoftware(currentCode.value);

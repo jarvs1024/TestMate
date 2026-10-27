@@ -218,13 +218,8 @@ const FILE_NAME = `${CODE}.bin`;
         .find((b) => (b.textContent || '').includes('发布新版本'));
       if (btn) btn.click();
     });
+    // 等抽屉刷新 (发完新版本后详情抽屉要自动重读 —— 否则用户看到的是旧的版本历史)
     await sleep(4000);
-    await page.evaluate(() => {
-      const btn = [...document.querySelectorAll('.sw-drawer button')]
-        .find((b) => (b.textContent || '').includes('发新版本'));
-      if (btn) btn.click();
-    });
-    await sleep(600);
 
     const after = await page.evaluate(() => {
       const d = document.querySelector('.sw-drawer');
@@ -248,6 +243,9 @@ const FILE_NAME = `${CODE}.bin`;
     check('E23 旧版本仍然有下载按钮', oldDl);
 
     // ---------- 收尾: 彻底清理 (记录 + 磁盘文件) ----------
+    // ⚠️ 清理之后会故意再读一次详情 (预期 404) —— 那一下的报错不算"JS 错误",
+    //    所以先记下此时的错误数, E26 只看清理**之前**有没有出错.
+    const errorsBeforeCleanup = errors.length;
     const cleaned = await page.evaluate(async (c) => {
       const t = localStorage.getItem('testmate:token');
       const r = await fetch('/api/v1/software/' + c + '/purge', {
@@ -264,7 +262,7 @@ const FILE_NAME = `${CODE}.bin`;
     }, CODE);
     check('E25 清理后详情接口返回 404', gone === 404, 'HTTP ' + gone);
 
-    check('E26 全程无 JS 错误', errors.length === 0, errors.slice(0, 3).join(' | '));
+    check('E26 全程无 JS 错误', errorsBeforeCleanup === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {
     check('脚本执行', false, String(e && e.stack || e));
   } finally {
