@@ -48,6 +48,21 @@ cd deploy && docker compose --env-file .env start backend frontend
 >
 > 两个模式的端口不同 (Docker 用 `FRONTEND_HOST_PORT`, 本地用 `FRONTEND_PORT`), 切换后入口地址会变。
 
+### ⚠️ 软件库的存储路径在两种模式里不是同一个东西
+
+| | 裸机 | 容器 |
+|---|---|---|
+| 进程看到的路径 | `<runtime>/data/software` | `/data/software` |
+| 谁给的 | `backend.env` 的 `SOFTWARE_STORAGE_PATH` | compose 的 `environment` + 绑定挂载 |
+| 宿主上的位置 | `deploy/native/runtime/data/software` | `$DATA_ROOT/software` |
+
+所以设置项 `software.storage_path` **在容器模式通常要留空** —— 填宿主路径容器里根本看不见。
+留空时后端用环境变量, 软件库页(管理员可见)会显示当前路径与它的来源(`设置项 / 环境变量 / 默认路径`),
+不用再猜"我改了设置项怎么没生效"。
+
+⚠️ **容器里没挂卷 = 软件包会丢** —— 重建容器会清掉容器可写层。
+后端启动时会体检这个目录并打日志, 不可用会直接喊出来, 不用等到用户传文件才发现。
+
 ---
 
 ## 1. 服务器最低配置
@@ -133,6 +148,17 @@ echo "0 3 * * * root /opt/testmate/deploy/backup.sh /var/backups/testmate" | sud
 产出:
 - `mysql-YYYY-MM-DD-HHMM.sql.gz` — mysqldump
 - `redis-YYYY-MM-DD-HHMM.rdb` — redis RDB 快照
+
+⚠️ **软件库的文件本体不在备份里** —— 软件包最大 5G/个, 整个目录打包不现实。
+它落在 `DATA_ROOT/software`(容器里挂给后端的 `/data/software`), 要单独备份:
+
+```bash
+sudo tar czf /var/backups/testmate/software-$(date +%F).tar.gz \
+    -C "$(grep '^DATA_ROOT=' /opt/testmate/deploy/.env | cut -d= -f2-)" software
+```
+
+> 数据库里存的是**相对路径**(`<code>/<version>/<文件名>`), 所以把目录原样拷回去,
+> 记录还对得上; 换根目录的话要在设置页把 `software.storage_path` 指到新位置。
 
 ### 4.2 恢复
 

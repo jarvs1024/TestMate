@@ -1971,6 +1971,8 @@ launchd_do_install() {
 
   wait_healthy
 
+  local fe_port
+  fe_port="$(cfg FRONTEND_PORT 8080)"
   echo
   ok "launchd 安装完成"
   echo "  后端: com.testmate.backend"

@@ -103,6 +103,12 @@ services:
       # ⚠️ DIFY_* 已于 2026-10-25 整体下线 (引擎 / 数据源 / 配置 / 接口 / 文案全清),
       #    compose 里这组透传是残留 —— config.py 早就没有对应字段了.
 
+      # ⚠️ CORS 白名单 —— 裸机模式的 backend.env 里会写
+      #    ["http://localhost:<前端端口>","http://127.0.0.1:<前端端口>"],
+      #    容器模式以前没写 → 用的后端默认值 (5173/8080) —— **跟容器前端端口对不上**.
+      #    浏览器走 nginx 同源代理时用不到 CORS, 但直接调后端端口 (18000) 会被拦.
+      CORS_ORIGINS: '["http://localhost:${FRONTEND_HOST_PORT:-8090}","http://127.0.0.1:${FRONTEND_HOST_PORT:-8090}"]'
+
       RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-}
       RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:-}
 
@@ -126,8 +132,9 @@ services:
       MARKET_GIT_BRANCH: ${MARKET_GIT_BRANCH:-main}
       MARKET_SYNC_INTERVAL_SECONDS: ${MARKET_SYNC_INTERVAL_SECONDS:-30}
 
-      # 软件库 —— 软件包存放根目录 (容器内路径). 对应下面的 software_data 命名卷.
-      # ⚠️ 5G 的包要落在这里 —— 卷必须在 (否则容器重建后软件包全没了).
+      # 软件库 —— 软件包存放根目录 (容器内路径). 与下面 volumes 里
+      #   ${DATA_ROOT}/software → /data/software 的**绑定挂载**是同一个位置, 别改成不一致的值.
+      # ⚠️ 5G 的包要落在这里 —— 挂载必须在 (否则容器重建后软件包全没了).
       SOFTWARE_STORAGE_PATH: /data/software
 
       ADMIN_DEFAULT_PASSWORD: ${ADMIN_DEFAULT_PASSWORD:-ChangeMe@2026}
