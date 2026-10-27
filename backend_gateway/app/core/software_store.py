@@ -88,10 +88,18 @@ ORPHAN_TTL_HOURS = 24
 def repo_root() -> Path:
     """仓库根目录 —— 相对路径都相对于它解析.
 
-    本文件在 backend_gateway/app/core/ 下, 所以往上三层:
-        core → app → backend_gateway → <repo>
+    ⚠️ **容器里的布局不一样**, 所以这里不能只按"上三层"算:
+      · 裸机: <repo>/backend_gateway/app/core/software_store.py → 仓库根 = 上三层
+      · 容器: /app/app/core/software_store.py → 上三层是 "/" (整份 backend_gateway
+        的内容被 COPY 进 /app, 容器里没有 "仓库" 这个概念)
+    所以先**认标志目录** (backend_gateway / frontend_web), 认不到再退回上三层 ——
+    容器里退到 "/" 也正好: 兜底的存放目录 /data/software 正好就是挂载卷。
     """
-    return Path(__file__).resolve().parents[3]
+    here = Path(__file__).resolve()
+    for p in here.parents:
+        if (p / "backend_gateway").is_dir() or (p / "frontend_web").is_dir():
+            return p
+    return here.parents[3]
 
 
 def default_root() -> Path:
@@ -396,6 +404,26 @@ def usage_info(root: Path) -> dict[str, Any]:
             info["used_bytes"] = usage.used
         except OSError:
             pass
+    return info
+
+
+def probe_storage(root: Path) -> dict[str, Any]:
+    """启动时的存储根体检 —— 返回可读的状态说明.
+
+    ⚠️ 为什么要在**启动时**查一遍 (而不是等第一次上传失败):
+       存储根不可写的典型原因是"容器里没挂卷"或"systemd 没放行 ReadWritePaths" ——
+       这两个都是**部署**问题, 等到用户传文件才报"存储目录不可写", 运维会一头雾水.
+    """
+    info = usage_info(root)
+    if not info["exists"]:
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            info["exists"] = root.is_dir()
+            info["writable"] = os.access(root, os.W_OK)
+        except OSError as e:
+            info["error"] = f"建不出来: {e}"
+    if info["exists"] and not info["writable"]:
+        info["error"] = "目录存在但不可写 (权限? 容器里没挂卷? systemd 的 ReadWritePaths 没放行?)"
     return info
 
 

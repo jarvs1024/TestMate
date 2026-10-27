@@ -80,6 +80,8 @@ export interface SoftwareConfig {
   public_download: boolean;
   /** 存储根目录 (仅管理员可见) */
   storage_root: string;
+  /** 根目录是哪来的: setting(设置项) / env(环境变量) / default(兜底) */
+  storage_source: string;
   /** 存储根是否可用 (仅管理员) */
   path_ok: boolean;
   used_bytes: number;

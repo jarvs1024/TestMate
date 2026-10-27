@@ -132,7 +132,10 @@ do_up() {
   log "2/5 创建数据目录..."
   DATA_ROOT_VAL="$(grep '^DATA_ROOT=' .env | cut -d= -f2-)"
   DATA_ROOT_VAL="${DATA_ROOT_VAL:-/opt/testmate/data}"
-  mkdir -p "$DATA_ROOT_VAL"/{mysql,redis,logs}
+  # ⚠️ software 是**软件包的存放目录** (挂给后端容器的 /data/software).
+  #    不提前建出来的话, Docker 会用 root 身份自动建 —— 能用, 但运维看不见,
+  #    也没法提前给它挂盘/设配额. market 是资产市场的 git 工作区, 同样提前建好.
+  mkdir -p "$DATA_ROOT_VAL"/{mysql,redis,logs,market,software}
   ok "数据目录: $DATA_ROOT_VAL"
 
   if [[ "$MODE" == "offline" ]]; then

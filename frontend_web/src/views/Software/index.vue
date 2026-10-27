@@ -54,6 +54,12 @@
     <div v-if="isAdmin && config && !config.path_ok" class="sw-note err">
       ⚠️ 软件包存放目录不可用: <code>{{ config.storage_root }}</code> —— 请到设置页检查路径.
     </div>
+    <div v-else-if="isAdmin && config" class="sw-note ok">
+      📁 软件包存放目录 <code>{{ config.storage_root }}</code>
+      <span class="muted">(来自{{ sourceText }})</span>
+      · 可用空间 {{ formatSize(config.free_bytes) }}
+      · 已占用 {{ formatSize(config.used_bytes) }}
+    </div>
 
     <!-- ===== 加载 / 空态 / 错误 ===== -->
     <div v-if="loading" class="state">
@@ -104,6 +110,7 @@ import {
   type SoftwareConfig, type SoftwareDetail, type SoftwareItem, type SoftwareSort,
 } from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
+import { formatSize } from './softwareForm';
 
 const userStore = useUserStore();
 const isAdmin = computed(() => userStore.user?.role === 'admin');
@@ -140,6 +147,17 @@ function errText(e: unknown, fallback: string): string {
 
 /** 当前用户能不能上传 —— 后端也判一遍 (前端只是提前把按钮灰掉) */
 const canPublish = computed(() => config.value?.can_publish ?? false);
+
+/**
+ * 存储根目录是**哪来的** —— 管理员最常问的是"我改了设置项怎么没生效".
+ * 实际多半是环境变量把它盖住了 (容器模式就是 compose 注入的).
+ */
+const sourceText = computed(() => {
+  const s = config.value?.storage_source;
+  if (s === 'setting') return '设置项';
+  if (s === 'env') return '环境变量';
+  return '默认路径';
+});
 
 const list = computed(() => items.value ?? []);
 
@@ -271,6 +289,8 @@ onMounted(async () => {
   border: 1px solid rgba(245, 158, 11, 0.25); margin-bottom: 10px;
 }
 .sw-note.err { background: rgba(239, 68, 68, 0.08); color: var(--err); border-color: rgba(239, 68, 68, .25); }
+.sw-note.ok { background: rgba(16, 185, 129, .08); color: var(--ink-700); border-color: rgba(16, 185, 129, .22); }
+.sw-note code { font-family: var(--font-mono); font-size: 11px; }
 
 .grid {
   display: grid;

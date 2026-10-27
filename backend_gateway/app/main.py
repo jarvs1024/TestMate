@@ -45,6 +45,25 @@ async def lifespan(app: FastAPI):
     # 反向同步: 定期从 GitLab 拉取远端变更, 对齐本地工作区与 DB 镜像
     interval = int(os.environ.get("MARKET_SYNC_INTERVAL_SECONDS", "30") or 30)
     await start_puller(interval)
+    # 软件库存放目录体检 —— ⚠️ 存储根不可写是**部署**问题 (容器没挂卷 /
+    #    systemd 没放行 ReadWritePaths), 等到用户传文件才报"存储目录不可写",
+    #    运维一头雾水. 启动时就喊出来.
+    try:
+        from app.core import software_store
+        from app.core.settings_store import get as _get_sw_setting
+
+        _sw_root = software_store.resolve_root(await _get_sw_setting("software.storage_path", ""))
+        _sw_info = software_store.probe_storage(_sw_root)
+        if _sw_info.get("exists") and _sw_info.get("writable"):
+            log.info("startup.software_storage", root=_sw_info["root"],
+                     free_bytes=_sw_info["free_bytes"])
+        else:
+            log.warning(
+                "startup.software_storage 不可用 —— 软件包传不上来",
+                root=_sw_info["root"], reason=_sw_info.get("error", "目录不存在"),
+            )
+    except Exception as e:  # noqa: BLE001
+        log.warning("startup.software_storage 体检失败", error=str(e))
     log.info("startup.complete", requeued_asset_jobs=requeued,
              sync_interval_seconds=interval)
     yield

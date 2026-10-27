@@ -481,6 +481,60 @@ async def test_config_reports_path_not_writable(client, sw_auth, tmp_path):
     assert r.json()["path_ok"] is False
 
 
+# ===== 两种部署模式的存储路径口径 =====
+
+
+async def test_storage_source_tells_where_the_root_came_from(client, sw_auth, sw_root):
+    """设置项填了 → source=setting.
+
+    ⚠️ 为什么要有这个字段: "我改了设置项怎么没生效" 是最常见的问法 ——
+       实际多半是**环境变量**把它盖住了 (容器模式就是 compose 注入的),
+       光看路径猜不出来, 所以后端直接告诉前端.
+    """
+    r = await client.get("/api/v1/software/config", headers=sw_auth)
+    assert r.status_code == 200
+    assert r.json()["storage_source"] == "setting"
+
+
+async def test_storage_source_env_when_setting_empty(client, sw_auth, tmp_path, monkeypatch):
+    """设置项留空 → 看环境变量 → source=env."""
+    monkeypatch.setenv("SOFTWARE_STORAGE_PATH", str(tmp_path / "sw-env"))
+    await set_setting("software.storage_path", "")
+    r = await client.get("/api/v1/software/config", headers=sw_auth)
+    assert r.status_code == 200
+    assert r.json()["storage_source"] == "env"
+
+
+async def test_storage_source_default_when_nothing_configured(client, sw_auth, monkeypatch):
+    """都没配 → source=default (兜底路径, 容器里落在 /data/software)."""
+    monkeypatch.delenv("SOFTWARE_STORAGE_PATH", raising=False)
+    await set_setting("software.storage_path", "")
+    r = await client.get("/api/v1/software/config", headers=sw_auth)
+    assert r.status_code == 200
+    assert r.json()["storage_source"] == "default"
+
+
+def test_probe_storage_reports_unwritable_dir(tmp_path):
+    """存储根体检: 目录建不出来 → 报出原因 (启动时就会喊)."""
+    from app.core import software_store
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("我是文件, 不能当目录用", encoding="utf-8")
+    info = software_store.probe_storage(blocker / "sub")
+    assert info["exists"] is False
+    assert info.get("error")
+
+
+def test_repo_root_finds_the_real_repo():
+    """仓库根要认标志目录 —— 容器里代码整份 COPY 进 /app, 不能只按"上三层"算."""
+    from app.core import software_store
+
+    root = software_store.repo_root()
+    # 裸机: 上层有 backend_gateway; 容器: 没有 (退到 "/"), 两种都得能返回
+    assert root.is_absolute()
+    assert (root / "backend_gateway").is_dir() or root == Path("/")
+
+
 # ---------- 审计 ----------
 
 async def test_audit_is_recorded(client, sw_auth, sw_root):

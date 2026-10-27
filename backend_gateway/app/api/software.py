@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, unquote
@@ -97,6 +98,19 @@ async def _setting_bool(key: str, default: bool) -> bool:
 async def _root() -> Path:
     """当前生效的存储根目录 (设置项 → 环境变量 → 仓库内默认)."""
     return software_store.resolve_root(await _setting("software.storage_path", ""))
+
+
+def _storage_source(configured: str) -> str:
+    """当前根目录是**哪来的** —— setting / env / default.
+
+    ⚠️ "我改了设置项怎么没生效" 是最常见的问法: 实际多半是环境变量把它盖住了.
+       光看路径猜不出来, 所以后端直接告诉前端.
+    """
+    if (configured or "").strip():
+        return "setting"
+    if (os.environ.get("SOFTWARE_STORAGE_PATH") or "").strip():
+        return "env"
+    return "default"
 
 
 async def _max_bytes() -> int:
@@ -356,12 +370,14 @@ async def get_config(user: User = Depends(get_current_user)) -> SoftwareConfigOu
     ⚠️ 存储路径**只有管理员能看到** —— 那是服务端目录结构, 普通用户拿到没意义.
     """
     is_admin = _is_admin(user)
-    root = await _root()
+    configured = await _setting("software.storage_path", "")
+    root = software_store.resolve_root(configured)
     out = SoftwareConfigOut(
         max_bytes=await _max_bytes(),
         can_publish=await market_policy.can_publish(user),
         is_admin=is_admin,
         public_download=await _setting_bool("software.public_download", False),
+        storage_source=_storage_source(configured),
     )
     if is_admin:
         info = software_store.usage_info(root)

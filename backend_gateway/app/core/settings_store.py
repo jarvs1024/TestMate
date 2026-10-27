@@ -580,8 +580,10 @@ SETTING_SCHEMA: list[dict] = [
         "value_type": "string",
         "default": "",
         "description": (
-            "软件包存放根目录 (绝对路径, 或相对仓库根的路径如 data/software). "
-            "留空 = 用环境变量 SOFTWARE_STORAGE_PATH, 都没有则用 <仓库>/data/software. "
+            "软件包存放根目录. 留空 = 用环境变量 SOFTWARE_STORAGE_PATH, 都没有则用 <仓库>/data/software. "
+            "⚠️ 这里填的是**当前进程能看到的路径**: 裸机模式填宿主路径, "
+            "容器模式通常**留空** (compose 已经用 /data/software 挂好卷了, "
+            "手填宿主路径容器里根本看不见). "
             "⚠️ 改这里等于**换根目录** —— 已经传过的文件不会自动搬过去, "
             "需要管理员自己把旧目录移过去 (设置页的「检查路径」会告诉你缺哪些文件)"
         ),

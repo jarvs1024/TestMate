@@ -32,6 +32,8 @@ FEATURES=(
   "资产状态读取失败"            # 2026-10-26: 取数失败不再伪装成"没有待办"
   "账号列表加载失败"            # 2026-10-26: 用户列表失败不再伪装成"没有账号"
   "通知记录加载失败"            # 2026-10-26: 通知回执失败不再伪装成"没有通知"
+  "软件包存放目录"              # 2026-10-28: 软件库页的管理员存储提示
+  "一行一条"                    # 2026-10-28: 软件库功能清单的输入提示
 )
 
 echo "=== 源码里有没有这些特征串 (确认我们测的是当前代码) ==="
@@ -104,6 +106,7 @@ BACKEND_FILES=(
   app/api/settings.py
   app/api/agents.py
   app/api/marketplace.py
+  app/api/software.py
   app/core/identity.py
   app/core/config.py
   app/core/security.py
@@ -112,12 +115,15 @@ BACKEND_FILES=(
   app/core/market_state.py
   app/core/market_notify.py
   app/core/mcp_config.py
+  app/core/software_store.py
   app/db/session.py
   app/models/user.py
   app/models/agent.py
   app/models/asset.py
+  app/models/software.py
   app/schemas/asset.py
   app/schemas/auth.py
+  app/schemas/software.py
 )
 echo
 echo "=== 后端: 跑着的代码跟源码对得上吗 ==="

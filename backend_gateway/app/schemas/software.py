@@ -96,6 +96,10 @@ class SoftwareConfigOut(BaseModel):
     public_download: bool = False
     # 存储根目录 (**仅 admin 可见**, 其他角色拿到空串)
     storage_root: str = ""
+    # 当前根目录是**哪来的**: setting(设置项) / env(环境变量) / default(兜底)
+    # ⚠️ 为什么要有这个: "我改了设置项怎么没生效" 是最常见的问法 ——
+    #    实际多半是环境变量把它盖住了, 光看路径猜不出来.
+    storage_source: str = ""
     # 存储根是否可用 (可写) —— admin 看到的健康信号
     path_ok: bool = False
     # 已占用的字节数
