@@ -46,3 +46,49 @@ def decode_token(token: str) -> dict[str, Any] | None:
         return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
     except JWTError:
         return None
+
+
+# ===== 软件库下载票据 =====
+
+#: 下载票据的类型标记 —— 跟普通登录 token 区分开.
+#: ⚠️ 必须区分: 登录 token 是**长期**凭证, 一旦塞进 URL 就会进 nginx access_log
+#:    和浏览器历史. 下载票是**短时**的 (默认 10 分钟), 窗口小、可撤销、绑定具体版本.
+DOWNLOAD_TICKET_TYPE = "sw-dl"
+
+#: 下载票默认有效期 (秒)
+DOWNLOAD_TICKET_TTL = 600
+
+
+def create_download_ticket(
+    *, user_id: int, code: str, version: str, ttl_seconds: int = DOWNLOAD_TICKET_TTL
+) -> tuple[str, int]:
+    """签发一张**短时下载票** —— 返回 (ticket, expires_in_seconds).
+
+    票据里带 uid / code / ver —— 校验时除了验签, 还要确认:
+      · 用户还在 (没被删)
+      · 用户没被停用 (is_active)
+      · 该版本的软件仍然存在且是 ready
+    """
+    expire = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+    payload: dict[str, Any] = {
+        "typ": DOWNLOAD_TICKET_TYPE,
+        "uid": int(user_id),
+        "code": code,
+        "ver": version,
+        "exp": expire,
+    }
+    ticket = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    return ticket, ttl_seconds
+
+
+def decode_download_ticket(ticket: str) -> dict[str, Any] | None:
+    """校验下载票 —— 签名有效 + 未过期 + 类型对得上, 才返回 payload; 否则 None."""
+    if not ticket:
+        return None
+    try:
+        payload = jwt.decode(ticket, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    except JWTError:
+        return None
+    if payload.get("typ") != DOWNLOAD_TICKET_TYPE:
+        return None
+    return payload

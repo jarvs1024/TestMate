@@ -237,15 +237,16 @@ def test_agent_market_renamed_to_plugin_skill_connector():
 
 
 def test_software_library_seed():
-    """软件库卡 (新增): 存内部软件, 展示功能 / 详情 / 适用 / 发布更新说明."""
+    """软件库卡: 存内部软件, 展示功能 / 详情 / 适用 / 发布更新说明."""
     sw = next(c for c in SEED_AGENTS if c["code"] == "software-library")
     assert sw["name"] == "软件库"
     assert sw["kind"] == "platform"
     assert sw["category"] == "sw-library"
     assert sw["cta"] == "浏览软件"
-    # 后期才做 → 现在是"规划中", 不跳任何页面
-    assert sw["status"] == "draft"
-    assert not sw.get("route"), "还没做页面, 不该有 route (否则会跳到不存在的页)"
+    # ⚠️ 2026-10-27: 功能已落地 (/software 页) —— 从"规划中"改成 beta 并接上路由.
+    #    以前是 draft 且**没有** route —— 那是"点进去什么都不发生"的死路.
+    assert sw["status"] == "beta"
+    assert sw["route"] == "page:software"
     blob = " ".join(str(sw.get(f) or "") for f in ("summary", "use_when"))
     for word in ("功能", "详情", "适用", "更新"):
         assert word in blob, f"软件库的说明里少了「{word}」: {blob}"

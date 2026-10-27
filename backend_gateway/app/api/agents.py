@@ -139,15 +139,16 @@ SEED_AGENTS: list[dict] = [
         #   · 插件·技能·连接 → 装进 Agent 的扩展 (可复用能力)
         #   · 软件库        → 给人用的内部软件 (装在哪 / 怎么用 / 什么版本)
         # 展示维度: 功能 / 详情 / 适用场景 / 发布与更新说明.
-        # 后期才做, 所以 status=draft (点进去显示"规划中", 不跳任何页面).
+        # ⚠️ 2026-10-27: 功能已落地 (/software 页) —— status 从 draft 改 beta,
+        #    route 接上 (之前是"规划中", 点了不跳任何地方).
         "code": "software-library",
         "name": "软件库",
         "icon": "🧰",
         "category": AgentCategory.sw_library.value,
         "kind": AgentKind.platform.value,
         "cta": "浏览软件",
-        "version": "v0.0.0",
-        "status": AgentStatus.draft.value,
+        "version": "v1.0.0",
+        "status": AgentStatus.beta.value,
         "summary": "公司内部软件的统一入口: 功能清单 / 详情 / 适用场景 / 发布与更新说明",
         "use_when": "想知道某个内部软件能干什么、适不适合自己的场景、装在哪、或者最近更新了什么",
         "not_for": "要找装进 Agent 的插件 / 技能 / 连接器请去「插件·技能·连接」",
@@ -158,6 +159,7 @@ SEED_AGENTS: list[dict] = [
         "data_sources": [],
         "tools": [],
         "is_featured": False,
+        "route": "page:software",
     },
 ]
 

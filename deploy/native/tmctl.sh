@@ -915,6 +915,11 @@ emit_env() {
     emit_env MARKET_GIT_REMOTE "$(cfg MARKET_GIT_REMOTE)"
     emit_env MARKET_GIT_BRANCH "$(cfg MARKET_GIT_BRANCH main)"
     emit_env MARKET_SYNC_INTERVAL_SECONDS "$(cfg MARKET_SYNC_INTERVAL_SECONDS 30)"
+    # 软件库存放根目录 (软件包本体落这儿, 最多 5G/个).
+    # ⚠️ 默认在 runtime/data/software —— 跟 market 工作区一样属于"运行时数据",
+    #    **不进** backup (体积太大), 要备份得单独拷这个目录.
+    emit_env SOFTWARE_STORAGE_PATH "$(cfg SOFTWARE_STORAGE_PATH "$runtime/data/software")"
+    mkdir -p "$(cfg SOFTWARE_STORAGE_PATH "$runtime/data/software")"
     if [[ -f "$runtime/ssh/id_ed25519" ]]; then
       emit_env GIT_SSH_COMMAND "ssh -i $runtime/ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$runtime/ssh/known_hosts -o BatchMode=yes"
     fi
@@ -985,6 +990,7 @@ render_systemd_configs() {
     "DATA_DIR" "$runtime/data" \
     "LOG_DIR" "$runtime/logs" \
     "MARKET_DIR" "$market_dir" \
+    "SOFTWARE_DIR" "$(cfg SOFTWARE_STORAGE_PATH "$runtime/data/software")" \
     "RUN_DIR" "$runtime/run"
 
   render_template "$NATIVE_DIR/units/testmate-frontend.service.tpl" "$UNIT_DIR/${FRONTEND_UNIT}.service" \

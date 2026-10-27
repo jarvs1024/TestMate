@@ -62,8 +62,16 @@ describe('路由表', () => {
     expect(router.resolve('/kb-manage').meta.title).toBe('知识库');
   });
 
+  it('软件库是独立页面 (不塞进 /market 的 Tab)', () => {
+    const r = router.resolve('/software');
+    expect(r.name).toBe('software');
+    expect(r.meta.title).toBe('软件库');
+    // 要登录才能看 —— 软件包是内网资产
+    expect(r.meta.publicRead).toBeFalsy();
+  });
+
   it('除首页和代码检视外, 其余都要登录', () => {
-    for (const p of ['/market', '/kb-manage', '/settings', '/c/log-analysis']) {
+    for (const p of ['/market', '/kb-manage', '/software', '/settings', '/c/log-analysis']) {
       expect(metaOf(p).publicRead).toBeFalsy();
     }
   });

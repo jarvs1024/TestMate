@@ -44,6 +44,9 @@ _TABLES = (
     "asset_notifications",
     "asset_jobs",
     "assets",
+    # 软件库 (条目与版本) —— 先删版本再删条目 (虽然没建外键, 顺序还是按依赖来)
+    "software_versions",
+    "software_items",
     "system_settings",
     "users",
     # agents 也清 —— 能力用例会 seed_agents() 写库, 不清会漏到别的用例里

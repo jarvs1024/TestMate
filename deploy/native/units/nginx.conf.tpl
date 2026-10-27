@@ -71,5 +71,30 @@ http {
             proxy_buffering off;
             proxy_read_timeout 600s;
         }
+
+        # ===== 软件库 (2026-10-27) =====
+        # 软件包最大 5G, 跟上面 /api/ 段的 client_max_body_size 200m 不是一回事 ——
+        # 这个 location **单独放大** body 上限, 否则 5G 传到 nginx 就被 413 掐掉.
+        #
+        # ⚠️ proxy_request_buffering off 是**关键**: 默认 nginx 会先把整个 body
+        #    收进 client_body_temp_path 再转给后端 —— 5G 会在临时目录**再存一份**,
+        #    磁盘翻倍, 而且后端拿到的还是"已缓冲完"的一坨, 流式落盘的意义就没了.
+        #
+        # ⚠️ 路径必须是 /api/v1/software/ (带 v1) —— 后端挂的是 /api/v1/software.
+        location /api/v1/software/ {
+            proxy_pass http://127.0.0.1:@@BACKEND_PORT@@;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            # 5G 包 + 余量 (超过就 413, 不会白收)
+            client_max_body_size 6g;
+            proxy_request_buffering off;
+            proxy_send_timeout 3600s;
+            proxy_read_timeout 3600s;
+            # 下载同样不缓冲 —— 边下边写盘
+            proxy_buffering off;
+        }
     }
 }

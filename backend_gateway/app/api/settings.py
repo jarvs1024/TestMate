@@ -34,6 +34,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "code-review": "🧪 代码检视 (pr-agent)",
     "data-source": "📡 数据源",
     "marketplace": "🏪 插件·技能·连接",
+    "software": "🧰 软件库",
 }
 
 

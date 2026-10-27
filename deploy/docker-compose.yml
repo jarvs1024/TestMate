@@ -126,11 +126,18 @@ services:
       MARKET_GIT_BRANCH: ${MARKET_GIT_BRANCH:-main}
       MARKET_SYNC_INTERVAL_SECONDS: ${MARKET_SYNC_INTERVAL_SECONDS:-30}
 
+      # 软件库 —— 软件包存放根目录 (容器内路径). 对应下面的 software_data 命名卷.
+      # ⚠️ 5G 的包要落在这里 —— 卷必须在 (否则容器重建后软件包全没了).
+      SOFTWARE_STORAGE_PATH: /data/software
+
       ADMIN_DEFAULT_PASSWORD: ${ADMIN_DEFAULT_PASSWORD:-ChangeMe@2026}
     volumes:
       # 资产市场工作区 — 宿主 DATA_ROOT/market, 容器内 /workspace.
       # 里面就是一个 root/testmate-market 的 git working copy, 上传先落这里, 后台再 push
       - ${DATA_ROOT:-/opt/testmate/data}/market:/workspace
+      # 软件库存储 — 宿主 DATA_ROOT/software, 容器内 /data/software.
+      # ⚠️ 软件包**不进** tmctl.sh backup (体积太大) —— 这一目录要单独备份.
+      - ${DATA_ROOT:-/opt/testmate/data}/software:/data/software
       # SSH 身份: 私钥 + known_hosts 只读挂载. 私钥不进镜像, 容器内 StrictHostKeyChecking=yes
       # ⚠️ 默认值是 Linux 部署的典型位置; mac 本地模式请务必在 .env 里显式覆盖
       #    (以前默认值是某个人的 mac 路径 —— 没覆盖时 docker 会静默建空目录挂载,

@@ -54,8 +54,10 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictNamespaces=true
 LockPersonality=true
-# 这些目录要可写: 运行时目录(日志/market 工作区/临时文件)
-ReadWritePaths=@@RUNTIME_DIR@@ @@DATA_DIR@@ @@LOG_DIR@@ @@MARKET_DIR@@ @@RUN_DIR@@
+# 这些目录要可写: 运行时目录(日志/market 工作区/临时文件/软件库存放目录)
+# ⚠️ SOFTWARE_DIR 是软件包的落盘目录 (最多 5G/个) —— 必须可写,
+#    否则后端一传文件就报 "存储目录不可写".
+ReadWritePaths=@@RUNTIME_DIR@@ @@DATA_DIR@@ @@LOG_DIR@@ @@MARKET_DIR@@ @@SOFTWARE_DIR@@ @@RUN_DIR@@
 
 [Install]
 WantedBy=multi-user.target

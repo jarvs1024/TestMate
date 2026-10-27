@@ -8,7 +8,7 @@
  *   ③ 工具组**只剩「环境运维」**;
  *   ④ 资产组三张卡: 插件·技能·连接 / 知识库 / 软件库;
  *   ⑤ 环境运维的文案里不许出现温箱 / 老化 / 温度 / 功耗;
- *   ⑥ 软件库是「规划中」(还没做页面, 不该跳到不存在的页).
+ *   ⑥ 软件库**已落地** (2026-10-27) —— 卡片不再是"规划中", 点进去是 /software.
  *
  * 用法: NODE_PATH=/tmp/tm-e2e/node_modules node scripts/e2e_capability_wall.js [baseUrl]
  */
@@ -94,13 +94,13 @@ function check(name, ok, detail) {
     check('环境运维文案不含温箱/老化/温度/功耗', bad.length === 0,
       bad.length ? `还有: ${bad.join(',')}` : env.slice(0, 60));
 
-    // ⑥ 软件库是规划中, 点不动
+    // ⑥ 软件库: 2026-10-27 功能已落地 → 不再是"规划中", 应该是可点的 beta 卡
     const sw = await page.evaluate(() => {
       const card = [...document.querySelectorAll('.cc, .cap-card, [class*=card]')]
         .find((c) => c.textContent.includes('软件库'));
       return card ? card.textContent.replace(/\s+/g, ' ').trim() : '';
     });
-    check('软件库标着规划中', sw.includes('规划中') || sw.includes('未接入'), sw.slice(0, 60));
+    check('软件库不再是「规划中 / 未接入」(功能已落地)', sw && !sw.includes('规划中') && !sw.includes('未接入'), sw.slice(0, 60));
 
     // 角色 chips 的顺序
     const chips = await page.evaluate(() =>

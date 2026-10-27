@@ -12,3 +12,9 @@ from app.models.asset import (  # noqa: F401
     AssetJob,
     AssetNotification,
 )
+# 软件库 (SoftwareItem / SoftwareVersion) —— 内部软件的条目与版本 (文件在服务端磁盘).
+# ⚠️ 同上: 必须在这里导出, 否则建表时漏掉这两张表.
+from app.models.software import (  # noqa: F401
+    SoftwareItem,
+    SoftwareVersion,
+)

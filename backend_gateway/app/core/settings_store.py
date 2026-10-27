@@ -569,6 +569,61 @@ SETTING_SCHEMA: list[dict] = [
         ),
         "is_secret": False,
     },
+    # ===== 软件库 =====
+    # ⚠️ 存储根目录是**部署形态**相关的:
+    #    裸机 (tmctl.sh) 会把 SOFTWARE_STORAGE_PATH 写进 backend.env;
+    #    容器 (docker-compose) 里是 /data/software (命名卷).
+    #    这里留空 = 用环境变量; 都没配时退到 <repo>/data/software.
+    {
+        "key": "software.storage_path",
+        "category": "software",
+        "value_type": "string",
+        "default": "",
+        "description": (
+            "软件包存放根目录 (绝对路径, 或相对仓库根的路径如 data/software). "
+            "留空 = 用环境变量 SOFTWARE_STORAGE_PATH, 都没有则用 <仓库>/data/software. "
+            "⚠️ 改这里等于**换根目录** —— 已经传过的文件不会自动搬过去, "
+            "需要管理员自己把旧目录移过去 (设置页的「检查路径」会告诉你缺哪些文件)"
+        ),
+        "is_secret": False,
+        # ⚠️ 显式标 admin_only: 这是**服务端文件路径**, 泄露等于告诉别人
+        #    服务的目录结构 —— 而且只有管理员该有权限改它.
+        "admin_only": True,
+    },
+    {
+        "key": "software.max_size_mb",
+        "category": "software",
+        "value_type": "int",
+        "default": "5120",
+        "description": (
+            "单个软件包大小上限 (MB). 默认 5120 = 5G. "
+            "⚠️ 改大之前先确认 nginx 的 client_max_body_size 也放得开 —— "
+            "两边都要够大, 否则会在 nginx 层被截掉 (返回 413)"
+        ),
+        "is_secret": False,
+    },
+    {
+        "key": "software.keep_versions",
+        "category": "software",
+        "value_type": "int",
+        "default": "10",
+        "description": (
+            "每个软件保留几个历史版本 —— 发新版本时超出就把**最老的**清掉 "
+            "(文件也从磁盘上删). 设为 0 = 不清理, 全部保留"
+        ),
+        "is_secret": False,
+    },
+    {
+        "key": "software.public_download",
+        "category": "software",
+        "value_type": "bool",
+        "default": "false",
+        "description": (
+            "未登录的人能不能下载软件包 (默认关). "
+            "跟「插件·技能·连接」的同名开关一个口径 —— 开了等于把安装包公开出去"
+        ),
+        "is_secret": False,
+    },
 ]
 
 # 已废弃的设置项 —— 从 SCHEMA 移除后, DB 里的残留行在启动时一并清掉.

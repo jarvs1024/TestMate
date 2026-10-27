@@ -35,6 +35,12 @@ export const routes: RouteRecordRaw[] = [
         // 以前知识库是侧栏跟「广场」平级的顶级项, 现在它是能力墙上的一张卡.
         { path: 'kb-manage', name: 'kb-manage', meta: { title: '知识库', lede: 'RAG 知识源 —— 数据集 / 文档 / 分段, 检索即用' }, component: () => import('@/views/Capability/Library/index.vue') },
 
+        // ===== 资产型: 软件库 =====
+        // 内部软件的分发入口 —— 任意格式的软件包 (≤5G), 服务端磁盘存储.
+        // ⚠️ 独立页面 (不塞进 /market 的 Tab): 软件包是二进制、落服务端磁盘,
+        //    跟「插件·技能·连接」(GitLab 里的文本包) 在存储/权限/审核三个维度都不同.
+        { path: 'software', name: 'software', meta: { title: '软件库', lede: '公司内部软件的统一入口 —— 功能 / 详情 / 适用场景 / 发布与更新说明' }, component: () => import('@/views/Software/index.vue') },
+
         { path: 'settings', name: 'settings', meta: { title: '设置', lede: '平台配置 · 账号管理 · RAGFlow / ReviewAgent —— 改完立刻生效, 不需重启' }, component: () => import('@/views/Settings/index.vue') },
       ],
     },
