@@ -1820,6 +1820,14 @@ local_update() {
 
   log "5/5 重启"
   render_app_configs
+  # ⚠️ launchd 启动后端时用的是 **plist 里写死的环境变量**, 不是 backend.env.
+  #    backend.env 刚重新生成过 → plist 必须跟着重生成, 否则新加的变量到不了进程.
+  #    (2026-10-28 踩过: SOFTWARE_STORAGE_PATH 没进 plist, 软件包默默落到了仓库里.)
+  if [[ "$(uname -s)" == "Darwin" ]] && local_launchd_loaded; then
+    render_launchd_units
+    # ⚠️ 光重生成 plist 不够 —— launchd 只在 bootstrap 时读它, 必须重新装载
+    launchd_reload_units
+  fi
   local_do_restart
   ok "升级完成"
 }
@@ -1836,7 +1844,76 @@ local_uninstall() {
   echo "  手动清理: rm -rf $RUNTIME_DIR && rm -f $ENV_FILE"
 }
 
+# 重新装载 launchd 单元 (plist 改了 → 必须重新 bootstrap 才生效).
+#
+# ⚠️ 为什么不能只 kickstart:
+#    launchd 只在 **bootstrap 那一刻**读 plist. plist 改完之后 kickstart 重启的
+#    仍然是**旧定义** —— EnvironmentVariables 还是旧的那份.
+#    (2026-10-28 踩过: SOFTWARE_STORAGE_PATH 写进了新 plist, 但 kickstart 起来的
+#     进程还是老环境 → 软件包依然落到了兜底目录, 跟配置说的完全不是一回事.)
+launchd_reload_units() {
+  local label
+  for label in com.testmate.backend com.testmate.frontend; do
+    launchd_unload "$label" >/dev/null 2>&1 || true
+  done
+  for label in com.testmate.backend com.testmate.frontend; do
+    launchd_load "$(launchd_plist_path "$label")" || die "装载 $label 失败"
+  done
+  ok "launchd 单元已重新装载 (新的环境变量生效)"
+}
+
 # ==================== launchd (macOS 开机自启 + 崩溃自愈) ====================
+
+# 重新生成 launchd 的 plist 单元 (backend.env → EnvironmentVariables).
+#
+# ⚠️ 为什么**单独抽出来** (2026-10-28 踩过):
+#    launchd 启动后端时用的是 plist 里**写死**的环境变量, 不是 backend.env.
+#    而 backend.env 是 install/update 时生成的 —— update 重新生成了 backend.env,
+#    却没重新生成 plist → 新加的变量 (如 SOFTWARE_STORAGE_PATH) 到不了进程,
+#    后端于是**默默用了别的路径** (软件包落到了仓库里, 而不是配置的那个目录).
+#    所以凡是重新生成 backend.env 之后, 都必须重新生成 plist.
+render_launchd_units() {
+  local dir be_port bind workers fe_port nginx_bin env_vars p
+  dir="$(launchd_plist_dir)"
+  mkdir -p "$dir"
+  be_port="$(cfg BACKEND_PORT 8000)"
+  bind="$(cfg BIND_ADDR 127.0.0.1)"
+  workers="$(cfg BACKEND_WORKERS 1)"
+  fe_port="$(cfg FRONTEND_PORT 8080)"
+  nginx_bin="$(local_nginx_bin)"
+
+  log "生成 launchd 单元"
+  env_vars="$(plist_env_vars)"
+  render_template "$NATIVE_DIR/units/launchd/com.testmate.backend.plist.tpl" \
+    "$(launchd_plist_path com.testmate.backend)" \
+    "VENV_BIN" "$RUNTIME_DIR/venv/bin" \
+    "BACKEND_DIR" "$REPO_ROOT/backend_gateway" \
+    "BIND_ADDR" "$bind" \
+    "BACKEND_PORT" "$be_port" \
+    "WORKERS" "$workers" \
+    "FORWARDED_ALLOW" "127.0.0.1" \
+    "LOG_DIR" "$RUNTIME_DIR/logs" \
+    "ENV_VARS" "$env_vars"
+
+  render_template "$NATIVE_DIR/units/launchd/com.testmate.frontend.plist.tpl" \
+    "$(launchd_plist_path com.testmate.frontend)" \
+    "NGINX_BIN" "$nginx_bin" \
+    "NGINX_CONF" "$RUNTIME_DIR/config/nginx.conf" \
+    "NGINX_PREFIX" "$RUNTIME_DIR" \
+    "LOG_DIR" "$RUNTIME_DIR/logs"
+
+  # plist 语法自检 —— 写错了 launchd 会静默不加载
+  if have_cmd plutil; then
+    for p in "$(launchd_plist_path com.testmate.backend)" "$(launchd_plist_path com.testmate.frontend)"; do
+      if ! plutil -lint "$p" >/dev/null 2>&1; then
+        fail "plist 语法有问题: $p"
+        plutil -lint "$p" 2>&1 | sed 's/^/      /'
+        die "已中止"
+      fi
+    done
+    ok "plist 语法校验通过"
+  fi
+}
 
 # backend.env → plist 的 EnvironmentVariables 字典
 plist_env_vars() {
@@ -1881,48 +1958,7 @@ launchd_do_install() {
   [[ -f "$RUNTIME_DIR/config/backend.env" ]] || die "配置还没生成 —— 先跑: $0 local install"
   [[ -f "$RUNTIME_DIR/config/nginx.conf" ]] || die "nginx 配置还没生成 —— 先跑: $0 local install"
 
-  local dir be_port bind workers fe_port
-  dir="$(launchd_plist_dir)"
-  mkdir -p "$dir"
-  be_port="$(cfg BACKEND_PORT 8000)"
-  bind="$(cfg BIND_ADDR 127.0.0.1)"
-  workers="$(cfg BACKEND_WORKERS 1)"
-  fe_port="$(cfg FRONTEND_PORT 8080)"
-
-  log "生成 launchd 单元"
-  local env_vars
-  env_vars="$(plist_env_vars)"
-  render_template "$NATIVE_DIR/units/launchd/com.testmate.backend.plist.tpl" \
-    "$(launchd_plist_path com.testmate.backend)" \
-    "VENV_BIN" "$RUNTIME_DIR/venv/bin" \
-    "BACKEND_DIR" "$REPO_ROOT/backend_gateway" \
-    "BIND_ADDR" "$bind" \
-    "BACKEND_PORT" "$be_port" \
-    "WORKERS" "$workers" \
-    "FORWARDED_ALLOW" "127.0.0.1" \
-    "LOG_DIR" "$RUNTIME_DIR/logs" \
-    "ENV_VARS" "$env_vars"
-
-  render_template "$NATIVE_DIR/units/launchd/com.testmate.frontend.plist.tpl" \
-    "$(launchd_plist_path com.testmate.frontend)" \
-    "NGINX_BIN" "$nginx_bin" \
-    "NGINX_CONF" "$RUNTIME_DIR/config/nginx.conf" \
-    "NGINX_PREFIX" "$RUNTIME_DIR" \
-    "LOG_DIR" "$RUNTIME_DIR/logs"
-
-  # plist 语法自检 —— 写错了 launchd 会静默不加载
-  if have_cmd plutil; then
-    local p
-    for p in "$(launchd_plist_path com.testmate.backend)" "$(launchd_plist_path com.testmate.frontend)"; do
-      if ! plutil -lint "$p" >/dev/null 2>&1; then
-        fail "plist 语法有问题: $p"
-        plutil -lint "$p" 2>&1 | sed 's/^/      /'
-        die "已中止"
-      fi
-    done
-    ok "plist 语法校验通过"
-  fi
-
+  render_launchd_units
   log "装载 launchd 服务"
   # 先把 PID 模式起的进程停掉 —— 两边不能同时管同一个服务
   local_do_stop >/dev/null 2>&1 || true

@@ -49,3 +49,6 @@ coverage/
 
 # 裸机部署运行时产物 (venv / 前端产物 / 数据 / 日志 / 配置)
 deploy/native/runtime/
+
+# 软件库存放目录 (裸机运行时的数据, 不进仓库)
+/data/

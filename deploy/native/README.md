@@ -354,7 +354,30 @@ install 第一次跑自动生成 `.env`, 并把 `JWT_SECRET` / `MySQL_PASSWORD` 
 
 mac 上 install 会**优先把 `MARKET_DIR` 对齐到 Docker 模式那份**(同一个 `DATA_ROOT/market`), 这样切模式不用搬数据。
 
-### 6.7 换一个 git 远端 (公司 GitLab / 云 GitLab)
+### 6.8 软件库存放目录 (2026-10-28)
+
+裸机模式下软件包落在 `SOFTWARE_STORAGE_PATH` (默认 `runtime/data/software`)。它由 `tmctl.sh`
+写进 `backend.env`, launchd 再把它带进进程。
+
+⚠️ **改存储路径有三个地方要对齐**(设置项 `software.storage_path` 只覆盖后端这一个):
+
+| 位置 | 作用 |
+|---|---|
+| `backend.env` 的 `SOFTWARE_STORAGE_PATH` | 后端把包写在哪 |
+| systemd 单元的 `ReadWritePaths` | 服务用户有没有权限写 (`ProtectSystem=full` 会挡住) |
+| launchd 的 plist `EnvironmentVariables` | macOS 上环境变量的**唯一来源** |
+
+⚠️ **macOS: `local update` 会重生成 plist 并重新装载**(2026-10-28 修的坑) ——
+launchd 只在 bootstrap 那一刻读 plist,光改文件不重新装载,进程拿到的还是旧环境变量。
+
+⚠️ **软件目录不进 `tmctl.sh backup`**(软件包可能几个 G)—— 要备份得单独拷:
+
+```bash
+tar czf /var/backups/testmate/software-$(date +%F).tar.gz \
+    -C /path/to/runtime/data software
+```
+
+### 6.9 换一个 git 远端 (公司 GitLab / 云 GitLab)
 
 ⚠️ **后端不需要 GitLab 的 API** —— 资产市场只通过 SSH 做 git push/pull
 (`app/core/git_sync.py`: 没有 PAT、没有 token 过期、没有 API 限流)。

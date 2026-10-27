@@ -71,7 +71,7 @@ render "$NATIVE_DIR/units/testmate-backend.service.tpl" "$OUT/testmate-backend.s
   "FORWARDED_ALLOW" "127.0.0.1" "TIMEZONE" "Asia/Shanghai" \
   "MEM_LIMIT" "2G" "CPU_QUOTA" "200%" \
   "RUNTIME_DIR" "$OUT" "DATA_DIR" "$OUT/data" "LOG_DIR" "$OUT/logs" \
-  "MARKET_DIR" "$OUT/market" "RUN_DIR" "$OUT/run"
+  "MARKET_DIR" "$OUT/market" "SOFTWARE_DIR" "$OUT/data/software" "RUN_DIR" "$OUT/run"
 
 render "$NATIVE_DIR/units/testmate-frontend.service.tpl" "$OUT/testmate-frontend.service" \
   "REPO_ROOT" "/opt/testmate" "NGINX_BIN" "/usr/sbin/nginx" \
@@ -101,6 +101,20 @@ if bash "$TMP/render.sh" "$SCRIPT_DIR" "$TMP" 2>"$TMP/render.err"; then
   for f in testmate-backend.service testmate-frontend.service config/nginx.conf; do
     [[ -s "$TMP/$f" ]] && pass "生成 $f" || failing "生成 $f 失败"
   done
+  # ⚠️ 占位符没被替换掉 = 模板里新增了变量但渲染脚本忘了传 ——
+  #    systemd 单元里会留下一个 "@@FOO@@" 路径, verify 才会报错, 但报错信息很难懂.
+  leftovers="$(grep -oh '@@[A-Z_]*@@' "$TMP"/testmate-backend.service "$TMP"/testmate-frontend.service "$TMP"/config/nginx.conf 2>/dev/null | sort -u | tr '\n' ' ')"
+  if [[ -z "${leftovers// /}" ]]; then
+    pass "渲染结果里没有残留的 @@占位符@@"
+  else
+    failing "渲染结果里还有没替换的占位符: $leftovers"
+  fi
+  # 软件库存放目录必须在 systemd 的可写路径里 (否则后端一传文件就报"目录不可写")
+  if grep -qE "ReadWritePaths=.*data/software" "$TMP/testmate-backend.service"; then
+    pass "systemd 单元把软件库存放目录列进了 ReadWritePaths"
+  else
+    failing "systemd 单元的 ReadWritePaths 里没有软件库存放目录 —— 后端传文件会失败"
+  fi
 else
   failing "模板渲染失败:"; sed 's/^/      /' "$TMP/render.err"
 fi
@@ -317,6 +331,38 @@ for f in "$NATIVE_NGINX" "$DOCKER_NGINX"; do
     failing "$label —— 软件库 location 没关 proxy_request_buffering (nginx 会把整个包先缓冲一份, 磁盘翻倍)"
   fi
 done
+
+echo
+echo "── 6.2 launchd 环境变量 (plist 重生成 + 重装载) ──"
+#
+# ⚠️ 为什么盯这个 (2026-10-28 踩过):
+#   launchd 启动后端时用的是 **plist 里写死的 EnvironmentVariables**, 不是 backend.env.
+#   以前 update 只重新生成 backend.env → 新加的变量 (SOFTWARE_STORAGE_PATH)
+#   到不了进程 → 后端默默用了兜底路径, 软件包落到了**仓库目录**里, 没人发现.
+#   而且光重生成 plist 也不够 —— launchd 只在 bootstrap 那一刻读它,
+#   改完 plist 必须重新 bootout + bootstrap (kickstart 重启的还是旧定义).
+if grep -q 'render_launchd_units' "$SCRIPT_DIR/tmctl.sh"; then
+  pass "tmctl.sh 里有 render_launchd_units (重生成 plist)"
+else
+  failing "tmctl.sh 里没有 render_launchd_units —— plist 不会跟着 backend.env 更新"
+fi
+if grep -q 'launchd_reload_units' "$SCRIPT_DIR/tmctl.sh"; then
+  pass "tmctl.sh 里有 launchd_reload_units (重新 bootstrap, 新环境变量才生效)"
+else
+  failing "tmctl.sh 里没有 launchd_reload_units —— 只重生成 plist 不够, launchd 还在用旧定义"
+fi
+# update 路径必须**两样都调** (渲染 + 重装载)
+update_block="$(sed -n '/^local_update() {/,/^}/p' "$SCRIPT_DIR/tmctl.sh")"
+if echo "$update_block" | grep -q 'render_launchd_units' && echo "$update_block" | grep -q 'launchd_reload_units'; then
+  pass "update 路径既重生成 plist 又重新装载"
+else
+  failing "update 路径没有同时做「重生成 plist」+「重新装载」—— 新加的环境变量到不了进程"
+fi
+if grep -q 'plist_env_vars' "$SCRIPT_DIR/tmctl.sh"; then
+  pass "plist 的环境变量来自 backend.env (plist_env_vars)"
+else
+  failing "plist 没有从 backend.env 取环境变量 —— 两边会对不上"
+fi
 
 echo
 echo "── 7. 裸机模式零容器 ──"
