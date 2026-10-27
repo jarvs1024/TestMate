@@ -135,7 +135,7 @@ const FILE_NAME = `${CODE}.bin`;
     await fileInput.uploadFile(srcFile);
     await sleep(400);
     check('E12 选中了软件包',
-      await page.evaluate(() => (document.querySelector('.file-chip')?.textContent || '').includes(CODE)));
+      await page.evaluate((c) => (document.querySelector('.file-chip')?.textContent || '').includes(c), CODE));
 
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('.sw-up-drawer button, .up-foot button')]

@@ -18,6 +18,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 仓库根 —— selftest 在 deploy/native 下, 往上两层
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 PASS=0; FAIL=0; SKIP=0
 pass() { PASS=$((PASS+1)); echo "  ✓ $*"; }
@@ -275,7 +277,48 @@ else
 fi
 echo
 
-# ==================== 7. 裸机模式零容器 ====================
+# ==================== 6.1 软件库的大文件通道 ====================
+echo "── 6.1 软件库大文件通道 (nginx) ──"
+#
+# ⚠️ 为什么单独盯这一段 (2026-10-28 踩过):
+#   1. nginx 对 "location /xxx/" 会**自动 301 补斜杠**, 而 FastAPI 的路由
+#      "/api/v1/software" 没斜杠 → 又 307 弹回来 → **重定向死循环**,
+#      而且 nginx 改写 Location 时会把端口吞掉 → ERR_CONNECTION_REFUSED.
+#      所以结尾**不能带斜杠**.
+#   2. 软件包最大 5G —— 裸机与容器**两处 nginx 都要放开** body 上限,
+#      漏一处就 413 (而且报错在 nginx 层, 用户只看到"上传失败").
+#
+NATIVE_NGINX="$SCRIPT_DIR/units/nginx.conf.tpl"
+DOCKER_NGINX="$REPO_ROOT/frontend_web/nginx.conf"
+
+for f in "$NATIVE_NGINX" "$DOCKER_NGINX"; do
+  label="$(basename "$(dirname "$f")")/$(basename "$f")"
+  if [[ ! -f "$f" ]]; then
+    failing "$label —— 文件不存在"
+    continue
+  fi
+  if grep -qE '^[[:space:]]*location /api/v1/software' "$f"; then
+    if grep -qE '^[[:space:]]*location /api/v1/software/[[:space:]]*\{' "$f"; then
+      failing "$label —— location /api/v1/software/ 结尾带了斜杠 → nginx 会自动 301 补斜杠, 跟 FastAPI 的 307 撞成死循环"
+    else
+      pass "$label —— 软件库 location 结尾没有斜杠 (不会触发补斜杠重定向)"
+    fi
+  else
+    failing "$label —— 缺 location /api/v1/software (软件包传不上去)"
+  fi
+  if grep -A 20 'location /api/v1/software' "$f" | grep -q 'client_max_body_size'; then
+    pass "$label —— 软件库 location 放开了 body 上限 (5G 包才传得上去)"
+  else
+    failing "$label —— 软件库 location 没放开 client_max_body_size (超过 200m 会被 nginx 413 掐掉)"
+  fi
+  if grep -A 20 'location /api/v1/software' "$f" | grep -q 'proxy_request_buffering off'; then
+    pass "$label —— 软件库 location 关掉了 request buffering (不额外落一份盘)"
+  else
+    failing "$label —— 软件库 location 没关 proxy_request_buffering (nginx 会把整个包先缓冲一份, 磁盘翻倍)"
+  fi
+done
+
+echo
 echo "── 7. 裸机模式零容器 ──"
 #
 # 裸机部署的前提: MySQL / Redis 都是**本机服务**, 不用任何容器.

@@ -80,8 +80,15 @@ http {
         #    收进 client_body_temp_path 再转给后端 —— 5G 会在临时目录**再存一份**,
         #    磁盘翻倍, 而且后端拿到的还是"已缓冲完"的一坨, 流式落盘的意义就没了.
         #
-        # ⚠️ 路径必须是 /api/v1/software/ (带 v1) —— 后端挂的是 /api/v1/software.
-        location /api/v1/software/ {
+        # ⚠️ 路径必须是 /api/v1/software (带 v1) —— 后端挂的是 /api/v1/software.
+        #
+        # ⚠️ **结尾不能带斜杠** —— nginx 对 "location /xxx/" 有一条自动行为:
+        #    请求 "/xxx" 时它会 **301 补上斜杠** (像访问目录一样).
+        #    而 FastAPI 的路由是 "/api/v1/software" (没斜杠) → 又会 307 弹回来.
+        #    两边一撞就成了**重定向死循环**, 而且 nginx 改写 Location 时还会把端口吞掉
+        #    (127.0.0.1:8081 → localhost:80) → 最后 ERR_CONNECTION_REFUSED.
+        #    写成不带斜杠的前缀: /api/v1/software 与 /api/v1/software/xxx 都命中, 且不会触发补斜杠.
+        location /api/v1/software {
             proxy_pass http://127.0.0.1:@@BACKEND_PORT@@;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
