@@ -65,7 +65,7 @@ function cap(over: any = {}) {
 
 const CAPS = [
   cap({ id: 1, code: 'code-review', name: '代码检视', icon: '🧬', kind: 'board', status: 'stable', category: 'auto-code', route: 'page:code-review' }),
-  cap({ id: 2, code: 'agent-market', name: 'AI 资产市场', icon: '🏪', kind: 'platform', status: 'beta', category: 'ai-market', route: 'page:market', cta: '浏览技能包' }),
+  cap({ id: 2, code: 'agent-market', name: '插件·技能·连接', icon: '🏪', kind: 'platform', status: 'beta', category: 'ai-market', route: 'page:market', cta: '浏览资产' }),
   cap({ id: 3, code: 'kb-inventory', name: '知识库', icon: '📚', kind: 'platform', status: 'stable', category: 'ssd-kb', route: 'page:kb-manage', cta: '检索语料' }),
   cap({ id: 4, code: 'log-analysis', name: '日志分析', icon: '📜', kind: 'tool', status: 'beta', category: 'ssd-trace' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', icon: '🧪', kind: 'tool', status: 'draft', category: 'ssd-spec' }),
@@ -135,37 +135,37 @@ describe('首页 · 能力墙', () => {
     w.unmount();
   });
 
-  it('底座筛选: 资产市场 + 知识库同列 (同属供料角色)', async () => {
+  it('资产筛选: 插件·技能·连接 + 知识库同列 (同属资产角色)', async () => {
     const { w } = await mountHome();
-    const chip = w.findAll('.filter').find((f) => f.text().includes('底座'))!;
+    const chip = w.findAll('.filter').find((f) => f.text().includes('资产'))!;
     await chip.trigger('click');
     const names = w.findAllComponents({ name: 'CapabilityCard' })
       .map((c) => c.props('capability').name);
-    expect(names.sort()).toEqual(['AI 资产市场', '知识库']);
+    expect(names.sort()).toEqual(['插件·技能·连接', '知识库']);
     w.unmount();
   });
 
-  it('CTA 由卡片自带: 底座两张卡动法不同', async () => {
+  it('CTA 由卡片自带: 资产组两张卡动法不同', async () => {
     const { w } = await mountHome();
     const ctas = w.findAllComponents({ name: 'CapabilityCard' })
       .map((c) => c.find('.cc-cta').exists() ? c.find('.cc-cta').text() : '')
       .join(' ');
-    expect(ctas).toContain('浏览技能包');
+    expect(ctas).toContain('浏览资产');
     expect(ctas).toContain('检索语料');
     w.unmount();
   });
 
-  it('角色 chips 上带计数 (全部 / 工具 / 看板 / 底座)', async () => {
+  it('角色 chips 上带计数 (全部 / 资产 / 工具 / 看板)', async () => {
     const { w } = await mountHome();
     const all = w.findAll('.filter').find((f) => f.text().includes('全部'))!;
     expect(all.text()).toContain('5');
+    // ⚠️ 2026-10-27: 资产组排最上面 (顺序由 CAPABILITY_KINDS 决定)
+    const asset = w.findAll('.filter').find((f) => f.text().includes('资产'))!;
+    expect(asset.text()).toContain('2');
     const tool = w.findAll('.filter').find((f) => f.text().includes('工具'))!;
     expect(tool.text()).toContain('2');
     const board = w.findAll('.filter').find((f) => f.text().includes('看板'))!;
     expect(board.text()).toContain('1');
-    // 资产市场 + 知识库同属底座
-    const base = w.findAll('.filter').find((f) => f.text().includes('底座'))!;
-    expect(base.text()).toContain('2');
     w.unmount();
   });
 
@@ -244,7 +244,7 @@ describe('首页 · 能力墙', () => {
     anon.w.unmount();
   });
 
-  it('角色 meta 取真实数据: 看板 128 个 MR / 底座 54 个资产 + 46 文档', async () => {
+  it('角色 meta 取真实数据: 看板 128 个 MR / 资产 54 个资产 + 46 文档', async () => {
     const { w } = await mountHome({ loggedIn: true });
     await flushPromises();
     const text = w.text();

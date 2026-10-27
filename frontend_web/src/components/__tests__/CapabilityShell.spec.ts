@@ -67,7 +67,7 @@ describe('能力详情外壳', () => {
       props: { name: '知识库', icon: '📚', kind: 'platform', status: 'draft' },
       global: { plugins: [router] },
     });
-    expect(lib.find('.sh-kind').text()).toContain('底座');
+    expect(lib.find('.sh-kind').text()).toContain('资产');
     expect(lib.find('.sh-badge').text()).toContain('未接入');
     lib.unmount();
   });

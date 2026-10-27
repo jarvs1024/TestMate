@@ -17,8 +17,8 @@ import { resolve } from 'node:path';
 const VIEWS = [
   { name: '工具型 · ToolRunner', path: 'src/views/Capability/ToolRunner.vue' },
   { name: '看板型 · BoardView', path: 'src/views/Capability/BoardView.vue' },
-  { name: '底座型 · Catalog', path: 'src/views/Capability/Catalog/index.vue' },
-  { name: '底座型 · Library', path: 'src/views/Capability/Library/index.vue' },
+  { name: '资产型 · Catalog', path: 'src/views/Capability/Catalog/index.vue' },
+  { name: '资产型 · Library', path: 'src/views/Capability/Library/index.vue' },
 ];
 
 describe('能力详情页 · 装配冒烟', () => {
@@ -45,7 +45,7 @@ describe('能力详情页 · 装配冒烟', () => {
 
   /**
    * 外壳的角色徽标靠 kind 渲染 —— kind 传错 (或传了已废弃的 catalog / library)
-   * 会静默回退成「工具」, 用户看到底座卡挂着工具徽标, 还不报错.
+   * 会静默回退成「工具」, 用户看到资产卡挂着工具徽标, 还不报错.
    * 所以这里把每个详情页传给外壳的角色钉死.
    */
   it('详情页传给外壳的角色跟角色模型一致 (不留旧的 catalog / library)', () => {

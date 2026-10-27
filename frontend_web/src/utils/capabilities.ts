@@ -41,7 +41,7 @@ export function matchesKeyword(c: Capability, keyword: string): boolean {
 /**
  * 能力 → 前端路由名.
  *
- * 后端 route 形如 "page:code-review" 表示跳自定义路由 (看板 / 底座),
+ * 后端 route 形如 "page:code-review" 表示跳自定义路由 (看板 / 资产),
  * 空则走工具型的运行页.
  */
 export function capabilityRouteName(c: Capability): string {
@@ -52,8 +52,9 @@ export function capabilityRouteName(c: Capability): string {
 /**
  * 卡片动作词 —— **每张卡自带** (后端 cta 字段), 空则回落到角色默认词.
  *
- * 为什么 CTA 不能由角色决定: 底座里两张卡的动法完全不同 ——
- * 资产市场是"浏览技能包", 知识库是"检索语料". 角色只说"扮演什么", 说不出"点下去干嘛".
+ * 为什么 CTA 不能由角色决定: 资产组里几张卡的动法完全不同 ——
+ * 插件·技能·连接是"浏览资产", 知识库是"检索语料", 软件库是"浏览软件".
+ * 角色只说"扮演什么", 说不出"点下去干嘛".
  */
 export function capabilityCta(c: { kind: string; cta?: string | null }): string {
   const own = (c.cta || '').trim();
@@ -61,7 +62,7 @@ export function capabilityCta(c: { kind: string; cta?: string | null }): string 
 }
 
 /**
- * 底座卡的取数来源 —— 同属底座, 但一个数资产一个数语料.
+ * 资产卡的取数来源 —— 同属资产组, 但一个数插件技能一个数语料.
  *
  * ⚠️ 按 code 而不是按 category: 取数逻辑是**这张卡自己的实现细节**
  * (数什么、去哪个接口), 不是业务域的通用属性.

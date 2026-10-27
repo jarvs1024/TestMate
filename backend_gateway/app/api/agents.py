@@ -20,37 +20,21 @@ router = APIRouter()
 
 # ===== 平台能力清单 (2026-Q3 路线图) =====
 # 每条 = 一张能力卡. kind 决定这张卡在平台里**扮演什么角色**:
-#   tool 工具(干活) / board 看板(看数) / platform 底座(供料)
-# CTA 由每张卡自带 (cta 字段) —— 同一角色下的卡动法不同 (浏览技能包 vs 检索语料)
+#   platform 资产(供料) / tool 工具(干活) / board 看板(看数)
+# ⚠️ 角色名 2026-10-27 从"底座"改成"资产" —— "底座"说的是架构位置, 用户看不懂;
+#    "资产"说的是"这里放的是可复用的东西"(插件/技能/连接器、知识、软件).
+#    顺序也改了: 资产组排最上面 (用户先看到"平台能给我什么", 再看"平台能替我干什么").
+# CTA 由每张卡自带 (cta 字段) —— 同一角色下的卡动法不同 (浏览资产 vs 检索语料 vs 浏览软件)
 # status=draft 的卡照常展示, 但点进去显示"规划中", 真实 workflow 待资源到位后接
 SEED_AGENTS: list[dict] = [
     {
-        "code": "log-analysis",
-        "name": "日志分析",
-        "icon": "📜",
-        "category": AgentCategory.ssd_trace.value,  # 复用 trace 域 (取 log 来源)
-        "kind": AgentKind.tool.value,
-        "cta": "开始使用",
-        "version": "v0.1.0-demo",
-        "status": AgentStatus.beta.value,
-        "summary": "SSD 测试日志分析: 贴 kernel ring buffer / 应用日志, 自动分段 + 异常标注 + 错误分类",
-        "use_when": "SSD 测试中产生的 syslog / dmesg / FW log 需要结构化解读 (demo 模式: 客户端规则分类)",
-        "not_for": "NVMe pcap trace 请用 Trace 医生",
-        "tags": ["日志", "诊断", "Demo"],
-        "engine": AgentEngine.builtin.value,
-        "engine_config": {"demo": True},
-        "input_schema": [
-            {"key": "log_text", "label": "日志文本", "type": "textarea", "required": True,
-             "placeholder": "直接粘贴 syslog / dmesg / FW log (多行). 例: [ 1234.56] nvme nvme0: I/O 234 QID 5 timeout, aborting"},
-            {"key": "log_type", "label": "日志类型", "type": "select",
-             "options": ["auto", "dmesg", "syslog", "fw-log"],
-             "default": "auto", "required": True},
-        ],
-        "data_sources": [],
-        "tools": [],
-        "is_featured": False,
-    },
-    {
+        # ⚠️ 2026-10-27: 工具只保留这一张 (日志分析 / 测试方案生成 / 文本用例生成 已移出清单).
+        #
+        # 范围说明 (为什么**不**含温箱 / 稳定性那一摊):
+        #   环境运维 = **基本的服务操作** + **SSD 盘符/设备的运维**, 由 AI 辅助完成.
+        #   温箱环境分析、长时老化派发这类"要看趋势、要跑很久"的活不在这里 ——
+        #   它们要的是长周期看护能力, 跟"查一下状态 / 跑一个动作"的运维不是一回事.
+        #   (老文案里"温箱与通道占用 / 环境分析 (温度/功耗/吞吐)"就是这部分, 已去掉.)
         "code": "env-ops",
         "name": "环境运维",
         "icon": "🛠",
@@ -59,10 +43,10 @@ SEED_AGENTS: list[dict] = [
         "cta": "开始使用",
         "version": "v0.0.0",
         "status": AgentStatus.draft.value,
-        "summary": "环境运维: 查询测试机状态 / 温箱与通道占用 / 环境分析 (温度/功耗/吞吐), 一键执行常用运维命令 (拉日志 / 复位 / 升级 FW)",
-        "use_when": "(规划中) 测试过程中要快速查机台 / 看环境 / 跑常用运维动作",
-        "not_for": "(规划中) 长时老化派发请用 老化守望",
-        "tags": ["机台", "运维", "规划中"],
+        "summary": "环境运维: 基本的服务操作 + SSD 盘符/设备运维 —— 查状态 / 拉日志 / 复位 / 升级固件 / 重启服务, 由 AI 辅助下发与解读",
+        "use_when": "(规划中) 要看某台机台上 SSD 盘符/设备的状态, 或顺手执行一个常用运维动作",
+        "not_for": "(规划中) 要派发长时批处理任务, 或只想拿原始日志自己判读",
+        "tags": ["机台", "运维", "AI 辅助"],
         "engine": AgentEngine.builtin.value,
         "engine_config": {},
         "input_schema": [
@@ -71,55 +55,6 @@ SEED_AGENTS: list[dict] = [
         ],
         "data_sources": ["machines:status"],
         "tools": ["machine_ssh"],
-        "is_featured": False,
-    },
-    {
-        "code": "test-plan-gen",
-        "name": "测试方案生成",
-        "icon": "📝",
-        "category": AgentCategory.ssd_spec.value,  # 协议 / 知识类
-        "kind": AgentKind.tool.value,
-        "cta": "开始使用",
-        "version": "v0.0.0",
-        "status": AgentStatus.draft.value,
-        "summary": "给 Spec / 场景 / 工况描述,自动出一版测试方案 + 步骤 + 风险点",
-        "use_when": "(规划中) 客户新功能上线前要出测试方案",
-        "not_for": "(规划中) 已有 case 模板请用模板库 (后续接入)",
-        "tags": ["测试方案", "Spec", "规划中"],
-        "engine": AgentEngine.builtin.value,
-        "engine_config": {},
-        "input_schema": [
-            {"key": "spec_doc", "label": "Spec / 需求描述", "type": "text", "required": True,
-             "placeholder": "粘贴 spec 章节 / 客户需求 / 工况约束"},
-        ],
-        "data_sources": [],
-        "tools": [],
-        "is_featured": False,
-    },
-    {
-        "code": "testcase-gen",
-        "name": "文本用例生成",
-        "icon": "🧪",
-        "category": AgentCategory.ssd_spec.value,
-        "kind": AgentKind.tool.value,
-        "cta": "开始使用",
-        "version": "v0.0.0",
-        "status": AgentStatus.draft.value,
-        "summary": "指定 Spec + 测试方案,自动展开成可执行的 case 列表 + 预期结果",
-        "use_when": "(规划中) QA 拿到方案要快速落 case",
-        "not_for": "(规划中) 已有 case 库请用 case 库 (后续接入)",
-        "tags": ["用例", "Spec", "规划中"],
-        "engine": AgentEngine.builtin.value,
-        "engine_config": {},
-        "input_schema": [
-            {"key": "test_plan", "label": "测试方案", "type": "text", "required": True,
-             "placeholder": "贴方案 / 选已有方案"},
-            {"key": "style", "label": "用例粒度", "type": "select",
-             "options": ["粗 (步骤级)", "中 (操作级)", "细 (断言级)"],
-             "default": "中 (操作级)", "required": True},
-        ],
-        "data_sources": [],
-        "tools": [],
         "is_featured": False,
     },
     {
@@ -145,22 +80,27 @@ SEED_AGENTS: list[dict] = [
         "route": "page:code-review",
     },
     {
-        # AI 资产市场: 能力墙入口卡片, 点击跳 /market 页 (仿 Qoder 插件市场的浏览页).
+        # 插件·技能·连接: 能力墙入口卡片, 点击跳 /market 页 (仿 Qoder 插件市场的浏览页).
         # 原型期数据为前端静态 (frontend_web/src/views/Market/marketCatalog.ts), 后端只提供这张入口卡.
         # route 走 "page:" 前缀 → Home/index.vue onOpen 会 router.push({ name: 'market' }).
         # ⚠️ status 不能是 draft: CapabilityCard 对 draft 直接 return 不跳转 + 盖"规划中"遮罩.
+        #
+        # ⚠️ 2026-10-27 改名: "AI 资产市场" → "插件·技能·连接".
+        #    老名字里"AI 资产"跟角色名"资产"(platform)撞了 —— 用户分不清
+        #    "资产市场"卖的是不是"资产"这个角色. 新名字直接说清卖什么:
+        #    三种可复用的扩展 (插件 / 技能 / 连接器).
         "code": "agent-market",
-        "name": "AI 资产市场",
+        "name": "插件·技能·连接",
         "icon": "🏪",
         "category": AgentCategory.ai_market.value,
         "kind": AgentKind.platform.value,
-        "cta": "浏览技能包",
+        "cta": "浏览资产",
         "version": "v0.1.0",
         "status": AgentStatus.beta.value,
-        "summary": "能力的技能沉淀: 插件 / 技能 / 连接器, 挑一个装进你的 Agent",
-        "use_when": "想找团队里现成的 AI 能力 (技能包 / 连接器 / 插件), 或要把自己沉淀的资产上架共享",
+        "summary": "可复用的扩展资产: 插件 / 技能 / 连接器, 挑一个装进你的 Agent",
+        "use_when": "想找团队里现成的插件、技能或连接器, 或要把自己沉淀的能力上架共享",
         "not_for": "运行具体的 SSD 测试任务请直接点对应的工具型能力",
-        "tags": ["技能包", "插件", "连接器"],
+        "tags": ["插件", "技能", "连接器"],
         "engine": AgentEngine.builtin.value,
         "engine_config": {},
         "input_schema": [],
@@ -172,7 +112,7 @@ SEED_AGENTS: list[dict] = [
     {
         # 知识库卡 (2026-10-25): 知识库从**侧栏顶级项**降级成能力墙上的一张卡.
         # 之前它跟"广场"是平级的两个功能区, 用户得先判断"我要去广场还是去知识库";
-        # 现在所有能力同列, 知识库跟工具/看板一样是其中一张 (底座角色).
+        # 现在所有能力同列, 知识库跟工具/看板一样是其中一张 (资产角色).
         # 详情页仍是原来的知识库工作区 (数据集 / 文档 / 分段 / 检索 / 对话), route 指过去即可.
         "code": "kb-inventory",
         "name": "知识库",
@@ -193,6 +133,31 @@ SEED_AGENTS: list[dict] = [
         "tools": [],
         "is_featured": False,
         "route": "page:kb-manage",
+    },
+    {
+        # 软件库卡 (2026-10-27 新增): 存**公司内部的软件**, 跟"插件·技能·连接"是两回事.
+        #   · 插件·技能·连接 → 装进 Agent 的扩展 (可复用能力)
+        #   · 软件库        → 给人用的内部软件 (装在哪 / 怎么用 / 什么版本)
+        # 展示维度: 功能 / 详情 / 适用场景 / 发布与更新说明.
+        # 后期才做, 所以 status=draft (点进去显示"规划中", 不跳任何页面).
+        "code": "software-library",
+        "name": "软件库",
+        "icon": "🧰",
+        "category": AgentCategory.sw_library.value,
+        "kind": AgentKind.platform.value,
+        "cta": "浏览软件",
+        "version": "v0.0.0",
+        "status": AgentStatus.draft.value,
+        "summary": "公司内部软件的统一入口: 功能清单 / 详情 / 适用场景 / 发布与更新说明",
+        "use_when": "想知道某个内部软件能干什么、适不适合自己的场景、装在哪、或者最近更新了什么",
+        "not_for": "要找装进 Agent 的插件 / 技能 / 连接器请去「插件·技能·连接」",
+        "tags": ["软件", "内部", "工具"],
+        "engine": AgentEngine.builtin.value,
+        "engine_config": {},
+        "input_schema": [],
+        "data_sources": [],
+        "tools": [],
+        "is_featured": False,
     },
 ]
 

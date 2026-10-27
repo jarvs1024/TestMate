@@ -1,12 +1,14 @@
 """能力 (capability) 的角色模型 —— 2026-10-25 能力墙重构 (第二版: 三角色).
 
-盯住五件事:
+盯住六件事:
    ① 每条 SEED 都带 kind, 且只有三种角色 (tool 干活 / board 看数 / platform 供料);
    ② 角色**不许泄漏实现** —— 曾经有 catalog(目录) / library(知识) 两个角色,
-      一个说的是目录结构, 一个说的是内容形态, 都被收进 platform(底座);
+      一个说的是目录结构, 一个说的是内容形态, 都被收进 platform(资产);
    ③ **知识库从侧栏顶级项变成了一张卡** (kind=platform, route=page:kb-manage);
-   ④ 每张卡自带 cta —— 同角色的卡动法不同 (浏览技能包 vs 检索语料);
-   ⑤ GET /agents **匿名可读** + 能按角色过滤.
+   ④ 每张卡自带 cta —— 同角色的卡动法不同 (浏览资产 vs 检索语料 vs 浏览软件);
+   ⑤ GET /agents **匿名可读** + 能按角色过滤;
+   ⑥ 2026-10-27: **工具只留「环境运维」**; 「AI 资产市场」改名「插件·技能·连接」;
+      新增「软件库」卡; 环境运维的文案不许再提温箱 / 稳定性那一摊.
 """
 from app.api.agents import SEED_AGENTS, seed_agents
 from app.models.agent import AgentKind
@@ -24,28 +26,30 @@ def test_seed_kinds_match_real_role():
     """角色要跟卡片**实际**扮演的东西对得上 —— 角色错了卡片就渲染错了."""
     by_code = {c["code"]: c for c in SEED_AGENTS}
     assert by_code["code-review"]["kind"] == AgentKind.board.value      # 看数
-    assert by_code["agent-market"]["kind"] == AgentKind.platform.value  # 供料
-    assert by_code["kb-inventory"]["kind"] == AgentKind.platform.value  # 供料
-    for code in ("log-analysis", "env-ops", "test-plan-gen", "testcase-gen"):
+    assert by_code["agent-market"]["kind"] == AgentKind.platform.value  # 资产
+    assert by_code["kb-inventory"]["kind"] == AgentKind.platform.value  # 资产
+    assert by_code["software-library"]["kind"] == AgentKind.platform.value  # 资产
+    for code in ("env-ops",):
         assert by_code[code]["kind"] == AgentKind.tool.value           # 干活
 
 
 def test_roles_do_not_leak_implementation():
     """角色只有三种, 且**不许**再有「目录」「知识」这种泄漏实现的角色.
 
-    2026-10-25 第二版: catalog(目录) / library(知识) 收成 platform(底座) ——
+    2026-10-25 第二版: catalog(目录) / library(知识) 收成 platform(资产) ——
     前者说的是目录结构, 后者说的是内容形态, 用户脑子里的分类是"这卡干嘛".
     """
     assert {k.value for k in AgentKind} == {"tool", "board", "platform"}
 
 
 def test_every_seed_card_has_its_own_cta():
-    """CTA 必须每张卡自带 —— 底座里"浏览技能包"和"检索语料"动法不同."""
+    """CTA 必须每张卡自带 —— 资产组里"浏览资产"/"检索语料"/"浏览软件"动法不同."""
     for cfg in SEED_AGENTS:
         assert cfg.get("cta"), f"{cfg['code']} 缺 cta"
     by_code = {c["code"]: c for c in SEED_AGENTS}
-    assert by_code["agent-market"]["cta"] == "浏览技能包"
+    assert by_code["agent-market"]["cta"] == "浏览资产"
     assert by_code["kb-inventory"]["cta"] == "检索语料"
+    assert by_code["software-library"]["cta"] == "浏览软件"
     assert by_code["code-review"]["cta"] == "查看看板"
 
 
@@ -74,7 +78,8 @@ async def test_seed_agents_persists_kind():
     assert kinds["code-review"] == "board"
     assert kinds["agent-market"] == "platform"
     assert kinds["kb-inventory"] == "platform"
-    assert kinds["log-analysis"] == "tool"
+    assert kinds["software-library"] == "platform"
+    assert kinds["env-ops"] == "tool"
 
 
 async def test_seed_agents_syncs_kind_of_existing_row():
@@ -150,6 +155,7 @@ async def test_list_agents_filter_by_kind(client):
     codes = {i["code"] for i in items}
     assert "kb-inventory" in codes
     assert "agent-market" in codes
+    assert "software-library" in codes
 
 
 async def test_get_capability_anonymous(client):
@@ -182,3 +188,64 @@ def test_settings_category_labels_avoid_legacy_agent_wording():
 
     for cat, label in CATEGORY_LABELS.items():
         assert "智能体" not in label, f"分类 {cat} 的标签还留着「智能体」: {label}"
+
+
+# ===== 2026-10-27: 能力墙重排 =====
+
+def test_only_env_ops_remains_as_tool():
+    """⚠️ 工具组**只留「环境运维」** —— 日志分析 / 测试方案生成 / 文本用例生成 已移出清单.
+
+    为什么要盯死: 那三张卡是"规划中"状态, 挂在侧栏里占位又不点不动 ——
+    用户看到三个点不动的入口, 只会以为平台坏了.
+    """
+    tools = [c["code"] for c in SEED_AGENTS if c["kind"] == "tool"]
+    assert tools == ["env-ops"], f"工具组应该只剩环境运维, 实际: {tools}"
+
+
+def test_env_ops_copy_has_no_temperature_chamber_or_burn_in():
+    """环境运维的文案**不许**再提温箱 / 老化那摊.
+
+    范围划定 (2026-10-27): 环境运维 = 基本的服务操作 + SSD 盘符/设备运维,
+    由 AI 辅助完成. 温箱环境分析、长时老化派发是另一类活 (要看趋势、要跑很久),
+    混进来会让这张卡既不像"运维"也不像"环境监控".
+    """
+    env = next(c for c in SEED_AGENTS if c["code"] == "env-ops")
+    blob = " ".join(
+        str(env.get(f) or "")
+        for f in ("name", "summary", "use_when", "not_for", "tags")
+    )
+    for word in ("温箱", "老化", "温度", "功耗"):
+        assert word not in blob, f"环境运维的文案里还有「{word}」: {blob}"
+
+
+def test_env_ops_copy_covers_the_intended_scope():
+    """反过来也要盯: 该说的得在 —— 服务操作 / SSD 盘符设备 / AI 辅助."""
+    env = next(c for c in SEED_AGENTS if c["code"] == "env-ops")
+    summary = env["summary"]
+    assert "服务" in summary, summary
+    assert "SSD" in summary, summary
+    assert "AI" in summary, summary
+
+
+def test_agent_market_renamed_to_plugin_skill_connector():
+    """「AI 资产市场」→「插件·技能·连接」 —— 老名字跟角色名「资产」撞了, 用户分不清."""
+    mkt = next(c for c in SEED_AGENTS if c["code"] == "agent-market")
+    assert mkt["name"] == "插件·技能·连接"
+    assert "AI 资产市场" not in mkt["name"]
+    # 改名了, route 不能变 (前端按 route 跳 /market)
+    assert mkt["route"] == "page:market"
+
+
+def test_software_library_seed():
+    """软件库卡 (新增): 存内部软件, 展示功能 / 详情 / 适用 / 发布更新说明."""
+    sw = next(c for c in SEED_AGENTS if c["code"] == "software-library")
+    assert sw["name"] == "软件库"
+    assert sw["kind"] == "platform"
+    assert sw["category"] == "sw-library"
+    assert sw["cta"] == "浏览软件"
+    # 后期才做 → 现在是"规划中", 不跳任何页面
+    assert sw["status"] == "draft"
+    assert not sw.get("route"), "还没做页面, 不该有 route (否则会跳到不存在的页)"
+    blob = " ".join(str(sw.get(f) or "") for f in ("summary", "use_when"))
+    for word in ("功能", "详情", "适用", "更新"):
+        assert word in blob, f"软件库的说明里少了「{word}」: {blob}"

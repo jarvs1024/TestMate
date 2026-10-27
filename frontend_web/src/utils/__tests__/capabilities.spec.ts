@@ -93,7 +93,7 @@ describe('能力工具函数', () => {
   });
 
   it('CTA 优先用卡片自带的, 空才回落角色默认词', () => {
-    // 底座两张卡动法不同: 浏览技能包 vs 检索语料 —— 所以 CTA 必须来自卡片
+    // 资产组两张卡动法不同: 浏览资产 vs 检索语料 —— 所以 CTA 必须来自卡片
     expect(capabilityCta({ kind: 'platform', cta: '浏览技能包' })).toBe('浏览技能包');
     expect(capabilityCta({ kind: 'platform', cta: '检索语料' })).toBe('检索语料');
     expect(capabilityCta({ kind: 'platform', cta: '' })).toBe('打开');
@@ -102,7 +102,7 @@ describe('能力工具函数', () => {
     expect(capabilityCta({ kind: 'board' })).toBe('查看看板');
   });
 
-  it('底座取数来源: 资产市场数资产, 知识库数语料', () => {
+  it('资产取数来源: 插件·技能·连接数资产, 知识库数语料', () => {
     expect(PLATFORM_META_SOURCE['agent-market']).toBe('assets');
     expect(PLATFORM_META_SOURCE['kb-inventory']).toBe('kb');
   });

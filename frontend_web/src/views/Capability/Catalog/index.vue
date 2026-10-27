@@ -2,7 +2,7 @@
   <div class="market">
     <!-- ===== 能力详情统一外壳 ===== -->
     <CapabilityShell
-      name="AI 资产市场"
+      name="插件·技能·连接"
       icon="🏪"
       kind="platform"
       status="beta"

@@ -1,7 +1,9 @@
 """智能体/工作流注册表 —— 现在叫「能力注册表」。
 
 每个 Agent = 平台上的一项**能力**. 能力有三种角色 (AgentKind):
-工具 (干活) / 看板 (看数) / 底座 (供料) —— 只有 tool 才是真正的"智能体"(有引擎、有输入 schema).
+资产 (供料) / 工具 (干活) / 看板 (看数) —— 只有 tool 才是真正的"智能体"(有引擎、有输入 schema).
+⚠️ 角色名 2026-10-27: platform 的中文名从「底座」改成「资产」—— "底座"说的是架构位置,
+   用户看不懂; "资产"说的是这里放的是可复用的东西 (插件/技能/连接器、知识、软件).
 
 平台所有能力都挂在这张表上, 新增一项能力 = 首页多一张卡, 不动主框架.
 """
@@ -35,8 +37,9 @@ class AgentCategory(str, enum.Enum):
     ssd_report = "ssd-report"         # 测试报告 / 周报
     ssd_ops = "ssd-ops"               # 机台/环境运维
     auto_code = "auto-code"           # 自动化代码 (代码检视 / PR-Agent / 静态分析等)
-    ai_market = "ai-market"           # AI 资产市场入口 (插件 / 技能 / 连接器集市, 跳 /market 页)
+    ai_market = "ai-market"           # 插件/技能/连接器市场入口 (跳 /market 页)
     ssd_kb = "ssd-kb"                 # 知识库 (RAGFlow 数据集 / 文档 / 检索)
+    sw_library = "sw-library"         # 软件库 (公司内部软件: 功能 / 详情 / 适用 / 更新说明)
 
 
 class AgentKind(str, enum.Enum):
@@ -51,12 +54,13 @@ class AgentKind(str, enum.Enum):
 
     所以角色只回答三件事: 干活 / 看数 / 供料.
 
-    · tool      干活: 填参数 → 出结果 (日志分析 / 用例生成 / 测试方案生成)
+    · tool      干活: 填参数 → 出结果 (环境运维)
     · board     看数: 只读指标看板 (代码检视)
     · platform  供料: 给上面两类提供弹药 ——
-                 技能沉淀 (插件 / 技能 / 连接器) + RAG 语料 (规范 / 缺陷 / 报告)
+                 可复用资产 (插件 / 技能 / 连接器) + RAG 语料 + 内部软件
 
-    ⚠️ 底座里的两类怎么区分? 靠 **category** (业务域): ai-market / ssd-kb.
+    ⚠️ 资产组里的几张卡怎么区分? 靠 **category** (业务域):
+       ai-market (插件技能) / ssd-kb (知识库) / sw-library (软件库).
        细分信息没丢, 只是不该由角色徽标来背.
 
     ⚠️ 名字与值故意一致 (都无连字符): MySQL ENUM 存的是 enum **name**,
@@ -96,7 +100,7 @@ class Agent(Base):
     # 默认 tool —— 老数据在 seed_agents 启动同步里会被改写成正确的角色.
     kind: Mapped[AgentKind] = mapped_column(Enum(AgentKind), nullable=False, default=AgentKind.tool)
     # ===== 卡片自己的动作词 (2026-10-25) =====
-    # 同一角色下的卡动法不同 (底座里的"浏览技能包" vs "检索语料"),
+    # 同一角色下的卡动法不同 (资产组里的"浏览资产" vs "检索语料" vs "浏览软件"),
     # 所以 CTA 不能由角色决定, 得每张卡自带 —— admin 以后加卡也能自己写按钮词.
     # 空 = 前端按角色给默认词.
     cta: Mapped[str] = mapped_column(String(32), nullable=False, default="")

@@ -63,7 +63,7 @@
  * 首页 —— 能力墙.
  *
  * 2026-10-25 重构: 原来的「智能体广场」假设每张卡都是智能体 (统一显示引擎 /
- * 调用次数 / 最近调用). 实际上卡片有三种**角色** (工具干活 / 看板看数 / 底座供料),
+ * 调用次数 / 最近调用). 实际上卡片有三种**角色** (资产供料 / 工具干活 / 看板看数),
  * 那些字段对非工具卡是假信息. 现在:
  *   ① 卡片按角色渲染徽标 + 对应的 meta (真实数字);
  *   ② 顶部多一条**待办带** —— 首页先回答"今天该看什么", 再回答"有什么";
@@ -153,14 +153,14 @@ function metaOf(c: Capability): MetaItem[] {
     return boardMeta.value.length ? boardMeta.value : [{ icon: '📡', text: '评审数据' }];
   }
   if (c.kind === 'platform') {
-    // 底座: 同属一类, 但取数来源不同 (数资产 / 数语料) —— 按卡片自己的来源分派
+    // 资产: 同属一类, 但取数来源不同 (数资产 / 数语料) —— 按卡片自己的来源分派
     switch (PLATFORM_META_SOURCE[c.code]) {
       case 'assets':
         return catalogMeta.value.length ? catalogMeta.value : [{ icon: '🧩', text: '技能沉淀' }];
       case 'kb':
         return libraryMeta.value.length ? libraryMeta.value : [{ icon: '📚', text: 'RAG 语料' }];
       default:
-        return [{ icon: '🧱', text: '平台底座' }];
+        return [{ icon: '📦', text: '平台资产' }];
     }
   }
   // 工具: 引擎 + 最近使用 —— 这两个字段只有能跑的卡才有意义
@@ -287,7 +287,7 @@ async function loadMetas() {
     /* ReviewAgent 没配 / 挂了 → 保持降级文案 */
   }
   if (!loggedIn.value) return;
-  // 底座 · 资产市场: 资产数 (接口要鉴权)
+  // 资产 · 插件·技能·连接: 资产数 (接口要鉴权)
   try {
     const assets = await listAssets({ limit: 200 }, { silent: true });
     catalogMeta.value = [{ icon: '🗂', text: `${assets.total ?? assets.items?.length ?? 0} 个资产` }];

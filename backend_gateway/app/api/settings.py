@@ -33,7 +33,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "chat":       "💬 知识对话",
     "code-review": "🧪 代码检视 (pr-agent)",
     "data-source": "📡 数据源",
-    "marketplace": "🏪 AI 资产市场",
+    "marketplace": "🏪 插件·技能·连接",
 }
 
 

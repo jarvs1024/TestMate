@@ -59,14 +59,14 @@ describe('能力卡片', () => {
     expect(board.find('.cc-cta').text()).toContain('查看看板');
 
     const base = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ssd-kb', status: 'stable', cta: '检索语料' }) } });
-    expect(base.find('.cc-kind').text()).toContain('底座');
+    expect(base.find('.cc-kind').text()).toContain('资产');
     expect(base.find('.cc-cta').text()).toContain('检索语料');
     expect(base.find('.cc-cat').text()).toContain('知识库');
   });
 
-  it('CTA 用卡片自带的 cta (底座里"浏览技能包" vs "检索语料")', () => {
-    const mkt = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ai-market', cta: '浏览技能包' }) } });
-    expect(mkt.find('.cc-cta').text()).toContain('浏览技能包');
+  it('CTA 用卡片自带的 cta (资产组里"浏览资产" vs "检索语料")', () => {
+    const mkt = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ai-market', cta: '浏览资产' }) } });
+    expect(mkt.find('.cc-cta').text()).toContain('浏览资产');
     const kb = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ssd-kb', cta: '检索语料' }) } });
     expect(kb.find('.cc-cta').text()).toContain('检索语料');
   });

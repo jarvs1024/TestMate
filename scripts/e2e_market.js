@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * AI 资产市场 —— 端到端验收脚本 (真实 Chrome).
+ * 插件·技能·连接 (原「AI 资产市场》) —— 端到端验收脚本 (真实 Chrome).
  *
  * 为什么不用内置 Browser 验证:
  *   Electron 内置 Browser 在页面加载瞬间会挂起 renderer —— XHR 事件不投递、setTimeout 不触发,

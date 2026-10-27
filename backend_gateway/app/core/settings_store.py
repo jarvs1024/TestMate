@@ -266,7 +266,7 @@ SETTING_SCHEMA: list[dict] = [
         "description": "嵌入 URL 是否自动拼 &theme=<light/dark> (按浏览器当前主题)",
         "is_secret": False,
     },
-    # ===== AI 资产市场 =====
+    # ===== 插件·技能·连接 =====
     {
         "key": "marketplace.projects",
         "category": "marketplace",

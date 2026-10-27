@@ -1,4 +1,4 @@
-/** AI 资产市场 API (后端 /api/v1/assets/*).
+/** 插件·技能·连接 (原「AI 资产市场」) API —— 后端 /api/v1/assets/*.
  *
  * ⚠️ 响应拦截器 (utils/request.ts) 返回的是**响应体本身**, axios 的类型声明
  *    仍是 Promise<AxiosResponse> —— 两者不一致, 所以统一走 apiGet/apiPost/apiPut

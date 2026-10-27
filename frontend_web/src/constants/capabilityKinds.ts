@@ -7,14 +7,20 @@
  *   实际上资产市场里三种资产的官方说明写得很清楚:
  *   "一段可复用的方法与知识, 装进 Agent 后直接照着做" / "让 Agent 连到外部服务"
  *   —— 资产本来就是**装进 Agent 的扩展**; 知识库是 RAGFlow 的数据集/分段, 是**检索语料**.
- *   两者同属一类: 给上面两类能力**供料**的底座.
+ *   两者同属一类: 给上面两类能力**供料**的一组东西.
  *
- *   所以角色只回答三件事: 干活 / 看数 / 供料.
- *   细分信息没丢 —— 靠 category (业务域: ai-market / ssd-kb) 区分, 不该由徽标来背.
+ *   所以角色只回答三件事: 供料 / 干活 / 看数.
+ *   细分信息没丢 —— 靠 category (业务域: ai-market / ssd-kb / sw-library) 区分, 不该由徽标来背.
+ *
+ * ⚠️ 2026-10-27 角色名从「底座」改成「资产」:
+ *    "底座"说的是**架构位置**(谁垫在底下), 用户看不懂; "资产"说的是
+ *    **这里放的是可复用的东西** —— 插件 / 技能 / 连接器、知识、软件, 都是资产.
+ *    顺序也跟着改: 资产组排**最上面** —— 用户先看到"平台能给我什么",
+ *    再看"平台能替我干什么"(工具)、"平台上有什么数"(看板).
  *
  * ⚠️ kind 跟 category (业务域标签) **正交**:
- *   kind     = 角色 —— 工具 / 看板 / 底座
- *   category = 业务域 —— Trace 诊断 / FW 比对 / AI 资产 / 知识库 …
+ *   kind     = 角色 —— 资产 / 工具 / 看板
+ *   category = 业务域 —— Trace 诊断 / FW 比对 / 插件技能 / 知识库 / 软件库 …
  *   两者由后端一起下发, 前端只做展示映射, 不要在前端反推.
  */
 
@@ -27,7 +33,7 @@ export interface CapabilityKindMeta {
   label: string;
   /** 徽标图标 */
   icon: string;
-  /** 默认动作词 —— 具体卡片可以用自己的 cta 覆盖 (底座里"浏览技能包" vs "检索语料") */
+  /** 默认动作词 —— 具体卡片可以用自己的 cta 覆盖 (资产里"浏览资产" vs "检索语料" vs "浏览软件") */
   cta: string;
   /** 侧栏 / 筛选条的展示顺序 */
   order: number;
@@ -40,11 +46,19 @@ export interface CapabilityKindMeta {
  */
 export const CAPABILITY_KINDS: CapabilityKindMeta[] = [
   {
+    value: 'platform',
+    label: '资产',
+    icon: '📦',
+    cta: '打开',
+    order: 1,
+    hint: '资产 —— 可复用的插件 / 技能 / 连接器、知识、软件',
+  },
+  {
     value: 'tool',
     label: '工具',
     icon: '🛠',
     cta: '开始使用',
-    order: 1,
+    order: 2,
     hint: '干活 —— 填参数, 出结果',
   },
   {
@@ -52,23 +66,15 @@ export const CAPABILITY_KINDS: CapabilityKindMeta[] = [
     label: '看板',
     icon: '📊',
     cta: '查看看板',
-    order: 2,
-    hint: '看数 —— 只读指标, 不改数据',
-  },
-  {
-    value: 'platform',
-    label: '底座',
-    icon: '🧱',
-    cta: '打开',
     order: 3,
-    hint: '供料 —— 能力的技能沉淀 + RAG 语料',
+    hint: '看数 —— 只读指标, 不改数据',
   },
 ];
 
 /**
  * 状态词 —— **按角色换词**.
  *
- * 为什么: 对看板和底座说 "Beta / 稳定" 没有决策价值, 用户不会因为
+ * 为什么: 对看板和资产说 "Beta / 稳定" 没有决策价值, 用户不会因为
  * "这个知识库是 Beta" 而改变行为; 但"未接入"是必须说清楚的 (服务没配 = 用不了).
  */
 export const STATUS_LABELS: Record<CapabilityKind, Record<string, string>> = {
@@ -143,8 +149,9 @@ export const CATEGORY_LABELS: Record<string, string> = {
   'ssd-report': '测试报告',
   'ssd-ops': '机台运维',
   'auto-code': '自动化代码',
-  'ai-market': 'AI 资产',
+  'ai-market': '插件技能',
   'ssd-kb': '知识库',
+  'sw-library': '软件库',
 };
 
 /** 业务域中文名 (未知域回退成原值, 不吞掉信息) */
