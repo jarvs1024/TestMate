@@ -103,6 +103,10 @@ sudo ./deploy/native/tmctl.sh stop
 # macOS: 让 host.docker.internal 在宿主上指回 127.0.0.1 (代码检视 / 市场推送要用)
 sudo ./deploy/native/tmctl.sh local hosts fix
 
+# 换 git 远端 (公司 GitLab): 贴公钥 + 钉 host key
+./deploy/native/tmctl.sh ssh show                    # 看市场用的公钥
+./deploy/native/tmctl.sh ssh trust gitlab.company.com # 钉 host key (换远端时)
+
 # 排障
 ./deploy/native/tmctl.sh check             # 体检
 ./deploy/native/tmctl.sh doctor            # 更深: 日志错误 / 配置一致性 / 迁移版本
@@ -349,6 +353,52 @@ install 第一次跑自动生成 `.env`, 并把 `JWT_SECRET` / `MySQL_PASSWORD` 
 但 SSH 身份必须先备好: install 会把你 `~/.ssh/id_ed25519` 拷进 `runtime/ssh/` (权限 600) 并在 `backend.env` 里配好 `GIT_SSH_COMMAND`。没配 SSH 的话, 仓库能建起来但拉不到远端, 上传推送会失败 —— `tmctl.sh doctor` 能看出来。
 
 mac 上 install 会**优先把 `MARKET_DIR` 对齐到 Docker 模式那份**(同一个 `DATA_ROOT/market`), 这样切模式不用搬数据。
+
+### 6.7 换一个 git 远端 (公司 GitLab / 云 GitLab)
+
+⚠️ **后端不需要 GitLab 的 API** —— 资产市场只通过 SSH 做 git push/pull
+(`app/core/git_sync.py`: 没有 PAT、没有 token 过期、没有 API 限流)。
+所以**远端只要是"能 SSH 访问的 git 仓库"就行**, GitLab 只是顺带给你一个网页界面。
+
+换远端四步:
+
+```bash
+cd /opt/testmate/deploy/native
+
+# ① 拿市场用的 SSH 公钥 → 贴到公司 GitLab 账号的 SSH Keys
+./tmctl.sh ssh show
+
+# ② 钉住公司主机的 host key (打印指纹, 跟 GitLab 管理员核对后再确认)
+./tmctl.sh ssh trust gitlab.company.com
+./tmctl.sh ssh trust gitlab.company.com:2222      # 非标准 SSH 端口
+
+# ③ 改远端地址 (二选一)
+#    改 .env 后要 tmctl.sh local update 让它生效:
+#      MARKET_GIT_REMOTE=ssh://git@gitlab.company.com/team/testmate-market.git
+#    或者直接改设置项 (免重启, 立即生效):
+#      设置页 → 市场 → Git 仓库地址
+
+# ④ 验证 —— 设置页点「测试 GitLab 连接」, 或:
+./tmctl.sh doctor
+```
+
+⚠️ **为什么要第 ② 步(不能靠自动)**:
+后端用 `StrictHostKeyChecking=accept-new` —— 第一次连上就自动把 host key 记下来。
+开发机这样方便, 生产是隐患: 第一次连上的**是谁**, 就永远信谁。
+`ssh trust` 改成**人工核对指纹后再钉**。
+
+⚠️ **两个 known_hosts 别搞混**:
+| 模式 | known_hosts 在哪 |
+|---|---|
+| 裸机 | `deploy/native/runtime/ssh/known_hosts` ← `tmctl.sh ssh trust` 写的就是它 |
+| Docker | `deploy/.env` 的 `GITLAB_KNOWN_HOSTS` 指向的那个(一般是 `~/.ssh/known_hosts`) |
+
+⚠️ **换远端后, 仓库内容要迁一次**: 新远端得先有 `main` 分支和同样的内容
+(把旧远端的 main 推过去), 否则后端 fetch 不到、克隆会失败。
+
+⚠️ **地址不用手改**: 后端按"自己跑在哪"自动双向改写
+(容器里 `127.0.0.1` → `host.docker.internal`, 宿主上 `host.docker.internal` → `127.0.0.1`),
+**同一个设置值在容器模式和裸机模式下都通** —— 切模式不用改配置, 也不用改 `/etc/hosts`。
 
 ---
 

@@ -156,11 +156,26 @@ async def _probe_gitlab() -> Tuple[bool, str]:
 
 
 async def _check_marketplace() -> dict:
-    """市场链路状态: GitLab 可达性 + 同步任务积压."""
+    """市场链路状态: GitLab 可达性 + 同步任务积压.
+
+    ⚠️ **判定口径**: 市场链路"坏没坏"看的是 `failed_assets` ——
+       资产表里 `sync_status='failed'` 的那几个, 也就是**还有活没推上去**。
+       不是 `failed_jobs` (任务表里的历史失败条数)。
+
+       为什么不能用 failed_jobs 判: 2026-10-22~26 GitLab 挂着那几天攒了 219 条
+       failed job, 对应的资产**后来都被删了** —— 它们是纯历史残留, 没有一件
+       待处理. 但 `failed_jobs == 0` 是**全量**计数 → 从那以后平台一直报
+       "市场链路不健康", 哪怕现在一切正常. 监控告警永远亮着, 真出故障时反而
+       没人看 —— 这在生产上是致命的。
+
+       历史那 219 条**一条不删** (那是审计线索: 谁在什么时候传了什么失败了),
+       只是不再参与健康判定。
+    """
     out: dict = {
         "ok": True,
         "gitlab": {"ok": True, "error": None},
         "failed_jobs": 0,
+        "failed_assets": 0,
         "pending_jobs": 0,
         "unpublished": 0,
         "error": None,
@@ -185,6 +200,13 @@ async def _check_marketplace() -> dict:
                     .where(AssetJob.status == "failed")
                 )
             ).scalar() or 0
+            # ⚠️ 判定用这个, 不是 failed_jobs —— 见函数 docstring 的说明
+            failed_assets = (
+                await session.execute(
+                    select(func.count()).select_from(Asset)
+                    .where(Asset.sync_status == "failed")
+                )
+            ).scalar() or 0
             pending = (
                 await session.execute(
                     select(func.count()).select_from(AssetJob)
@@ -198,13 +220,15 @@ async def _check_marketplace() -> dict:
                 )
             ).scalar() or 0
         out["failed_jobs"] = int(failed)
+        out["failed_assets"] = int(failed_assets)
         out["pending_jobs"] = int(pending)
         out["unpublished"] = int(unpublished)
     except Exception as e:  # noqa: BLE001
         logger.warning("readiness: 市场统计查询失败: %s: %s", type(e).__name__, e)
         out["error"] = f"{type(e).__name__}: {e}"
 
-    out["ok"] = bool(out["gitlab"]["ok"]) and out["failed_jobs"] == 0
+    # ⚠️ 判定用 failed_assets (还有活没推上去), 不是 failed_jobs (历史残留) —— 见上面
+    out["ok"] = bool(out["gitlab"]["ok"]) and out["failed_assets"] == 0
     return out
 
 

@@ -23,6 +23,8 @@
 #   doctor      深度排障 (比 check 看得深)
 #   admin       建 / 改 admin 账号
 #   uninstall   卸载 (默认保留数据)
+#   ssh show    看资产市场的 SSH 身份 (公钥) + 已钉的 host key
+#   ssh trust   钉住 git 远端主机的 host key (换公司 GitLab 时用)
 #   help        本帮助
 #
 # 驱动 (自动选, 有 systemd 用 systemd, 没有用 local):
@@ -32,6 +34,8 @@
 #   launchd status      macOS: 看 launchd 状态
 #   local hosts check   macOS: 看 host.docker.internal 在宿主上通不通
 #   local hosts fix     macOS: 往宿主 /etc/hosts 加映射 (代码检视 / 市场推送要用)
+#   ssh show            看资产市场用的 SSH 身份 (公钥) + 已钉的 host key
+#   ssh trust <host>    钉住 git 远端主机的 host key (换公司 GitLab 时用)
 #
 # 选项:
 #   --auto        install/check 时自动装缺失的依赖
@@ -98,7 +102,9 @@ detect_driver() {
 }
 
 usage() {
-  sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
+  # ⚠️ 打印文件头部的注释块 (到第一个非注释行为止) —— 写死行号的话,
+  #    头部长短一变就截错位置 (加两行说明, 末尾的"选项/示例"就被切掉了).
+  sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//' | sed '$d'
 }
 
 # ==================== 参数解析 ====================
@@ -110,7 +116,7 @@ usage() {
 # 不再走全局选项解析 (否则 admin --username 会被当成未知全局选项报错).
 CMD_TAKES_ARGS="no"
 case "${1:-}" in
-  admin|backup|restore|logs|local|launchd) CMD_TAKES_ARGS="yes" ;;
+  admin|backup|restore|logs|local|launchd|ssh) CMD_TAKES_ARGS="yes" ;;
 esac
 
 ACTION=""
@@ -1410,6 +1416,85 @@ cmd_hosts() {
   esac
 }
 
+# ===== SSH 身份: 给 git 远端(host key)钉信任 =====
+#
+# ⚠️ 为什么生产需要这个命令:
+#    换公司 GitLab 时, 后端用 `StrictHostKeyChecking=accept-new` —— 第一次连上
+#    就自动把 host key 记下来. "自动"在开发机方便, 在生产是隐患: 第一次连上的
+#    是谁, 就永远信谁 (而且是**整个 known_hosts 文件**替它背书).
+#    所以改成**人工核对后再钉**: 扫出 host key → 打印指纹 → 运维拿指纹跟
+#    GitLab 管理员核对 → 确认无误才写进 known_hosts.
+ssh_do_trust() {
+  local host="${1:-}" port=22
+  [[ -n "$host" ]] || die "用法: $0 ssh trust <host[:port]>"
+  # ⚠️ "[host]:port" 形式要拆开 —— ssh-keyscan 用 -p 传端口, 不能带方括号
+  if [[ "$host" == *:* ]]; then
+    port="${host##*:}"
+    host="${host%:*}"
+    host="${host#[}"
+    host="${host%]}"
+  fi
+  have_cmd ssh-keyscan || die "没有 ssh-keyscan —— 装 openssh-client"
+  have_cmd ssh-keygen   || die "没有 ssh-keygen —— 装 openssh-client"
+
+  local kh="$RUNTIME_DIR/ssh/known_hosts"
+  mkdir -p "$(dirname "$kh")"
+  touch "$kh"; chmod 600 "$kh"
+
+  log "扫描 $host:$port 的 host key (最多等 8 秒) ..."
+  local tmp
+  tmp="$(mktemp)"
+  ssh-keyscan -T 8 -p "$port" "$host" 2>/dev/null | grep -v '^#' > "$tmp" || true
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$tmp"
+    fail "扫不到 $host:$port 的 host key —— 端口对不对? 网络通不通?"
+    return 1
+  fi
+  # 同一种密钥类型可能被扫到多次 —— 按类型去重
+  awk '!seen[$2]++' "$tmp" > "$tmp.dedup"
+
+  echo
+  echo "  扫到的 host key 指纹 (拿去跟 GitLab 管理员核对):"
+  ssh-keygen -lf "$tmp.dedup" | sed 's/^/    /'
+  echo
+  confirm "指纹核对无误? (对不上就回答 n)" || { rm -f "$tmp" "$tmp.dedup"; die "已中止 —— 什么都没改"; }
+
+  cat "$tmp.dedup" >> "$kh"
+  sort -u -o "$kh" "$kh"
+  rm -f "$tmp" "$tmp.dedup"
+  ok "已写进 $kh"
+  echo "  现在的 known_hosts:"
+  ssh-keygen -lf "$kh" | sed 's/^/    /'
+}
+
+ssh_do_show() {
+  local kh="$RUNTIME_DIR/ssh/known_hosts"
+  local key="$RUNTIME_DIR/ssh/id_ed25519"
+  echo "── 资产市场 SSH 身份 ──"
+  if [[ -f "$key" ]]; then
+    echo "  私钥: $key"
+    echo "  公钥 (贴到 GitLab 账号的 SSH Keys 里):"
+    ssh-keygen -y -f "$key" 2>/dev/null | sed 's/^/    /'
+  else
+    warn "没有市场用的 SSH 私钥 ($key) —— 上架/推送会失败; 先跑 $0 install"
+  fi
+  echo
+  echo "── 已钉的 host key ──"
+  if [[ -s "$kh" ]]; then
+    ssh-keygen -lf "$kh" | sed 's/^/    /'
+  else
+    echo "  (空 —— 用 $0 ssh trust <host[:port]> 钉一个)"
+  fi
+}
+
+cmd_ssh() {
+  case "${REST[0]:-show}" in
+    trust) ssh_do_trust "${REST[@]:1}" ;;
+    show)  ssh_do_show ;;
+    *) die "ssh 子命令: trust <host[:port]> | show" ;;
+  esac
+}
+
 local_do_start() {
   # 两条路径都要提醒 (launchd 接管 / PID 模式) —— 端口用错是本地部署最容易踩的坑
   warn_docker_frontend
@@ -2576,6 +2661,7 @@ case "$ACTION" in
       *) die "launchd 子命令: install | uninstall | status" ;;
     esac ;;
   hosts)   cmd_hosts ${REST[@]+"${REST[@]}"} ;;
+  ssh)     cmd_ssh ${REST[@]+"${REST[@]}"} ;;
   db)      cmd_db ${REST[@]+"${REST[@]}"} ;;
   help|-h|--help) usage ;;
   *)        die "未知命令: $ACTION (用 --help 看用法)" ;;
