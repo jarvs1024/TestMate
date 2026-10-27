@@ -64,3 +64,35 @@ export async function createUser(payload: CreateUserPayload): Promise<ManagedUse
 export async function updateUser(id: number, payload: UpdateUserPayload): Promise<ManagedUser> {
   return (await request.patch(`/auth/users/${id}`, payload)) as ManagedUser;
 }
+
+/** 账号提示的结论 */
+export type AccountState = 'ok' | 'missing' | 'disabled' | 'unknown';
+
+export interface AccountHint {
+  /** ok = 已开通且可用; missing = 没开通; disabled = 已停用; unknown = 输入还不成形 */
+  account: AccountState;
+  /** 这个账号登录要不要密码 (管理员一律要) */
+  needs_password: boolean;
+  role: UserRole | null;
+  /** 库里这个账号的规范用户名 (普通用户 = 邮箱, 管理员 = 账号名) */
+  username: string | null;
+}
+
+/**
+ * 账号提示 (公开, 不用登录) —— 登录页据此决定"要不要显示密码框".
+ *
+ * ⚠️ 拿不到时返回 null (**不抛**) —— 探测只是"锦上添花":
+ *    探不到就退回"先提交、后端说 password_required 再展开密码框"的老路,
+ *    登录照样能用. 顺带 silent —— 探测失败不该弹全局错误.
+ */
+export async function getAccountHint(username: string): Promise<AccountHint | null> {
+  try {
+    return (await request.get('/auth/account-hint', {
+      params: { username },
+      silent: true,
+    })) as AccountHint;
+  } catch {
+    return null;
+  }
+}
+

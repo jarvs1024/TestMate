@@ -39,6 +39,22 @@ class TokenResponse(BaseModel):
     expires_in: int
 
 
+class AccountHintOut(BaseModel):
+    """账号提示 —— 登录页用来决定"要不要显示密码框".
+
+    ⚠️ 这是**公开**端点 (不用登录) —— 它只回答跟登录表单直接相关的问题:
+       这个账号存不存在、要不要密码. 不含任何凭据信息.
+    """
+
+    # ok = 账号存在且可用; missing = 没开通; disabled = 已停用; unknown = 输入还不成形
+    account: str = "unknown"
+    # 这个账号登录要不要密码 (admin 一律 True; 普通账号看建号时有没有给密码)
+    needs_password: bool = False
+    role: UserRole | None = None
+    # 库里这个账号的**规范用户名** (普通用户是邮箱, 管理员是账号名) —— 前端拿它校正提示
+    username: str | None = None
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

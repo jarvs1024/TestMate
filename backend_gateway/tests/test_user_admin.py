@@ -393,3 +393,103 @@ async def test_bad_usernames_rejected(client, admin_user, bad):
         headers=_auth(admin_user),
     )
     assert r.status_code == 422, r.text()
+
+
+# ---------- 账号提示 (/account-hint) ----------
+#
+# ⚠️ 登录页靠它决定"要不要摆密码框" —— 所以它的结论必须跟登录接口**完全一致**:
+#    提示说"免密"结果登录要密码, 用户就会莫名其妙被顶回来一次.
+
+async def test_account_hint_needs_no_login(client):
+    """公开端点 —— 登录页在还没登录时就要调它."""
+    r = await client.get("/api/v1/auth/account-hint", params={"username": "anyone"})
+    assert r.status_code == 200, r.text()
+    assert r.json()["account"] == "missing"
+
+
+async def test_account_hint_passwordless_user(client, admin_user):
+    """没设密码的账号 → 免密 (前端不摆密码框)."""
+    await client.post(
+        "/api/v1/auth/users",
+        json={"username": "hintfree", "role": "tester"},
+        headers=_auth(admin_user),
+    )
+    r = await client.get("/api/v1/auth/account-hint", params={"username": "hintfree"})
+    assert r.status_code == 200, r.text()
+    body = r.json()
+    assert body["account"] == "ok"
+    assert body["needs_password"] is False
+    assert body["username"] == "hintfree@twsc.com.cn"
+    assert body["role"] == "tester"
+
+
+async def test_account_hint_user_with_password(client, admin_user):
+    """设了密码的账号 → 要密码 (前端摆密码框)."""
+    await client.post(
+        "/api/v1/auth/users",
+        json={"username": "hintpw", "password": "Secret@12345", "role": "tester"},
+        headers=_auth(admin_user),
+    )
+    r = await client.get("/api/v1/auth/account-hint", params={"username": "hintpw"})
+    body = r.json()
+    assert body["account"] == "ok"
+    assert body["needs_password"] is True
+
+
+async def test_account_hint_admin_always_needs_password(client, admin_user):
+    """管理员一律要密码 —— 哪怕 password_required 这一列是 False."""
+    r = await client.get("/api/v1/auth/account-hint", params={"username": admin_user["username"]})
+    body = r.json()
+    assert body["account"] == "ok"
+    assert body["needs_password"] is True
+    assert body["role"] == "admin"
+
+
+async def test_account_hint_disabled_account(client, admin_user):
+    """停用的账号 → 如实说停用, 但**不**说"要密码" (那会多摆一个没用的框)."""
+    r = await client.post(
+        "/api/v1/auth/users",
+        json={"username": "hintleaver", "role": "tester"},
+        headers=_auth(admin_user),
+    )
+    uid = r.json()["id"]
+    await client.patch(f"/api/v1/auth/users/{uid}", json={"is_active": False}, headers=_auth(admin_user))
+
+    h = await client.get("/api/v1/auth/account-hint", params={"username": "hintleaver"})
+    body = h.json()
+    assert body["account"] == "disabled"
+    assert body["needs_password"] is False
+
+
+async def test_account_hint_short_username_is_unknown(client):
+    """输入还没成形 → unknown (不查库, 免得用户刚打字就看到"账号不存在")."""
+    r = await client.get("/api/v1/auth/account-hint", params={"username": "a"})
+    assert r.json()["account"] == "unknown"
+
+
+async def test_account_hint_agrees_with_login(client, admin_user):
+    """⚠️ 不变式: 提示说免密 → 不带密码就该真登进去; 说要密码 → 不带密码就该被顶回.
+
+    这是整个"免密优先"改动的命门 —— 两处口径一旦分叉, 用户就会莫名挨一次失败.
+    """
+    await client.post(
+        "/api/v1/auth/users",
+        json={"username": "agreefree", "role": "tester"},
+        headers=_auth(admin_user),
+    )
+    await client.post(
+        "/api/v1/auth/users",
+        json={"username": "agreepw", "password": "Secret@12345", "role": "tester"},
+        headers=_auth(admin_user),
+    )
+
+    for name, expect_ok in (("agreefree", True), ("agreepw", False)):
+        hint = await client.get("/api/v1/auth/account-hint", params={"username": name})
+        needs_pw = hint.json()["needs_password"]
+        assert needs_pw is (not expect_ok), f"{name}: 提示与登录口径不一致"
+        login = await client.post("/api/v1/auth/login", json={"username": name})
+        if expect_ok:
+            assert login.status_code == 200, login.text()
+        else:
+            assert login.status_code == 401, login.text()
+            assert login.json()["detail"]["code"] == "password_required"

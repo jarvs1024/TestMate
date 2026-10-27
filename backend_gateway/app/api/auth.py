@@ -5,7 +5,7 @@ import os
 import secrets
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -18,6 +18,7 @@ from app.db.session import get_session
 from app.models.asset import AssetAudit
 from app.models.user import User, UserRole
 from app.schemas.auth import (
+    AccountHintOut,
     LoginRequest,
     TokenResponse,
     UserCreate,
@@ -80,6 +81,42 @@ async def _record_login_failure(key: str) -> int:
 async def _clear_login_failures(key: str) -> None:
     async with _login_fail_lock:
         _login_failures.pop(key, None)
+
+
+# ===== 账号提示 (/account-hint) 的限流 =====
+#
+# ⚠️ 为什么这个端点也要限流:
+#    它会告诉调用方"这个账号存不存在、要不要密码" —— 跟登录接口的
+#    account_not_found / account_disabled / password_required 是同一类信息.
+#    登录接口靠 _LOGIN_FAIL_LIMIT 挡住批量撞库; 这个端点**不会失败**
+#    (不存在的账号也正常返回), 所以那套"失败计数"拦不住它.
+#    不限流的话, 一个 IP 就能在几分钟内把整个公司目录问一遍.
+#
+# ⚠️ 阈值按"一个办公网出口 IP"来想: 几十个同事各自登录一次完全够用
+#    (默认 120 次 / 5 分钟), 而批量枚举要付出明显更高的代价.
+_HINT_LIMIT = max(1, int(os.environ.get("AUTH_HINT_LIMIT", "120")))
+_HINT_WINDOW = max(60, int(os.environ.get("AUTH_HINT_WINDOW_SECONDS", "300")))
+_hint_hits: dict[str, list[float]] = {}
+_hint_lock = asyncio.Lock()
+
+
+async def _hint_count(key: str) -> int:
+    now = time.monotonic()
+    async with _hint_lock:
+        hits = [t for t in _hint_hits.get(key, []) if now - t < _HINT_WINDOW]
+        if hits:
+            _hint_hits[key] = hits
+        else:
+            _hint_hits.pop(key, None)
+        return len(hits)
+
+
+async def _hint_record(key: str) -> None:
+    now = time.monotonic()
+    async with _hint_lock:
+        hits = [t for t in _hint_hits.get(key, []) if now - t < _HINT_WINDOW]
+        hits.append(now)
+        _hint_hits[key] = hits
 
 
 async def get_current_user(
@@ -289,6 +326,56 @@ async def auth_config() -> dict:
        用户按提示填了错的域名, 登录时后端补的却是另一个域).
     """
     return {"email_domain": settings.AUTH_EMAIL_DOMAIN}
+
+
+@router.get("/account-hint", response_model=AccountHintOut)
+async def account_hint(
+    request: Request,
+    username: str = Query(default="", max_length=128),
+    session: AsyncSession = Depends(get_session),
+):
+    """账号提示 —— 登录页用它决定"要不要摆出密码框".
+
+    ⚠️ 为什么需要它: "这个账号要不要密码"是**账号属性**, 只有后端知道.
+       没有这个端点时, 前端只能等用户点提交 → 后端回 password_required 才展开
+       密码框 —— 用户白挨一次失败, 而且那一次失败还会**计入登录限流**.
+
+    ⚠️ 口径跟登录接口完全一致 (同一个 need_password 判定):
+       · 管理员账号            → 一律要密码;
+       · 建号时给了密码的账号  → 要密码;
+       · 建号时没给密码的账号  → 免密 (只填账号名就能进).
+       见 login() 里的 need_password = role == admin or password_required.
+
+    ⚠️ 停用的账号: 如实回 disabled, 但**不**回 needs_password —— 停用跟
+       密码没关系, 回 true 只会让登录页多摆一个没用的密码框.
+
+    ⚠️ 输入还没成形 (少于 2 个字符) → account='unknown', 不查库 ——
+       否则用户刚开始打字就会看到"账号不存在".
+    """
+    client_ip = request.client.host if request.client else "-"
+    hint_key = f"hint|{client_ip}"
+    if await _hint_count(hint_key) >= _HINT_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"查询过于频繁, 请 {_HINT_WINDOW // 60} 分钟后再试",
+        )
+    await _hint_record(hint_key)
+
+    raw = (username or "").strip()
+    if len(raw) < 2:
+        return AccountHintOut(account="unknown")
+
+    user = await _find_user(session, raw)
+    if user is None:
+        return AccountHintOut(account="missing")
+    if not user.is_active:
+        return AccountHintOut(account="disabled")
+    return AccountHintOut(
+        account="ok",
+        needs_password=(user.role == UserRole.admin or user.password_required),
+        role=user.role,
+        username=user.username,
+    )
 
 
 # ===== 账号管理 (仅 admin) =====

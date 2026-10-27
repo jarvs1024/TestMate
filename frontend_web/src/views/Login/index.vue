@@ -12,9 +12,8 @@
 
         <h1 class="title">登录到工作台</h1>
         <p class="lede">
-          账号需<strong>管理员提前开通</strong> —— 没开通的账号填了也进不来。<br />
-          普通用户：填公司邮箱前缀<span v-if="emailDomain">（{{ emailDomain }}）</span>；
-          管理员：填账号名，另输密码
+          填公司邮箱前缀<span v-if="emailDomain">（{{ emailDomain }}）</span>，或管理员账号名。<br />
+          账号需<strong>管理员提前开通</strong>；未设密码的账号<strong>免密登录</strong>，回车即可。
         </p>
 
         <form @submit.prevent="onSubmit">
@@ -31,16 +30,17 @@
                 @input="onUserInput" />
               <span v-if="showDomain" class="suffix">{{ emailDomain }}</span>
             </div>
+            <div v-if="hintText" class="hint" :class="hintKind">{{ hintText }}</div>
           </div>
 
-          <!-- 密码: 默认不占版面, 管理员才需要 (后端说 password_required 才展开) -->
+          <!-- 密码: **只有这个账号真的要密码时才摆出来** (后端探测的结果) -->
           <div v-if="needPassword" class="field">
             <label>密码 <span class="req">*</span></label>
             <input
               ref="pwdInput"
               v-model="form.password"
               type="password"
-              placeholder="••••••••"
+              placeholder="请输入密码"
               autocomplete="current-password" />
           </div>
 
@@ -48,12 +48,18 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M15 3h4a2 2 0 0 1 2 2v4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>
             </svg>
-            <span>{{ loading ? '登录中…' : '登录' }}</span>
+            <span>{{ buttonText }}</span>
           </button>
 
-          <div v-if="error" class="err">{{ error }}</div>
-          <button v-else-if="!needPassword" type="button" class="link" @click="needPassword = true">
-            用密码登录
+          <div v-if="error" class="err" :class="{ warn: errorIsWarn }">{{ error }}</div>
+
+          <!-- 探测失败时的**兜底口子** (正常情况下不需要它 —— 要密码的账号密码框自动出现) -->
+          <button
+            v-else-if="hintState === 'failed' && !needPassword"
+            type="button"
+            class="link"
+            @click="showPasswordBox">
+            该账号有密码？点这里输入
           </button>
         </form>
       </div>
@@ -63,33 +69,42 @@
 
 <script setup lang="ts">
 /**
- * 登录页 —— 2026-10-25 账号管理重构.
+ * 登录页 —— 免密优先.
  *
- * 新规则 (后端 app/api/auth.py):
+ * 账号口径 (后端 app/api/auth.py):
  *   · 账号**必须管理员先建过**才能登录 —— 填了没开通的账号进不来;
- *   · **普通用户**: 输入公司邮箱前缀 (后缀由后端的 AUTH_EMAIL_DOMAIN 决定) → 建号时没设密码
- *     就是免密登录, 设了密码就要输;
- *   · **管理员**: 账号名 (不含 @) → 必须密码.
+ *   · **普通用户**: 输入公司邮箱前缀 (后缀由后端的 AUTH_EMAIL_DOMAIN 决定)
+ *     → 建号时没设密码 = **免密登录**, 设了密码就要输;
+ *   · **管理员**: 账号名 (不含 @) → 一律要密码.
  *
- * 所以这个表单默认**只有一个输入框**: 填完用户名回车就进去了 —— 真"一键".
- * 密码框默认不占版面, 两种情况才出现:
- *   ① 后端回 password_required (说明这个账号设了密码 / 是管理员);
- *   ② 用户自己点「用密码登录」(拿旧密码体系的同事也能用).
+ * 所以表单默认**只有一个输入框**: 填完用户名回车就进去了 —— 真"一键".
  *
- * ⚠️ 记住两个东西 (localStorage):
+ * 密码框**只在"这个账号真的要密码"时才出现**, 判据是后端的账号提示
+ * (GET /api/v1/auth/account-hint):
+ *   ① 探测到 needs_password → 摆出密码框, 并说清"这个号已设密码";
+ *   ② 探测到免密账号         → 不摆密码框, 按钮写成「免密登录」;
+ *   ③ 探测失败 (后端不可达)  → 退回老路: 先提交, 后端回 password_required
+ *      再展开密码框 (这一步失败会被登录限流计数, 所以只是兜底);
+ *   ④ 上次登录过且带密码的账号 → localStorage 记着, 下次直接摆出密码框.
+ *
+ * ⚠️ 记住三个东西 (localStorage):
  *   · 上次用的用户名 → 下次自动填好, 回车即登录;
- *   · "这个账号要密码" → 下次直接把密码框摆出来, 管理员不用多点一次.
+ *   · "这个账号要密码" → 下次直接把密码框摆出来, 不用多点一次.
  */
 import BrandLogo from '@/components/BrandLogo.vue';
-import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useUserStore } from '@/stores/user';
-import { getAuthConfig } from '@/api/users';
+import { getAccountHint, getAuthConfig, type AccountHint } from '@/api/users';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 /** 上次登录用的用户名 */
 const LAST_USERNAME_KEY = 'testmate:last-username';
 /** 需要密码的账号名 (值 = 用户名) */
 const NEEDS_PASSWORD_KEY = 'testmate:needs-password';
+
+/** 探测的防抖间隔 (毫秒) —— 别一个字一个字地打一次接口 */
+const HINT_DEBOUNCE_MS = 300;
 
 const router = useRouter();
 const route = useRoute();
@@ -98,9 +113,21 @@ const userStore = useUserStore();
 const form = reactive({ username: '', password: '' });
 const loading = ref(false);
 const error = ref('');
+/** 这条提示是"提醒"还是"错误"? (要密码 → 提醒, 黄色; 登录失败 → 错误, 红色) */
+const errorIsWarn = ref(false);
 const needPassword = ref(false);
 const userInput = ref<HTMLInputElement | null>(null);
 const pwdInput = ref<HTMLInputElement | null>(null);
+
+/** 账号提示的状态机: idle → checking → ready / failed */
+const hintState = ref<'idle' | 'checking' | 'ready' | 'failed'>('idle');
+const hint = ref<AccountHint | null>(null);
+/** 当前这份提示是**给哪个账号名**的 —— 换了账号, 旧结论立刻作废 */
+const hintFor = ref('');
+
+/** 探测序号 —— 后发先至时只认最后一次 (慢请求回来不能覆盖新账号的结论) */
+let hintSeq = 0;
+let hintTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * 公司邮箱后缀 —— **运行时向后端取** (GET /api/v1/auth/config, 公开端点).
@@ -115,16 +142,58 @@ const FALLBACK_EMAIL_DOMAIN = '@twsc.com.cn';
 const emailDomain = ref(FALLBACK_EMAIL_DOMAIN);
 
 /** 输入里已经有 @ 了就不用再显示固定后缀 */
-const showDomain = computed(() => !form.username.includes('@'));
+const showDomain = computed(() => {
+  if (form.username.includes('@')) return false;
+  // ⚠️ 管理员账号是**账号名** (admin), 不是邮箱 —— 探测出来是管理员就别再挂
+  //    "@twsc.com.cn" 后缀, 否则提示本身就是错的.
+  if (hint.value?.account === 'ok' && hint.value.role === 'admin') return false;
+  return true;
+});
+
+/** 账号状态提示 (一行, 跟着输入走) */
+const hintText = computed(() => {
+  const u = form.username.trim();
+  if (!u) return '';
+  if (hintState.value === 'checking') return '正在核对账号…';
+  if (hintState.value === 'failed') return '账号需管理员提前开通';
+  const h = hint.value;
+  if (!h) return '';
+  if (h.account === 'ok') {
+    const who = h.role === 'admin' ? '管理员账号' : '账号已开通';
+    return h.needs_password
+      ? `${who} · 已设置密码，请输入密码登录`
+      : `${who} · 免密登录，直接回车即可`;
+  }
+  if (h.account === 'missing') return '该账号尚未开通，请联系管理员';
+  if (h.account === 'disabled') return '该账号已停用，请联系管理员';
+  return '';
+});
+
+/** 提示的语气 (ok / bad / busy / need-pw) */
+const hintKind = computed(() => {
+  if (hintState.value === 'checking') return 'busy';
+  const h = hint.value;
+  if (h?.account === 'ok') return h.needs_password ? 'need-pw' : 'ok';
+  if (h?.account === 'missing' || h?.account === 'disabled') return 'bad';
+  return 'plain';
+});
+
+/** 按钮文案 —— 免密账号就说清楚是免密 */
+const buttonText = computed(() => {
+  if (loading.value) return '登录中…';
+  if (hint.value?.account === 'ok' && !hint.value.needs_password) return '免密登录';
+  return '登录';
+});
 
 onMounted(async () => {
   const last = localStorage.getItem(LAST_USERNAME_KEY) || '';
   if (last) {
     form.username = last;
-    // 上次这个账号要过密码 → 直接把密码框摆出来
+    // 上次这个账号要过密码 → 直接把密码框摆出来 (不用等探测)
     needPassword.value = localStorage.getItem(NEEDS_PASSWORD_KEY) === last;
+    // 后缀取真值 (取不到就用兜底常量, 见上面的说明)
+    void checkAccountHint(last);
   }
-  // 后缀取真值 (取不到就用兜底常量, 见上面的说明)
   try {
     const cfg = await getAuthConfig();
     if (cfg?.email_domain) emailDomain.value = cfg.email_domain;
@@ -133,13 +202,84 @@ onMounted(async () => {
   }
 });
 
-/** 换了账号 → 密码框收起来 (新账号大概率是普通用户) */
+onBeforeUnmount(() => {
+  if (hintTimer) clearTimeout(hintTimer);
+  // 让在途的探测回来时自动作废 (别再往已卸载的组件上写状态)
+  hintSeq += 1;
+});
+
+/** 换了账号 → 旧结论作废, 重新排一次探测 */
 function onUserInput() {
   error.value = '';
-  if (needPassword.value && localStorage.getItem(NEEDS_PASSWORD_KEY) !== form.username) {
+  errorIsWarn.value = false;
+  const u = form.username.trim();
+
+  if (hintFor.value && u !== hintFor.value) {
+    hint.value = null;
+    hintState.value = 'idle';
+    hintFor.value = '';
+  }
+  // 记住的"这个号要密码"只对**那一个账号名**成立 —— 换个号就收起来
+  if (localStorage.getItem(NEEDS_PASSWORD_KEY) !== u) {
     needPassword.value = false;
     form.password = '';
   }
+  scheduleHintCheck(u);
+}
+
+/** 防抖后去问后端: 这个账号要不要密码 */
+function scheduleHintCheck(username: string) {
+  if (hintTimer) clearTimeout(hintTimer);
+  if (username.length < 2) {
+    hint.value = null;
+    hintState.value = 'idle';
+    hintFor.value = '';
+    return;
+  }
+  hintTimer = setTimeout(() => {
+    hintTimer = null;
+    void checkAccountHint(username);
+  }, HINT_DEBOUNCE_MS);
+}
+
+/**
+ * 问后端账号提示.
+ *
+ * ⚠️ 失败**不报错** —— 探测是"锦上添花": 探不到就退回老路 (提交时后端说
+ *    password_required 再展开密码框), 登录照样能用. 用户不该看到"探测失败"。
+ */
+async function checkAccountHint(username: string) {
+  const seq = ++hintSeq;
+  hintState.value = 'checking';
+  const res = await getAccountHint(username);
+  // 有更新的探测了 → 这份结果作废 (慢请求不能盖掉新账号的结论)
+  if (seq !== hintSeq) return;
+  if (!res) {
+    hintState.value = 'failed';
+    return;
+  }
+  hint.value = res;
+  hintFor.value = username;
+  hintState.value = 'ready';
+  if (res.account === 'ok') {
+    needPassword.value = res.needs_password;
+    if (res.needs_password) {
+      localStorage.setItem(NEEDS_PASSWORD_KEY, username);
+    } else if (localStorage.getItem(NEEDS_PASSWORD_KEY) === username) {
+      // 这个号刚被改成免密了 → 撤掉"要密码"的标记
+      localStorage.removeItem(NEEDS_PASSWORD_KEY);
+    }
+  } else {
+    needPassword.value = false;
+  }
+}
+
+/** 探测失败时的兜底: 手动把密码框叫出来 */
+function showPasswordBox() {
+  needPassword.value = true;
+  error.value = '';
+  errorIsWarn.value = false;
+  void nextTick(() => pwdInput.value?.focus());
 }
 
 async function onSubmit() {
@@ -147,14 +287,15 @@ async function onSubmit() {
   if (!username) return;
   loading.value = true;
   error.value = '';
+  errorIsWarn.value = false;
   try {
-    await userStore.login(username, form.password);
+    await userStore.login(username, needPassword.value ? form.password : '');
     // 记住用户名 (下次自动填)
     localStorage.setItem(LAST_USERNAME_KEY, username);
     // ⚠️ "这个账号要密码"的标记要**按情况**处理:
     //    · 这次是带密码进来的 → 说明这个账号要密码 (管理员), 下次直接把密码框摆出来
     //    · 这次没输密码就进来了 → 说明这账号不需要密码 (普通用户), 标记撤掉
-    if (form.password) {
+    if (needPassword.value && form.password) {
       localStorage.setItem(NEEDS_PASSWORD_KEY, username);
     } else {
       localStorage.removeItem(NEEDS_PASSWORD_KEY);
@@ -162,22 +303,20 @@ async function onSubmit() {
     const redirect = (route.query.redirect as string) || '/';
     router.push(redirect);
   } catch (e: any) {
-    const detail = e?.response?.data?.detail;
-    if (detail && typeof detail === 'object') {
-      // 后端给的是结构化 detail: {code, message}
-      if (detail.code === 'password_required') {
-        // 这个账号要密码 → 展开密码框, 并记住 (下次直接摆出来)
-        needPassword.value = true;
-        error.value = detail.message || '该账号需要密码';
-        localStorage.setItem(NEEDS_PASSWORD_KEY, username);
-        await nextTick();
-        pwdInput.value?.focus();
-      } else {
-        // account_not_found / account_disabled 等 —— 直接显示后端给的话
-        error.value = detail.message || '登录失败, 请联系管理员';
-      }
+    const detail = errorDetail(e);
+    const code = (detail as { code?: string } | null)?.code;
+    if (code === 'password_required') {
+      // 这个账号要密码 → 展开密码框 (这不是"错误", 是流程的下一步), 并记住
+      needPassword.value = true;
+      localStorage.setItem(NEEDS_PASSWORD_KEY, username);
+      error.value = (detail as { message?: string }).message || '该账号需要密码';
+      errorIsWarn.value = true;
+      await nextTick();
+      pwdInput.value?.focus();
     } else {
-      error.value = typeof detail === 'string' ? detail : '登录失败,请检查账号密码';
+      // account_not_found / account_disabled 等 —— 显示后端给的人话
+      error.value = httpErrorText(errorStatus(e), detail, '登录失败，请稍后再试');
+      errorIsWarn.value = false;
     }
   } finally {
     loading.value = false;
@@ -204,7 +343,8 @@ async function onSubmit() {
 .t2 { font-size: 12.5px; color: var(--ink-500); margin-top: 2px; }
 
 .title { font-size: 30px; font-weight: 800; color: var(--ink-900); margin: 0 0 8px; letter-spacing: -0.4px; line-height: 1.15; }
-.lede { color: var(--ink-700); margin: 0 0 24px; font-size: 14.5px; }
+.lede { color: var(--ink-700); margin: 0 0 24px; font-size: 14.5px; line-height: 1.6; }
+.lede strong { color: var(--ink-900); font-weight: 700; }
 
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .field label { font-size: 12.5px; color: var(--ink-700); font-weight: 500; }
@@ -244,6 +384,18 @@ async function onSubmit() {
   user-select: none;
 }
 
+/* 账号状态提示 (一行, 跟着输入走) */
+.hint {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-500);
+  display: flex; align-items: center; gap: 5px;
+}
+.hint.ok { color: var(--ok); }
+.hint.need-pw { color: var(--ink-700); }
+.hint.bad { color: var(--err); }
+.hint.busy { color: var(--ink-500); }
+
 .primary {
   width: 100%;
   margin-top: 6px;
@@ -268,7 +420,7 @@ async function onSubmit() {
 .primary:active:not(:disabled) { transform: translateY(0); }
 .primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* 「用密码登录」—— 给习惯密码登录的人留的口子 */
+/* 兜底口子: 探测失败时才出现, 平时不占版面 */
 .link {
   margin-top: 10px;
   background: none; border: 0; padding: 0;
@@ -285,5 +437,12 @@ async function onSubmit() {
   padding: 10px 12px;
   color: var(--err);
   font-size: 12.5px;
+  line-height: 1.5;
+}
+/* ⚠️ warn = "这不是失败, 是流程的下一步" (要密码 / 探测不到) —— 黄色, 别吓唬人 */
+.err.warn {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #b45309;
 }
 </style>
