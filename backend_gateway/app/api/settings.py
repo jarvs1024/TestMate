@@ -142,6 +142,16 @@ async def update_setting(
             return SettingOut.model_validate(row) if row else _empty_out(key, schema)
     # bool 开关统一存成真正的布尔 —— 字符串 "false" 读的时候会被当成真
     value = to_bool(payload.value) if schema["value_type"] == "bool" else payload.value
+    # ⚠️ 换存储根目录时, **旧根必须在写入新值之前**抓出来 (2026-10-28).
+    #    提交之后再回读读到的已经是新值了 —— 那样 old == new, 历史根永远记不上,
+    #    "换根后老文件变孤儿" 就又复现了.
+    old_storage = ""
+    if key == "software.storage_path":
+        async with AsyncSessionLocal() as s:
+            r0 = await s.get(SystemSetting, key)
+            if r0 is not None:
+                v = r0.value
+                old_storage = (v.get("v") if isinstance(v, dict) else v) or ""
     async with AsyncSessionLocal() as session:
         row = await session.get(SystemSetting, key)
         if row is None:
@@ -171,7 +181,68 @@ async def update_setting(
             "设置已生效: %s → remote=%s branch=%s",
             key, git_sync.git_remote(), git_sync.git_branch(),
         )
+    # ⚠️ 换软件库存储根目录时, 把**旧根**记进历史 (2026-10-28).
+    #    为什么: 软件包在库里存的是**相对路径**, 换根目录后"当前根 + 相对路径"
+    #    找不到老文件 —— 下载 404、删除删不掉, 文件变成删不掉的孤儿.
+    #    记下旧根之后, 平台会去各个根目录里找文件, 老文件照样能下、照样能删.
+    if key == "software.storage_path":
+        await _remember_old_storage_root(old_storage, value, user)
     return SettingOut.model_validate(row)
+
+
+async def _remember_old_storage_root(old_value, new_value, user) -> None:
+    """换存储根目录时, 把**旧根**追加进 ``software.storage_path_history``.
+
+    ⚠️ ``old_value`` 必须由调用方在**写入新值之前**取好 —— 这里再回读数据库
+       拿到的已经是新值了.
+    """
+    from app.core import software_store
+
+    old = str(old_value or "").strip()
+    new = str(new_value or "").strip()
+    if not old or old == new:
+        return
+    # 旧值可能是**空** (用的是环境变量) —— 那就把环境变量指向的根记下来
+    if not old:
+        env_root = (os.environ.get("SOFTWARE_STORAGE_PATH") or "").strip()
+        if not env_root:
+            return
+        old = env_root
+    async with AsyncSessionLocal() as session:
+        row_h = await session.get(SystemSetting, "software.storage_path_history")
+        hist_raw = ""
+        if row_h is not None:
+            v = row_h.value
+            hist_raw = (v.get("v") if isinstance(v, dict) else v) or ""
+        parts = [p.strip() for p in str(hist_raw).split(",") if p.strip()]
+        # 归一成绝对路径再存 —— 否则"相对仓库根"的写法换个 cwd 就对不上了
+        try:
+            old_abs = str(software_store.resolve_root(old))
+        except Exception:  # noqa: BLE001 —— 路径解析失败就原样存
+            old_abs = old
+        if old_abs in parts:
+            return
+        parts.append(old_abs)
+        val = ",".join(parts[-20:])
+        if row_h is None:
+            schema = next(
+                (s for s in SETTING_SCHEMA if s["key"] == "software.storage_path_history"),
+                None,
+            )
+            row_h = SystemSetting(
+                key="software.storage_path_history",
+                value={"v": val},
+                category=(schema or {}).get("category", "software"),
+                description=(schema or {}).get("description", ""),
+                is_secret=False,
+                updated_by=user.id,
+            )
+            session.add(row_h)
+        else:
+            row_h.value = {"v": val}
+            row_h.updated_by = user.id
+        await session.commit()
+    logger.info("软件库存储根目录已变更, 旧根已记入历史: %s", old)
 
 
 def _empty_out(key: str, schema: dict) -> SettingOut:
@@ -294,7 +365,7 @@ async def test_software_storage(user: User = Depends(get_current_user)) -> Setti
     from app.core import software_store
     from app.core.settings_store import get
     from app.db.session import AsyncSessionLocal
-    from app.models.software import SoftwareVersion
+    from app.models.software import SoftwareItem, SoftwareVersion
     from sqlalchemy import select
 
     configured = await get("software.storage_path", "") or ""
@@ -321,7 +392,45 @@ async def test_software_storage(user: User = Depends(get_current_user)) -> Setti
                 select(SoftwareVersion).where(SoftwareVersion.status == "ready")
             )
         ).scalars().all()
-    missing = [v for v in rows if not software_store.file_exists(root, v.file_path)]
+        code_rows = (
+            await session.execute(select(SoftwareItem.code))
+        ).scalars().all()
+        known_codes = {(c or "").strip() for c in code_rows}
+
+    # ⚠️ 2026-10-28: 分清两种"缺" ——
+    #   · **在别的根目录里** (文件没丢, 只是不在当前根 —— 下载/删除会自动去找)
+    #   · **所有根里都没有** (真丢了)
+    #   以前只报一种, 管理员换完根目录一看"缺 3 个文件"就以为软件没了.
+    history_raw = await get("software.storage_path_history", "") or ""
+    history = [h.strip() for h in history_raw.split(",") if h.strip()]
+    roots = software_store.candidate_roots(root, history)
+    elsewhere: list[dict] = []
+    lost: list[dict] = []
+    for v in rows:
+        if software_store.file_exists(root, v.file_path):
+            continue
+        found = software_store.locate_under(roots, v.file_path)
+        item = {"version": v.version, "code": v.file_path.split("/")[0]}
+        if found is not None:
+            elsewhere.append({**item, "found_in": str(found.parent.parent.parent)})
+        else:
+            lost.append(item)
+
+    # 孤儿目录: 根目录下有目录, 但 DB 里没有对应条目 (下架残留 / 手工塞的)
+    orphan_dirs: list[dict] = []
+    for r in roots:
+        if not r.is_dir():
+            continue
+        try:
+            children = list(r.iterdir())
+        except OSError:
+            continue
+        for d in children:
+            if not d.is_dir() or d.name.startswith("."):
+                continue
+            if d.name in known_codes:
+                continue
+            orphan_dirs.append({"name": d.name, "root": str(r)})
 
     # ⚠️ **两个"占用"是两回事** (2026-10-28 踩过):
     #   · software_store.used_bytes(root) —— 软件库目录**自己**占了多少
@@ -336,21 +445,36 @@ async def test_software_storage(user: User = Depends(get_current_user)) -> Setti
         "writable": True,
         "used_bytes": int(lib_bytes),
         "free_bytes": int(info["free_bytes"]),
-        "missing_count": len(missing),
-        "missing": [
-            {"version": v.version, "code": v.file_path.split("/")[0]}
-            for v in missing[:50]
-        ],
+        # 所有候选根 —— 管理员能看到文件实际在哪
+        "roots": [str(r) for r in roots],
+        "missing_count": len(elsewhere),
+        "missing": elsewhere[:50],
+        "lost_count": len(lost),
+        "lost": lost[:50],
+        "orphan_count": len(orphan_dirs),
+        "orphan_dirs": orphan_dirs[:50],
         # 设置项 / 环境变量 / 默认 —— 让管理员知道这个路径**是哪来的**
         "source": (
             "setting" if configured.strip()
             else ("env" if (os.environ.get("SOFTWARE_STORAGE_PATH") or "").strip() else "default")
         ),
     }
-    if missing:
+    if lost:
         return SettingTestOut(
             ok=False, status="warn",
-            message=f"可写, 但有 {len(missing)} 个版本的文件不在这个目录里 (换过根目录?)",
+            message=(
+                f"可写, 但有 {len(lost)} 个版本的文件**在所有根目录里都找不到** "
+                f"(真的丢了?) · 另有 {len(elsewhere)} 个在旧根目录里 (还能用)"
+            ),
+            detail=detail,
+        )
+    if elsewhere:
+        return SettingTestOut(
+            ok=False, status="warn",
+            message=(
+                f"可写 · {len(elsewhere)} 个版本的文件不在这个目录里, "
+                f"但在**旧根目录**里找到了 (不影响下载/删除)"
+            ),
             detail=detail,
         )
     return SettingTestOut(

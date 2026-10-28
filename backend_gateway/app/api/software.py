@@ -101,6 +101,26 @@ async def _root() -> Path:
     return software_store.resolve_root(await _setting("software.storage_path", ""))
 
 
+async def _roots() -> list[Path]:
+    """所有**可能**存放软件包的根目录 (按优先级).
+
+    ⚠️ 为什么不止当前根 (2026-10-28 修的真 bug):
+       落库的 ``file_path`` 是**相对**路径, 基准是"当前根". 管理员改了
+       ``software.storage_path`` 之后, "当前根 + 相对路径" 就找不到老文件了 ——
+       文件还在旧根, 但下载 404、删除删不掉 (删不掉的孤儿).
+
+       候选根 = 当前根 + 历史根 + 环境变量根 + 默认根 (见
+       :func:`software_store.candidate_roots`). 环境变量根/默认根天然覆盖了
+       "改设置项之前" 的存放位置, 所以绝大多数情况不用额外维护.
+    """
+    configured = await _setting("software.storage_path", "")
+    history_raw = await _setting("software.storage_path_history", "")
+    history = [h.strip() for h in (history_raw or "").split(",") if h.strip()]
+    return software_store.candidate_roots(
+        software_store.resolve_root(configured), history
+    )
+
+
 def _storage_source(configured: str) -> str:
     """当前根目录是**哪来的** —— setting / env / default.
 
@@ -452,33 +472,75 @@ async def get_config(user: User = Depends(get_current_user)) -> SoftwareConfigOu
 
 @router.get("/path-check")
 async def check_path(user: User = Depends(require_publisher)) -> dict:
-    """管理员的「检查路径」—— 新根目录下**缺哪些文件**.
+    """管理员的「检查路径」—— **每个候选根**下各缺哪些文件 + 哪些是孤儿目录.
 
-    ⚠️ 换存储根目录 = 文件不会自动搬过去 —— 这个接口把"哪些条目的文件找不到了"
-       一次性列出来, 免得用户以为传过的软件凭空消失.
+    ⚠️ 换存储根目录 = 文件不会自动搬过去 —— 但**也不会丢**:
+       文件还在旧根里, 只是"当前根 + 相对路径"找不到它.
+       所以这里要分清两种情况:
+         · **missing**  —— 当前根里没有, 但在**别的根**里找到了
+           (文件没丢, 只是不在当前根 —— 下载/删除会自动去别的根找)
+         · **lost**     —— 所有候选根里都找不到 (真丢了, 或者被手工删了)
+       以前只报一种, 用户看着像"软件凭空消失", 实际只是换了根目录.
     """
     if not _is_admin(user):
         raise HTTPException(status_code=403, detail="admin only")
     root = await _root()
+    roots = await _roots()
     info = software_store.usage_info(root)
-    missing: list[dict] = []
+    missing: list[dict] = []      # 当前根没有, 但别的根有
+    lost: list[dict] = []         # 所有根都没有
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
                 select(SoftwareVersion).where(SoftwareVersion.status == "ready")
             )
         ).scalars().all()
+        code_rows = (
+            await session.execute(select(SoftwareItem.code))
+        ).scalars().all()
+        known_codes = {(c or "").strip() for c in code_rows}
     for v in rows:
-        if not software_store.file_exists(root, v.file_path):
-            missing.append({"code": v.file_path.split("/")[0], "version": v.version})
+        if software_store.file_exists(root, v.file_path):
+            continue
+        found = software_store.locate_under(roots, v.file_path)
+        entry = {
+            "code": v.file_path.split("/")[0],
+            "version": v.version,
+            "file_name": v.file_name,
+        }
+        if found is not None:
+            missing.append({**entry, "found_in": str(found.parent.parent.parent)})
+        else:
+            lost.append(entry)
+    # ⚠️ 孤儿目录: 根目录下有目录, 但 DB 里**没有**对应条目 (下架残留 / 手工塞的)
+    orphan_dirs: list[dict] = []
+    for r in roots:
+        if not r.is_dir():
+            continue
+        try:
+            children = list(r.iterdir())
+        except OSError:
+            continue
+        for d in children:
+            if not d.is_dir() or d.name.startswith("."):
+                continue
+            if d.name in known_codes:
+                continue
+            orphan_dirs.append({"name": d.name, "root": str(r)})
     return {
         "root": str(root),
         "exists": info["exists"],
         "writable": info["writable"],
         "used_bytes": software_store.used_bytes(root),
         "free_bytes": int(info["free_bytes"]),
+        # 所有候选根 (管理员能看到"文件其实在哪")
+        "roots": [str(r) for r in roots],
         "missing": missing[:200],
         "missing_count": len(missing),
+        "lost": lost[:200],
+        "lost_count": len(lost),
+        "orphan_dirs": orphan_dirs[:200],
+        "orphan_count": len(orphan_dirs),
     }
 
 
@@ -535,9 +597,11 @@ async def download_by_ticket(
         if ver is None or ver.status != "ready":
             raise HTTPException(status_code=404, detail="这个版本还没有可下载的文件")
 
-        root = await _root()
-        path = software_store.resolve_under(root, ver.file_path)
-        if path is None or not path.is_file():
+        # ⚠️ 2026-10-28: 在**所有候选根**里找文件 ——
+        #   管理员改了 storage_path 之后, 文件还在旧根, 只查当前根会 404.
+        roots = await _roots()
+        path = software_store.locate_under(roots, ver.file_path)
+        if path is None:
             raise HTTPException(status_code=404, detail="文件不在服务器上了, 请联系管理员")
 
         # 下载次数 +1 —— 原子自增 (先读后写会丢计数)
@@ -599,6 +663,27 @@ async def get_software(code: str, user: User = Depends(get_current_user)) -> Sof
 # ---------- 写 ----------
 
 
+async def _unique_code(session, base: str) -> str:
+    """给 base 找一个**没被占用**的 code —— 撞名就自动加序号 (base2 / base3 …).
+
+    ⚠️ 2026-10-28: 以前撞名直接 409 "标识已经存在了", 让用户自己想一个.
+       现在 code 是从**文件名**派生的, 同名文件本来就常见 (同一套工具的不同构建),
+       所以自动加序号更符合直觉 —— 用户什么都不用管.
+    """
+    code = base
+    n = 1
+    while n < 1000:
+        exists = (
+            await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
+        ).scalar_one_or_none()
+        if exists is None:
+            return code
+        n += 1
+        suffix = str(n)
+        code = base[: 64 - len(suffix)] + suffix
+    return code
+
+
 @router.post("", status_code=201)
 async def create_software(
     payload: SoftwareCreateIn, user: User = Depends(require_publisher)
@@ -606,9 +691,31 @@ async def create_software(
     """建条目 (第 ① 步) —— 只填元数据, 文件随后用 PUT /{code}/file 传.
 
     返回 ``upload_path`` —— 前端拿着它直接传字节流, 不用自己拼 URL.
+
+    ⚠️ 2026-10-28: **code 不再让用户填** —— 由软件包文件名自动派生, 撞名自动加序号.
+       文件名同时要过**英文数字+标准字符**的校验 (不合规当场 422).
     """
+    # ---- 文件名: 有就**校验**, 不合规当场拒 (别等传完文件才发现) ----
+    # ⚠️ 空文件名是**允许**的 (老调用方只传元数据) —— 这时用兜底名
+    #    ``<code>-<version>.bin``. 校验只针对"用户真的传了文件名"的情况.
+    file_name = (payload.file_name or "").strip()
+    if file_name:
+        try:
+            file_name = software_store.validate_file_name(file_name)
+        except software_store.InvalidPath as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
+    # ---- code: 用户没填就从文件名派生 ----
+    raw_code = (payload.code or "").strip()
+    if not raw_code:
+        if not file_name:
+            raise HTTPException(
+                status_code=422,
+                detail="需要提供软件标识, 或者先选好软件包 (用文件名自动生成)",
+            )
+        raw_code = software_store.code_from_file_name(file_name)
     try:
-        code = software_store.validate_code(payload.code)
+        code = software_store.validate_code(raw_code)
     except software_store.InvalidPath as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     if code in RESERVED_CODES:
@@ -620,13 +727,13 @@ async def create_software(
     version = (payload.version or "1.0.0").strip()[:32]
     if "/" in version or "\\" in version or version in (".", ".."):
         raise HTTPException(status_code=422, detail="版本号不合法")
+    file_name = file_name or f"{code}-{version}.bin"
 
     async with AsyncSessionLocal() as session:
-        exists = (
-            await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
-        ).scalar_one_or_none()
-        if exists is not None:
-            raise HTTPException(status_code=409, detail=f"软件标识 {code} 已经存在了")
+        # ⚠️ 撞名不报错, **自动加序号** (2026-10-28) ——
+        #   code 是从文件名派生的, 同名文件很常见 (比如同一套工具的不同构建).
+        #   以前让用户自己填, 现在自动变成 xxx2 / xxx3, 省得用户瞎猜.
+        code = await _unique_code(session, code)
 
         # ⚠️ 图标不能跟别的软件重复 (2026-10-28)
         await _assert_icon_free(session, payload.icon)
@@ -661,9 +768,9 @@ async def create_software(
             variant=payload.variant.strip()[:32],
             # 第一个版本默认就是推荐下载的那个
             is_default=True,
-            file_name=software_store.sanitize_filename(
-                payload.file_name, f"{code}-{version}.bin"
-            ),
+            # ⚠️ 用**已校验过**的文件名 —— 不再 sanitize (sanitize 是静默改名,
+            #    用户不知道自己传的文件叫什么了). 不合规的早就 422 掉了.
+            file_name=file_name,
             declared_size=int(payload.file_size or 0),
             status="awaiting_file",
             author=user.username,
@@ -721,6 +828,16 @@ async def create_version(
         if dup is not None:
             raise HTTPException(status_code=409, detail=f"版本 {version} 已经存在了")
 
+        # ⚠️ 发新版本的文件名同样要过规范校验 (2026-10-28) —— 跟新建一个口径
+        file_name = (payload.file_name or "").strip()
+        if file_name:
+            try:
+                file_name = software_store.validate_file_name(file_name)
+            except software_store.InvalidPath as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
+        else:
+            file_name = f"{code}-{version}.bin"
+
         ver = SoftwareVersion(
             item_id=item.id,
             version=version,
@@ -728,9 +845,7 @@ async def create_version(
             # 变体标签 (选填) —— 如「LTS版」; 不填就留空, 版本号本身够用
             variant=payload.variant.strip()[:32],
             is_default=bool(payload.is_default),
-            file_name=software_store.sanitize_filename(
-                payload.file_name, f"{code}-{version}.bin"
-            ),
+            file_name=file_name,
             declared_size=int(payload.file_size or 0),
             status="awaiting_file",
             author=user.username,
@@ -873,8 +988,13 @@ async def delete_version(
        不能为了删一个版本把整个软件连别的版本一起下架.
 
     ⚠️ 删的是**最后一个**能下载的版本 → 整个条目一起下架 (条目不能空着上架).
+
+    ⚠️ 2026-10-28 修: 删文件要在**所有候选根**里删 (见 :func:`_roots`),
+       而且版本删光后要把**空壳目录** ``<root>/<code>/`` 一并删掉 ——
+       以前只删了 ``<root>/<code>/<version>/``, 上面那层空目录留着,
+       用户看着像"没删干净" (这正是用户报的: 目录还在).
     """
-    root = await _root()
+    roots = await _roots()
     async with AsyncSessionLocal() as session:
         item = (
             await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
@@ -923,8 +1043,13 @@ async def delete_version(
         )
         await session.commit()
 
-    software_store.remove_version_dir(root, code, version)
-    return SoftwareDeleteOut(ok=True, code=code, deleted_files=1)
+    # ⚠️ 在所有候选根里删 —— 换过存储根目录时, 老文件在旧根, 只删当前根删不掉
+    deleted = software_store.remove_version_dir_anywhere(roots, code, version)
+    # ⚠️ 版本删光后, 条目目录会剩个空壳 (``<root>/<code>/``) —— 顺手删掉,
+    #    不然用户看着像"东西还在" (2026-10-28 用户报的坑)
+    for r in roots:
+        software_store.remove_item_dir_if_empty(r, code)
+    return SoftwareDeleteOut(ok=True, code=code, deleted_files=max(1, deleted))
 
 
 @router.put("/{code}/file")
@@ -1018,7 +1143,14 @@ async def upload_file(
 
     raw_name = request.headers.get("x-file-name") or ""
     if raw_name:
-        file_name = software_store.sanitize_filename(unquote(raw_name), file_name)
+        # ⚠️ 2026-10-28: 这里也**校验**而不是静默改名 ——
+        #   落库的文件名会变成磁盘目录名和下载文件名, 不合规就该当场拒,
+        #   而不是悄悄换成 "xxx.bin" (用户下回来发现名字变了都不知道).
+        try:
+            file_name = software_store.validate_file_name(unquote(raw_name))
+        except software_store.InvalidPath as e:
+            await _mark_failed(ver_id, str(e))
+            raise HTTPException(status_code=422, detail=str(e)) from e
 
     root = await _root()
     try:
@@ -1124,7 +1256,7 @@ async def _prune_versions_for(code: str) -> None:
     keep = await _keep_versions()
     if keep <= 0:
         return
-    root = await _root()
+    roots = await _roots()
     async with AsyncSessionLocal() as session:
         item = (
             await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
@@ -1148,8 +1280,12 @@ async def _prune_versions_for(code: str) -> None:
         for v in stale:
             await session.delete(v)
         await session.commit()
+    # ⚠️ 所有候选根都删 (2026-10-28) —— 换过存储根目录时, 老文件在旧根
     for v in stale:
-        software_store.remove_version_dir(root, code, v.version)
+        software_store.remove_version_dir_anywhere(roots, code, v.version)
+    # 版本删光 → 条目目录空壳也清掉
+    for r in roots:
+        software_store.remove_item_dir_if_empty(r, code)
 
 
 @router.put("/{code}", response_model=SoftwareOut)
@@ -1286,8 +1422,11 @@ async def purge_software(
        管理员照旧能下架/更新**任何人**的软件.
 
     ⚠️ 不可恢复 —— 文件本体也一起删. 前端确认框里写清楚了.
+
+    ⚠️ 2026-10-28 修: 删目录要在**所有候选根**里删 ——
+       管理员改过存储根目录时, 文件在旧根, 只删当前根 → 文件删不掉, 变成孤儿.
     """
-    root = await _root()
+    roots = await _roots()
     async with AsyncSessionLocal() as session:
         item = (
             await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
@@ -1314,5 +1453,6 @@ async def purge_software(
             detail={"versions": n},
         )
         await session.commit()
-    software_store.remove_item_dir(root, code)
+    # ⚠️ 所有候选根都删 —— 换过存储根目录时, 老文件在旧根 (2026-10-28)
+    software_store.remove_item_dir_anywhere(roots, code)
     return SoftwareDeleteOut(ok=True, code=code, deleted_files=n)

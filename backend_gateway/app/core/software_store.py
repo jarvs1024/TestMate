@@ -68,6 +68,16 @@ class InvalidPath(SoftwareStoreError):
 #: ⚠️ code 会**直接变成目录名** —— 所以必须严: 不许 "/" 不许 ".." 不许大写.
 CODE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
 
+#: **软件包文件名**的合法形态 (2026-10-28): 字母/数字/点/下划线/连字符.
+#: ⚠️ 为什么比 :data:`_UNSAFE_CHARS` 严那么多:
+#:    文件名会直接落进 ``<root>/<code>/<version>/<file_name>``,
+#:    也是下载时 Content-Disposition 的名字. 允许中文/空格/括号的话:
+#:      · 目录名在各种工具里转义不一致 (curl / unzip / Windows 资源管理器);
+#:      · 下载回来的文件名在别人机器上可能变成乱码.
+#:    所以上架时**当场校验并拒绝**, 而不是静默改名 (静默改名用户根本不知道).
+#:    规则: 必须以字母或数字开头, 后面跟字母/数字/点/下划线/连字符.
+FILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+
 #: 文件名白名单: 字母数字/下划线/点/连字符 + 中文.
 #: ⚠️ \w 在 Python 的 unicode 模式下已含中文 —— 显式写出来是为了让规则可读.
 _UNSAFE_CHARS = re.compile(r"[^\w.\-]", re.UNICODE)
@@ -157,6 +167,10 @@ def sanitize_filename(raw: str, fallback: str) -> str:
       · 非法字符 → ``_``
       · 去掉前导点 (挡掉 ``..`` 与隐藏文件)
       · 长度截断
+
+    ⚠️ 注意: 这是**兜底**, 不是主路径. 上架时应该先用 :func:`validate_file_name`
+       当场拒绝不合规的文件名 (2026-10-28) —— 静默改名用户不知道, 下载回来
+       名字对不上更麻烦.
     """
     name = (raw or "").strip().replace("\x00", "")
     name = name.replace("\\", "/")
@@ -166,6 +180,63 @@ def sanitize_filename(raw: str, fallback: str) -> str:
     if not name or name in (".", ".."):
         name = fallback
     return name[:MAX_FILE_NAME_LEN]
+
+
+def validate_file_name(name: str) -> str:
+    """校验**软件包文件名** —— 不合法直接抛 :class:`InvalidPath`.
+
+    ⚠️ 规则 (2026-10-28): 只允许字母 / 数字 / 点 / 下划线 / 连字符, 且必须以
+       字母或数字开头 (不许以点开头 —— 那会变成隐藏文件).
+
+    为什么这么严: 文件名会变成 ``<root>/<code>/<version>/<file_name>`` 里的
+    一段, 也是下载时给用户的文件名. 带上中文/空格/括号的话, 在别的机器上
+    (curl / unzip / Windows 资源管理器) 很容易变成乱码或转义不一致.
+       → 与其事后怪, 不如上架时就说清楚.
+    """
+    n = (name or "").strip()
+    if not n:
+        raise InvalidPath("文件名不能为空")
+    if not FILE_NAME_RE.match(n):
+        raise InvalidPath(
+            f"文件名「{n}」不合规 —— 只能用英文字母、数字、点(.)、下划线(_)、连字符(-), "
+            "且必须以字母或数字开头 (不能有中文、空格、括号等)"
+        )
+    return n
+
+
+def code_from_file_name(file_name: str) -> str:
+    """从软件包文件名派生出**软件标识 (code)** (2026-10-28).
+
+    ⚠️ 为什么 code 不让用户填了:
+       code 会**直接变成服务端存储目录名** (``<root>/<code>/<version>/``),
+       用户手填就会出现 "SSD 日志医生" → 目录名带中文/空格, 或者两个人
+       填成 `ssd-log-doctor` / `ssd_log_doctor` 撞车.
+       文件名本来就是英文的, 拿它派生最省事, 也最不容易错.
+
+    规则:
+      · 去掉扩展名 (``dify-web-entrypoint.sh`` → ``dify-web-entrypoint``)
+      · 转小写
+      · 非法字符 → ``-``
+      · 合并连续的 ``-``, 去掉首尾 ``-``
+      · 最多 64 位; 太短就补 ``-tool``
+
+    ⚠️ 派生的结果**仍可能撞名** —— 真正的唯一性由 api 层加序号保证
+       (见 app/api/software.py 的 _unique_code).
+    """
+    base = (file_name or "").strip()
+    base = base.replace("\\", "/").split("/")[-1]
+    # 去掉扩展名 (只去最后一段, `a.tar.gz` → `a.tar`)
+    if "." in base:
+        base = base.rsplit(".", 1)[0]
+    base = base.lower()
+    base = re.sub(r"[^a-z0-9._-]+", "-", base)
+    base = re.sub(r"-{2,}", "-", base).strip("-._")
+    if not base:
+        base = "software"
+    base = base[:64].strip("-._")
+    if len(base) < 2:
+        base = (base or "so")[:2].ljust(2, "0")
+    return base
 
 
 def resolve_under(root: Path, rel: str) -> Path | None:
@@ -378,6 +449,175 @@ def remove_item_dir(root: Path, code: str) -> None:
     except ValueError:
         return
     shutil.rmtree(p, ignore_errors=True)
+
+
+# ===== 多根定位 (2026-10-28 修: 改存储根目录后老文件"失联") =====
+
+
+def candidate_roots(
+    current: Path | None = None,
+    history: list[str] | None = None,
+) -> list[Path]:
+    """所有**可能**存放软件包的根目录 (按优先级, 去重).
+
+    ⚠️ 为什么要有多个根 (这是一个真 bug, 不是过度设计):
+       落库的 ``file_path`` 是**相对**路径 (``code/version/file_name``) ——
+       这本身是对的 (换机器时绝对路径会失效). 但相对路径的**基准是"当前根"**:
+       一旦管理员改了 ``software.storage_path``, "当前根 + 相对路径" 就找不到
+       老文件了 —— 文件还在旧根躺着, 但下载 404、删除删不掉, 成了**删不掉的孤儿**.
+
+       实测踩到的现场 (2026-10-28):
+         设置项根  = /Users/jarvs/Code/TestMate/software        (管理员改的)
+         环境变量根 = .../deploy/native/runtime/data/software    (文件实际在这)
+       管理员下架了所有版本, 目录却还在 —— 因为删除用的是"当前根 + 相对路径".
+
+       所以查找文件时要把**所有可能的根**都试一遍:
+         ① 当前生效根 (设置项)          —— 现在在用的
+         ② 历史根 (设置项变更时记下的)   —— 改过好几次时的老根
+         ③ 环境变量根 (部署时固定)        —— 覆盖"改设置项之前"的存放位置
+         ④ 默认根 (仓库内 data/software)  —— 兜底
+       ③④ 天然覆盖绝大多数情况, 不用额外维护.
+    """
+    out: list[Path] = []
+
+    def push(p: Path | str | None) -> None:
+        if not p:
+            return
+        try:
+            pp = Path(str(p)).expanduser()
+            if not pp.is_absolute():
+                pp = (repo_root() / pp).resolve()
+            else:
+                pp = pp.resolve()
+        except (OSError, ValueError):
+            return
+        if pp not in out:
+            out.append(pp)
+
+    push(current)
+    for h in history or []:
+        push(h)
+    push(os.environ.get("SOFTWARE_STORAGE_PATH") or "")
+    push(default_root())
+    return out
+
+
+def locate_under(roots: list[Path], rel: str) -> Path | None:
+    """在候选根里找相对路径对应的**文件** —— 找到返回绝对路径, 找不到 None."""
+    if not rel:
+        return None
+    for root in roots:
+        p = resolve_under(root, rel)
+        if p is not None and p.is_file():
+            return p
+    return None
+
+
+def locate_version_dir(roots: list[Path], code: str, version: str) -> Path | None:
+    """在候选根里找某版本的目录 —— 找到返回绝对路径."""
+    for root in roots:
+        try:
+            d = version_dir(root, code, version)
+        except InvalidPath:
+            return None
+        if d.is_dir():
+            return d
+    return None
+
+
+def locate_item_dir(roots: list[Path], code: str) -> Path | None:
+    """在候选根里找某条目的目录 —— 找到返回绝对路径."""
+    try:
+        validate_code(code)
+    except InvalidPath:
+        return None
+    for root in roots:
+        p = (root / code).resolve()
+        try:
+            p.relative_to(root.resolve())
+        except (ValueError, OSError):
+            continue
+        if p.is_dir():
+            return p
+    return None
+
+
+def remove_version_dir_anywhere(roots: list[Path], code: str, version: str) -> int:
+    """在**所有候选根**里删掉某版本的目录 —— 返回删掉几个.
+
+    ⚠️ 为什么要删"所有"而不是"找到的第一个":
+       管理员来回改过存储根目录时, 同一个 ``<code>/<version>/`` 可能在两个根下
+       都存在 (一半在新根一半在旧根). 只删一个的话, 另一半永远留着.
+    """
+    n = 0
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            d = version_dir(root, code, version)
+        except InvalidPath:
+            return n
+        key = str(d)
+        if key in seen:
+            continue
+        seen.add(key)
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+            n += 1
+    return n
+
+
+def remove_item_dir_anywhere(roots: list[Path], code: str) -> int:
+    """在**所有候选根**里删掉某条目的整个目录 —— 返回删掉几个."""
+    n = 0
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            validate_code(code)
+        except InvalidPath:
+            return n
+        p = (root / code).resolve()
+        try:
+            p.relative_to(root.resolve())
+        except (ValueError, OSError):
+            continue
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+            n += 1
+    return n
+
+
+def remove_item_dir_if_empty(root: Path, code: str) -> bool:
+    """版本都删光后, 条目目录会剩个**空壳** (``<root>/<code>/``) —— 顺手删掉.
+
+    ⚠️ 2026-10-28 用户报的坑: "全下架了多个版本, 但根目录下的这个目录没删除".
+       原因就是删版本只删了 ``<root>/<code>/<version>/``, 上面那层 ``<root>/<code>/``
+       空了却没人管 —— 目录还在, 看着像"东西没删干净", 白占地方.
+
+    返回 True = 确实删掉了空壳.
+    """
+    try:
+        validate_code(code)
+    except InvalidPath:
+        return False
+    p = (root / code).resolve()
+    try:
+        p.relative_to(root.resolve())
+    except (ValueError, OSError):
+        return False
+    if not p.is_dir():
+        return False
+    try:
+        # 还有东西就不动 —— 只清空壳
+        if any(p.iterdir()):
+            return False
+        p.rmdir()
+        return True
+    except OSError:
+        return False
 
 
 # ---- 占用统计 ----

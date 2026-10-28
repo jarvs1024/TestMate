@@ -836,7 +836,15 @@ function storageDetailText(detail: any): string {
     parts.push(srcMap[detail.source] || detail.source);
   }
   if (detail.missing_count) {
-    parts.push(`缺 ${detail.missing_count} 个版本的文件`);
+    // ⚠️ missing = 当前根里没有, 但**别的根**里找到了 —— 文件没丢, 只是不在当前根
+    //    (下载/删除会自动去旧根找). 别再说成"缺文件", 那会让人以为软件没了.
+    parts.push(`${detail.missing_count} 个版本的文件不在当前根 (已自动去旧根找)`);
+  }
+  if (detail.lost_count) {
+    parts.push(`⚠️ ${detail.lost_count} 个版本的文件所有根目录里都找不到`);
+  }
+  if (detail.orphan_count) {
+    parts.push(`${detail.orphan_count} 个残留目录 (库里没有对应条目)`);
   }
   return parts.join(' · ');
 }

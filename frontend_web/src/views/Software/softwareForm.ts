@@ -51,6 +51,57 @@ export function validateCode(code: string): string {
   return '';
 }
 
+// ===== 软件包文件名 (2026-10-28) =====
+
+/**
+ * **软件包文件名**的合法格式 —— 必须跟后端 software_store.FILE_NAME_RE 一致.
+ *
+ * ⚠️ 比 code 严: 文件名会原样落到 ``<root>/<code>/<version>/<file_name>``,
+ *   也是下载回来时给用户的那个名字. 带中文/空格/括号的话, 在别人机器上
+ *   (curl / unzip / Windows 资源管理器) 很容易变成乱码或转义不一致.
+ *   所以**上架时当场校验并拒绝**, 而不是静默改名 (静默改名用户不知道).
+ */
+export const FILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
+
+/** 校验软件包文件名 —— 返回空串 = 通过, 否则是给用户看的原因 */
+export function validateFileName(name: string): string {
+  const n = (name || '').trim();
+  if (!n) return '软件包文件名不能为空';
+  if (!FILE_NAME_PATTERN.test(n)) {
+    return `文件名「${n}」不合规 —— 只能用英文字母、数字、点(.)、下划线(_)、连字符(-), `
+      + '且必须以字母或数字开头 (不能有中文、空格、括号等)';
+  }
+  return '';
+}
+
+/**
+ * 从**软件包文件名**派生软件标识 (code) —— 不用用户填.
+ *
+ * ⚠️ 规则必须跟后端 software_store.code_from_file_name **一字不差**:
+ *   前端显示的 code 跟后端存的不一样, 用户在服务器上就找不到自己的目录.
+ *
+ * 规则:
+ *   · 去掉扩展名 (``dify-web-entrypoint.sh`` → ``dify-web-entrypoint``)
+ *   · 转小写
+ *   · 非法字符 → ``-``
+ *   · 合并连续的 ``-``, 去掉首尾的 ``-._``
+ *   · 最多 64 位; 太短补齐到 2 位
+ *
+ * ⚠️ 派生结果**仍可能撞名** —— 真正的唯一性由后端加序号保证 (xxx2 / xxx3).
+ */
+export function codeFromFileName(fileName: string): string {
+  let base = ((fileName || '').trim().replace(/\\/g, '/').split('/').pop()) || '';
+  // 去掉扩展名 (只去最后一段, `a.tar.gz` → `a.tar`)
+  if (base.includes('.')) base = base.slice(0, base.lastIndexOf('.'));
+  base = base.toLowerCase();
+  base = base.replace(/[^a-z0-9._-]+/g, '-');
+  base = base.replace(/-{2,}/g, '-').replace(/^[-._]+/, '').replace(/[-._]+$/, '');
+  if (!base) base = 'software';
+  base = base.slice(0, 64).replace(/^[-._]+/, '').replace(/[-._]+$/, '');
+  if (base.length < 2) base = (base || 'so').slice(0, 2).padEnd(2, '0');
+  return base;
+}
+
 /** 校验版本号 —— 空串 = 通过 */
 export function validateVersion(version: string): string {
   const v = (version || '').trim();

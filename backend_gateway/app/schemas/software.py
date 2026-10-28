@@ -124,7 +124,11 @@ class SoftwareConfigOut(BaseModel):
 class SoftwareCreateIn(BaseModel):
     """建条目 (JSON 元数据) —— 文件随后用 PUT /{code}/file 传."""
 
-    code: str = Field(min_length=2, max_length=64)
+    # ⚠️ 2026-10-28: code **不再要求填** ——
+    #    它会变成服务端存储目录名, 用户手填容易出乱码/撞名.
+    #    现在由软件包文件名自动派生 (见 software_store.code_from_file_name),
+    #    撞名时后端自动加序号 (base2 / base3 …). 填了也能用, 但同样会走唯一化.
+    code: str = Field(default="", max_length=64)
     name: str = Field(min_length=1, max_length=128)
     icon: str = Field(default="🧰", max_length=16)
     version: str = Field(default="", max_length=32)
@@ -141,6 +145,8 @@ class SoftwareCreateIn(BaseModel):
     tags: list[str] = []
     keywords: list[str] = []
     # 原始文件名 (清洗前) —— 后端会清洗
+    # ⚠️ 2026-10-28: 文件名必须符合**英文数字+标准字符** (见 software_store.validate_file_name),
+    #    不合规直接 422 —— 目录名在别的机器上转义不一致, 下载回来容易变乱码.
     file_name: str = Field(default="", max_length=255)
     # 声明的文件大小 —— 实收对不上 → 409 (文件不完整)
     file_size: int = Field(default=0, ge=0)

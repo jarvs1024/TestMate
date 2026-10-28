@@ -109,36 +109,91 @@ async def test_create_rejects_reserved_code(client, sw_auth, sw_root):
     assert r.status_code == 422, r.text
 
 
-async def test_create_duplicate_code_conflicts(client, sw_auth, sw_root):
-    """同一个 code 只能有一个条目."""
+async def test_create_duplicate_code_gets_suffix(client, sw_auth, sw_root):
+    """同一个 code 再来一次 → **自动加序号**, 不再报 409.
+
+    ⚠️ 2026-10-28 改: code 现在由**文件名自动派生**, 同名文件本来就很常见
+       (同一套工具的不同构建). 撞名就让用户自己想一个太费劲, 自动变成
+       ``demo-sw2`` / ``demo-sw3`` 更符合直觉.
+    """
     await _create(client, sw_auth)
     r = await client.post(
         "/api/v1/software",
-        json={"code": "demo-sw", "name": "再来一个", "version": "1.0.0", "summary": "x"},
+        json={
+            "code": "demo-sw",
+            "name": "再来一个",
+            "version": "1.0.0",
+            "summary": "x",
+            # ⚠️ 图标全局唯一 (2026-10-28 另一条规则) —— 这里必须换图标, 否则先撞图标
+            "icon": "📦",
+        },
         headers=sw_auth,
     )
-    assert r.status_code == 409, r.text
+    assert r.status_code == 201, r.text
+    assert r.json()["code"] == "demo-sw2"
+
+    # 再来一次 → 3
+    r2 = await client.post(
+        "/api/v1/software",
+        json={
+            "code": "demo-sw",
+            "name": "再来一个",
+            "version": "1.0.0",
+            "summary": "x",
+            "icon": "🧩",
+        },
+        headers=sw_auth,
+    )
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["code"] == "demo-sw3"
 
 
-# ---------- 文件名清洗 ----------
+async def test_create_derives_code_from_file_name(client, sw_auth, sw_root):
+    """code **不用用户填** —— 由软件包文件名自动派生 (2026-10-28)."""
+    r = await client.post(
+        "/api/v1/software",
+        json={"name": "自动生成标识", "version": "1.0.0", "file_name": "Dify-Web-Entrypoint.sh"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 201, r.text
+    # 扩展名去掉 + 转小写 + 分隔符合规
+    assert r.json()["code"] == "dify-web-entrypoint"
 
 
-async def test_upload_sanitizes_file_name(client, sw_auth, sw_root):
-    """``../../etc/passwd`` → 落成 ``passwd`` (不能写到根目录外面去)."""
+async def test_create_rejects_bad_file_name(client, sw_auth, sw_root):
+    """文件名带中文/空格 → 422 (目录名在别的机器上会乱码)."""
+    r = await client.post(
+        "/api/v1/software",
+        json={"name": "x", "file_name": "SSD 日志医生.exe"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 422, r.text
+    assert "英文" in r.json()["detail"] or "字母" in r.json()["detail"]
+
+
+# ---------- 文件名规范 (2026-10-28: 校验而不是静默改名) ----------
+
+
+async def test_upload_rejects_unsafe_file_name(client, sw_auth, sw_root):
+    """``../../etc/passwd`` → **422 拒绝**, 不是静默改名.
+
+    ⚠️ 以前是"洗成 passwd" —— 静默改名用户根本不知道, 下载回来的名字对不上.
+       现在不合规当场拒, 并说清楚规则.
+    """
     await _create(client, sw_auth)
     r = await _upload(client, sw_auth, "demo-sw", b"x", filename="../../etc/passwd")
-    assert r.status_code == 200, r.text
-    assert (sw_root / "demo-sw" / "1.0.0" / "passwd").is_file()
-    # 不该有任何文件跑到根目录外面
+    assert r.status_code == 422, r.text
+    # 不该有任何文件跑到根目录外面, 也不该落进版本目录
     assert not (sw_root.parent / "etc").exists()
+    assert not (sw_root / "demo-sw" / "1.0.0" / "passwd").exists()
 
 
-async def test_upload_strips_leading_dots(client, sw_auth, sw_root):
-    """前导点被剥掉 (``..`` 挡掉)."""
+async def test_upload_rejects_leading_dot_file_name(client, sw_auth, sw_root):
+    """前导点的文件名 → 422 (那会变成隐藏文件, 还可能是 ``..``)."""
     await _create(client, sw_auth)
     r = await _upload(client, sw_auth, "demo-sw", b"x", filename="..hidden.bin")
-    assert r.status_code == 200, r.text
-    assert (sw_root / "demo-sw" / "1.0.0" / "hidden.bin").is_file()
+    assert r.status_code == 422, r.text
+    assert not (sw_root / "demo-sw" / "1.0.0" / "hidden.bin").exists()
 
 
 # ---------- 大小与完整性 ----------
@@ -568,17 +623,63 @@ async def test_soft_delete_keeps_files(client, sw_auth, sw_root):
 
 
 async def test_path_check_reports_missing_files(client, sw_auth, sw_root):
-    """换根目录后, 「检查路径」要能说出缺哪些文件."""
+    """换根目录后, 「检查路径」要能说出文件**在哪个根目录里**.
+
+    ⚠️ 2026-10-28 改: 以前只报"缺了" —— 管理员换完根目录一看"缺 1 个文件",
+       以为软件凭空消失了. 实际文件还在**旧根**里, 平台会自动去那边找.
+       所以现在分两种: 在别的根里找到了 (missing) / 所有根都没有 (lost).
+    """
     await _create(client, sw_auth)
     await _upload(client, sw_auth, "demo-sw", b"hello")
 
     # 换到一个空根目录 (模拟"改了设置但文件没搬")
     await set_setting("software.storage_path", str(sw_root.parent / "elsewhere"))
+    # 旧根进了历史 (设置页改根目录时后端会自动记)
+    await set_setting("software.storage_path_history", str(sw_root))
     r = await client.get("/api/v1/software/path-check", headers=sw_auth)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["missing_count"] == 1
     assert body["missing"][0]["code"] == "demo-sw"
+    # 在旧根里找到了 → **没丢**
+    assert body["lost_count"] == 0
+    assert body["missing"][0]["found_in"] == str(sw_root)
+
+
+async def test_path_check_reports_lost_when_no_root_has_it(client, sw_auth, sw_root):
+    """所有候选根里都没有 → 报 **lost** (真丢了)."""
+    await _create(client, sw_auth)
+    await _upload(client, sw_auth, "demo-sw", b"hello")
+
+    # 换根 + 把文件真删掉 —— 这次是真的找不到了
+    await set_setting("software.storage_path", str(sw_root.parent / "elsewhere"))
+    await set_setting("software.storage_path_history", str(sw_root))
+    for p in (sw_root / "demo-sw").rglob("*"):
+        if p.is_file():
+            p.unlink()
+
+    r = await client.get("/api/v1/software/path-check", headers=sw_auth)
+    body = r.json()
+    assert body["lost_count"] == 1
+    assert body["lost"][0]["code"] == "demo-sw"
+
+
+async def test_path_check_lists_orphan_dirs(client, sw_auth, sw_root):
+    """根目录下有目录、DB 里却没有对应条目 → 报成**孤儿目录**.
+
+    ⚠️ 这正是用户报的: 版本全下架了, ``<root>/<code>/`` 空壳还在.
+    """
+    await _create(client, sw_auth)
+    await _upload(client, sw_auth, "demo-sw", b"hello")
+    # 手工造一个 DB 里没有的目录
+    (sw_root / "ghost-item").mkdir(parents=True, exist_ok=True)
+
+    r = await client.get("/api/v1/software/path-check", headers=sw_auth)
+    body = r.json()
+    names = [o["name"] for o in body["orphan_dirs"]]
+    assert "ghost-item" in names
+    # 有条目的不算孤儿
+    assert "demo-sw" not in names
 
 
 async def test_config_reports_path_not_writable(client, sw_auth, tmp_path):
@@ -923,10 +1024,10 @@ async def test_storage_probe_reports_ok(client, sw_auth, sw_root):
 
 
 async def test_storage_probe_lists_missing_files(client, sw_auth, sw_root, tmp_path):
-    """换了存储根目录 → 老文件不在新目录里 → 报出来缺哪些.
+    """换了存储根目录 → 老文件不在新目录里 → **报出来在旧根** (不是"丢了").
 
     ⚠️ 这是「改存储路径」最常见的坑: 改完配置, 老文件不会自动搬过去,
-       用户以为软件没了. 体检接口要一次把缺的列全.
+       用户以为软件没了. 体检接口要一次把"在哪儿"说清楚.
     """
     await _create(client, sw_auth)
     await _upload(client, sw_auth, "demo-sw", b"hello")
@@ -935,6 +1036,7 @@ async def test_storage_probe_lists_missing_files(client, sw_auth, sw_root, tmp_p
     other = tmp_path / "other"
     other.mkdir(parents=True, exist_ok=True)
     await set_setting("software.storage_path", str(other))
+    await set_setting("software.storage_path_history", str(sw_root))
 
     r = await client.post("/api/v1/settings/test/software_storage", headers=sw_auth)
     assert r.status_code == 200, r.text
@@ -944,6 +1046,35 @@ async def test_storage_probe_lists_missing_files(client, sw_auth, sw_root, tmp_p
     d = body["detail"]
     assert d["missing_count"] == 1
     assert d["missing"][0]["version"] == "1.0.0"
+    # 在旧根里找到了 → 没丢
+    assert d["lost_count"] == 0
+    assert d["missing"][0]["found_in"] == str(sw_root)
+    # 所有候选根都列出来 —— 管理员能看到文件实际在哪
+    assert str(sw_root) in d["roots"]
+
+
+async def test_changing_storage_root_remembers_old_root(client, sw_auth, sw_root, tmp_path):
+    """改存储根目录 → **旧根自动记进历史** (2026-10-28).
+
+    ⚠️ 这条是"换根后老文件变孤儿"的根因修复点:
+       库里存的是**相对路径**, 换了根目录后"当前根 + 相对路径"就找不到老文件.
+       所以改根目录时必须把旧根记下来, 让平台后续能在各个根里找文件.
+    """
+    new_root = tmp_path / "software-new"
+    new_root.mkdir(parents=True, exist_ok=True)
+    r = await client.put(
+        "/api/v1/settings/software.storage_path",
+        json={"value": str(new_root)},
+        headers=sw_auth,
+    )
+    assert r.status_code == 200, r.text
+    # 旧根进了历史
+    from app.core.settings_store import get
+
+    hist = (await get("software.storage_path_history", "")) or ""
+    assert str(sw_root) in hist
+    # 新值生效
+    assert (await get("software.storage_path", "")) == str(new_root)
 
 
 async def test_storage_probe_denied_for_non_admin(client, sw_root, publisher_user):

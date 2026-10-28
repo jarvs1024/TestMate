@@ -32,6 +32,7 @@
         <p class="hint">
           任意格式都行 (exe / zip / tar.gz / deb …), 单个最大
           <b>{{ formatSize(maxBytes) }}</b>. 文件原样存在服务器上, 别人下下来就是这一份.
+          <br>文件名只能用<b>英文字母、数字</b>和 <b>. _ -</b>, 且必须以字母或数字开头.
         </p>
         <p v-if="fileError" class="pick-err">{{ fileError }}</p>
 
@@ -69,11 +70,19 @@
           </el-form-item>
         </div>
 
-        <!-- 标识: 会变成服务器上的目录名 —— 所以有格式要求 -->
-        <el-form-item label="软件标识 (code)" required>
-          <el-input v-model="form.code" maxlength="64"
-                    :placeholder="`唯一标识, 小写字母数字与 -_. 如 ${CODE_EXAMPLE}`" />
-          <p class="hint">这是这个软件在服务器上的唯一编号, 以后下载和更新都靠它认.</p>
+        <!-- 标识: **自动生成**, 不用用户填 (2026-10-28) —— 由软件包文件名派生 -->
+        <el-form-item label="软件标识 (自动生成)">
+          <!-- ⚠️ readonly: code 会变成服务端目录名, 用户手填容易带中文/撞名.
+               由文件名派生 + 后端撞名自动加序号, 比让人自己想一个省事得多. -->
+          <el-input :model-value="form.code" readonly placeholder="选好软件包后自动生成"
+                    class="ro-input">
+            <template #suffix>
+              <span class="auto-tag">自动</span>
+            </template>
+          </el-input>
+          <p class="hint">
+            由软件包文件名自动生成 (去扩展名、转小写), 不用手填. 跟别人重名会自动加序号.
+          </p>
           <p v-if="codeError" class="pick-err">{{ codeError }}</p>
         </el-form-item>
 
@@ -230,8 +239,8 @@ import {
 } from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import {
-  CODE_EXAMPLE, ICONS, PLATFORMS, formatSize, splitFeatures, splitTags,
-  validateCode, validateFileSize, validateName, validateVersion,
+  ICONS, PLATFORMS, RESERVED_CODES, codeFromFileName, formatSize, splitFeatures, splitTags,
+  validateCode, validateFileName, validateFileSize, validateName, validateVersion,
 } from './softwareForm';
 
 const props = defineProps<{
@@ -429,6 +438,14 @@ function setFile(f: File | null) {
     file.value = null;
     return;
   }
+  // ⚠️ 文件名规范 (2026-10-28) —— **当场拒绝**, 不静默改名.
+  //    静默改名用户不知道, 下载回来名字对不上更麻烦 (所以后端也不再 sanitize).
+  const nameErr = validateFileName(f.name);
+  if (nameErr) {
+    fileError.value = nameErr;
+    file.value = null;
+    return;
+  }
   const err = validateFileSize(f.size, maxBytes.value);
   if (err) {
     fileError.value = err;
@@ -436,11 +453,17 @@ function setFile(f: File | null) {
     return;
   }
   file.value = f;
+  // ⚠️ 软件标识**自动生成** —— 由文件名派生 (后端也会再派生一次, 规则一致)
+  if (mode.value === 'create') {
+    form.value.code = codeFromFileName(f.name);
+    codeError.value = '';
+  }
 }
 
 function clearFile() {
   file.value = null;
   fileError.value = '';
+  if (mode.value === 'create') form.value.code = '';
 }
 
 const missing = computed<string[]>(() => {
@@ -464,8 +487,14 @@ async function submit() {
   versionError.value = '';
 
   if (mode.value === 'create') {
-    codeError.value = validateCode(form.value.code);
-    if (codeError.value) return;
+    // ⚠️ code 是**自动生成**的 —— 校验不过只能让用户**换文件名**, 所以提示要说清楚
+    const derived = form.value.code.trim();
+    if (validateCode(derived)) {
+      codeError.value = RESERVED_CODES.includes(derived)
+        ? `文件名派生的标识 "${derived}" 是系统保留词 —— 换个软件包文件名吧`
+        : `文件名派生的标识 "${derived}" 不合规 —— 换个软件包文件名吧`;
+      return;
+    }
   } else {
     versionError.value = validateVersion(versionForm.value.version);
     if (versionError.value) return;
@@ -589,6 +618,17 @@ async function submit() {
 .pick-hint { font-size: 12px; color: var(--ink-500); }
 .pick-err { margin: 0; font-size: 11.5px; color: var(--err); }
 .hint { margin: 0; font-size: 11px; color: var(--ink-500); line-height: 1.6; }
+
+/* 自动生成的 code —— 只读, 看着就知道不用自己填 */
+.ro-input :deep(.el-input__inner) {
+  color: var(--ink-700);
+  background: var(--ink-200);
+  cursor: default;
+}
+.auto-tag {
+  font-size: 10.5px; line-height: 1; padding: 2px 6px; border-radius: 8px;
+  color: var(--primary); background: rgba(64, 158, 255, 0.12);
+}
 
 /* 提示行里的小链接按钮 (如「用建议值」) */
 .mini-link {

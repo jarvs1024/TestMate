@@ -100,7 +100,7 @@ export interface SoftwareConfig {
 
 /** 新建软件时填的元数据 */
 export interface SoftwareCreateForm {
-  code: string;
+  code?: string;
   name: string;
   icon: string;
   version: string;
