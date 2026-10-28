@@ -1,6 +1,6 @@
 <template>
   <el-drawer :model-value="modelValue" size="760px" direction="rtl"
-             :title="mode === 'version' ? `发布新版本 · ${item?.name || ''}` : '上传软件'"
+             :title="mode === 'version' ? `发布新版本 · ${item?.name || ''}` : '上架软件'"
              :close-on-click-modal="false" class="sw-up-drawer"
              @update:model-value="emit('update:modelValue', $event)">
     <el-form label-position="top" class="up-form">
@@ -58,9 +58,14 @@
                       placeholder="展示名, 中文即可 (卡片标题), 如 SSD 日志医生" />
           </el-form-item>
           <el-form-item label="图标">
-            <el-select v-model="form.icon" filterable style="width:100%">
-              <el-option v-for="ic in ICONS" :key="ic" :value="ic" :label="ic" />
+            <!-- ⚠️ 图标**不能跟别的软件重复** (2026-10-28) —— 两张卡长得一样,
+                 用户根本分不清谁是谁. 已用过的图标直接标出来并禁掉. -->
+            <el-select v-model="form.icon" filterable style="width:100%"
+                       @change="iconTouched = true">
+              <el-option v-for="ic in ICONS" :key="ic" :value="ic"
+                         :label="iconLabel(ic)" :disabled="isIconUsed(ic)" />
             </el-select>
+            <p class="hint">图标别跟别人重复 —— 用过的图标会标成「已用」, 换别的吧.</p>
           </el-form-item>
         </div>
 
@@ -127,6 +132,22 @@
         <div class="sec-h"><span class="sec-no">2</span>版本信息</div>
         <el-form-item label="版本号" required>
           <el-input v-model="versionForm.version" maxlength="32" placeholder="如 1.1.0" />
+          <!-- ⚠️ 版本号**可以自增, 也可以自己写** ——
+               默认给的是"当前版本 +1 个补丁号"的建议值, 想改成 2.0.0 直接改就行.
+               重复的版本号当场拦下来 (后端也会再拦一道). -->
+          <p class="hint">
+            <template v-if="currentVersion">
+              当前 {{ currentVersion }} · 建议
+              <b class="mono">{{ suggestedVersion }}</b>
+              <button v-if="versionForm.version.trim() !== suggestedVersion"
+                      type="button" class="mini-link" @click="versionForm.version = suggestedVersion">
+                用建议值
+              </button>
+            </template>
+            <template v-if="existingVersions.length">
+              · 已有版本 {{ existingVersions.join(' / ') }}
+            </template>
+          </p>
           <p v-if="versionError" class="pick-err">{{ versionError }}</p>
         </el-form-item>
       </section>
@@ -151,7 +172,7 @@
         <div class="foot-btns">
           <button class="mini-btn" :disabled="uploading" @click="emit('update:modelValue', false)">取消</button>
           <button class="mini-btn primary" :disabled="uploading || missing.length > 0" @click="submit">
-            {{ uploading ? '上传中…' : (mode === 'version' ? '发布新版本' : '上传软件') }}
+            {{ uploading ? '上传中…' : (mode === 'version' ? '发布新版本' : '上架软件') }}
           </button>
         </div>
       </div>
@@ -213,19 +234,49 @@ const dragging = ref(false);
 
 const config = ref<SoftwareConfig | null>(null);
 const maxBytes = computed(() => config.value?.max_bytes || 5 * 1024 * 1024 * 1024);
+/** 用户自己挑过图标 —— 之后 loadConfig 不要再替他改 */
+const iconTouched = ref(false);
 
 function errText(e: unknown, fallback: string): string {
   return httpErrorText(errorStatus(e), errorDetail(e), fallback);
 }
 
 async function loadConfig() {
-  if (config.value) return;
+  // (2026-10-28) 每次打开都要**重新拉** ——
+  //    `used_icons` 是「谁占了哪个图标」. 上一条刚上架完, 这里必须看到最新的,
+  //    否则下拉里那个已被占用的图标看着还是可选的, 用户选了才被后端 409 拦回来.
   try {
     config.value = await getSoftwareConfig();
   } catch {
-    // 取不到配置不该挡住上传 —— 用 5G 的默认上限, 后端还会再拦一道
-    config.value = null;
+      // 取不到配置不该挡住上传 —— 用 5G 的默认上限, 后端还会再拦一道
+      config.value = null;
   }
+  // ⚠️ 默认图标给一个**没被占用**的 (2026-10-28) ——
+  //    图标不许跟别的软件重复 (后端会 409). 但所有条目的默认值都是 🧰,
+  //    不挑空闲的 → 第二个条目必然撞车, 用户什么都没选就被拦.
+  //    只在用户还没自己挑过时改 (别把人家刚选好的图标顶掉).
+  if (!iconTouched.value) {
+    const free = pickFreeIcon();
+    if (free) form.value.icon = free;
+  }
+  iconTouched.value = false;
+}
+
+/** 这个图标已经被别的软件占了? */
+function isIconUsed(ic: string): boolean {
+  return !!config.value?.used_icons?.[ic];
+}
+
+/** 下拉里显示的名字 —— 已用的直接标出来 */
+function iconLabel(ic: string): string {
+  const owner = config.value?.used_icons?.[ic];
+  return owner ? `${ic} (已被「${owner}」用了)` : ic;
+}
+
+/** 挑一个还没人用的图标 */
+function pickFreeIcon(): string {
+  const used = config.value?.used_icons || {};
+  return ICONS.find((ic) => !used[ic]) || '';
 }
 
 /**
@@ -272,6 +323,8 @@ function resetDraft() {
   //    不会同步到 DOM (输入框里还留着上一次的简介), 看着像没清干净.
   Object.assign(form.value, emptyForm());
   versionForm.value = { version: '' };
+  // 下次打开时图标由 loadConfig 重新挑一个空闲的
+  iconTouched.value = false;
 }
 
 watch(() => props.modelValue, (open) => {
@@ -294,6 +347,14 @@ function bumpVersion(v: string): string {
   if (!m) return v;
   return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
 }
+
+// ===== 版本号建议 (发新版本时) =====
+// 当前版本 / 建议的下一个版本号 / 已经发过的版本号
+const currentVersion = computed(() => props.item?.version || '');
+const suggestedVersion = computed(() => bumpVersion(currentVersion.value) || '1.0.0');
+const existingVersions = computed(() => (props.item?.versions || []).map((v) => v.version));
+/** 用户填的版本号跟已发过的撞了 —— 当场提示, 别等后端 409 */
+const versionDup = computed(() => existingVersions.value.includes(versionForm.value.version.trim()));
 
 function onPick(e: Event) {
   const f = (e.target as HTMLInputElement).files?.[0] || null;
@@ -352,6 +413,11 @@ async function submit() {
   } else {
     versionError.value = validateVersion(versionForm.value.version);
     if (versionError.value) return;
+    // 版本号跟已发过的撞了 —— 当场拦, 别等后端 409
+    if (versionDup.value) {
+      versionError.value = `版本号 ${versionForm.value.version.trim()} 已经发过了, 换一个`;
+      return;
+    }
   }
   const nameErr = mode.value === 'create' ? validateName(form.value.name) : '';
   if (nameErr) {
@@ -459,6 +525,14 @@ async function submit() {
 .pick-hint { font-size: 12px; color: var(--ink-500); }
 .pick-err { margin: 0; font-size: 11.5px; color: var(--err); }
 .hint { margin: 0; font-size: 11px; color: var(--ink-500); line-height: 1.6; }
+
+/* 提示行里的小链接按钮 (如「用建议值」) */
+.mini-link {
+  border: none; background: none; padding: 0 3px;
+  color: var(--primary); font-size: 11px; cursor: pointer;
+  font-family: inherit; text-decoration: underline;
+}
+.mini-link:hover { color: var(--primary-2); }
 
 .pv-box {
   border: 1px solid var(--border); border-radius: var(--radius-sm);

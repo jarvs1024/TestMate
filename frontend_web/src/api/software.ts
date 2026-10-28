@@ -86,6 +86,8 @@ export interface SoftwareConfig {
   path_ok: boolean;
   used_bytes: number;
   free_bytes: number;
+  /** 已被占用的图标: { emoji: 软件名 } —— 图标不能跟别的软件重复 */
+  used_icons?: Record<string, string>;
 }
 
 /** 新建软件时填的元数据 */

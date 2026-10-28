@@ -809,17 +809,9 @@ onUnmounted(() => {
 }
 
 .toolbar-right { display: flex; align-items: center; gap: 8px; }
-.mini-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  background: var(--surface); border: 1px solid var(--border);
-  padding: 6px 12px; border-radius: 8px;
-  font-size: 12.5px; color: var(--ink-700); cursor: pointer;
-  font-family: inherit; transition: all 0.15s ease;
-}
-.mini-btn:hover { border-color: var(--primary); color: var(--ink-900); }
-.mini-btn.on { background: rgba(16, 185, 129, 0.12); border-color: transparent; color: var(--ok); font-weight: 600; }
-.mini-btn.primary { color: #fff; border-color: transparent; background: var(--primary-grad); }
-.mini-btn.primary:hover { filter: brightness(1.06); color: #fff; }
+/* ⚠️ .mini-btn 的样式 2026-10-28 提到 styles/main.css (全局) ——
+   软件库那边照抄了 class 名却没有样式, 按钮长得跟浏览器默认一样.
+   现在全局一份, 两边一致. */
 .tick-off { opacity: 0.3; }
 
 /* ===== 上传入口: 形态菜单 ===== */

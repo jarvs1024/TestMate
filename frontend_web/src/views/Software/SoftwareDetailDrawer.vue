@@ -24,7 +24,7 @@
             ⬇ 下载{{ item.download_version ? ` ${item.download_version}` : '' }}
           </button>
           <button v-if="item.can_edit" class="mini-btn" @click="emit('new-version', item)">
-            ↑ 发新版本
+            ↑ 发布新版本
           </button>
         </div>
       </div>
@@ -110,20 +110,21 @@
       </div>
 
       <!-- ===== 危险操作 ===== -->
+      <!-- ⚠️ 2026-10-28: 以前是两个按钮 (删除=软删留文件 / 彻底清理=删文件, 仅管理员),
+           绕。现在合成一个「下架软件」: **谁上架的谁就能下架, 不用管理员审批**,
+           管理员照旧能下架任何人的. 下架 = 条目和文件一起没. -->
       <div v-if="item.can_edit" class="sw-danger">
-        <button class="mini-btn danger" @click="onDelete">删除这个软件</button>
-        <button v-if="isAdmin" class="mini-btn danger" @click="onPurge">彻底清理 (删文件)</button>
-        <span class="danger-tip">删除是软删 —— 文件还留在服务器上; 彻底清理才会连文件一起删.</span>
+        <button class="mini-btn danger" @click="onUnpublish">下架这个软件</button>
+        <span class="danger-tip">下架后这个软件会从列表里消失, 服务器上的文件**一起删掉**, 不可恢复.</span>
       </div>
     </div>
   </el-drawer>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { downloadSoftware, deleteSoftware, purgeSoftware, getSoftware, type SoftwareDetail, type SoftwareVersion } from '@/api/software';
-import { useUserStore } from '@/stores/user';
+import { downloadSoftware, purgeSoftware, getSoftware, type SoftwareDetail, type SoftwareVersion } from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { formatSize } from './softwareForm';
 
@@ -148,8 +149,8 @@ const item = ref<SoftwareDetail | null>(null);
 const versions = ref<SoftwareVersion[]>([]);
 const loading = ref(false);
 
-const userStore = useUserStore();
-const isAdmin = computed(() => userStore.user?.role === 'admin');
+// ⚠️ 不再单独判断 admin —— 「下架软件」对**上传者本人**和**管理员**都显示
+//    (后端 _assert_can_modify 才是真正的闸: 上传者本人 或 管理员).
 
 function errText(e: unknown, fallback: string): string {
   return httpErrorText(errorStatus(e), errorDetail(e), fallback);
@@ -187,45 +188,40 @@ async function doDownload(version: string) {
   }
 }
 
-async function onDelete() {
+/**
+ * 下架 —— 条目和文件一起删.
+ *
+ * ⚠️ 2026-10-28: 以前这里有两个按钮 (删除=软删留文件 / 彻底清理=删文件且仅管理员),
+ *    绕。现在合并成一个「下架软件」:
+ *    · **谁上架的谁就能下架**, 不用等管理员审批 (后端 _assert_can_modify);
+ *    · 管理员照旧能下架/更新任何人的软件;
+ *    · 下架即删除 —— 文件本体也一起删, 所以确认框要说清楚不可恢复.
+ */
+async function onUnpublish() {
   if (!item.value) return;
   try {
     await ElMessageBox.confirm(
-      `确定删除「${item.value.name}」吗? (文件仍保留在服务器上, 管理员可以彻底清理)`,
-      '删除软件',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+      `确定下架「${item.value.name}」吗?\n\n下架后它会从软件库里消失, ` +
+      '服务器上的软件包**也会一起删掉**, 不可恢复。',
+      '下架软件',
+      {
+        type: 'warning',
+        confirmButtonText: '下架',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'mini-btn danger',
+        dangerouslyUseHTMLString: false,
+      },
     );
   } catch {
     return; // 用户取消
   }
   try {
-    await deleteSoftware(item.value.code);
-    ElMessage.success('已删除');
-    emit('changed');
-    emit('update:modelValue', false);
-  } catch (e: any) {
-    ElMessage.error(errText(e, '删除失败'));
-  }
-}
-
-async function onPurge() {
-  if (!item.value) return;
-  try {
-    await ElMessageBox.confirm(
-      `彻底清理会**删掉服务器上的文件本体**, 不可恢复。确定清理「${item.value.name}」吗?`,
-      '彻底清理',
-      { type: 'error', confirmButtonText: '彻底清理', cancelButtonText: '取消' },
-    );
-  } catch {
-    return;
-  }
-  try {
     const r = await purgeSoftware(item.value.code);
-    ElMessage.success(`已彻底清理 (${r.deleted_files || 0} 个版本的文件)`);
+    ElMessage.success(`已下架 (${r.deleted_files || 0} 个版本的文件一并删除)`);
     emit('changed');
     emit('update:modelValue', false);
   } catch (e: any) {
-    ElMessage.error(errText(e, '彻底清理失败'));
+    ElMessage.error(errText(e, '下架失败'));
   }
 }
 

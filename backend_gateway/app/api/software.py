@@ -167,6 +167,46 @@ def _assert_can_modify(item: SoftwareItem, user: User) -> None:
     raise HTTPException(status_code=403, detail="只有上传者本人或管理员能操作这个软件")
 
 
+async def _assert_icon_free(
+    session,
+    icon: str,
+    *,
+    exclude_code: str = "",
+) -> None:
+    """图标不能跟**别的软件**重复 —— 两张卡长得一样, 用户分不清谁是谁.
+
+    ⚠️ 2026-10-28 加: 图标重复会让能力墙上一片"红工具箱", 看着像同一个软件.
+       前端会把已占用的图标标成"已用"并禁掉, 这里再兜一道 ——
+       前端只拿到当前列表页里的图标, 后端看的是全量.
+
+    ⚠️⚠️ **必须用二进制 collation 比较** (2026-10-28 踩过的坑):
+       software_items.icon 的 collation 是 ``utf8mb4_unicode_ci``, 而 MySQL 的
+       UCA 4.0.0 **不认识 supplementary plane 的字符** —— 它给**所有 emoji**
+       套了同一个"通用权重". 结果就是 🚀 和 💿 在这一列上**互相相等**!
+       写成 ``icon == '🚀'`` 的话, 任何 emoji 都会跟任何 emoji 撞车
+       (第一个条目 🧰, 第二个条目 📦 → 409 "图标重复").
+       所以这里用 ``collate('utf8mb4_bin')`` 按字节比 —— 一个字节都不差才算同一个图标.
+
+    ``exclude_code`` = 改自己的条目时排除自己 (不改图标当然不该跟自己撞).
+    """
+    icon = (icon or "").strip()
+    if not icon:
+        return
+    stmt = select(SoftwareItem).where(
+        # 按字节比 —— utf8mb4_bin 是 MySQL 的二进制 collation
+        SoftwareItem.icon.collate("utf8mb4_bin") == icon,
+        SoftwareItem.deleted_at.is_(None),
+    )
+    if exclude_code:
+        stmt = stmt.where(SoftwareItem.code != exclude_code)
+    hit = (await session.execute(stmt)).scalars().first()
+    if hit is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"图标 {icon} 已经被「{hit.name}」用了, 换一个不一样的",
+        )
+
+
 async def _audit(
     session,
     *,
@@ -385,6 +425,17 @@ async def get_config(user: User = Depends(get_current_user)) -> SoftwareConfigOu
         out.path_ok = bool(info["exists"] and info["writable"])
         out.used_bytes = software_store.used_bytes(root)
         out.free_bytes = int(info["free_bytes"])
+    # 已被占用的图标 (全量, 不分页) —— 前端把用过的图标禁掉
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(SoftwareItem).where(
+                    SoftwareItem.deleted_at.is_(None),
+                    SoftwareItem.icon != "",
+                )
+            )
+        ).scalars().all()
+    out.used_icons = {r.icon: r.name for r in rows}
     return out
 
 
@@ -565,6 +616,9 @@ async def create_software(
         ).scalar_one_or_none()
         if exists is not None:
             raise HTTPException(status_code=409, detail=f"软件标识 {code} 已经存在了")
+
+        # ⚠️ 图标不能跟别的软件重复 (2026-10-28)
+        await _assert_icon_free(session, payload.icon)
 
         item = SoftwareItem(
             code=code,
@@ -916,6 +970,9 @@ async def update_software(
         data = payload.model_dump(exclude_unset=True)
         if "features" in data and data["features"] is not None:
             data["features"] = [f.strip() for f in data["features"] if f and f.strip()]
+        # ⚠️ 改图标也要查重 (2026-10-28) —— 排除自己
+        if data.get("icon"):
+            await _assert_icon_free(session, data["icon"], exclude_code=code)
         for k, v in data.items():
             if v is None:
                 continue
@@ -1023,9 +1080,15 @@ async def delete_software(
 async def purge_software(
     code: str, user: User = Depends(get_current_user)
 ) -> SoftwareDeleteOut:
-    """彻底清理 —— 删条目行 + 磁盘目录. **仅管理员**."""
-    if not _is_admin(user):
-        raise HTTPException(status_code=403, detail="只有管理员能彻底清理")
+    """**下架** —— 删条目行 + 磁盘目录 (记录与文件一起没了).
+
+    ⚠️ 2026-10-28 改: 以前只有**管理员**能彻底清理, 现在
+       **上传者本人也能下架自己的软件, 不用管理员审批** ——
+       谁传的谁负责, 不想留在平台上了就自己撤下.
+       管理员照旧能下架/更新**任何人**的软件.
+
+    ⚠️ 不可恢复 —— 文件本体也一起删. 前端确认框里写清楚了.
+    """
     root = await _root()
     async with AsyncSessionLocal() as session:
         item = (
@@ -1033,6 +1096,8 @@ async def purge_software(
         ).scalar_one_or_none()
         if item is None:
             raise HTTPException(status_code=404, detail=f"软件 {code} 不存在")
+        # 上传者本人 或 管理员
+        _assert_can_modify(item, user)
         versions = (
             await session.execute(
                 select(SoftwareVersion).where(SoftwareVersion.item_id == item.id)
@@ -1047,7 +1112,7 @@ async def purge_software(
             code=code,
             action="purge",
             actor=user,
-            comment="彻底清理 (记录与文件一起删除)",
+            comment="下架软件 (记录与文件一起删除)",
             detail={"versions": n},
         )
         await session.commit()

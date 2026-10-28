@@ -56,6 +56,41 @@ html, html[data-theme] {
  * 全局控件样式 (C 版 · 毛玻璃 + 简约 · 单层 focus ring)
  * ============================================================ */
 
+/* ------------------------------------------------------------
+ * 小按钮 (.mini-btn) —— **全局**, 2026-10-28 提到这里
+ *
+ * ⚠️ 为什么要提到全局: 原来这套装在「插件·技能·连接」页面的 scoped 样式里,
+ *    软件库那边照抄了 class 名却**没有对应样式** → 按钮全是浏览器默认长相
+ *    (灰色小方块), 和平台其它地方的按钮完全不是一回事.
+ *    现在全局一份, 谁用都一致.
+ * ------------------------------------------------------------ */
+.mini-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 6px 12px; border-radius: 8px;
+  font-size: 12.5px; color: var(--ink-700); cursor: pointer;
+  font-family: inherit; transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.mini-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--ink-900); }
+.mini-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 主按钮 —— 蓝→靛→青 渐变 (和平台的 tm-btn 同一套视觉) */
+.mini-btn.primary {
+  color: #fff; border-color: transparent; background: var(--primary-grad);
+  font-weight: 600;
+}
+.mini-btn.primary:hover:not(:disabled) { filter: brightness(1.06); color: #fff; }
+/* 危险操作 —— 红色描边, 不用实心 (实心红太抢眼, 用户容易误点) */
+.mini-btn.danger {
+  color: var(--err); border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.06);
+}
+.mini-btn.danger:hover:not(:disabled) {
+  color: var(--err); border-color: var(--err); background: rgba(239, 68, 68, 0.14);
+}
+/* 已选中的状态开关 (市场的通知开关在用) */
+.mini-btn.on { background: rgba(16, 185, 129, 0.12); border-color: transparent; color: var(--ok); font-weight: 600; }
+
 /* 主按钮 — 蓝→靛→青 渐变, hover 提亮 + 上抬 1px */
 button.tm-btn,
 button.tm-btn-primary {

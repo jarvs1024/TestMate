@@ -346,7 +346,8 @@ async def test_list_shows_published_and_own(client, sw_auth, sw_root, publisher_
     # publisher 建一个没传文件的
     r = await client.post(
         "/api/v1/software",
-        json={"code": "draft-sw", "name": "没传完的", "version": "0.1.0", "summary": "x"},
+        json={"code": "draft-sw", "name": "没传完的", "version": "0.1.0", "summary": "x",
+              "icon": "📦"},
         headers=auth2,
     )
     assert r.status_code == 201, r.text
@@ -426,12 +427,41 @@ async def test_admin_can_modify_others_item(client, sw_auth, sw_root, publisher_
     assert r.json()["summary"] == "管理员改的"
 
 
-async def test_purge_requires_admin(client, sw_auth, sw_root, publisher_user):
-    """彻底清理只有管理员能做."""
+async def test_purge_denied_for_others(client, sw_auth, sw_root, publisher_user):
+    """下架**别人的**软件 → 403.
+
+    ⚠️ 2026-10-28 改: 下架不再"只有管理员能做" —— **谁上架的谁就能下架自己的**,
+       不用管理员审批. 但下架**别人的**照样不行 (见下面两条).
+    """
     await _create(client, sw_auth)
     auth2 = {"Authorization": f"Bearer {publisher_user['token']}"}
     r = await client.delete("/api/v1/software/demo-sw/purge", headers=auth2)
     assert r.status_code == 403, r.text
+
+
+async def test_author_can_unpublish_own_software(client, sw_auth, sw_root, publisher_user):
+    """**上传者本人**能下架自己的软件, 不用管理员审批 (2026-10-28)."""
+    auth2 = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _create(client, auth2, code="own-sw", name="我自己的", icon="📦")
+    await _upload(client, auth2, "own-sw", b"hello")
+    assert (sw_root / "own-sw").is_dir()
+
+    r = await client.delete("/api/v1/software/own-sw/purge", headers=auth2)
+    assert r.status_code == 200, r.text
+    # 条目和文件一起没了
+    assert not (sw_root / "own-sw").exists()
+    assert (await client.get("/api/v1/software/own-sw", headers=auth2)).status_code == 404
+
+
+async def test_admin_can_unpublish_others_software(client, sw_auth, sw_root, publisher_user):
+    """管理员能下架**任何人**的软件."""
+    auth2 = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _create(client, auth2, code="p-sw", name="别人的", icon="💿")
+    await _upload(client, auth2, "p-sw", b"hello")
+
+    r = await client.delete("/api/v1/software/p-sw/purge", headers=sw_auth)
+    assert r.status_code == 200, r.text
+    assert not (sw_root / "p-sw").exists()
 
 
 async def test_purge_removes_files(client, sw_auth, sw_root):
@@ -443,6 +473,50 @@ async def test_purge_removes_files(client, sw_auth, sw_root):
     assert r.status_code == 200, r.text
     assert not (sw_root / "demo-sw").exists()
     assert (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).status_code == 404
+
+
+# ---------- 图标不许重复 (2026-10-28) ----------
+
+
+async def test_icon_cannot_duplicate(client, sw_auth):
+    """图标不能跟别的软件重复 —— 两张卡长得一样, 用户分不清谁是谁."""
+    await _create(client, sw_auth, icon="🚀")
+    r = await client.post(
+        "/api/v1/software",
+        json={"code": "other-sw", "name": "另一个", "version": "1.0.0", "summary": "x",
+              "icon": "🚀"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 409, r.text
+    assert "已经被" in r.json()["detail"]
+
+
+async def test_update_icon_cannot_duplicate(client, sw_auth):
+    """改图标也要查重 (不能改成别人的图标)."""
+    await _create(client, sw_auth, code="a-sw", name="A", icon="🚀")
+    await _create(client, sw_auth, code="b-sw", name="B", icon="💿")
+    r = await client.put(
+        "/api/v1/software/b-sw", json={"icon": "🚀"}, headers=sw_auth
+    )
+    assert r.status_code == 409, r.text
+
+
+async def test_update_icon_to_same_is_allowed(client, sw_auth):
+    """不改图标 (或改成自己的同一个) 不该被自己撞上."""
+    await _create(client, sw_auth, code="a-sw", name="A", icon="🚀")
+    r = await client.put(
+        "/api/v1/software/a-sw", json={"icon": "🚀", "summary": "改个简介"}, headers=sw_auth
+    )
+    assert r.status_code == 200, r.text
+
+
+async def test_config_lists_used_icons(client, sw_auth):
+    """config 要告诉前端哪些图标被占了 —— 前端据此把它们禁掉."""
+    await _create(client, sw_auth, icon="🧪")
+    r = await client.get("/api/v1/software/config", headers=sw_auth)
+    assert r.status_code == 200, r.text
+    used = r.json()["used_icons"]
+    assert used.get("🧪") == "演示软件"
 
 
 async def test_soft_delete_keeps_files(client, sw_auth, sw_root):

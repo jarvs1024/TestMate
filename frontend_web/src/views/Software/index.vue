@@ -25,7 +25,7 @@
           <option value="name">按名称</option>
         </select>
         <button class="mini-btn primary" :disabled="!canPublish" @click="openUpload('create')">
-          ＋ 上传软件
+          ＋ 上架软件
         </button>
       </div>
     </div>
@@ -47,7 +47,7 @@
 
     <!-- ===== 没有发布权限 → 说清楚, 别让人以为按钮坏了 ===== -->
     <div v-if="!canPublish && configLoaded" class="sw-note">
-      当前账号没有上传权限 —— 上传软件需要「测试工程」角色, 或由管理员加进发布者白名单.
+      当前账号没有上架权限 —— 上架软件需要「测试工程」角色, 或由管理员加进发布者白名单.
     </div>
 
     <!-- ===== 管理员: 存储路径健康 ===== -->
@@ -74,7 +74,7 @@
     <div v-else-if="list.length === 0" class="state">
       <div style="font-size: 30px; opacity: 0.4">🧰</div>
       <div>这里还没有软件</div>
-      <button v-if="canPublish" class="reset" @click="openUpload('create')">上传第一个软件</button>
+      <button v-if="canPublish" class="reset" @click="openUpload('create')">上架第一个软件</button>
     </div>
     <div v-else class="grid">
       <SoftwareCard v-for="it in list" :key="it.code" :item="it" @open="openDetail" />

@@ -106,6 +106,11 @@ class SoftwareConfigOut(BaseModel):
     used_bytes: int = 0
     # 磁盘剩余字节数
     free_bytes: int = 0
+    # 已被占用的图标: {emoji: 软件名}
+    # ⚠️ 为什么要有这个 (2026-10-28): 图标**不能跟别的软件重复** ——
+    #    两张卡长得一模一样, 用户根本分不清谁是谁. 前端拿它把已占用的图标
+    #    标成"已用"并禁掉, 后端再兜一道 (见 _assert_icon_free).
+    used_icons: dict[str, str] = {}
 
 
 class SoftwareCreateIn(BaseModel):

@@ -101,7 +101,7 @@ const FILE_NAME = `${CODE}.bin`;
 
     // ---------- 打开上传抽屉 ----------
     await page.evaluate(() => {
-      const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('上传软件'));
+      const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('上架软件'));
       if (btn) btn.click();
     });
     await page.waitForSelector('.sw-up-drawer input[type=file]', { timeout: 10000 });
@@ -139,7 +139,7 @@ const FILE_NAME = `${CODE}.bin`;
 
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('.sw-up-drawer button, .up-foot button')]
-        .find((b) => (b.textContent || '').includes('上传软件'));
+        .find((b) => (b.textContent || '').includes('上架软件'));
       if (btn) btn.click();
     });
     // 传文件要一会儿 (走的是原始字节流 + 流式落盘)
@@ -147,6 +147,47 @@ const FILE_NAME = `${CODE}.bin`;
     await sleep(1500);
     check('E13 上传后卡片出现',
       await page.evaluate((c) => [...document.querySelectorAll('.ac-name')].some((n) => n.textContent.includes('E2E 演示软件')), CODE));
+
+    // ---------- 图标不许重复 (2026-10-28) ----------
+    // 再开一次上架抽屉 → 图标下拉里, **刚才这条用掉的图标**应该
+    //   ① 标着「已被「…」用了」; ② 是禁用的 (点不动).
+    // ⚠️ 用的是自己上架时的那个图标, 而不是写死某个 ——
+    //    库里可能已经有别的演示条目占着别的图标 (截图脚本留下的).
+    const myIcon = await page.evaluate(() => {
+      const t = localStorage.getItem('testmate:token');
+      return fetch('/api/v1/software/config', { headers: { Authorization: 'Bearer ' + t } })
+        .then((r) => r.json()).then((d) => {
+          const u = (d.used_icons || {});
+          const hit = Object.keys(u).find((k) => u[k] === 'E2E 演示软件');
+          return hit || '';
+        });
+    });
+    await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('button')]
+        .find((b) => b.textContent.includes('上架软件'));
+      if (btn) btn.click();
+    });
+    await page.waitForSelector('.sw-up-drawer .el-select__wrapper', { timeout: 10000 });
+    await sleep(1200);
+    await page.click('.sw-up-drawer .el-select__wrapper');
+    await sleep(900);
+    const iconState = await page.evaluate((ic) => {
+      const opt = [...document.querySelectorAll('.el-select-dropdown__item')]
+        .find((o) => (o.textContent || '').includes(ic) && (o.textContent || '').includes('已被'));
+      return {
+        label: opt ? opt.textContent.trim() : '',
+        disabled: opt ? opt.classList.contains('is-disabled') : false,
+      };
+    }, myIcon);
+    check('E13a 已用图标标出占用者', iconState.label.includes('E2E 演示软件'), `${myIcon} ${iconState.label}`);
+    check('E13b 已用图标是禁用的', iconState.disabled === true, `disabled=${iconState.disabled}`);
+    // 关掉抽屉 (点「取消」, 不用 Escape)
+    await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('.sw-up-drawer button, .up-foot button')]
+        .find((b) => (b.textContent || '').trim() === '取消');
+      if (btn) btn.click();
+    });
+    await sleep(1200);
 
     // ---------- 详情抽屉 ----------
     await page.evaluate(() => {
@@ -214,7 +255,7 @@ const FILE_NAME = `${CODE}.bin`;
 
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('.sw-drawer button')]
-        .find((b) => (b.textContent || '').includes('发新版本'));
+        .find((b) => (b.textContent || '').includes('发布新版本'));
       if (btn) btn.click();
     });
     await page.waitForSelector('.sw-up-drawer input[type=file]', { timeout: 10000 });
