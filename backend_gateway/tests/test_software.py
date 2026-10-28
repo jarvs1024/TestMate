@@ -968,6 +968,30 @@ async def test_delete_last_version_unpublishes_item(client, sw_auth, sw_root):
     r = await client.delete("/api/v1/software/demo-sw/versions/1.0.0", headers=sw_auth)
     assert r.status_code == 200, r.text
     assert (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).status_code == 404
+    # ⚠️ 返回体要**告诉前端条目被连带下架了** (2026-10-28 用户报的"成功却报错"):
+    #    前端下架完再去查详情必然 404, 不知道这一条就会弹红字「软件 xxx 不存在」.
+    body = r.json()
+    assert body["item_unpublished"] is True
+    assert body["remaining_versions"] == 0
+
+
+async def test_delete_version_reports_remaining_versions(client, sw_auth, sw_root):
+    """还有别的版本 → 条目**不下架**, 返回体说清还剩几个."""
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+    await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "file_name": "v2.bin"},
+        headers=sw_auth,
+    )
+    await _upload(client, sw_auth, "demo-sw", b"v2-file", filename="v2.bin")
+    r = await client.delete("/api/v1/software/demo-sw/versions/1.0.0", headers=sw_auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["item_unpublished"] is False
+    assert body["remaining_versions"] == 1
+    # 条目还在 —— 前端这时可以正常刷新详情
+    assert (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).status_code == 200
 
 
 async def test_delete_version_denied_for_others(client, sw_auth, sw_root, publisher_user):

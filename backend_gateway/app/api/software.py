@@ -1049,7 +1049,14 @@ async def delete_version(
     #    不然用户看着像"东西还在" (2026-10-28 用户报的坑)
     for r in roots:
         software_store.remove_item_dir_if_empty(r, code)
-    return SoftwareDeleteOut(ok=True, code=code, deleted_files=max(1, deleted))
+    return SoftwareDeleteOut(
+        ok=True,
+        code=code,
+        deleted_files=max(1, deleted),
+        # ⚠️ 条目是不是被连带下架了 —— 前端要靠这个决定"是刷新详情还是关抽屉"
+        item_unpublished=remaining == 0,
+        remaining_versions=remaining,
+    )
 
 
 @router.put("/{code}/file")

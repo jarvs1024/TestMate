@@ -6,24 +6,29 @@
  *   ② 一个软件挂两个版本、两个都有用 —— 版本列表要能区分谁是谁,
  *      并且说清「推荐下载哪个」.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 
 // ⚠️ vi.mock 的工厂函数会被**提升**到文件顶部 —— 直接用模块级的 const 会
 //    "Cannot access 'getSoftware' before initialization". 必须用 vi.hoisted.
-const { getSoftware } = vi.hoisted(() => ({ getSoftware: vi.fn() }));
+const { getSoftware, deleteSoftwareVersion, elMessage, elMessageBox } = vi.hoisted(() => ({
+  getSoftware: vi.fn(),
+  deleteSoftwareVersion: vi.fn(),
+  elMessage: { success: vi.fn(), error: vi.fn() },
+  elMessageBox: { confirm: vi.fn(async () => true) },
+}));
 
 vi.mock('@/api/software', () => ({
   getSoftware: (...a: any[]) => getSoftware(...a),
   downloadSoftware: vi.fn(async () => {}),
   purgeSoftware: vi.fn(async () => ({ ok: true, deleted_files: 1 })),
   updateSoftwareVersion: vi.fn(async () => ({})),
-  deleteSoftwareVersion: vi.fn(async () => ({ ok: true, deleted_files: 1 })),
+  deleteSoftwareVersion: (...a: any[]) => deleteSoftwareVersion(...a),
 }));
 
 vi.mock('element-plus', () => ({
-  ElMessage: { success: vi.fn(), error: vi.fn() },
-  ElMessageBox: { confirm: vi.fn(async () => true) },
+  ElMessage: elMessage,
+  ElMessageBox: elMessageBox,
 }));
 
 import SoftwareDetailDrawer from '../SoftwareDetailDrawer.vue';
@@ -180,5 +185,78 @@ describe('多版本并存', () => {
     const w = await mountDrawer(detail({ can_edit: false }));
     const labels = w.findAll('.ver-row .vr-hd .mini-btn').map((b) => b.text());
     expect(labels.some((t) => t.includes('下架这版'))).toBe(false);
+  });
+});
+
+/**
+ * 「下架这版」成功却报错的 bug (2026-10-28 用户报的).
+ *
+ * ⚠️ 现场: 删掉**最后一个**版本 → 后端会把条目一并下架 (软删) →
+ *    前端下架成功后**又去查详情** → 必然 404 → 弹一条红字
+ *    「软件 xxx 不存在」. 明明成功, 看着像坏了.
+ */
+describe('下架版本 (成功不该报错)', () => {
+  /** 抽屉里点「下架这版」 */
+  async function clickUnpublishVersion(w: any) {
+    const btn = w.findAll('.ver-row .vr-hd .mini-btn')
+      .find((b: any) => b.text().includes('下架这版'));
+    expect(btn).toBeTruthy();
+    await btn.trigger('click');
+    await flushPromises();
+    await flushPromises();
+  }
+
+  beforeEach(() => {
+    elMessage.success.mockClear();
+    elMessage.error.mockClear();
+    elMessageBox.confirm.mockClear();
+  });
+
+  it('删掉最后一个版本 → 条目被连带下架 → 关抽屉 + 说明, 不报红错', async () => {
+    deleteSoftwareVersion.mockResolvedValueOnce({
+      ok: true, deleted_files: 1, item_unpublished: true, remaining_versions: 0,
+    });
+    const w = await mountDrawer(detail({ versions: [version()] }));
+    await clickUnpublishVersion(w);
+
+    expect(elMessage.error).not.toHaveBeenCalled();
+    expect(elMessage.success).toHaveBeenCalled();
+    // 提示里要说清"软件也一并下架了" —— 否则用户以为只撤了一个版本
+    expect(elMessage.success.mock.calls[0][0]).toContain('一并下架');
+    // 抽屉请求关闭
+    expect(w.emitted('update:modelValue')?.some((e: any) => e[0] === false)).toBe(true);
+  });
+
+  it('还有别的版本 → 正常刷新详情, 抽屉不关, 不报错', async () => {
+    deleteSoftwareVersion.mockResolvedValueOnce({
+      ok: true, deleted_files: 1, item_unpublished: false, remaining_versions: 1,
+    });
+    const d = detail({
+      versions: [version({ id: 2, version: '2.0.0' }), version({ id: 1 })],
+    });
+    // 后面 refresh 时的 load() 也要有数据
+    getSoftware.mockResolvedValue(d);
+    const w = await mountDrawer(d);
+    await clickUnpublishVersion(w);
+
+    expect(elMessage.error).not.toHaveBeenCalled();
+    // 抽屉不该被关掉 (条目还在) —— 没发过 update:modelValue 就是没关
+    expect(w.emitted('update:modelValue')).toBeFalsy();
+  });
+
+  it('详情读回来是 404 (条目已经不在了) → 静默关抽屉, 不弹红错', async () => {
+    getSoftware.mockRejectedValue({
+      response: { status: 404, data: { detail: '软件 xxx 不存在' } },
+    });
+    const w = mount(SoftwareDetailDrawer, {
+      props: { modelValue: false, code: 'gone-sw' },
+      global: { stubs: { 'el-drawer': { template: '<div><slot /></div>' } } },
+    });
+    await w.setProps({ modelValue: true });
+    await flushPromises();
+    await flushPromises();
+
+    expect(elMessage.error).not.toHaveBeenCalled();
+    expect(w.emitted('update:modelValue')?.some((e: any) => e[0] === false)).toBe(true);
   });
 });

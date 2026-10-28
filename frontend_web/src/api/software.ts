@@ -226,7 +226,14 @@ export async function updateSoftwareVersion(
 export async function deleteSoftwareVersion(
   code: string,
   version: string,
-): Promise<{ ok: boolean; code: string; deleted_files: number }> {
+): Promise<{
+  ok: boolean;
+  code: string;
+  deleted_files: number;
+  /** ⚠️ 删掉的是**最后一个**版本 → 条目被连带下架 (软删) → 再查详情必然 404 */
+  item_unpublished?: boolean;
+  remaining_versions?: number;
+}> {
   return apiDelete(`/software/${encodeURIComponent(code)}/versions/${encodeURIComponent(version)}`);
 }
 

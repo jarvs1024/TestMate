@@ -246,6 +246,13 @@ async function load() {
     item.value = d;
     versions.value = d.versions || [];
   } catch (e: any) {
+    // ⚠️ 404 = 这个条目**已经不在了** (刚被下架 / 被删) —— 静默关掉抽屉.
+    //    以前这里一律弹红错, 用户看到的是"下架成功" + 紧接着一条
+    //    「软件 xxx 不存在」—— 明明成功却报错了, 看着像坏了.
+    if (errorStatus(e) === 404) {
+      emit('update:modelValue', false);
+      return;
+    }
     ElMessage.error(errText(e, '读取软件详情失败'));
   } finally {
     loading.value = false;
@@ -295,10 +302,17 @@ async function setDefault(v: SoftwareVersion) {
  */
 async function onDeleteVersion(v: SoftwareVersion) {
   if (!item.value) return;
+  // ⚠️ 这是**唯一**能下载的版本吗? —— 那删掉它整个软件就一并下架了,
+  //    确认框必须说清楚, 不然用户以为只撤了一个版本.
+  const isLast = versions.value.filter((x) => x.status === 'ready').length <= 1;
   try {
     await ElMessageBox.confirm(
-      `确定下架版本 ${v.version} 吗?\n\n` +
-      '这个版本的**文件会被删掉**, 不可恢复. 其他版本不受影响.',
+      isLast
+        ? `确定下架版本 ${v.version} 吗?\n\n`
+          + '这是**最后一个**可下载版本 —— 下架后这个软件会**一起从软件库里消失**, '
+          + '文件也会被删掉, 不可恢复.'
+        : `确定下架版本 ${v.version} 吗?\n\n`
+          + '这个版本的**文件会被删掉**, 不可恢复. 其他版本不受影响.',
       '下架这个版本',
       {
         type: 'warning',
@@ -312,7 +326,18 @@ async function onDeleteVersion(v: SoftwareVersion) {
     return; // 用户取消
   }
   try {
-    await deleteSoftwareVersion(item.value.code, v.version);
+    const r = await deleteSoftwareVersion(item.value.code, v.version);
+    // ⚠️ 后端把"条目被连带下架"告诉了我们 (2026-10-28) ——
+    //    这时**再去查详情必然 404** (条目已经软删了). 所以:
+    //    关抽屉 + 刷新列表, 不查详情, 也不弹红错.
+    if (r.item_unpublished) {
+      ElMessage.success(
+        `版本 ${v.version} 已下架 · 这是最后一个版本, 软件已一并下架`,
+      );
+      emit('update:modelValue', false);
+      emit('changed');
+      return;
+    }
     ElMessage.success(`版本 ${v.version} 已下架`);
     await load();
     emit('changed');
@@ -351,8 +376,10 @@ async function onUnpublish() {
   try {
     const r = await purgeSoftware(item.value.code);
     ElMessage.success(`已下架 (${r.deleted_files || 0} 个版本的文件一并删除)`);
-    emit('changed');
+    // ⚠️ **先关抽屉再刷新列表** —— 反过来的话, 父组件刷新 `refreshKey` 会在
+    //    抽屉还开着的时候触发一次详情查询, 而条目已经被删了 → 404.
     emit('update:modelValue', false);
+    emit('changed');
   } catch (e: any) {
     ElMessage.error(errText(e, '下架失败'));
   }

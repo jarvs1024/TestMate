@@ -215,3 +215,8 @@ class SoftwareDeleteOut(BaseModel):
     ok: bool = True
     code: str
     deleted_files: int = 0
+    # ⚠️ 2026-10-28: 删掉**最后一个**版本时, 条目会被连带下架 (软删) ——
+    #    前端得知道这件事, 不然它下架完再查详情必然 404, 用户看着像"成功却报错".
+    item_unpublished: bool = False
+    # 还剩几个能下载的版本
+    remaining_versions: int = 0
