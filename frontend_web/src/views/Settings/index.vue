@@ -310,6 +310,10 @@
                  各自跟着自己的能力走. 这里剩下的都是**不属于任何一类能力**的全局项. -->
             <span class="grp-cnt">{{ generalItems.length }} 项</span>
           </h2>
+          <div class="hint">
+            💡 这里是<strong>不属于任何一类能力</strong>的全局配置 —— 跟具体能力相关的
+            (资产市场 / 知识库 / 软件库 / 看板) 都在<strong>能力墙</strong>下面, 跟着各自的能力走.
+          </div>
           <!-- ⚠️ 这里以前是**手抄的一整套 row 模板** (跟 SettingRow 重复) ——
                后果是 SettingRow 后来加的「描述渲染粗体」「secret 掩码提示」这些
                改进, 通用组全都吃不到. 现在统一用 SettingRow, 一处改全场生效. -->
