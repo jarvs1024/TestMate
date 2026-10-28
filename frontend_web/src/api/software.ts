@@ -105,10 +105,8 @@ export interface SoftwareCreateForm {
   icon: string;
   version: string;
   summary: string;
-  description: string;
   features: string[];
   use_when: string;
-  not_for: string;
   /** 安装说明 (选填) */
   install_steps: string;
   /** 注意事项 (选填) */
@@ -122,6 +120,11 @@ export interface SoftwareCreateForm {
   release_notes: string;
   /** 变体标签 (选填) —— 如「Windows版」 */
   variant: string;
+  // ⚠️ 2026-10-28: `description`(详情) 和 `not_for`(不适合的场景) **不再要求填** ——
+  //    上架页没有这两个输入框了. 老条目里已有的值照常显示 (详情页是条件渲染).
+  //    后端两个字段都是 nullable=False + default="", 不传就是空串.
+  description?: string;
+  not_for?: string;
 }
 
 // ---------- 类型收敛的请求封装 ----------

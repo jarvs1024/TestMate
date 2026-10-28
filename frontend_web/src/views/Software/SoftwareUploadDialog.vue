@@ -103,11 +103,6 @@
                     placeholder="一句话说清它干什么 (卡片副标题 + 搜索都用这句)" />
         </el-form-item>
 
-        <el-form-item label="详情">
-          <el-input v-model="form.description" type="textarea" :rows="4" maxlength="4000" show-word-limit
-                    placeholder="详细说明: 怎么用、需要什么环境、注意事项…" />
-        </el-form-item>
-
         <!-- 功能清单 —— 卡片和详情里最显眼的一段 -->
         <el-form-item label="功能清单">
           <el-input v-model="featuresText" type="textarea" :rows="4"
@@ -120,10 +115,11 @@
                     placeholder="什么情况下该用它" />
         </el-form-item>
 
-        <el-form-item label="不适合的场景">
-          <el-input v-model="form.not_for" type="textarea" :rows="2"
-                    placeholder="什么情况下别用它 (别让人踩坑)" />
-        </el-form-item>
+        <!-- ⚠️ 2026-10-28: 「详情」和「不适合的场景」两个输入框**去掉了** ——
+             上架时只填真正影响"能不能用、怎么用"的信息, 少两个框少两次纠结.
+             · 「详情」= 一段自由文本, 跟「功能清单」「安装说明」重叠, 详情页本来就有条件渲染;
+             · 「不适合的场景」更没必要 —— 「注意事项」已经覆盖了"别乱用"这件事.
+             两者在后端都是 nullable=False + default="", 不传就是空串, 老数据照常显示. -->
 
         <!-- ===== 安装说明 / 注意事项 —— **选填**, 详情页有则显示、无则不占位 ===== -->
         <el-form-item label="安装说明">
@@ -148,7 +144,8 @@
         </div>
       </section>
 
-      <!-- ============ ③ 版本信息 (发新版本时) ============ -->
+      <!-- ============ ② 版本信息 (发新版本时) ============ -->
+      <!-- ⚠️ 跟上面的「② 基本信息」是 v-if / v-else **互斥**的 —— 两种模式都占第 2 号 -->
       <section v-else class="up-sec">
         <div class="sec-h"><span class="sec-no">2</span>版本信息</div>
         <el-form-item label="版本变体">
@@ -189,10 +186,17 @@
         </el-form-item>
       </section>
 
-      <!-- ============ ④ 更新说明 ============ -->
+      <!-- ============ ③ 更新说明 ============ -->
+      <!-- ⚠️ 编号为什么是 **3** (2026-10-28 修):
+           两种模式的区块结构是一样的 —— 「基本信息」和「版本信息」是 v-if / v-else
+           **互斥**的, 所以不管哪种模式, 这个 section 前面都只有两个:
+             上架软件:  ① 软件包 → ② 基本信息 → ③ 更新说明
+             发新版本:  ① 软件包 → ② 版本信息 → ③ 更新说明
+           以前这里写的是 `mode === 'version' ? 3 : 4` —— create 模式给 4,
+           页面上的数字直接跳号 (1 → 2 → 4), 看着像漏了一节. -->
       <section class="up-sec">
         <div class="sec-h">
-          <span class="sec-no">{{ mode === 'version' ? 3 : 4 }}</span>发布与更新说明
+          <span class="sec-no">3</span>发布与更新说明
           <span class="sec-tip">选填</span>
         </div>
         <el-input v-model="releaseNotes" type="textarea" :rows="3"
@@ -246,8 +250,10 @@ const mode = computed(() => props.mode || 'create');
 /** 新建软件时的空表单 —— 每次打开抽屉都回到这个状态 */
 function emptyForm() {
   return {
-    code: '', name: '', icon: '🧰', version: '1.0.0', summary: '', description: '',
-    use_when: '', not_for: '', platform: '', category: '', tags: '', keywords: '',
+    code: '', name: '', icon: '🧰', version: '1.0.0', summary: '',
+    // ⚠️ 2026-10-28: `description`(详情) 和 `not_for`(不适合的场景) 不再是表单字段 ——
+    //    上架时不再问这两个, 提交时也不传 (后端 default="", 老数据照常显示).
+    use_when: '', platform: '', category: '', tags: '', keywords: '',
     // 安装说明 / 注意事项 —— 选填 (2026-10-28)
     install_steps: '', caveats: '',
     // 变体标签 —— 选填 (2026-10-28)
@@ -490,10 +496,9 @@ async function submit() {
         icon: form.value.icon || '🧰',
         version: form.value.version.trim(),
         summary: form.value.summary.trim(),
-        description: form.value.description,
         features: splitFeatures(featuresText.value),
         use_when: form.value.use_when,
-        not_for: form.value.not_for,
+        // ⚠️ 不再传 description / not_for (2026-10-28) —— 上架页没有这两个输入框了
         // 安装说明 / 注意事项 (选填)
         install_steps: form.value.install_steps,
         caveats: form.value.caveats,

@@ -50,7 +50,7 @@
 
       <!-- ===== 功能清单 ===== -->
       <section v-if="item.features?.length" class="sw-sec">
-        <div class="sec-h"><span class="sec-no">1</span>功能</div>
+        <div class="sec-h"><span class="sec-no">{{ secNos.features }}</span>功能</div>
         <ul class="feature-list">
           <li v-for="(f, i) in item.features" :key="i">{{ f }}</li>
         </ul>
@@ -58,13 +58,13 @@
 
       <!-- ===== 详情 ===== -->
       <section v-if="item.description" class="sw-sec">
-        <div class="sec-h"><span class="sec-no">2</span>详情</div>
+        <div class="sec-h"><span class="sec-no">{{ secNos.description }}</span>详情</div>
         <div class="pre-wrap">{{ item.description }}</div>
       </section>
 
       <!-- ===== 适用场景 ===== -->
       <section v-if="item.use_when || item.not_for" class="sw-sec">
-        <div class="sec-h"><span class="sec-no">3</span>适用场景</div>
+        <div class="sec-h"><span class="sec-no">{{ secNos.use }}</span>适用场景</div>
         <div v-if="item.use_when" class="use-block ok">
           <span class="ub-tag">适合</span>
           <span class="ub-text pre-wrap">{{ item.use_when }}</span>
@@ -77,7 +77,7 @@
 
       <!-- ===== 安装说明 (选填) ===== -->
       <section v-if="item.install_steps" class="sw-sec">
-        <div class="sec-h"><span class="sec-no">4</span>安装说明</div>
+        <div class="sec-h"><span class="sec-no">{{ secNos.install }}</span>安装说明</div>
         <ol class="step-list">
           <li v-for="(s, i) in installStepList" :key="i">{{ s }}</li>
         </ol>
@@ -85,7 +85,7 @@
 
       <!-- ===== 注意事项 (选填) —— 醒目一点, 免得别人踩坑 ===== -->
       <section v-if="item.caveats" class="sw-sec">
-        <div class="sec-h"><span class="sec-no">5</span>注意事项</div>
+        <div class="sec-h"><span class="sec-no">{{ secNos.caveats }}</span>注意事项</div>
         <div class="caveat-box">
           <span class="cb-icon">⚠</span>
           <div class="pre-wrap">{{ item.caveats }}</div>
@@ -95,7 +95,7 @@
       <!-- ===== 版本历史 ===== -->
       <section class="sw-sec">
         <div class="sec-h">
-          <span class="sec-no">6</span>版本与更新说明
+          <span class="sec-no">{{ secNos.versions }}</span>版本与更新说明
           <span class="sec-tip">{{ versions.length }} 个版本</span>
         </div>
         <div v-if="!versions.length" class="empty">还没有版本记录</div>
@@ -132,7 +132,7 @@
 
       <!-- ===== 标签 / 元信息 ===== -->
       <section v-if="item.tags?.length || item.keywords?.length" class="sw-sec">
-        <div class="sec-h"><span class="sec-no">7</span>标签</div>
+        <div class="sec-h"><span class="sec-no">{{ secNos.tags }}</span>标签</div>
         <div class="ac-tags">
           <span v-for="t in item.tags" :key="t" class="tag">#{{ t }}</span>
           <span v-for="k in item.keywords" :key="'k' + k" class="tag kw">{{ k }}</span>
@@ -187,6 +187,29 @@ const emit = defineEmits<{
 const item = ref<SoftwareDetail | null>(null);
 const versions = ref<SoftwareVersion[]>([]);
 const loading = ref(false);
+
+/**
+ * 详情页各区块的**连续编号** —— 条件渲染的块不占号.
+ *
+ * ⚠️ 2026-10-28: 以前这里是硬编码的 1..7, 但每个块都是 `v-if` 条件渲染 ——
+ *    没有功能清单就从 2 开始, 没有安装说明就 1→2→3→5, 跳号.
+ *    跟这次「上架页去掉详情/不适合的场景」直接相关: 新条目更常缺这两块,
+ *    编号跳得更扎眼. 现在按**实际显示出来的块**依次编号.
+ */
+const secNos = computed(() => {
+  const it = item.value;
+  const out: Record<string, number> = {};
+  let n = 0;
+  const take = () => ++n;
+  if (it?.features?.length) out.features = take();
+  if (it?.description) out.description = take();
+  if (it?.use_when || it?.not_for) out.use = take();
+  if (it?.install_steps) out.install = take();
+  if (it?.caveats) out.caveats = take();
+  out.versions = take();          // 版本历史总是显示
+  if (it?.tags?.length || it?.keywords?.length) out.tags = take();
+  return out;
+});
 
 /**
  * 推荐下载版本的显示名 —— 版本号 + 变体标签 (有的话).
