@@ -568,7 +568,7 @@ async def test_skill_kind_label_matches_ui(monkeypatch):
     monkeypatch.setattr(dingtalk, "get", _get)
 
     await dingtalk.notify_market(
-        "publish", name="技能演示", kind="skill", category="质量诊断", code="sk",
+        "publish", name="技能演示", kind="skill", category="质量保障", code="sk",
     )
     assert "类型: 技能" in sent[0]["text"], sent[0]["text"]
     assert "技能包" not in sent[0]["text"], sent[0]["text"]

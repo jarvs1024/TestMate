@@ -1,18 +1,25 @@
-"""业务分类表 —— "这条资产在测试全流程里承担哪一步".
+"""业务分类表 —— "这个资产在研发/测试协作里承担什么角色".
 
 为什么要有这张表:
-  以前分类是**前端硬编码的 7 个中文名** + 后端一张 `CATEGORY_SLUGS` 映射, 后果:
+  以前分类是**前端硬编码的中文名** + 后端一张 `CATEGORY_SLUGS` 映射, 后果:
     · 上传时 allow-create 自填的分类, 前端**没有筛选 chip** → 孤儿分类(筛不出来)
     · 分类改名 / 新增分类 要改两个地方, 容易漂移
     · 目录 slug 和中文名是两套东西, 改名就搬家
 
 现在这张表是**唯一真源**:
-    后端校验 —— 只认表里的分类, 自定义的一律归「其它」
+    后端校验 —— 只认表里的分类, 自定义的一律归「其他」
     目录 slug —— assets/{kind}/{slug}/{code}/, slug 冻结 (改名不搬家)
     前端 chip —— 从 /assets/categories 动态渲染 (带顺序和说明)
 
 ⚠️ 对外契约: `Asset.category` / manifest.json / index.json 里存的**仍是中文名**
    (Qoder 那边在消费), 这里只把"有哪些分类"收敛到一处.
+
+2026-10-26 分类重排: 从"按测试流程阶段分"改成"按**协作角色**分" ——
+   旧分类是流程视角 (方案用例/环境运维/任务调度/流程管控/质量诊断/知识资产),
+   回答的是"这件事在流程的哪一步"; 新分类是**能力视角**, 回答的是
+   "这个资产替我兜什么底 / 提什么效 / 走什么流程 / 管什么事" ——
+   后者对**上传的人**更有指导意义 (知道自己该往哪一类放), 也更稳定
+   (流程阶段会随项目变, 角色分工不会).
 """
 from __future__ import annotations
 
@@ -26,44 +33,32 @@ MISC_SLUG = "misc"
 # 分类表: slug ↔ 中文名 ↔ 顺序 ↔ 说明
 #   slug   —— GitLab 目录名, **冻结**: 改了要搬目录, 所以只在必要时动
 #   name   —— 显示名 (中文), 可以随时改 (不影响目录)
-#   order  —— 展示顺序 (按测试全流程的阶段排, 小的在前)
-#   desc   —— 一句话说明, 给上传的人看
+#   order  —— 展示顺序
+#   desc   —— 一句话说明, 给上传的人看 (下拉框里就显示它)
 CATEGORIES: list[dict[str, Any]] = [
     {
-        "slug": "cases",
-        "name": "方案用例",
+        "slug": "quality",
+        "name": "质量保障",
         "order": 10,
-        "desc": "测试方案 / 计划 / 用例 —— 测什么、怎么测",
+        "desc": "对功能、性能、可靠性的全方位兜底 —— 定位问题、判定结果、给出判据",
     },
     {
-        "slug": "env",
-        "name": "环境运维",
+        "slug": "efficiency",
+        "name": "效率工具",
         "order": 20,
-        "desc": "机台 / 设备 / 测试环境的准备与操作",
+        "desc": "自动化脚本、造数工具等提效手段 —— 把重复劳动交出去, 让人做得更快",
     },
     {
-        "slug": "schedule",
-        "name": "任务调度",
+        "slug": "process",
+        "name": "流程规范",
         "order": 30,
-        "desc": "老化 / 批量测试任务的调度、执行与结果读取",
+        "desc": "对 CI/CD、门禁、标准化动作的约束与执行 —— 守住流程, 不靠人盯",
     },
     {
-        "slug": "flow",
-        "name": "流程管控",
+        "slug": "management",
+        "name": "管理协同",
         "order": 40,
-        "desc": "流程流转与管控 (PR 审核、看板、报表、变更单)",
-    },
-    {
-        "slug": "diagnose",
-        "name": "质量诊断",
-        "order": 50,
-        "desc": "日志 / Trace / 固件问题的定位与诊断",
-    },
-    {
-        "slug": "knowledge",
-        "name": "知识资产",
-        "order": 60,
-        "desc": "速查表 / 规范 / 经验沉淀",
+        "desc": "进度管理、风险控制以及团队内外的沟通协作 —— 让事情被看见、被推进",
     },
     {
         "slug": MISC_SLUG,
@@ -73,9 +68,15 @@ CATEGORIES: list[dict[str, Any]] = [
     },
 ]
 
-# 旧分类名 → 新分类名 (2026-10-24 分类重排时的一次性映射)
+# 旧分类名 → 新分类名
 # 用途: 迁移老数据 (DB / manifest / index.json / GitLab 目录) 时把旧名字换成新的.
+#
+# ⚠️ 2026-10-26 这一轮把"按流程阶段"改成"按协作角色", **每个旧分类都要落到新分类**,
+#    而且不是一对一 —— 旧分类内部的资产会**拆到不同新分类**去 (见 migrate 脚本),
+#    所以这里只提供"名字 → 名字"的兜底映射 (给不认识名字的老数据一条退路),
+#    精确归类由 scripts/migrate_categories.py 按资产逐个判定.
 LEGACY_ALIASES: dict[str, str] = {
+    # ---- 2026-10-26 之前的那一轮改名 (流程阶段口径内的调整) ----
     "Spec 问答": "方案用例",
     "机台运维": "环境运维",
     "环境助手": "环境运维",
@@ -84,6 +85,13 @@ LEGACY_ALIASES: dict[str, str] = {
     "Trace 诊断": "质量诊断",
     "FW 比对": "质量诊断",
     "自动化代码": "流程管控",
+    # ---- 2026-10-26: 流程阶段 → 协作角色 (按"这个资产替我干什么"归) ----
+    "质量诊断": "质量保障",
+    "知识资产": "效率工具",
+    "方案用例": "效率工具",
+    "环境运维": "效率工具",
+    "任务调度": "效率工具",
+    "流程管控": "管理协同",
 }
 
 _BY_NAME: dict[str, dict[str, Any]] = {c["name"]: c for c in CATEGORIES}
@@ -91,16 +99,26 @@ _BY_SLUG: dict[str, dict[str, Any]] = {c["slug"]: c for c in CATEGORIES}
 
 
 def normalize(category: str | None) -> str:
-    """把任意分类名归一成表里的正式分类名 (不认识的一律归「其它」)."""
+    """把任意分类名归一成表里的正式分类名 (不认识的一律归「其它」).
+
+    ⚠️ 别名是**链式**的: "Spec 问答" → "方案用例" → "效率工具" ——
+       只查一次表会把中间那层当成终点, 而它现在已经不是正式名了,
+       结果是"Spec 问答"被归到「其它」(老数据全丢分类).
+       所以要一直查到不动点.
+    """
     name = (category or "").strip()
     if not name:
         return MISC
-    if name in _BY_NAME:
-        return name
-    alias = LEGACY_ALIASES.get(name)
-    if alias and alias in _BY_NAME:
-        return alias
-    return MISC
+    seen: set[str] = set()
+    while name not in _BY_NAME:
+        if name in seen:      # 别名成环 (不该有, 但别死循环)
+            return MISC
+        seen.add(name)
+        alias = LEGACY_ALIASES.get(name)
+        if not alias:
+            return MISC
+        name = alias
+    return name
 
 
 def slug_of(category: str | None) -> str:

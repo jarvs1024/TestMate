@@ -97,7 +97,7 @@ describe('code 与名称的一致性', () => {
 describe('图标自动分配', () => {
   it('不跟现有资产重复', () => {
     const used = ['🔍', '🩺', '📈'];
-    const icon = pickIcon({ category: '质量诊断', name: '日志诊断', used });
+    const icon = pickIcon({ category: '质量保障', name: '日志诊断', used });
     expect(used).not.toContain(icon);
   });
 
@@ -109,14 +109,14 @@ describe('图标自动分配', () => {
   });
 
   it('猜不到就按分类池', () => {
-    const icon = pickIcon({ category: '知识资产', name: 'zzz' });
-    expect(ICON_POOLS['知识资产']).toContain(icon);
+    const icon = pickIcon({ category: '效率工具', name: 'zzz' });
+    expect(ICON_POOLS['效率工具']).toContain(icon);
   });
 
   it('分类池用完了会退到通用池, 通用池也用完还有兜底池', () => {
     const all = Object.values(ICON_POOLS).flat();
     const used = new Set([...all, ...GENERAL_ICONS]);
-    const icon = pickIcon({ category: '知识资产', name: 'zzz', used });
+    const icon = pickIcon({ category: '效率工具', name: 'zzz', used });
     expect(used.has(icon)).toBe(false);
     expect(icon).toBeTruthy();
   });

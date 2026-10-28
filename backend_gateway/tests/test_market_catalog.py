@@ -69,16 +69,19 @@ def test_validate_version():
 
 def test_category_slug_and_path():
     # 分类 → 目录 slug (分类表是唯一真源, 详见 test_market_categories.py)
-    assert mc.category_slug("质量诊断") == "diagnose"
-    assert mc.category_slug("方案用例") == "cases"
+    # ⚠️ 2026-10-26 分类重排: 目录 slug 也跟着换了
+    #    (质量诊断/diagnose → 质量保障/quality, 方案用例/cases → 效率工具/efficiency …)
+    assert mc.category_slug("质量保障") == "quality"
+    assert mc.category_slug("效率工具") == "efficiency"
     # 不在表里的分类 → 「其他」(misc), 不会再临时生成新 slug
     assert mc.category_slug("没在表里的分类") == "misc"
-    # 旧分类名也能算出旧 slug 之外的映射 —— 归一到新分类再取 slug
-    assert mc.category_slug("Trace 诊断") == "diagnose"
-    p = mc.asset_git_path("skill", "质量诊断", "demo")
-    assert p == "assets/skills/diagnose/demo"
-    p2 = mc.asset_git_path("plugin", "流程管控", "demo")
-    assert p2 == "assets/plugins/flow/demo"
+    # 旧分类名 → 归一到新分类再取 slug (别名是链式的)
+    assert mc.category_slug("Trace 诊断") == "quality"
+    assert mc.category_slug("Spec 问答") == "efficiency"
+    p = mc.asset_git_path("skill", "质量保障", "demo")
+    assert p == "assets/skills/quality/demo"
+    p2 = mc.asset_git_path("plugin", "管理协同", "demo")
+    assert p2 == "assets/plugins/management/demo"
 
 
 # ---------- 索引条目 ----------
