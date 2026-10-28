@@ -70,7 +70,7 @@
 | `marketplace.install.skill_dir` / `.plugin_dir` | 本机安装目录（宿主路径） |
 | `marketplace.install.enabled` | 是否允许服务端写盘安装 |
 | `marketplace.publisher_usernames` / `.publisher_ids` | 发布白名单（用户名 / 用户 ID 两个口径） |
-| `marketplace.review.enabled` | 上架是否需要管理员审核 |
+| `marketplace.review.enabled` | **审核总开关**（默认开）: 开 = 上架/更新要管理员审核 + 下架走申请制; 关 = 上架直接生效 + 下架自助完成（**文件保留**）|
 | `marketplace.review.admin_self_approve` | 管理员自己上传是否免审 |
 | `marketplace.sync.interval_seconds` | 从 GitLab 拉取对齐的周期 |
 | `marketplace.max_package_mb` | 上传包体积上限 |
