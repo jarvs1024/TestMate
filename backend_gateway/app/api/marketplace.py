@@ -489,23 +489,47 @@ async def list_assets(
 
 
 @router.get("/categories")
-async def list_categories(_user: User = Depends(get_current_user)) -> dict[str, Any]:
+async def list_categories(
+    status: str | None = None,
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
     """分类表 + 各分类的资产数 (按类型分开).
 
     ⚠️ 返回的是**完整分类表** (含计数为 0 的) —— 前端据此动态渲染筛选 chip.
     以前前端硬编码 7 个分类, 用户自建的分类**没有 chip** → 筛不出来 (孤儿分类).
+
+    ⚠️ **计数口径必须跟资产列表一致** (2026-10-28 整改):
+    以前这里只数 `publish_status == 'published'`, 而列表对管理员返回**全部**状态
+    (待审核 / 待下架 / 已驳回都在列表里, 各自带个徽标) ——
+    于是 chip 上写着 3, 点进去是 5 张卡, 用户以为分类坏了.
+    现在按**这个用户能看到什么**来数 (跟 `GET /assets` 的可见性同一套规则):
+      · 管理员 / 审核人 → 全部状态
+      · 其他人 → 在架 ∪ 待下架 ∪ 自己提交的
+    ⚠️ `status` 参数让前端在「只看待审」时也能数对 (否则 chip 显示的是已上架数).
     """
     from app.core import market_categories
     from app.core.market_categories import table as category_table
 
+    username = (user.username or "").strip()
+    role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    is_admin = role == "admin"
+    is_reviewer = await _is_reviewer(user)
+
     async with AsyncSessionLocal() as session:
-        rows = (
-            await session.execute(
-                select(Asset.category, Asset.kind).where(
-                    Asset.publish_status == "published"
+        stmt = select(Asset.category, Asset.kind)
+        if status in ("pending", "rejected", "unpublished", "unpublish_pending", "published"):
+            stmt = stmt.where(Asset.publish_status == status)
+            if not (is_admin or is_reviewer) and status != "published":
+                # 别人的待审/已驳回不该被列出来 —— 跟列表同一套规则
+                stmt = stmt.where(Asset.author.in_(author_forms(username)))
+        elif not (is_admin or is_reviewer):
+            stmt = stmt.where(
+                or_(
+                    Asset.publish_status.in_(("published", "unpublish_pending")),
+                    Asset.author.in_(author_forms(username)),
                 )
             )
-        ).all()
+        rows = (await session.execute(stmt)).all()
     counts: dict[str, dict[str, int]] = {}
     for cat, k in rows:
         if not cat:

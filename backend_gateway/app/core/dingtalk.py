@@ -44,7 +44,25 @@ RETRY_BASE_SEC = 30
 # 重试扫描间隔 (秒)
 RETRY_SCAN_SEC = 30
 
+# ---------- 审核类通知的窗口合并 (2026-10-28) ----------
+#
+# 为什么只合并**审核类**事件 (review / unpublish_request):
+#   · 审核类是「要人去做一件事」—— 管理员的动作是"打开审核台看全部待办",
+#     逐条消息反而刷屏, 合并成一条汇总更省事.
+#   · 市场群那几类 (publish / update / unpublish / reject / delete) 是
+#     「资产已经变了」的**事实通告**, 而且 @所有人 —— 合并会丢信息,
+#     谁上架了什么都要看得见, 保持一条一个.
+_AGGREGATED_EVENTS = ("review", "unpublish_request")
+# 合并窗口 (秒): 窗口内的同类事件只发第一条, 其余攒成一条汇总.
+# 可在设置里改 (dingtalk.aggregate_window_seconds).
+AGGREGATE_WINDOW_DEFAULT = 60
+# 汇总消息最多列出几个资产名 (超了只报数量)
+AGGREGATE_MAX_NAMES = 8
+# 聚合扫描间隔 (秒) —— 窗口到了要把攒着的发出去
+AGGREGATE_SCAN_SEC = 10
+
 _worker: asyncio.Task | None = None
+_aggregate_worker: asyncio.Task | None = None
 
 
 def sign(secret: str, timestamp_ms: int) -> str:
@@ -123,6 +141,12 @@ _EVENT_TEXT = {
     "unpublish": "🗑 资产已下架",
     "delete": "🗑 资产已删除",
     "reject": "❌ 资产审核未通过",
+}
+
+# 窗口合并时用的汇总标题 (按事件分开 —— 审核和下架是两件事, 混一起会让人看不懂)
+_AGGREGATE_SUMMARY_TITLE = {
+    "review": "📋 另有资产在等上架审核",
+    "unpublish_request": "🗑 另有资产在等下架确认",
 }
 
 _SWITCH_KEY = {
@@ -215,6 +239,171 @@ async def _deliver(
     )
 
 
+# ---------- 审核类通知的窗口合并 (2026-10-28) ----------
+#
+# 背景: 审核通知是「要人去做一件事」—— 管理员的动作是"打开审核台看全部待办",
+#   逐条消息只会把群刷屏 (10 个人同时上架 = 10 条消息).
+# 做法: **首条照常发** (带完整详情, 管理员第一时间知道有人上传了),
+#   **窗口内的其余攒起来**, 窗口末发一条「另有 N 个在等审核」的汇总.
+#
+# ⚠️ 状态存 DB (asset_notifications) 而不是内存 —— 进程重启不能把攒着的通知弄丢.
+# ⚠️ 市场群那几类 (publish / update / unpublish / reject / delete) **不合并**:
+#    那是「资产已经变了」的事实通告而且 @所有人, 合并会让人漏看谁上架了什么.
+
+
+async def _aggregate_window_seconds() -> int:
+    """合并窗口 (秒). 0 = 不合并 (一条一个, 恢复原行为)."""
+    raw = await get("dingtalk.aggregate_window_seconds", AGGREGATE_WINDOW_DEFAULT)
+    try:
+        n = int(str(raw).strip())
+    except (TypeError, ValueError):
+        n = AGGREGATE_WINDOW_DEFAULT
+    return max(0, n)
+
+
+async def _last_sent_at(event: str) -> datetime | None:
+    """最近一条**已发出**的同类通知时间 —— 窗口的起点.
+
+    ⚠️ 汇总消息本身也算"已发出": 刚发过汇总, 后面窗口内的事件应该并进
+       **下一轮**汇总, 而不是又单独发一条 (否则汇总完又立刻来一条单发).
+    """
+    async with AsyncSessionLocal() as session:
+        row = (
+            await session.execute(
+                select(AssetNotification)
+                .where(
+                    AssetNotification.event == event,
+                    AssetNotification.status.in_(("sent", "summary_sent")),
+                )
+                .order_by(AssetNotification.id.desc())
+                .limit(1)
+            )
+        ).scalars().first()
+    return row.created_at if row is not None else None
+
+
+async def _within_window(event: str, window: int) -> bool:
+    """现在还在窗口里吗 (窗口内 → 并入汇总, 不单独发)."""
+    last = await _last_sent_at(event)
+    if last is None:
+        return False
+    return (datetime.utcnow() - last).total_seconds() < window
+
+
+async def _review_entry_link() -> str:
+    """审核入口链接 —— 没有对外基地址就**不给链接** (别发一个打不开的地址)."""
+    base = (await get("marketplace.public_base_url", "") or "").strip().rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/market?status=pending"
+
+
+async def _pending_summary_receipt(event: str, summary_title: str):
+    """还没发出去的**汇总**回执 (上一轮发送失败留下的).
+
+    ⚠️ 为什么要复用它: 汇总发送失败时, 聚合 worker 和重试 worker 都会盯着这条 ——
+       两个 worker 各发一遍 = 群里收到两条一样的汇总. 复用同一条回执,
+       谁先发成功就只发出去一次.
+    """
+    async with AsyncSessionLocal() as session:
+        row = (
+            await session.execute(
+                select(AssetNotification)
+                .where(
+                    AssetNotification.event == event,
+                    AssetNotification.status.in_(("pending", "failed")),
+                    AssetNotification.title.contains(summary_title),
+                )
+                .order_by(AssetNotification.id.desc())
+                .limit(1)
+            )
+        ).scalars().first()
+    return row
+
+
+async def _flush_event(event: str, window: int) -> int:
+    """把某事件攒着的通知发成**一条**汇总. 返回 1 (发了) / 0 (没发)."""
+    now = datetime.utcnow()
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(AssetNotification)
+                .where(
+                    AssetNotification.event == event,
+                    AssetNotification.status == "aggregated",
+                )
+                .order_by(AssetNotification.id.asc())
+            )
+        ).scalars().all()
+    if not rows:
+        return 0
+    last = await _last_sent_at(event)
+    if last is not None and (now - last).total_seconds() < window:
+        return 0        # 窗口还没到, 继续等
+
+    channel = _CHANNEL_OF_EVENT.get(event, "market")
+    webhook, secret, keyword = await _channel_config(channel)
+    if not webhook:
+        return 0
+
+    summary_title = _AGGREGATE_SUMMARY_TITLE.get(event, "📋 另有资产待处理")
+    n = len(rows)
+    body = "\n".join((r.text or "").strip() for r in rows if (r.text or "").strip())
+    text = f"### {summary_title} · 另有 {n} 个"
+    if body:
+        text += f"\n{body}"
+    link = await _review_entry_link()
+    if link:
+        text += f"\n- [去审核台]({link})"
+    title = f"{summary_title} · 另有 {n} 个"
+    if keyword:
+        text = f"{keyword}\n{text}"
+        title = f"{keyword} · {title}"
+
+    # 上一轮发送失败 → 复用那条回执 (别再造一条, 否则两个 worker 各发一遍)
+    existing = await _pending_summary_receipt(event, summary_title)
+    if existing is not None:
+        if existing.next_retry_at is not None and existing.next_retry_at > now:
+            return 0        # 还在退避窗口里 —— 交给重试 worker, 别硬发
+        async with AsyncSessionLocal() as session:
+            cur = await session.get(AssetNotification, existing.id)
+            if cur is None:
+                return 0
+            cur.asset_name = f"{n} 个资产"
+            cur.title = title
+            cur.text = text
+            await session.commit()
+        row = existing
+    else:
+        row = await _create_receipt(event, "", f"{n} 个资产", title, text, status="pending")
+    ok = await _attempt(row, webhook, secret, sent_status="summary_sent")
+    if not ok:
+        return 0
+    # 被这条汇总涵盖的几条, 标成"已并入汇总" —— 以后别再发一遍
+    async with AsyncSessionLocal() as session:
+        for r in rows:
+            cur = await session.get(AssetNotification, r.id)
+            if cur is not None:
+                cur.status = "aggregated_sent"
+        await session.commit()
+    logger.info("dingtalk 聚合汇总已发送: event=%s count=%d", event, n)
+    return 1
+
+
+async def flush_aggregated_notifications() -> int:
+    """窗口到期 → 把攒着的审核通知发成汇总. 返回发了几条."""
+    window = await _aggregate_window_seconds()
+    if window <= 0:
+        return 0
+    n = 0
+    for event in _AGGREGATED_EVENTS:
+        try:
+            n += await _flush_event(event, window)
+        except Exception as e:  # noqa: BLE001 — 一条失败不能影响别的
+            logger.warning("dingtalk 聚合汇总失败 event=%s err=%s", event, e)
+    return n
+
+
 async def notify_market(
     event: str,
     *,
@@ -277,25 +466,60 @@ async def notify_market(
     #    开关映射 (dingtalk.notify_on_publish 等) 靠 key, 改了会关掉/打开错开关.
     event_text = title_override or _EVENT_TEXT[event]
     lines = [f"### {event_text} · {name}"]
+    # ⚠️ 汇总用的正文**单独攒一份**: 汇总里每个资产要占**一行** (名字 + 属性),
+    #    正常消息的名字在标题行里, 拆开就看不出这行是哪个资产的了.
+    body_bits: list[str] = []
     # 类型要说清楚 —— 收到通知的人得知道这是个技能还是插件
     kind_line = f"- 类型: {_KIND_LABEL.get(kind, kind)}" if kind else ""
     if category:
         kind_line += f" · {category}"
     if kind_line:
         lines.append(kind_line)
+        body_bits.append(kind_line.removeprefix("- 类型: "))
     if project:
         # 适用项目: 只有**项目特有**的资产才写这行 (通用的不占地方)
-        lines.append(f"- 适用项目: {project} 项目")
+        line = f"- 适用项目: {project} 项目"
+        lines.append(line)
+        body_bits.append(f"{project} 项目")
     if version:
         lines.append(f"- 版本: `{version}`")
+        body_bits.append(f"v{version}")
     if actor:
         lines.append(f"- 操作人: {actor}")
+        body_bits.append(f"操作人 {actor}")
     if detail:
         # ⚠️ detail 是**这次操作发生了什么** (如"新资产已上架"), 不是资产的简介 ——
         #    把简介塞进来会变成"说明: 把测试数据整理成报告", 看着像重复了一遍简介.
         lines.append(f"- 说明: {detail}")
+        body_bits.append(detail)
     if link:
         lines.append(f"- [查看详情]({link})")
+    elif event in _AGGREGATED_EVENTS:
+        # 审核类通知**带入口** —— 收到消息的人得知道去哪儿审,
+        # 不然又是一条"看到了但不知道该干嘛"的通知.
+        entry = await _review_entry_link()
+        if entry:
+            lines.append(f"- [去审核台]({entry})")
+
+    # ---------- 审核类通知: 窗口合并 ----------
+    # 首条照常发 (带完整详情), 窗口内的其余攒起来, 窗口末发一条汇总.
+    if event in _AGGREGATED_EVENTS:
+        window = await _aggregate_window_seconds()
+        if window > 0:
+            if await _within_window(event, window):
+                # 窗口内 → 并入汇总, **不单独发** (但回执要留痕, 能在操作记录里看到)
+                body = f"- {name}" + (f" ({' · '.join(body_bits)})" if body_bits else "")
+                await _create_receipt(
+                    event, code, name, _EVENT_TEXT[event], body, status="aggregated",
+                )
+                logger.info("dingtalk 通知并入汇总 (窗口内不发): event=%s code=%s", event, code)
+                return True
+            # 窗口已过 → 先把之前攒的汇总发出去, 这条作为新窗口的第一条单独发
+            try:
+                await _flush_event(event, window)
+            except Exception as e:  # noqa: BLE001 — 汇总失败不能挡住这条正常通知
+                logger.warning("dingtalk 汇总发送失败 (已忽略): %s", e)
+
     text = "\n".join(lines)
     title = f"{event_text} · {name}"
 
@@ -323,13 +547,14 @@ async def notify_market(
 
 
 async def _create_receipt(
-    event: str, code: str, asset_name: str, title: str, text: str
+    event: str, code: str, asset_name: str, title: str, text: str,
+    status: str = "pending",
 ) -> AssetNotification:
     row = AssetNotification(
         event=event,
         code=code or "",
         asset_name=asset_name or "",
-        status="pending",
+        status=status,
         title=title,
         text=text,
     )
@@ -368,6 +593,7 @@ async def _attempt(
     *,
     at_user_ids: list[str] | None = None,
     is_at_all: bool = False,
+    sent_status: str = "sent",
 ) -> bool:
     """发一次并更新回执. 返回是否成功."""
     try:
@@ -398,7 +624,9 @@ async def _attempt(
     async with AsyncSessionLocal() as session:
         cur = await session.get(AssetNotification, row.id)
         if cur is not None:
-            cur.status = "sent"
+            # ⚠️ 汇总消息用 summary_sent —— 它跟"单独发出的一条"要能区分开
+            #    (窗口起点算的是"最近发过的同类消息", 汇总也算).
+            cur.status = sent_status
             cur.attempts = (cur.attempts or 0) + 1
             cur.error = ""
             cur.last_attempt_at = datetime.utcnow()
@@ -504,6 +732,12 @@ async def retry_failed_notifications() -> int:
     n = 0
     skipped = 0
     for r in due:
+        # ⚠️ 汇总回执**不归重试 worker 管** —— 归聚合 worker.
+        #    汇总只有聚合 worker 知道当前还攒着哪些资产, 两个 worker 同时发
+        #    同一条汇总会让人收到两条一样的消息.
+        summary_title = _AGGREGATE_SUMMARY_TITLE.get(r.event)
+        if summary_title and summary_title in (r.title or ""):
+            continue
         # ⚠️ 开关关了就不再发 —— 否则管理员把开关关掉, 之前排队的通知还在继续刷屏
         if not to_bool(await get(_SWITCH_KEY.get(r.event, ""), False)):
             await _mark_skipped(r)
@@ -561,3 +795,29 @@ def start_retry_worker() -> None:
     if _worker is None or _worker.done():
         _worker = asyncio.create_task(_retry_loop())
         logger.info("dingtalk.retry worker started")
+
+
+# ---------- 聚合 worker ----------
+
+async def _aggregate_loop() -> None:
+    logger.info("dingtalk.aggregate worker running")
+    while True:
+        try:
+            await asyncio.sleep(AGGREGATE_SCAN_SEC)
+            await flush_aggregated_notifications()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — worker 不能因为单次失败崩掉
+            logger.exception("dingtalk.aggregate 轮询异常 (已忽略)")
+
+
+def start_aggregate_worker() -> None:
+    """启动聚合 worker (应用启动时调一次).
+
+    ⚠️ 必须有它: 窗口到期后**没人再触发事件**, 攒着的那批就永远发不出去 ——
+       审核人会在"最后一条通知之后"完全不知道还有东西等着审.
+    """
+    global _aggregate_worker
+    if _aggregate_worker is None or _aggregate_worker.done():
+        _aggregate_worker = asyncio.create_task(_aggregate_loop())
+        logger.info("dingtalk.aggregate worker started")

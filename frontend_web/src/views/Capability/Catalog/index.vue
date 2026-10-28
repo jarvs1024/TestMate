@@ -92,6 +92,16 @@
       </button>
     </div>
 
+    <!-- ===== 管理员: 别人上传的资产在等审核 =====
+         ⚠️ 这一条以前**没有** —— 下架申请有管理员视角的条, 上架审核却没有:
+            管理员只能扫卡片上的「📋 待审核」徽标, 别人传了什么全靠眼睛找. -->
+    <div v-if="isAdmin && othersReviewCount > 0" class="my-review-bar admin">
+      <span>📋 有 <b>{{ othersReviewCount }}</b> 个资产在等上架审核 —— 通过后才出现在市场里</span>
+      <button class="mrb-btn" @click="toggleOnlyMine('all-pending')">
+        {{ onlyMine === 'all-pending' ? '显示全部' : '只看这些' }}
+      </button>
+    </div>
+
     <!-- ===== 下架申请: 作者等确认 / 管理员等拍板 ===== -->
     <div v-if="sync.my_unpublish_count > 0" class="my-review-bar">
       <span>🗑 你的 <b>{{ sync.my_unpublish_count }}</b> 个资产在等下架确认 —— 管理员通过后会被彻底删除</span>
@@ -194,6 +204,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import AssetCard from './AssetCard.vue';
 import AssetDetailDrawer from './AssetDetailDrawer.vue';
@@ -243,17 +254,30 @@ const category = ref('');
 const keyword = ref('');
 const sortBy = ref<MarketSort>('hot');
 /**
- * 「只看这些」的模式 —— 两条提示条要分开:
- *   review    → 我提交的、还等审核或被驳回的
- *   unpublish → 我申请下架、等管理员确认的
+ * 「只看这些」的模式 —— 三条提示条要分开:
+ *   review      → 我提交的、还等审核或被驳回的
+ *   unpublish   → 我申请下架、等管理员确认的
+ *   all-pending → **全部**待审核的 (管理员视角: 别人上传的也在内)
  *
  * ⚠️ 以前两个提示条共用一个开关, 但过滤条件只有 pending/rejected ——
  *    点「🗑 你的 N 个资产在等下架确认」→ 一条都显示不出来 (它们是 unpublish_pending)。
+ * ⚠️ `all-pending` 走**后端**的 status=pending (后端对管理员/审核人放行全部待审),
+ *    不是前端过滤 —— 前端过滤会把别人传的资产按"是不是我的"筛掉, 那就白点了。
  */
-const onlyMine = ref<'review' | 'unpublish' | ''>('');
+const onlyMine = ref<'review' | 'unpublish' | 'all-pending' | ''>('');
 
-function toggleOnlyMine(mode: 'review' | 'unpublish') {
+/**
+ * ⚠️ 钉钉通知里的「去审核台」链接带 `?status=pending` —— 点进来直接落在待审列表上,
+ *    免得收通知的人还要自己在页面里找「📋 待审核」的卡片.
+ */
+const route = useRoute();
+if (route.query.status === 'pending') onlyMine.value = 'all-pending';
+
+function toggleOnlyMine(mode: 'review' | 'unpublish' | 'all-pending') {
   onlyMine.value = onlyMine.value === mode ? '' : mode;
+  // ⚠️ 切到「只看待审」时 chip 计数也得换成待审口径 ——
+  //    chip 上的数得是"点进去能看到几张卡" (2026-10-28 整改).
+  loadCategories();
   load();
 }
 /** 未过滤的结果 (分类 chip 上的「全部 N」用) */
@@ -265,6 +289,16 @@ const isAdmin = computed(() => userStore.user?.role === 'admin');
 /** 别人申请下架、还在等确认的资产数 (管理员视角) */
 const othersUnpublishCount = computed(() =>
   Math.max(0, sync.value.unpublish_pending_count - sync.value.my_unpublish_count));
+/**
+ * 别人上传、还在等上架审核的资产数 (管理员视角).
+ *
+ * ⚠️ 后端 `awaiting_review_count` 是**全部**待审数, `my_pending_count` 是自己那份 ——
+ *    扣掉自己的, 免得跟上面那条「你有 N 个资产需要处理」重复报同一个数.
+ * ⚠️ 这个字段以前**后端算好了下发、前端根本没用** —— 管理员看不到别人上传的待审资产,
+ *    只能扫卡片上的「📋 待审核」徽标.
+ */
+const othersReviewCount = computed(() =>
+  Math.max(0, sync.value.awaiting_review_count - sync.value.my_pending_count));
 
 /** 能不能改这个资产 (更新版本 / 下架 / 彻底删除) —— **作者本人或管理员**.
  *  ⚠️ 之前是硬编码 true —— 任何登录用户打开别人的资产都能看到并操作这些按钮,
@@ -388,7 +422,10 @@ async function loadProjects() {
 }
 async function loadCategories(silent = false) {
   try {
-    const r = await listCategories();
+    // ⚠️ 计数口径要跟**当前列表**一致 —— chip 上的数字得是"点进去能看到几张卡".
+    //    「只看待审」时列表走后端的 status=pending, chip 也得数待审的那些,
+    //    否则 chip 写着已上架的数、点进去是另一批 (2026-10-28 整改).
+    const r = await listCategories(onlyMine.value === 'all-pending' ? 'pending' : undefined);
     categories.value = (r?.items || []) as typeof categories.value;
     filterErrors.categories = '';
     refreshFilterError();
@@ -487,6 +524,9 @@ async function fetchList(opts: { silent?: boolean } = {}) {
         : (projectFilter.value || undefined)),
       q: keyword.value.trim() || undefined,
       sort: sortBy.value,
+      // ⚠️ `all-pending` 走**后端**过滤 (后端对管理员/审核人放行全部待审) ——
+      //    前端再按"是不是我的"筛一遍的话, 别人上传的会被全部筛掉, 那就白点了。
+      status: onlyMine.value === 'all-pending' ? 'pending' : undefined,
       limit: 500,
     });
     if (seq !== listSeq) return;   // 已有更新的请求在飞, 丢弃本次结果
@@ -495,7 +535,7 @@ async function fetchList(opts: { silent?: boolean } = {}) {
     items.value = (!mine && category.value === '__featured')
       ? rows.filter((i) => i.featured)
       : rows;
-    if (onlyMine.value) {
+    if (onlyMine.value === 'review' || onlyMine.value === 'unpublish') {
       // 提示条的"只看这些": 我自己提交的, 按提示条的种类过滤
       // ⚠️ 作者比对走 isAuthor (短名/全邮箱都认) —— 后端认两种写法,
       //    这里只认一种的话, 自己提交的资产会**整片消失**.

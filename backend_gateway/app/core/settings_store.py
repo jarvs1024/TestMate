@@ -524,6 +524,19 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
+        "key": "dingtalk.aggregate_window_seconds",
+        "category": "notification",
+        "value_type": "int",
+        "default": "60",
+        "description": (
+            "审核类通知的**合并窗口** (秒): 窗口内的「待上架审核 / 待下架确认」"
+            "只发第一条, 其余攒起来在窗口末发一条汇总 —— 避免十几个人同时上架"
+            "把审核群刷屏。设 0 = 恢复一个资产一条消息。"
+            "⚠️ 只影响**审核类**通知; 上架/更新/下架那几类市场通告不合并"
+        ),
+        "is_secret": False,
+    },
+    {
         "key": "dingtalk.notify_on_reject",
         "category": "notification",
         "value_type": "bool",

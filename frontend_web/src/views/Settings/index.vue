@@ -381,7 +381,7 @@
                 <span class="nl-act">{{ NOTIFY_EVENTS[n.event] || n.event }}</span>
                 <code v-if="n.code" class="nl-code">{{ n.code }}</code>
                 <span class="nl-chip" :class="n.status">
-                  {{ n.status === 'sent' ? '已送达' : n.status === 'failed' ? '失败' : n.status === 'skipped' ? '未发送' : '待发' }}
+                  {{ NOTIFY_STATUS[n.status] || '待发' }}
                 </span>
                 <span class="nl-time mono">{{ fmtTime(n.last_attempt_at || n.created_at) }}</span>
                 <span v-if="n.error" class="nl-err" :title="n.error">{{ n.error }}</span>
@@ -537,6 +537,24 @@ const NOTIFY_EVENTS: Record<string, string> = {
   unpublish: '资产已下架',
   reject: '审核未通过',
   delete: '资产已删除',
+};
+/**
+ * 回执状态 → 中文.
+ *
+ * ⚠️ 2026-10-28 加了**聚合**状态 (审核类通知的窗口合并):
+ *   aggregated       攒着待汇总 (窗口内没单独发)
+ *   aggregated_sent  已并入汇总 (发出去了)
+ *   summary_sent     这条就是**汇总消息**本身
+ * ⚠️ 以前只认三种, 新状态会落进兜底的「待发」—— 看着像通知根本没发出去.
+ */
+const NOTIFY_STATUS: Record<string, string> = {
+  sent: '已送达',
+  failed: '失败',
+  skipped: '未发送',
+  pending: '待发',
+  aggregated: '攒着待汇总',
+  summary_sent: '汇总已送达',
+  aggregated_sent: '已并入汇总',
 };
 async function loadNotifyLog() {
   try {

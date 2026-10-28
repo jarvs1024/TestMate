@@ -123,7 +123,17 @@ const FILE_NAME = `${CODE}.bin`;
     }, placeholder, value);
 
     check('E5 填软件名', await setValue('展示名', 'E2E 演示软件'));
-    check('E6 填软件标识', await setValue('唯一标识', CODE));
+    // ⚠️ 软件标识 2026-10-28 起是**自动生成**的 (由文件名派生, 只读) —— 不能手填.
+    //    这里断言它是只读的自动字段 (选完文件后才有值, 见 E12b).
+    const autoCode = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.sw-up-drawer input')]
+        .find((e) => (e.placeholder || '').includes('自动生成'));
+      return el
+        ? { found: true, readonly: !!el.readOnly, value: (el.value || '').trim() }
+        : { found: false };
+    });
+    check('E6 软件标识是自动生成的 (只读, 不用手填)',
+      autoCode.found && autoCode.readonly === true, JSON.stringify(autoCode));
     check('E7 填版本号', await setValue('如 1.0.0', '1.0.0'));
     check('E8 填简介', await setValue('一句话说清', 'e2e 走查用的演示软件'));
     check('E9 填功能清单', await setValue('一行一条', '读取 SMART 日志\n定位失败扇区\n导出 CSV'));
@@ -140,6 +150,13 @@ const FILE_NAME = `${CODE}.bin`;
     await sleep(400);
     check('E12 选中了软件包',
       await page.evaluate((c) => (document.querySelector('.file-chip')?.textContent || '').includes(c), CODE));
+    // ⚠️ 选完文件 → 标识**自动派生**出来 (由文件名去扩展名转小写)
+    check('E12b 选完文件后标识自动生成',
+      await page.evaluate((c) => {
+        const el = [...document.querySelectorAll('.sw-up-drawer input')]
+          .find((e) => (e.placeholder || '').includes('自动生成'));
+        return !!el && (el.value || '').trim() === c;
+      }, CODE), CODE);
 
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('.sw-up-drawer button, .up-foot button')]

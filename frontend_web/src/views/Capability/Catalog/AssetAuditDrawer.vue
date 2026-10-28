@@ -51,7 +51,7 @@
               <span class="log-act">{{ eventLabel(n.event) }}</span>
               <code v-if="n.code" class="log-code">{{ n.code }}</code>
               <span class="log-chip" :class="n.status">
-                {{ n.status === 'sent' ? '已送达' : n.status === 'failed' ? '发送失败' : '待发送' }}
+                {{ notifyStatusLabel(n.status) }}
               </span>
               <span class="log-time mono">{{ fmt(n.last_attempt_at || n.created_at) }}</span>
             </div>
@@ -120,6 +120,28 @@ function countBy(action: string): number {
 /** 动作中文 —— **后端给的** (action_label), 前端只做兜底 */
 function actionLabel(r: { action: string; action_label?: string }): string {
   return r.action_label || r.action;
+}
+
+/**
+ * 通知回执的状态 → 中文.
+ *
+ * ⚠️ 2026-10-28 加了**聚合**相关状态 (审核类通知的窗口合并):
+ *   aggregated      攒着待汇总 (窗口内没单独发, 窗口末会并进汇总)
+ *   summary_sent    这条是**汇总消息**本身 (窗口末发的那一条)
+ *   aggregated_sent 已被某条汇总涵盖 (发出去了)
+ * ⚠️ 以前只认 sent / failed, 其余一律显示「待发送」—— 新状态会显示成"还没发",
+ *    看着像通知丢了.
+ */
+function notifyStatusLabel(status: string): string {
+  return ({
+    sent: '已送达',
+    failed: '发送失败',
+    pending: '待发送',
+    skipped: '已跳过',
+    aggregated: '攒着待汇总',
+    summary_sent: '汇总已送达',
+    aggregated_sent: '已并入汇总',
+  } as Record<string, string>)[status] || status;
 }
 
 /**

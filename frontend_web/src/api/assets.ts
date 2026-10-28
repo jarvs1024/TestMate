@@ -262,14 +262,21 @@ export async function listAssets(params: {
   return apiGet<AssetListResp>('/assets', query);
 }
 
-export async function listCategories(): Promise<{
+/**
+ * 分类表 + 每个分类的资产数 (前端渲染筛选 chip 用).
+ *
+ * ⚠️ `status` 要跟当前列表的筛选**保持一致** —— chip 上的数字得是
+ *    「点进去能看到几张卡」, 否则会出现 chip 写 3、点进去 5 张的情况
+ *    (2026-10-28 整改: 以前后端只数已上架的, 管理员却能看到待审的)。
+ */
+export async function listCategories(status?: string): Promise<{
   items: {
     name: string; slug: string; desc?: string; order?: number;
     by_kind: Record<string, number>; total: number;
   }[];
   total?: number;
 }> {
-  return apiGet('/assets/categories');
+  return apiGet('/assets/categories', status ? { status } : undefined);
 }
 
 /**

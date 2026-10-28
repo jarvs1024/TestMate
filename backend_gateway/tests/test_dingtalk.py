@@ -647,6 +647,275 @@ def test_parse_mentions():
     assert at_all is False and users == []
 
 
+# ---------- 审核类通知的窗口合并 (2026-10-28) ----------
+#
+# 背景: 审核通知是「要人去做一件事」, 十几个人同时上架就是十几条消息刷屏.
+# 做法: 首条照常发 (带详情), 窗口内的其余攒起来, 窗口末发一条汇总.
+#
+# ⚠️ 只合并**审核类** (review / unpublish_request):
+#    市场群那几类是「资产已经变了」的事实通告且 @所有人, 合并会让人漏看.
+
+def _review_settings(window: str = "60") -> dict[str, str]:
+    return {
+        "dingtalk.review_webhook": "http://x/hook",
+        "dingtalk.notify_on_review": "true",
+        "dingtalk.notify_on_unpublish_request": "true",
+        "dingtalk.aggregate_window_seconds": window,
+    }
+
+
+async def _receipts() -> list:
+    """所有回执 (按 id 升序) —— 断言用."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as s:
+        rows = (
+            await s.execute(select(AssetNotification).order_by(AssetNotification.id.asc()))
+        ).scalars().all()
+    return list(rows)
+
+
+async def _backdate_last_sent(seconds: int = 120) -> None:
+    """把最近一条**已发出**的回执时间往前挪 —— 模拟窗口已经过去.
+
+    ⚠️ 不这么干就只能干等 60 秒 —— 单测不能真等.
+    """
+    from datetime import datetime, timedelta
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as s:
+        row = (
+            await s.execute(
+                select(AssetNotification)
+                .where(AssetNotification.status.in_(("sent", "summary_sent")))
+                .order_by(AssetNotification.id.desc())
+                .limit(1)
+            )
+        ).scalars().first()
+        if row is not None:
+            row.created_at = datetime.utcnow() - timedelta(seconds=seconds)
+            await s.commit()
+
+
+def _collector() -> tuple[list[dict], object]:
+    """造一个收集发送内容的假 send_markdown."""
+    sent: list[dict] = []
+
+    async def fake_send(webhook, title, text, *, secret="", at_mobiles=None,
+                        at_user_ids=None, is_at_all=False):
+        sent.append({"webhook": webhook, "title": title, "text": text})
+        return {"errcode": 0, "errmsg": "ok"}
+
+    return sent, fake_send
+
+
+async def test_review_first_in_window_sends_normally(monkeypatch):
+    """窗口内**第一条**照常发 —— 管理员得第一时间知道有人上传了."""
+    sent, fake_send = _collector()
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
+
+    ok = await dingtalk.notify_market(
+        "review", name="资产甲", code="a", kind="skill", category="效率工具",
+    )
+    assert ok is True
+    assert len(sent) == 1, sent
+    assert "资产甲" in sent[0]["title"], sent[0]
+    rows = await _receipts()
+    assert rows[-1].status == "sent", rows[-1].status
+
+
+async def test_review_second_in_window_is_aggregated(monkeypatch):
+    """窗口内**第二条**不单独发 —— 攒起来等汇总 (回执还是要留痕)."""
+    sent, fake_send = _collector()
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
+
+    await dingtalk.notify_market("review", name="资产甲", code="a")
+    await dingtalk.notify_market("review", name="资产乙", code="b")
+
+    assert len(sent) == 1, f"窗口内不该发第二条: {sent}"
+    rows = await _receipts()
+    assert rows[-1].status == "aggregated", rows[-1].status
+    assert rows[-1].code == "b"
+
+
+async def test_aggregated_flush_sends_one_summary(monkeypatch):
+    """窗口到期 → 发**一条**汇总, 被合并的几条标成「已并入汇总」."""
+    sent, fake_send = _collector()
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
+
+    await dingtalk.notify_market("review", name="甲", code="a")
+    await dingtalk.notify_market("review", name="乙", code="b")
+    await dingtalk.notify_market("review", name="丙", code="c")
+    assert len(sent) == 1
+
+    # 窗口还没到 → 不发汇总
+    assert await dingtalk.flush_aggregated_notifications() == 0
+    assert len(sent) == 1
+
+    # 窗口到了 → 一条汇总
+    await _backdate_last_sent(120)
+    assert await dingtalk.flush_aggregated_notifications() == 1
+    assert len(sent) == 2, sent
+    assert "另有 2 个" in sent[1]["text"], sent[1]["text"]
+    # 汇总里要能看到那两个资产的详情 (不然只剩一个数字, 还得自己去翻)
+    assert "乙" in sent[1]["text"] and "丙" in sent[1]["text"], sent[1]["text"]
+
+    rows = await _receipts()
+    assert rows[-1].status == "summary_sent", rows[-1].status
+    merged = [r for r in rows if r.code in ("b", "c")]
+    assert merged and all(r.status == "aggregated_sent" for r in merged), [
+        (r.code, r.status) for r in merged
+    ]
+
+
+async def test_market_events_are_not_aggregated(monkeypatch):
+    """市场群的「资产已经变了」**不合并** —— 谁上架了什么都要看得见."""
+    sent, fake_send = _collector()
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({
+            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.notify_on_publish": "true",
+            "dingtalk.aggregate_window_seconds": "60",
+        }),
+    )
+
+    await dingtalk.notify_market("publish", name="甲", code="a")
+    await dingtalk.notify_market("publish", name="乙", code="b")
+    assert len(sent) == 2, f"市场通告不该被合并: {sent}"
+
+
+async def test_aggregate_window_zero_disables_merging(monkeypatch):
+    """窗口设 0 → 恢复一个资产一条消息 (管理员要能关掉合并)."""
+    sent, fake_send = _collector()
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings("0")))
+
+    await dingtalk.notify_market("review", name="甲", code="a")
+    await dingtalk.notify_market("review", name="乙", code="b")
+    assert len(sent) == 2, f"窗口=0 不该合并: {sent}"
+
+
+async def test_review_and_unpublish_request_aggregate_separately(monkeypatch):
+    """上架审核和下架申请是**两件事** —— 不能混进同一轮汇总."""
+    sent, fake_send = _collector()
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
+
+    await dingtalk.notify_market("review", name="甲", code="a")
+    await dingtalk.notify_market("unpublish_request", name="乙", code="b")
+    assert len(sent) == 2, f"两类事件不该互相合并: {sent}"
+    assert "甲" in sent[0]["title"] and "乙" in sent[1]["title"], sent
+
+
+async def test_aggregated_rows_are_not_retried_as_pending(monkeypatch):
+    """「已并入汇总」的行**不能**被重试 worker 当成待发通知再发一遍."""
+    sent, fake_send = _collector()
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
+
+    await dingtalk.notify_market("review", name="甲", code="a")
+    await dingtalk.notify_market("review", name="乙", code="b")
+    await _backdate_last_sent(120)
+    await dingtalk.flush_aggregated_notifications()
+    n = len(sent)
+
+    # 重试 worker 再跑一轮 —— 不该冒出新的发送 (之前只发 1 条 + 1 条汇总)
+    await dingtalk.retry_failed_notifications()
+    assert len(sent) == n, f"汇总过的通知被重发了一遍: {sent}"
+
+
+async def _clear_backoff() -> None:
+    """清掉失败回执的**退避时间** —— 模拟"退避已经过了".
+
+    ⚠️ 不这么干就只能干等 30 秒 —— 单测不能真等.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as s:
+        rows = (
+            await s.execute(
+                select(AssetNotification).where(AssetNotification.status == "failed")
+            )
+        ).scalars().all()
+        for row in rows:
+            row.next_retry_at = None
+        await s.commit()
+
+
+async def test_failed_summary_is_reused_not_duplicated(monkeypatch):
+    """汇总发送失败 → **复用**那条回执重试, 不新建 (否则群里收到两条一样的)."""
+    calls: list[str] = []
+
+    async def flaky_send(webhook, title, text, *, secret="", at_mobiles=None,
+                         at_user_ids=None, is_at_all=False):
+        calls.append(title)
+        if len(calls) == 2:
+            raise RuntimeError("网络抖了一下")
+        return {"errcode": 0, "errmsg": "ok"}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", flaky_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
+
+    await dingtalk.notify_market("review", name="甲", code="a")
+    await dingtalk.notify_market("review", name="乙", code="b")
+    await _backdate_last_sent(120)
+
+    # 第一次汇总 → 失败 (第 2 次调用抛异常)
+    assert await dingtalk.flush_aggregated_notifications() == 0
+    rows = await _receipts()
+    summaries = [r for r in rows if "另有" in (r.title or "")]
+    assert len(summaries) == 1, f"汇总回执不该新建: {[(r.id, r.title) for r in summaries]}"
+
+    # 退避没到 → 不硬发 (把这条重试让给退避逻辑)
+    await _backdate_last_sent(120)
+    assert await dingtalk.flush_aggregated_notifications() == 0
+    assert len(calls) == 2, f"退避期内不该再发: {calls}"
+
+    # 退避到了 → 复用同一条回执, 这次发成功
+    await _clear_backoff()
+    await _backdate_last_sent(120)
+    assert await dingtalk.flush_aggregated_notifications() == 1
+    rows = await _receipts()
+    summaries = [r for r in rows if "另有" in (r.title or "")]
+    assert len(summaries) == 1, f"汇总回执被重复创建了: {[(r.id, r.title) for r in summaries]}"
+    assert summaries[0].status == "summary_sent", summaries[0].status
+
+
+async def test_retry_worker_does_not_send_summary_receipts(monkeypatch):
+    """汇总回执**归聚合 worker 管** —— 重试 worker 不能抢着发 (会重发一遍)."""
+    sent, fake_send = _collector()
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
+
+    await dingtalk.notify_market("review", name="甲", code="a")
+    await dingtalk.notify_market("review", name="乙", code="b")
+    await _backdate_last_sent(120)
+
+    # 汇总发送失败 → 回执留在 pending/failed
+    async def boom(*a, **kw):
+        raise RuntimeError("发不出去")
+    monkeypatch.setattr(dingtalk, "send_markdown", boom)
+    await dingtalk.flush_aggregated_notifications()
+
+    # 重试 worker 跑一轮 —— 不该把这条汇总发出去
+    sent.clear()
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    await dingtalk.retry_failed_notifications()
+    assert sent == [], f"重试 worker 抢发了汇总: {sent}"
+
+
 # ---------- 辅助 ----------
 
 def _fake_get(values: dict[str, str]):

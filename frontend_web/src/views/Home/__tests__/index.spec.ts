@@ -21,9 +21,15 @@ import { createPinia, setActivePinia } from 'pinia';
 import router from '@/router';
 import { useUserStore } from '@/stores/user';
 
-const { listCapabilities, getOverview } = vi.hoisted(() => ({
+const { listCapabilities, getOverview, syncStatus } = vi.hoisted(() => ({
   listCapabilities: vi.fn(),
   getOverview: vi.fn(),
+  // ⚠️ 可变 —— 不同用例要不同的资产状态 (管理员待办要靠 awaiting_review_count)
+  syncStatus: {
+    my_review_count: 3, failed_count: 0, unpublish_pending_count: 0,
+    pending_count: 0, conflict_count: 0,
+    awaiting_review_count: 0, my_pending_count: 0,
+  } as Record<string, number>,
 }));
 
 vi.mock('@/api/capabilities', () => ({
@@ -38,10 +44,7 @@ vi.mock('@/api/reviewagent', () => ({
 
 vi.mock('@/api/assets', () => ({
   listAssets: vi.fn(async () => ({ items: [], total: 54 })),
-  getSyncStatus: vi.fn(async () => ({
-    my_review_count: 3, failed_count: 0, unpublish_pending_count: 0,
-    pending_count: 0, conflict_count: 0,
-  })),
+  getSyncStatus: vi.fn(async () => ({ ...syncStatus })),
 }));
 
 vi.mock('@/api/kb', () => ({
@@ -101,6 +104,12 @@ async function mountHome(opts: { loggedIn?: boolean } = {}) {
 beforeEach(async () => {
   listCapabilities.mockReset();
   listCapabilities.mockResolvedValue({ items: CAPS, total: CAPS.length });
+  // ⚠️ 资产状态要复位 —— 上一个用例改过它 (管理员待办那条)
+  Object.assign(syncStatus, {
+    my_review_count: 3, failed_count: 0, unpublish_pending_count: 0,
+    pending_count: 0, conflict_count: 0,
+    awaiting_review_count: 0, my_pending_count: 0,
+  });
   getOverview.mockReset();
   getOverview.mockResolvedValue({
     mrs: { total: 128, merged: 10, open: 20 },
@@ -249,6 +258,44 @@ describe('首页 · 能力墙', () => {
     const anon = await mountHome({ loggedIn: false });
     expect(anon.w.find('.todo-strip.anon').text()).toContain('登录后可见你的待办');
     anon.w.unmount();
+  });
+
+  // ---------- 管理员待办: 别人上传的资产在等审核 (2026-10-28 补上) ----------
+
+  it('管理员待办: 别人上传的资产在等审核 → 有一条专门的待办', async () => {
+    syncStatus.my_review_count = 0;
+    syncStatus.awaiting_review_count = 3;
+    syncStatus.my_pending_count = 0;
+    const { w } = await mountHome({ loggedIn: true });
+    const strip = w.find('.todo-strip').text();
+    expect(strip).toContain('3 个资产等你审核');
+    expect(strip).toContain('别人提交的');
+    w.unmount();
+  });
+
+  it('管理员待办: 点「等你审核」直接跳到待审列表 (带 status=pending)', async () => {
+    syncStatus.my_review_count = 0;
+    syncStatus.awaiting_review_count = 2;
+    const { w } = await mountHome({ loggedIn: true });
+    const item = w.findAll('.ts-item').find((t) => t.text().includes('等你审核'))!;
+    await item.trigger('click');
+    expect(pushSpy).toHaveBeenCalledWith({ name: 'market', query: { status: 'pending' } });
+    w.unmount();
+  });
+
+  it('没有待审资产时不显示这条 (别凭空报一个 0)', async () => {
+    const { w } = await mountHome({ loggedIn: true });
+    expect(w.find('.todo-strip').text()).not.toContain('别人提交的');
+    w.unmount();
+  });
+
+  it('自己的待审数要从总数里扣掉 (别跟「我的」那条报同一个数)', async () => {
+    syncStatus.my_review_count = 0;
+    syncStatus.awaiting_review_count = 3;
+    syncStatus.my_pending_count = 1;
+    const { w } = await mountHome({ loggedIn: true });
+    expect(w.find('.todo-strip').text()).toContain('2 个资产等你审核');
+    w.unmount();
   });
 
   it('角色 meta 取真实数据: 看板 128 个 MR / 资产 54 个资产 + 46 文档', async () => {

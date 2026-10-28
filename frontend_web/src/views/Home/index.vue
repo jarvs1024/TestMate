@@ -95,7 +95,8 @@ interface Todo {
   icon: string;
   text: string;
   tone: 'warn' | 'err' | 'info';
-  to: { name: string };
+  /** ⚠️ 带 query 的要去审核列表 (市场页读 ?status=pending 直接落在待审上) */
+  to: { name: string; query?: Record<string, string> };
 }
 
 interface MetaItem { icon: string; text: string }
@@ -233,6 +234,20 @@ async function loadTodos() {
           to: { name: 'market' },
         });
       }
+      // ⚠️ 管理员视角: **别人**上传的资产在等审核 —— 这条以前没有.
+      //    `awaiting_review_count` 是全部待审数, 扣掉自己那份 (`my_pending_count`),
+      //    免得跟上面「我的」那条报同一个数.
+      //    ⚠️ 非管理员拿不到这个数 (后端把系统级计数归零), 所以只会给管理员显示.
+      const othersAwaiting = (s.awaiting_review_count || 0) - (s.my_pending_count || 0);
+      if (othersAwaiting > 0) {
+        list.push({
+          key: 'asset-awaiting-review',
+          icon: '📋',
+          text: `${othersAwaiting} 个资产等你审核 (别人提交的)`,
+          tone: 'warn',
+          to: { name: 'market', query: { status: 'pending' } },
+        });
+      }
       if (s.failed_count > 0) {
         list.push({
           key: 'asset-failed',
@@ -326,7 +341,7 @@ async function loadMetas() {
 }
 
 // ===== 交互 =====
-function go(target: { name: string }) {
+function go(target: { name: string; query?: Record<string, string> }) {
   router.push(target);
 }
 

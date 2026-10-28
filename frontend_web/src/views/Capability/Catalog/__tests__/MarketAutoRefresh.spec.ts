@@ -11,14 +11,19 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { useUserStore } from '@/stores/user';
 
-const { listAssets, listJobs } = vi.hoisted(() => ({ listAssets: vi.fn(), listJobs: vi.fn() }));
+const { listAssets, listJobs, syncStatus } = vi.hoisted(() => ({
+  listAssets: vi.fn(),
+  listJobs: vi.fn(),
+  // ⚠️ 可变 —— 管理员待审提示条要靠它 (不同用例给不同的数)
+  syncStatus: {} as Record<string, number>,
+}));
 
 vi.mock('@/api/assets', () => ({
   listAssets: (...a: any[]) => listAssets(...a),
   listCategories: vi.fn(async () => ({ items: [] })),
   listJobs: (...a: any[]) => listJobs(...a),
   listProjects: vi.fn(async () => ({ items: [] })),
-  getSyncStatus: vi.fn(async () => ({})),
+  getSyncStatus: vi.fn(async () => ({ ...syncStatus })),
   retryJob: vi.fn(async () => ({})),
   syncFromGit: vi.fn(async () => ({ added: 0, updated: 0 })),
 }));
@@ -31,7 +36,12 @@ vi.mock('../AssetCard.vue', () => ({
 vi.mock('../AssetDetailDrawer.vue', () => ({ default: { template: '<div />' } }));
 vi.mock('../AssetUploadDialog.vue', () => ({ default: { template: '<div />' } }));
 vi.mock('../AssetAuditDrawer.vue', () => ({ default: { template: '<div />' } }));
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// ⚠️ 市场页会用 useRoute() 读 `?status=pending` (钉钉通知里的「去审核台」链接直达待审列表),
+//    所以这个 mock 必须把 useRoute 也给出 —— 少了它组件初始化就抛, 一整份 spec 全挂.
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useRoute: () => ({ query: {} }),
+}));
 
 const stubs = {
   'el-tooltip': { template: '<div><slot/></div>' },
@@ -71,6 +81,8 @@ beforeEach(() => {
   listAssets.mockResolvedValue({ items: [], total: 0 });
   listJobs.mockReset();
   listJobs.mockResolvedValue({ items: [] });
+  // ⚠️ 资产状态要复位 —— 上一个用例改过它
+  for (const k of Object.keys(syncStatus)) delete syncStatus[k];
 });
 
 afterEach(() => {
@@ -191,6 +203,60 @@ describe('市场页 · 管理员专属入口', () => {
     const w = await mountMarket({ role: 'admin' });
     const labels = w.findAll('.mini-btn').map((b) => b.text()).join(' | ');
     expect(labels).toContain('操作记录');
+    w.unmount();
+  });
+});
+
+// ---------- 管理员待审提示条 (2026-10-28 补上) ----------
+//
+// ⚠️ 以前**只有下架**有管理员视角的提示条, 上架审核没有 ——
+//    管理员只能扫卡片上的「📋 待审核」徽标, 别人传了什么全靠眼睛找.
+//    后端 `awaiting_review_count` 早就算好下发了, 前端根本没用它.
+
+describe('市场页 · 管理员待审提示条', () => {
+  it('管理员: 别人上传的资产在等审核 → 顶部有提示条', async () => {
+    syncStatus.awaiting_review_count = 3;
+    syncStatus.my_pending_count = 0;
+    const w = await mountMarket({ role: 'admin' });
+    const bar = w.findAll('.my-review-bar').map((b) => b.text()).join(' | ');
+    expect(bar).toContain('3 个资产在等上架审核');
+    w.unmount();
+  });
+
+  it('普通用户看不到这条 (系统级计数是运营数据)', async () => {
+    syncStatus.awaiting_review_count = 3;
+    const w = await mountMarket({ role: 'tester' });
+    const bar = w.findAll('.my-review-bar').map((b) => b.text()).join(' | ');
+    expect(bar).not.toContain('在等上架审核');
+    w.unmount();
+  });
+
+  it('自己的待审数要扣掉 (别跟「我的」那条报同一个数)', async () => {
+    syncStatus.awaiting_review_count = 3;
+    syncStatus.my_pending_count = 1;
+    const w = await mountMarket({ role: 'admin' });
+    const bar = w.findAll('.my-review-bar').map((b) => b.text()).join(' | ');
+    expect(bar).toContain('2 个资产在等上架审核');
+    w.unmount();
+  });
+
+  it('点「只看这些」→ 列表请求带 status=pending (后端过滤, 不是前端)', async () => {
+    syncStatus.awaiting_review_count = 3;
+    const w = await mountMarket({ role: 'admin' });
+    const btn = w.findAll('.mrb-btn').find((b) => b.text().includes('只看这些'));
+    expect(btn).toBeTruthy();
+    listAssets.mockClear();
+    await btn!.trigger('click');
+    await vi.advanceTimersByTimeAsync(0);
+    const last = listAssets.mock.calls[listAssets.mock.calls.length - 1][0];
+    expect(last.status).toBe('pending');
+    w.unmount();
+  });
+
+  it('没有待审资产时不显示这条', async () => {
+    const w = await mountMarket({ role: 'admin' });
+    const bar = w.findAll('.my-review-bar').map((b) => b.text()).join(' | ');
+    expect(bar).not.toContain('在等上架审核');
     w.unmount();
   });
 });

@@ -460,3 +460,72 @@ async def test_upload_with_huge_metadata_rejected(client, auth, ws,  # noqa: ARG
         headers=pauth,
     )
     assert r.status_code == 422, r.text
+
+
+# ---------- 分类 chip 的计数口径 (2026-10-28) ----------
+
+async def _add_asset(code: str, status: str, *, author: str = "admin_t",
+                     category: str = "效率工具", kind: str = "skill"):
+    """直接往库里塞一条指定状态的资产 (分类计数用例用)."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        s.add(Asset(
+            code=code, name=f"计数用例 {code}", icon="🧩", kind=kind,
+            version="1.0.0", category=category, publish_status=status,
+            author=author, git_path=f"assets/skills/demo/{code}",
+        ))
+        await s.commit()
+
+
+async def _cat_count(client, auth, *, name: str = "效率工具", status: str | None = None):
+    url = f"{API}/categories" + (f"?status={status}" if status else "")
+    items = (await client.get(url, headers=auth)).json()["items"]
+    hit = [i for i in items if i["name"] == name]
+    assert hit, f"分类 {name} 不在表里: {[i['name'] for i in items]}"
+    return hit[0]["total"]
+
+
+async def test_category_counts_include_pending_for_admin(client, auth):
+    """管理员的 chip 计数要把**待审**算进去 —— 列表里能看到, 计数就不能装没看见.
+
+    ⚠️ 以前这里只数 published, 于是 chip 写 3、点进去是 5 张卡.
+    """
+    await _add_asset("chip-count-published", "published")
+    await _add_asset("chip-count-pending", "pending")
+    await _add_asset("chip-count-unpublish", "unpublish_pending")
+
+    total = await _cat_count(client, auth)
+    assert total >= 3, total
+
+
+async def test_category_counts_respect_status_filter(client, auth):
+    """带 status=pending → 只数待审的 (前端「只看待审」时 chip 也要换口径)."""
+    await _add_asset("chip-count-p1", "pending")
+    await _add_asset("chip-count-p2", "pending")
+    await _add_asset("chip-count-published2", "published")
+
+    pending_total = await _cat_count(client, auth, status="pending")
+    all_total = await _cat_count(client, auth)
+    assert pending_total < all_total, (pending_total, all_total)
+
+
+async def test_category_counts_hide_others_pending_from_normal_user(client, publisher_user):
+    """普通用户看不到**别人**的待审 → chip 计数里也不能有."""
+    await _add_asset("chip-count-stranger", "pending", author="someone_else")
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    items = (await client.get(f"{API}/categories", headers=pauth)).json()["items"]
+    hit = [i for i in items if i["name"] == "效率工具"]
+    assert hit
+    # 这条是别人提交的待审 —— 普通用户既看不到, 也不该被数进去
+    assert hit[0]["total"] == 0, hit[0]
+
+
+async def test_category_counts_include_own_pending_for_normal_user(client, publisher_user):
+    """普通用户**自己**提交的待审 → 列表里看得到, chip 就该算上."""
+    await _add_asset("chip-count-own", "pending", author="publisher_t")
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    items = (await client.get(f"{API}/categories", headers=pauth)).json()["items"]
+    hit = [i for i in items if i["name"] == "效率工具"]
+    assert hit and hit[0]["total"] == 1, hit
