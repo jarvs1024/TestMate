@@ -45,7 +45,7 @@ export const routes: RouteRecordRaw[] = [
         //    设置项里全是平台级配置 (存储路径 / 仓库地址 / 审核白名单 / 账号管理),
         //    非管理员进来既改不了, 又会看到一堆"看得见摸不着"的只读项 —— 纯干扰.
         //    守卫在这里拦 (不渲染页面), 菜单里也不出现入口 (见 UserMenu.vue).
-        { path: 'settings', name: 'settings', meta: { title: '设置', adminOnly: true, lede: '平台配置 · 账号管理 · RAGFlow / ReviewAgent —— 改完立刻生效, 不需重启' }, component: () => import('@/views/Settings/index.vue') },
+        { path: 'settings', name: 'settings', meta: { title: '设置', adminOnly: true, lede: '平台配置 · 账号管理 —— 按能力分类组织 (资产 / 工具 / 看板), 改完立刻生效, 不需重启' }, component: () => import('@/views/Settings/index.vue') },
       ],
     },
 ];

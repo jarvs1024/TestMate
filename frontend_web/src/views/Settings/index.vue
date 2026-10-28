@@ -50,11 +50,24 @@
           </div>
           <ul v-if="s.children && s.children.length" class="toc-sub">
             <li v-for="c in s.children" :key="c.id"
-                :class="{ active: activeTop === s.id && activeSub === c.id }"
+                :class="{ active: activeTop === s.id && activeSub === c.id,
+                          'has-sub': !!(c.children && c.children.length) }"
                 @click.stop="onPickSub(s.id, c.id)">
               <span class="toc-dot"></span>
               <span class="toc-lb">{{ c.label }}</span>
               <span class="toc-cnt">{{ c.count }}</span>
+              <!-- ⚠️ 第三层 (2026-10-28) —— 「能力墙 → 资产 → 插件·技能·连接」这种三级结构.
+                   目录只有两层的话, 「插件·技能·连接」和「知识库」就得挤在同一层,
+                   用户看不出它们是资产的三张卡, 而不是三种能力角色. -->
+              <ul v-if="c.children && c.children.length" class="toc-sub toc-sub3">
+                <li v-for="g in c.children" :key="g.id"
+                    :class="{ active: activeTop === s.id && activeSub === c.id && activeSub2 === g.id }"
+                    @click.stop="onPickSub2(s.id, c.id, g.id)">
+                  <span class="toc-dot"></span>
+                  <span class="toc-lb">{{ g.label }}</span>
+                  <span class="toc-cnt">{{ g.count }}</span>
+                </li>
+              </ul>
             </li>
           </ul>
         </template>
@@ -62,145 +75,240 @@
 
       <!-- 右侧 sections -->
       <main class="set-main">
-        <!-- 📚 知识库 (大组) -->
-        <section v-if="activeTop === 'sec-knowledge'" :id="'sec-knowledge'" class="card grp">
-          <h2>
-            <span>📚 知识库</span>
-            <span class="grp-cnt">{{ searchItems.length + chatItems.length }} 项</span>
-          </h2>
-          
-
-          <!-- 子组: 知识检索 -->
-          <div :id="'sec-search'" class="sub-grp">
-            <h3>🔎 知识检索 <span class="sub-cnt">{{ searchItems.length }} 项</span></h3>
-            <SettingRow v-for="(it, idx) in searchItems" :key="it.key"
-              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
-              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
-              :saving="saving === it.key" :secret-display="getInputValue(it)"
-              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
-            <div class="hint">
-              💡 这组控制 <code>/kb-manage</code> 页"知识检索"卡片的嵌入 URL. 换 RAGFlow 共享 Search App 或任意可嵌入页面都改这里, 不需要改代码.
-            </div>
-          </div>
-
-          <!-- 子组: 知识对话 -->
-          <div :id="'sec-chat'" class="sub-grp">
-            <h3>💬 知识对话 <span class="sub-cnt">{{ chatItems.length }} 项</span></h3>
-            <SettingRow v-for="(it, idx) in chatItems" :key="it.key"
-              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
-              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
-              :saving="saving === it.key" :secret-display="getInputValue(it)"
-              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
-            <div class="hint">
-              💡 这组控制 <code>/kb-manage</code> 页"知识对话"tab 的嵌入 URL (RAGFlow 共享 Chat App / 任意可嵌入聊天页).
-            </div>
-          </div>
-
-        </section>
-
         <!-- 🗂️ 能力墙 -->
-        <!-- ⚠️ 以前这里叫「🤖 智能体」, 前面首页改成「能力墙」后这里没跟上 ——
-             用户在设置里看到的还是旧叫法. 2026-10-26 统一成「能力墙」,
-             内部 id 也一起从 sec-agents 改成 sec-capability (只有本文件 3 处引用).
-             ⚠️ 图标用 🗂️ 而不是 📦 —— 📦 已经是「资产」这个能力角色的图标
-             (能力卡片 / 侧栏分组头在用), 同一个字形表示两件事会让人懵.
-             ⚠️ 以前这里还有个「🧪 智能体业务」子组 (引擎 / 模型 / 工具等参数) ——
-             Dify 下线后后端 schema 里已经没有 agents 类别的配置项了, 那个子组**永远空**,
-             只会一直显示「暂无智能体业务配置」, 让人以为功能坏了. 死 UI, 直接去掉. -->
+        <!-- ⚠️ 2026-10-28 大改: 这里以前是**三个平级的顶级 section**
+             (📚 知识库 / 🗂️ 能力墙 / 🧰 软件库), 而首页能力墙的分类是
+             **📦 资产 / 🛠 工具 / 📊 看板** —— 资产下面才是
+             插件·技能·连接 / 知识库 / 软件库 三张卡.
+             设置页跟首页两套分类, 用户配「知识库」得先知道它在设置页
+             叫哪个顶级项. 现在**两边一套名字、一套层级**.
+
+             新的结构:
+               🗂️ 能力墙
+                 📦 资产
+                   🧩 插件·技能·连接   marketplace.*
+                   📚 知识库            search.* / chat.* / ragflow.*
+                   🧰 软件库            software.*
+                 🛠 工具               (暂无配置项)
+                 📊 看板
+                   📈 代码检视          review_agent.*
+
+             ⚠️ 数据源 (RAGFlow / ReviewAgent) 原来挤在「通用 → 📡 数据源」——
+                那是"按技术分类"而不是"按能力分类". 现在各归各家:
+                RAGFlow 就是知识库的 API, ReviewAgent 就是代码检视看板的后端. -->
         <section v-if="activeTop === 'sec-capability'" :id="'sec-capability'" class="card grp">
           <h2>
             <span>🗂️ 能力墙</span>
-            <span class="grp-cnt">{{ marketItems.length }} 项</span>
+            <span class="grp-cnt">{{ capabilityTotal }} 项</span>
           </h2>
+          <div class="hint">
+            💡 这里按<strong>首页能力墙的分类</strong>组织 —— 📦 资产 / 🛠 工具 / 📊 看板.
+            每种能力下面就是它自己的配置项, 不用再去别的组里找.
+            改完<strong>立即生效</strong>, 不用重启后端.
+          </div>
 
-          <!-- 🧩 资产市场: 团队共享的插件 / 技能 / 连接器 -->
-          <div class="sub-grp">
-            <h3>🧩 资产市场 <span class="sub-cnt">{{ marketItems.length }} 项</span></h3>
+          <!-- ===== 📦 资产 ===== -->
+          <div id="sec-asset" class="sub-grp">
+            <h3>📦 资产 <span class="sub-cnt">{{ assetTotal }} 项</span></h3>
             <div class="hint">
-              💡 资产市场的后端配置 —— GitLab 仓库在哪、项目列表怎么配、谁能发布、
-              怎么对外暴露 marketplace.json. 改完<strong>立即生效</strong>, 不用重启后端.
+              💡 资产 = <strong>能被复用、给别人供料</strong>的东西 —— 首页能力墙里这三张卡都属于它.
             </div>
-            <SettingRow v-for="(it, idx) in marketItems" :key="it.key"
+
+            <!-- 🧩 插件·技能·连接 -->
+            <div id="sec-asset-market" class="sub-grp sub3">
+              <h4>🧩 插件·技能·连接 <span class="sub-cnt">{{ marketItems.length }} 项</span></h4>
+              <div class="hint">
+                💡 资产市场的后端配置 —— GitLab 仓库在哪、项目列表怎么配、谁能发布、
+                怎么对外暴露 marketplace.json. 改完<strong>立即生效</strong>, 不用重启后端.
+              </div>
+              <SettingRow v-for="(it, idx) in marketItems" :key="it.key"
+                :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+                :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+                :saving="saving === it.key" :secret-display="getInputValue(it)"
+                @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+
+              <!-- ⚠️ 测试连接 = **admin only** (后端已收紧) ——
+                   非管理员点了只会吃一个 403, 不如不显示. -->
+              <div v-if="isAdmin" class="test-row">
+                <button class="test-btn" :disabled="!!testing" @click="onTest('gitlab')">
+                  {{ testing === 'gitlab' ? '测试中…' : '🔌 测试仓库连接' }}
+                </button>
+                <div v-if="testResults['gitlab']" class="test-result" :class="`s-${testResults['gitlab']?.status}`">
+                  <span class="dot"></span>
+                  <span class="msg">{{ testResults['gitlab']?.message }}</span>
+                </div>
+              </div>
+              <div class="workdir mono">
+                <div>工作区 <code>{{ marketWorkspace }}</code>
+                  <span class="muted">（运行时不可改 —— 换了会丢掉现有工作副本）</span>
+                </div>
+                <div>远端 <code>{{ marketRemote }}</code>
+                  <span class="muted">（当前生效值, 改上面的「GitLab 仓库地址」后立即生效）</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 📚 知识库 -->
+            <div id="sec-asset-kb" class="sub-grp sub3">
+              <h4>📚 知识库 <span class="sub-cnt">{{ kbTotal }} 项</span></h4>
+              <div class="hint">
+                💡 RAG 知识源 —— 检索/对话页的嵌入地址, 以及底下的 RAGFlow API.
+              </div>
+
+              <h5>🔎 知识检索 <span class="sub-cnt">{{ searchItems.length }} 项</span></h5>
+              <SettingRow v-for="(it, idx) in searchItems" :key="it.key"
+                :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+                :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+                :saving="saving === it.key" :secret-display="getInputValue(it)"
+                @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+              <div class="hint">
+                💡 这组控制 <code>/kb-manage</code> 页"知识检索"卡片的嵌入 URL. 换 RAGFlow 共享 Search App 或任意可嵌入页面都改这里, 不需要改代码.
+              </div>
+
+              <h5>💬 知识对话 <span class="sub-cnt">{{ chatItems.length }} 项</span></h5>
+              <SettingRow v-for="(it, idx) in chatItems" :key="it.key"
+                :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+                :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+                :saving="saving === it.key" :secret-display="getInputValue(it)"
+                @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+              <div class="hint">
+                💡 这组控制 <code>/kb-manage</code> 页"知识对话"tab 的嵌入 URL (RAGFlow 共享 Chat App / 任意可嵌入聊天页).
+              </div>
+
+              <!-- 📡 RAGFlow (知识库自己的后端 API) -->
+              <h5>📡 RAGFlow <span class="sub-cnt">{{ kbSourceTotal }} 项</span></h5>
+              <div class="hint">
+                💡 知识库底下的 RAGFlow API —— 地址和 Key.
+              </div>
+              <div v-for="grp in kbSourceGroups" :key="grp.id" class="ds-grp">
+                <div class="ds-head">
+                  <span class="ds-icon">{{ grp.icon }}</span>
+                  <span class="ds-label">{{ grp.label }}</span>
+                  <span class="sub-cnt">{{ grp.items.length }} 项</span>
+                  <span class="ds-hint">{{ grp.hint }}</span>
+                </div>
+                <SettingRow v-for="(it, idx) in grp.items" :key="it.key"
+                  :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+                  :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+                  :saving="saving === it.key" :secret-display="getInputValue(it)"
+                  @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+                <!-- ⚠️ 测试连接 = admin only (后端已收紧) -->
+                <div v-if="isAdmin" class="test-row">
+                  <button class="test-btn" :disabled="!!testing" @click="onTest(grp.testKey)">
+                    {{ testing === grp.testKey ? '测试中…' : '🔌 测试连接' }}
+                  </button>
+                  <div v-if="testResults[grp.testKey]" class="test-result" :class="`s-${testResults[grp.testKey]?.status}`">
+                    <span class="dot"></span>
+                    <span class="msg">{{ testResults[grp.testKey]?.message }}</span>
+                    <span v-if="testResults[grp.testKey]?.detail" class="det">{{ JSON.stringify(testResults[grp.testKey]?.detail) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 🧰 软件库 -->
+            <!-- ⚠️ 2026-10-28: 这一组后端一直有 (software.* 四项), 但前端**从来没渲染过** ——
+                 所以「软件包存放根目录」这种关键配置在设置页里根本看不见, 只能手改 DB.
+                 现在补上, 并且把「体检存储目录」按钮接上 (换根目录不会自动搬文件,
+                 必须告诉管理员"缺哪些文件"). -->
+            <div id="sec-asset-sw" class="sub-grp sub3">
+              <h4>🧰 软件库 <span class="sub-cnt">{{ softwareItems.length }} 项</span></h4>
+              <div class="hint">
+                💡 内部软件的分发配置 —— 软件包存在哪、单包能多大、留几个历史版本、
+                未登录的人能不能下载. 改完<strong>立即生效</strong>, 不用重启后端.
+              </div>
+
+              <!-- ⚠️ 存储路径体检 = admin only (后端已收紧) -->
+              <div v-if="isAdmin" class="test-row">
+                <button class="test-btn" :disabled="!!testing" @click="onTest('software-storage')">
+                  {{ testing === 'software-storage' ? '体检中…' : '🔌 体检存储目录' }}
+                </button>
+                <div v-if="testResults['software-storage']"
+                     class="test-result" :class="`s-${testResults['software-storage']?.status}`">
+                  <span class="dot"></span>
+                  <span class="msg">{{ testResults['software-storage']?.message }}</span>
+                  <span v-if="testResults['software-storage']?.detail" class="det">{{
+                    storageDetailText(testResults['software-storage']?.detail)
+                  }}</span>
+                </div>
+              </div>
+
+              <SettingRow v-for="(it, idx) in softwareItems" :key="it.key"
+                :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+                :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+                :saving="saving === it.key" :secret-display="getInputValue(it)"
+                @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+            </div>
+          </div>
+
+          <!-- ===== 🛠 工具 ===== -->
+          <div id="sec-tool" class="sub-grp">
+            <h3>🛠 工具 <span class="sub-cnt">{{ toolItems.length }} 项</span></h3>
+            <!-- ⚠️ 空组要**说清楚为什么空** —— 干巴巴一个「0 项」会让人以为功能坏了.
+                 工具类的运行参数在能力表里 (engine / 参数), 不走平台设置;
+                 以后工具类能力上线, 配置会自动出现在这里. -->
+            <div v-if="!toolItems.length" class="hint">
+              💡 工具 = <strong>能直接干活</strong>的卡 (首页能力墙里的 🛠 组) —— 这一类目前
+              <strong>还没有可配置项</strong>: 工具的运行参数在能力表里, 不走平台设置.
+              等工具类能力上线, 它的配置会出现在这里.
+            </div>
+            <SettingRow v-for="(it, idx) in toolItems" :key="it.key"
               :item="it" :is-first="idx === 0" :is-admin="isAdmin"
               :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
               :saving="saving === it.key" :secret-display="getInputValue(it)"
               @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+          </div>
 
-            <!-- ⚠️ 测试连接 = **admin only** (后端已收紧) ——
-                 非管理员点了只会吃一个 403, 不如不显示. -->
-            <div v-if="isAdmin" class="test-row">
-              <button class="test-btn" :disabled="!!testing" @click="onTest('gitlab')">
-                {{ testing === 'gitlab' ? '测试中…' : '🔌 测试仓库连接' }}
-              </button>
-              <div v-if="testResults['gitlab']" class="test-result" :class="`s-${testResults['gitlab']?.status}`">
-                <span class="dot"></span>
-                <span class="msg">{{ testResults['gitlab']?.message }}</span>
+          <!-- ===== 📊 看板 ===== -->
+          <div id="sec-board" class="sub-grp">
+            <h3>📊 看板 <span class="sub-cnt">{{ boardTotal }} 项</span></h3>
+            <div id="sec-board-code-review" class="sub-grp sub3">
+              <h4>📈 代码检视 <span class="sub-cnt">{{ boardTotal }} 项</span></h4>
+              <div class="hint">
+                💡 代码检视看板的数据来源 —— ReviewAgent telemetry API.
+              </div>
+              <!-- ⚠️ board 类设置项 (后端目前还没有这个 category) —— 先留着位置,
+                   后端加了不用改模板. -->
+              <SettingRow v-for="(it, idx) in boardItems" :key="it.key"
+                :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+                :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+                :saving="saving === it.key" :secret-display="getInputValue(it)"
+                @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+              <div v-for="grp in boardSourceGroups" :key="grp.id" class="ds-grp">
+                <div class="ds-head">
+                  <span class="ds-icon">{{ grp.icon }}</span>
+                  <span class="ds-label">{{ grp.label }}</span>
+                  <span class="sub-cnt">{{ grp.items.length }} 项</span>
+                  <span class="ds-hint">{{ grp.hint }}</span>
+                </div>
+                <SettingRow v-for="(it, idx) in grp.items" :key="it.key"
+                  :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+                  :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+                  :saving="saving === it.key" :secret-display="getInputValue(it)"
+                  @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+                <!-- ⚠️ 测试连接 = admin only (后端已收紧) -->
+                <div v-if="isAdmin" class="test-row">
+                  <button class="test-btn" :disabled="!!testing" @click="onTest(grp.testKey)">
+                    {{ testing === grp.testKey ? '测试中…' : '🔌 测试连接' }}
+                  </button>
+                  <div v-if="testResults[grp.testKey]" class="test-result" :class="`s-${testResults[grp.testKey]?.status}`">
+                    <span class="dot"></span>
+                    <span class="msg">{{ testResults[grp.testKey]?.message }}</span>
+                    <span v-if="testResults[grp.testKey]?.detail" class="det">{{ JSON.stringify(testResults[grp.testKey]?.detail) }}</span>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="workdir mono">
-              <div>工作区 <code>{{ marketWorkspace }}</code>
-                <span class="muted">（运行时不可改 —— 换了会丢掉现有工作副本）</span>
-              </div>
-              <div>远端 <code>{{ marketRemote }}</code>
-                <span class="muted">（当前生效值, 改上面的「GitLab 仓库地址」后立即生效）</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="hint">
-            💡 所有外部数据源 (RAGFlow / ReviewAgent / 后续接入) 统一在 <strong>通用 → 📡 数据源</strong> 配置.
-          </div>
-        </section>
-
-        <!-- 🧰 软件库 -->
-        <!-- ⚠️ 2026-10-28: 这一组后端一直有 (software.* 四项), 但前端**从来没渲染过** ——
-             所以「软件包存放根目录」这种关键配置在设置页里根本看不见, 只能手改 DB.
-             现在补上, 并且把「存储路径体检」按钮接上 (换根目录不会自动搬文件,
-             必须告诉管理员"缺哪些文件"). -->
-        <section v-if="activeTop === 'sec-software'" :id="'sec-software'" class="card grp">
-          <h2>
-            <span>🧰 软件库</span>
-            <span class="grp-cnt">{{ softwareItems.length }} 项</span>
-          </h2>
-          <div class="hint">
-            💡 内部软件的分发配置 —— 软件包存在哪、单包能多大、留几个历史版本、
-            未登录的人能不能下载。改完<strong>立即生效</strong>, 不用重启后端.
-          </div>
-
-          <!-- ⚠️ 存储路径体检 = admin only (后端已收紧) -->
-          <div v-if="isAdmin" class="test-row">
-            <button class="test-btn" :disabled="!!testing" @click="onTest('software-storage')">
-              {{ testing === 'software-storage' ? '体检中…' : '🔌 体检存储目录' }}
-            </button>
-            <div v-if="testResults['software-storage']"
-                 class="test-result" :class="`s-${testResults['software-storage']?.status}`">
-              <span class="dot"></span>
-              <span class="msg">{{ testResults['software-storage']?.message }}</span>
-              <span v-if="testResults['software-storage']?.detail" class="det">{{
-                storageDetailText(testResults['software-storage']?.detail)
-              }}</span>
-            </div>
-          </div>
-
-          <SettingRow v-for="(it, idx) in softwareItems" :key="it.key"
-            :item="it" :is-first="idx === 0" :is-admin="isAdmin"
-            :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
-            :saving="saving === it.key" :secret-display="getInputValue(it)"
-            @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
-
-          <div v-if="!isAdmin" class="hint">
-            🔒 存储根目录是<strong>仅管理员可见</strong>的配置 (它是服务端路径) —— 管理员在
-            「体检存储目录」里能看到当前路径和占用情况.
           </div>
         </section>
 
         <section v-if="activeTop === 'sec-general'" :id="'sec-general'" class="card grp">
           <h2>
             <span>⚙️ 通用</span>
-            <!-- ⚠️ 计数要算上**数据源** (2026-10-28) ——
-                 原来只数 generalItems (1 项), 下面明明还挂着 4 项数据源,
-                 目录里「通用」的计数也是 5. 两处对不上, 用户以为漏了配置. -->
-            <span class="grp-cnt">{{ generalItems.length + dataSourceItems.length }} 项</span>
+            <!-- ⚠️ 计数只算 generalItems (2026-10-28) ——
+                 数据源 (RAGFlow / ReviewAgent) 已经拆去「能力墙 → 资产 / 看板」,
+                 各自跟着自己的能力走. 这里剩下的都是**不属于任何一类能力**的全局项. -->
+            <span class="grp-cnt">{{ generalItems.length }} 项</span>
           </h2>
           <!-- ⚠️ 这里以前是**手抄的一整套 row 模板** (跟 SettingRow 重复) ——
                后果是 SettingRow 后来加的「描述渲染粗体」「secret 掩码提示」这些
@@ -210,39 +318,8 @@
             :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
             :saving="saving === it.key" :secret-display="getInputValue(it)"
             @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
-
-          <!-- 📡 数据源 (RAGFlow / ReviewAgent 统一配置入口, 按 prefix 分组) -->
-          <div id="sec-general-data-source" class="sub-grp">
-            <h3>📡 数据源 <span class="sub-cnt">{{ dataSourceItems.length }} 项</span></h3>
-            <div class="hint">
-              💡 所有外部数据源统一入口: 每个数据源一组配置 + 一个测试连接, 后续接入新外部服务在 SOURCE_GROUPS 数组里加一项即可.
-            </div>
-            <div v-for="grp in sourceGroups" :key="grp.id" class="ds-grp">
-              <div class="ds-head">
-                <span class="ds-icon">{{ grp.icon }}</span>
-                <span class="ds-label">{{ grp.label }}</span>
-                <span class="sub-cnt">{{ grp.items.length }} 项</span>
-                <span class="ds-hint">{{ grp.hint }}</span>
-              </div>
-              <SettingRow v-for="(it, idx) in grp.items" :key="it.key"
-                :item="it" :is-first="idx === 0" :is-admin="isAdmin"
-                :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
-                :saving="saving === it.key" :secret-display="getInputValue(it)"
-                @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
-              <!-- ⚠️ 测试连接 = admin only (后端已收紧) -->
-              <div v-if="isAdmin" class="test-row">
-                <button class="test-btn" :disabled="!!testing" @click="onTest(grp.testKey)">
-                  {{ testing === grp.testKey ? '测试中…' : '🔌 测试连接' }}
-                </button>
-                <div v-if="testResults[grp.testKey]" class="test-result" :class="`s-${testResults[grp.testKey]?.status}`">
-                  <span class="dot"></span>
-                  <span class="msg">{{ testResults[grp.testKey]?.message }}</span>
-                  <span v-if="testResults[grp.testKey]?.detail" class="det">{{ JSON.stringify(testResults[grp.testKey]?.detail) }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
         </section>
+
 
         <!-- 🔔 通知 (钉钉机器人 · 市场上下架通知) -->
         <section v-if="activeTop === 'sec-notification'" :id="'sec-notification'" class="card grp">
@@ -393,9 +470,11 @@ const saving = ref<string | null>(null);
 const testing = ref<string | null>(null);
 const testResults = reactive<Record<string, TestResult | null>>({});
 
-// 当前选中的顶级 section + 子级 (sub group)
-const activeTop = ref<string>('sec-knowledge');
-const activeSub = ref<string>('sec-search');
+// 当前选中的顶级 section + 子级 (sub group) + 第三级 (2026-10-28)
+// ⚠️ 默认落在「能力墙 → 资产 → 插件·技能·连接」—— 那是设置页里项最多的地方.
+const activeTop = ref<string>('sec-capability');
+const activeSub = ref<string>('sec-asset');
+const activeSub2 = ref<string>('sec-asset-market');
 
 // ===== 按 category 拆分 (后端 schema 是单一来源) =====
 const searchItems = computed(() => itemsByCategory('search'));
@@ -408,6 +487,11 @@ const marketItems = computed(() => itemsByCategory('marketplace'));
 // 软件库 (存储根目录 / 单包上限 / 保留版本数 / 公开下载)
 // ⚠️ 2026-10-28: 这一组后端一直有, 前端一直没渲染 —— 补上.
 const softwareItems = computed(() => itemsByCategory('software'));
+// 工具类能力的配置 —— 目前后端还没有这个 category, 这里是**空组**
+// (工具的运行参数在能力表里, 不走平台设置). 后端加了就自动出现.
+const toolItems = computed(() => itemsByCategory('tool'));
+// 看板类能力的配置 (后端 board 类设置项) —— 目前空, 看板的实际配置是 ReviewAgent (见 boardSourceGroups)
+const boardItems = computed(() => itemsByCategory('board'));
 
 // 市场当前生效的配置 (只读, 用来展示"工作区在哪 / 远端是哪个")
 const marketWorkspace = ref('');
@@ -469,11 +553,18 @@ function fmtTime(iso: string | null): string {
 // ===== 数据源 sub-group: 按 prefix 拆子组 (RAGFlow / ReviewAgent) =====
 // 配置项都标 category='data-source', 这里按 key 前缀再细分, 让"测试连接"按钮紧贴对应配置.
 // 后续接新数据源: 在 SOURCE_GROUPS 数组里加一项即可.
+//
+// ⚠️ 2026-10-28: 原来这里是一整块「通用 → 📡 数据源」, 两个数据源平铺在一起.
+//    但 RAGFlow 和 ReviewAgent 分属**不同的能力** —— RAGFlow 是知识库的 API,
+//    ReviewAgent 是代码检视看板的后端. 现在加了 scope 字段, 各归各家:
+//      scope='asset-kb' → 渲染在「能力墙 → 资产 → 知识库」下
+//      scope='board'    → 渲染在「能力墙 → 看板 → 代码检视」下
 const dataSourceItems = computed(() => itemsByCategory('data-source'));
 
 interface DataSourceGroup {
   id: string;          // 模板里渲染用, 也是测试结果 key
   prefix: string;      // key 必须以这个开头
+  scope: 'asset-kb' | 'board';  // 归到哪个能力下面 (2026-10-28)
   icon: string;
   label: string;       // 显示名
   testKey: string;     // 调用 settings.onTest 用的分类
@@ -483,8 +574,8 @@ interface DataSourceGroup {
 // SOURCE_GROUPS 是静态声明 (没有 items 字段), 经 sourceGroups computed 注入实际匹配项.
 type SourceGroupDef = Omit<DataSourceGroup, 'items'>;
 const SOURCE_GROUPS: SourceGroupDef[] = [
-  { id: 'ragflow',  prefix: 'ragflow.',  icon: '📚', label: 'RAGFlow (知识库 API)', testKey: 'ragflow',  hint: 'KB 知识库 · 数据集 / 文档 / chunking API' },
-  { id: 'review-agent', prefix: 'review_agent.', icon: '🧬', label: 'ReviewAgent (代码检视)', testKey: 'review-agent', hint: '代码检视 · HTTP / 健康检查' },
+  { id: 'ragflow',  prefix: 'ragflow.',  scope: 'asset-kb', icon: '📚', label: 'RAGFlow (知识库 API)', testKey: 'ragflow',  hint: 'KB 知识库 · 数据集 / 文档 / chunking API' },
+  { id: 'review-agent', prefix: 'review_agent.', scope: 'board', icon: '🧬', label: 'ReviewAgent (代码检视)', testKey: 'review-agent', hint: '代码检视 · HTTP / 健康检查' },
 ];
 const sourceGroups = computed<DataSourceGroup[]>(() =>
   SOURCE_GROUPS.map(g => ({
@@ -492,6 +583,30 @@ const sourceGroups = computed<DataSourceGroup[]>(() =>
     items: dataSourceItems.value.filter(it => it.key.startsWith(g.prefix)),
   })).filter(g => g.items.length > 0),
 );
+/** 按 scope 取数据源组 —— 渲染在各自能力下面 */
+function groupsByScope(scope: SourceGroupDef['scope']): DataSourceGroup[] {
+  return sourceGroups.value.filter(g => g.scope === scope);
+}
+const kbSourceGroups = computed(() => groupsByScope('asset-kb'));
+const boardSourceGroups = computed(() => groupsByScope('board'));
+
+/** 一组数据源占几项 —— 计数用 */
+function countOf(groups: DataSourceGroup[]): number {
+  return groups.reduce((n, g) => n + g.items.length, 0);
+}
+
+// ===== 能力墙的计数 (2026-10-28) =====
+// ⚠️ 这些数**必须跟目录里显示的一致** —— 两处对不上用户会以为漏了配置.
+//    每一类能力对应首页能力墙上的一张卡 (或多张).
+const kbSourceTotal = computed(() => countOf(kbSourceGroups.value));
+/** 知识库 = 知识检索 + 知识对话 + RAGFlow API */
+const kbTotal = computed(() => searchItems.value.length + chatItems.value.length + kbSourceTotal.value);
+/** 资产 = 插件·技能·连接 + 知识库 + 软件库 (首页资产组的三张卡) */
+const assetTotal = computed(() => marketItems.value.length + kbTotal.value + softwareItems.value.length);
+/** 看板 = 代码检视的数据源 + 以后可能有的 board 类设置项 */
+const boardTotal = computed(() => boardItems.value.length + countOf(boardSourceGroups.value));
+/** 能力墙总计 */
+const capabilityTotal = computed(() => assetTotal.value + toolItems.value.length + boardTotal.value);
 
 // ⚠️ 「智能体业务」那一组已经删掉了 (Dify 下线后没有 agents 类别的配置项,
 //    留着只会永远显示「暂无智能体业务配置」). 能力相关的配置都在下面的「数据源」里.
@@ -504,7 +619,10 @@ function itemsByCategory(cat: string): SettingItem[] {
 }
 
 // ===== 左侧目录 (sections 定义) =====
-interface TocItem { id: string; label: string; count: number }
+// ⚠️ TocItem 自己也能有 children —— 目录是**三层**的:
+//   能力墙 → 资产 → 插件·技能·连接
+//   (第一层 children 是能力角色, 第二层 children 是该角色下的具体能力)
+interface TocItem { id: string; label: string; count: number; children?: TocItem[] }
 interface TocSection { id: string; icon: string; label: string; count: number; children: TocItem[] }
 
 // ⚠️ 「👥 用户」只在 admin 的目录里出现 —— 非 admin 连目录项都看不到
@@ -512,21 +630,42 @@ interface TocSection { id: string; icon: string; label: string; count: number; c
 const sections = computed<TocSection[]>(() => {
   const list: TocSection[] = [
   {
-    id: 'sec-knowledge',
-    icon: '📚',
-    label: '知识库',
-    count: 0, // 父级不显示数字, 子级显示
+    // ⚠️ 2026-10-28: 目录跟着**首页能力墙的分类**走 ——
+    //   📦 资产 / 🛠 工具 / 📊 看板, 资产下面才是首页那三张卡
+    //   (插件·技能·连接 / 知识库 / 软件库).
+    //   以前这里是三个平级顶级项 (知识库 / 能力墙 / 软件库), 跟首页对不上.
+    id: 'sec-capability',
+    icon: '🗂️',
+    label: '能力墙',
+    count: capabilityTotal.value,
     children: [
-      { id: 'sec-search',            label: '知识检索',         count: searchItems.value.length },
-      { id: 'sec-chat',              label: '知识对话',         count: chatItems.value.length },
+      {
+        id: 'sec-asset',
+        label: '📦 资产',
+        count: assetTotal.value,
+        children: [
+          { id: 'sec-asset-market', label: '🧩 插件·技能·连接', count: marketItems.value.length },
+          { id: 'sec-asset-kb',      label: '📚 知识库',         count: kbTotal.value },
+          { id: 'sec-asset-sw',      label: '🧰 软件库',         count: softwareItems.value.length },
+        ],
+      },
+      {
+        id: 'sec-tool',
+        label: '🛠 工具',
+        count: toolItems.value.length,
+        children: [],
+      },
+      {
+        id: 'sec-board',
+        label: '📊 看板',
+        count: boardTotal.value,
+        children: [
+          { id: 'sec-board-code-review', label: '📈 代码检视', count: boardTotal.value },
+        ],
+      },
     ],
   },
-  { id: 'sec-capability',   icon: '🗂️', label: '能力墙', count: marketItems.value.length, children: [] },
-  // ⚠️ 软件库的配置 (存储路径 / 大小上限 / 版本保留) —— 跟「能力墙」里的资产市场是一对
-  { id: 'sec-software',     icon: '🧰', label: '软件库', count: softwareItems.value.length, children: [] },
-  { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length + dataSourceItems.value.length, children: [
-    { id: 'sec-general-data-source', label: '📡 数据源', count: dataSourceItems.value.length },
-  ] },
+  { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length, children: [] },
   { id: 'sec-notification', icon: '🔔', label: '通知',   count: notificationItems.value.length, children: [] },
   ];
   if (isAdmin.value) {
@@ -536,6 +675,8 @@ const sections = computed<TocSection[]>(() => {
 });
 
 // ===== 点击目录 =====
+// ⚠️ onPickTop / onPickSub / onPickSub2 是**三级**的 —— 目录有三层
+//   (能力墙 → 资产 → 插件·技能·连接), 点击要跟得上层数, 否则高亮会停在错的地方.
 function onPickTop(topId: string) {
   activeTop.value = topId;
   // 滚到右侧 section 顶部 (不滚到子级)
@@ -547,8 +688,6 @@ function onPickTop(topId: string) {
   if (topId === 'sec-notification') loadNotifyLog();
   // 资产市场区展示当前生效的工作区/远端
   if (topId === 'sec-capability') loadMarketConfig();
-  // 软件库区体检存储目录 (admin only)
-  if (topId === 'sec-software' && isAdmin.value) onTest('software-storage');
   // 用户管理区拉账号列表
   if (topId === 'sec-users') loadUsers();
 }
@@ -561,6 +700,19 @@ function onPickSub(topId: string, subId: string) {
     const el = document.getElementById(subId);
     el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+}
+
+/** 第三级 (资产的三张卡 / 看板下的代码检视) */
+function onPickSub2(topId: string, subId: string, sub2Id: string) {
+  activeTop.value = topId;
+  activeSub.value = subId;
+  activeSub2.value = sub2Id;
+  nextTick(() => {
+    const el = document.getElementById(sub2Id);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  // ⚠️ 软件库是资产里的第三级 —— 进它就体检存储目录 (admin only)
+  if (sub2Id === 'sec-asset-sw' && isAdmin.value) onTest('software-storage');
 }
 
 // ===== 加载 / 渲染 =====
@@ -809,7 +961,9 @@ onMounted(() => {
 /* ====== 布局: 左 toc + 右 sections ====== */
 .set-layout {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  /* ⚠️ 260px 而不是 220px (2026-10-28) —— 目录变成**三层**之后,
+     「🧩 插件·技能·连接」这一行在 220px 里会被挤成竖排 (一个字一行). */
+  grid-template-columns: 260px 1fr;
   gap: 24px;
   align-items: start;
 }
@@ -879,6 +1033,30 @@ onMounted(() => {
   display: flex; flex-direction: column; gap: 1px;
 }
 .toc-sub li { font-size: 12.5px; padding: 5px 10px; }
+/* ⚠️ 含子项的 li 必须改成 **grid** (2026-10-28) ——
+   li 默认是 flex, 嵌套进来的 ul 会被当成 flex 子项, 宽度被压到 0,
+   结果「插件·技能·连接」这些长标签被挤成**竖排** (一个字一行).
+   grid 里给嵌套 ul 一个整行位置就正常了. */
+.toc-sub li.has-sub {
+  display: grid;
+  grid-template-columns: 4px 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+}
+.toc-sub li.has-sub > .toc-sub3 { grid-column: 1 / -1; }
+/* 标签不换行 —— 挤了就省略号, 不能竖排 */
+.toc-lb {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* ⚠️ 第三层 (2026-10-28) —— 再缩一点 + 字小一号.
+   三层挤在窄侧栏里, 不分层的话「插件·技能·连接」和「知识库」
+   看起来是并列的, 用户会以为它们是两种能力角色, 而不是资产的三张卡. */
+.toc-sub3 {
+  margin: 2px 0 4px;
+  padding: 0 0 0 12px;
+}
+.toc-sub3 li { font-size: 11.5px; padding: 4px 8px; }
 .toc-dot {
   width: 4px; height: 4px; border-radius: 50%;
   background: currentColor; opacity: 0.5;
@@ -912,6 +1090,34 @@ onMounted(() => {
   display: flex; align-items: center; gap: 6px;
   scroll-margin-top: 16px;
 }
+/* ⚠️ 第四层 (2026-10-28) —— 能力墙 → 资产 → 插件·技能·连接 这种三层结构,
+   靠字号 + 左边框线把层级拉开: h2=section, h3=能力角色, h4=具体能力, h5=能力内部的分组 */
+.sub-grp h4 {
+  font-size: 13px; font-weight: 600;
+  color: var(--ink-900);
+  margin: 0 0 10px;
+  display: flex; align-items: center; gap: 6px;
+  scroll-margin-top: 16px;
+  padding-left: 10px;
+  /* ⚠️ 不能用 var(--primary-grad) —— 那是 linear-gradient, border-color 不吃,
+     整条左边框会**整个消失** (2026-10-28 踩过). */
+  border-left: 3px solid var(--primary);
+  border-radius: 2px;
+}
+.sub-grp h5 {
+  font-size: 12px; font-weight: 600;
+  color: var(--ink-700);
+  margin: 16px 0 8px;
+  display: flex; align-items: center; gap: 6px;
+  scroll-margin-top: 16px;
+}
+/* 第三层往下再缩一点 —— 视觉上"嵌"在上一层里 */
+.sub-grp.sub3 {
+  padding: 14px 0 4px 14px;
+  margin-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.sub-grp.sub3:first-of-type { border-top: none; }
 .sub-cnt {
   font-size: 10.5px; padding: 1px 6px;
   background: var(--surface-sunken); color: var(--ink-500);

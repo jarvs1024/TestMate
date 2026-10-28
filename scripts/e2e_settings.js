@@ -90,14 +90,30 @@ async function login(page, user, password) {
     await page.goto(`${BASE}/settings`, { waitUntil: 'networkidle2' });
     await sleep(1800);
 
-    // ① 目录里有「软件库」
+    // ① 目录里跟**首页能力墙**对齐: 能力墙 → 资产/工具/看板, 资产下三张卡
     const toc = await page.evaluate(() =>
-      [...document.querySelectorAll('.set-toc .toc-item')].map((t) => t.textContent.trim()));
-    check('S1 目录里有「软件库」', toc.some((t) => t.includes('软件库')), toc.join(' | '));
+      [...document.querySelectorAll('.set-toc .toc-item, .set-toc .toc-sub li')]
+        .map((t) => t.textContent.trim()));
+    check('S1 目录里有「能力墙」', toc.some((t) => t.includes('能力墙')), toc.join(' | '));
+    check('S1b 能力墙下分 资产/工具/看板',
+      ['资产', '工具', '看板'].every((k) => toc.some((t) => t.includes(k))));
+    check('S1c 资产下挂 插件·技能·连接/知识库/软件库',
+      ['插件·技能·连接', '知识库', '软件库'].every((k) => toc.some((t) => t.includes(k))));
+    const topLabels = await page.evaluate(() =>
+      [...document.querySelectorAll('.set-toc > .toc-item')].map((t) => t.textContent.trim()));
+    check('S1d 顶级没有平级的「知识库」「软件库」',
+      !topLabels.some((t) => t.includes('知识库')) && !topLabels.some((t) => t.includes('软件库')),
+      topLabels.join(' | '));
 
-    // 点进去
+    // 点进「能力墙」顶级项, 再点资产下的「软件库」(第三层)
     await page.evaluate(() => {
       const it = [...document.querySelectorAll('.set-toc .toc-item')]
+        .find((t) => t.textContent.includes('能力墙'));
+      if (it) it.click();
+    });
+    await sleep(1200);
+    await page.evaluate(() => {
+      const it = [...document.querySelectorAll('.set-toc .toc-sub3 li')]
         .find((t) => t.textContent.includes('软件库'));
       if (it) it.click();
     });
@@ -138,24 +154,34 @@ async function login(page, user, password) {
     check('S6 描述里有真加粗的 <strong>',
       sw.descs.some((d) => d.includes('<strong>')));
 
-    // ⑦ 「通用」组的计数要算上数据源 (以前只数 1 项, 下面明明还有 4 项)
-    await page.evaluate(() => {
-      const it = [...document.querySelectorAll('.set-toc .toc-item')]
-        .find((t) => t.textContent.includes('通用'));
-      if (it) it.click();
-    });
-    await sleep(1200);
-    const general = await page.evaluate(() => {
-      const h = document.querySelector('#sec-general h2');
-      const ds = document.querySelector('#sec-general-data-source');
+    // ⑦ 数据源各归各家 (2026-10-28): RAGFlow → 知识库, ReviewAgent → 代码检视
+    const ds = await page.evaluate(() => {
+      const kb = document.querySelector('#sec-asset-kb');
+      const board = document.querySelector('#sec-board-code-review');
+      const general = document.querySelector('#sec-general');
       return {
-        cnt: h ? h.textContent.replace(/\s+/g, ' ').trim() : '',
-        dsCount: ds ? (ds.querySelector('.sub-cnt')?.textContent || '') : '',
+        kbHasRagflow: !!(kb && kb.textContent.includes('ragflow.base_url')),
+        kbHasReview: !!(kb && kb.textContent.includes('review_agent.base_url')),
+        boardHasReview: !!(board && board.textContent.includes('review_agent.base_url')),
+        boardHasRagflow: !!(board && board.textContent.includes('ragflow.base_url')),
+        generalHasDs: !!(general && general.textContent.includes('ragflow.base_url')),
+        generalCnt: (() => {
+          const h = document.querySelector('#sec-general h2');
+          return h ? h.textContent.replace(/\s+/g, ' ').trim() : '';
+        })(),
+        toolNote: (() => {
+          const t = document.querySelector('#sec-tool');
+          return t ? t.textContent.replace(/\s+/g, ' ').trim() : '';
+        })(),
       };
     });
-    check('S7「通用」的计数把数据源算进去了',
-      general.cnt.includes('5') && general.dsCount.includes('4'),
-      `${general.cnt} / 数据源 ${general.dsCount}`);
+    check('S7 RAGFlow 归到「资产 → 知识库」下',
+      ds.kbHasRagflow && !ds.kbHasReview, JSON.stringify([ds.kbHasRagflow, ds.kbHasReview]));
+    check('S7b ReviewAgent 归到「看板 → 代码检视」下',
+      ds.boardHasReview && !ds.boardHasRagflow, JSON.stringify([ds.boardHasReview, ds.boardHasRagflow]));
+    check('S7c「通用」里不再挂数据源', !ds.generalHasDs, ds.generalCnt);
+    check('S7d 工具组说清了「暂无可配置项」',
+      ds.toolNote.includes('还没有'), ds.toolNote.slice(0, 60));
 
     check('S8 全程无 JS 错误', errors.length === 0, errors.slice(0, 3).join(' | '));
 

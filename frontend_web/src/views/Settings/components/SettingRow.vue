@@ -107,7 +107,9 @@ const placeholderText = computed(() => {
     return it.default !== undefined && it.default !== null ? `默认 ${it.default}` : '';
   }
   if (!it.is_default) return '已定制 —— 留空不改';
-  const first = (it.description || '').split(/[.。\n]/)[0].trim();
+  // ⚠️ 截断前先**剥掉 `**` 强调标记** —— 否则 placeholder 里会出现
+  //    "**额外**允许发布的用户名（逗号分隔，如 zhan…"，一串星号 (2026-10-28 踩过).
+  const first = (it.description || '').replace(/\*\*/g, '').split(/[.。\n]/)[0].trim();
   return first.length > 28 ? first.slice(0, 28) + '…' : first;
 });
 </script>
