@@ -74,6 +74,11 @@
     <div v-else-if="list.length === 0" class="state">
       <div style="font-size: 30px; opacity: 0.4">🧰</div>
       <div>这里还没有软件</div>
+      <!-- ⚠️ 空的时候最需要说清"接下来怎么做" —— 页头 lede 说了"放什么",
+           这里别重复一遍 (同一句话说两遍), 说"怎么上架" -->
+      <div class="state-sub">
+        选好软件包、填几项说明就能上架 —— 上架后同事直接在这里下载.
+      </div>
       <button v-if="canPublish" class="reset" @click="openUpload('create')">上架第一个软件</button>
     </div>
     <div v-else class="grid">
@@ -317,6 +322,11 @@ onMounted(async () => {
   padding: 46px 0; color: var(--ink-500); font-size: 13px;
 }
 .state.err { color: var(--err); }
+/* 空态补充说明 —— 说清"这个库放什么", 一行灰字, 别抢主文案 */
+.state-sub {
+  max-width: 460px; text-align: center; line-height: 1.7;
+  color: var(--ink-500); opacity: 0.85; font-size: 12px;
+}
 .spinner {
   width: 22px; height: 22px; border-radius: 50%;
   border: 2px solid var(--border); border-top-color: var(--primary);

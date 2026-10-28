@@ -39,7 +39,9 @@ export const routes: RouteRecordRaw[] = [
         // 内部软件的分发入口 —— 任意格式的软件包 (≤5G), 服务端磁盘存储.
         // ⚠️ 独立页面 (不塞进 /market 的 Tab): 软件包是二进制、落服务端磁盘,
         //    跟「插件·技能·连接」(GitLab 里的文本包) 在存储/权限/审核三个维度都不同.
-        { path: 'software', name: 'software', meta: { title: '软件库', lede: '公司内部软件的统一入口 —— 功能 / 详情 / 适用场景 / 发布与更新说明' }, component: () => import('@/views/Software/index.vue') },
+        // ⚠️ lede 是页头**一行**, max-width 600px + nowrap + 省略号 —— 写长了被截掉.
+        //    所以只说「放什么 + 拿来干什么」, 不列表单字段 (那是详情页的事).
+        { path: 'software', name: 'software', meta: { title: '软件库', lede: '公司内部软件的统一入口 —— 自研工具与基于开源改造的版本都在这儿, 找到就能下, 也能发新版本' }, component: () => import('@/views/Software/index.vue') },
 
         // ⚠️ **adminOnly** (2026-10-28): 设置页整个只给管理员.
         //    设置项里全是平台级配置 (存储路径 / 仓库地址 / 审核白名单 / 账号管理),
