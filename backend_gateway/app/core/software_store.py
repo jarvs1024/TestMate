@@ -384,9 +384,17 @@ def remove_item_dir(root: Path, code: str) -> None:
 
 
 def usage_info(root: Path) -> dict[str, Any]:
-    """存储根的占用情况 —— 设置页/健康探针用.
+    """存储根的**磁盘**情况 —— 设置页/健康探针用.
 
     返回: {"root", "exists", "writable", "total_bytes", "free_bytes", "used_bytes"}
+
+    ⚠️⚠️ **`used_bytes` 是整块磁盘的已用空间, 不是软件库目录自己占的** ——
+       它来自 ``shutil.disk_usage()``. 软件库目录自身的占用要用另一个函数
+       :func:`used_bytes` (同名, 但完全不同的东西 —— 这个坑真的踩过:
+       体检端点把磁盘的 725GB 当成"软件库占了 725GB" 显示了出来).
+
+       要"软件库占了多少" → :func:`used_bytes`
+       要"磁盘还剩多少"   → 这里的 ``free_bytes``
     """
     info: dict[str, Any] = {
         "root": str(root),

@@ -8,7 +8,15 @@ export interface SettingItem {
   description: string;
   is_secret: boolean;
   is_default: boolean;
-  default?: any;        // 默认值 (来自 .env 或代码, 未在 DB 改过)
+  /**
+   * 默认值 (来自 .env 或代码, 未在 DB 改过).
+   *
+   * ⚠️ 类型是 `any` 而不是 string —— 后端的 default 跟着 value_type 走:
+   *   int 项的 default 是 "5120" (字符串), 但 bool 项是 "false" (字符串),
+   *   而**当前值**是真正的 int / bool. 前端拿它做 placeholder
+   *   (「默认 5120」), 所以得能原样插值.
+   */
+  default?: any;
   category?: string;
 }
 export interface SettingGroup {
@@ -57,6 +65,17 @@ export async function testDingTalk(channel: 'market' | 'review' = 'market'): Pro
 /** 探当前配置的 GitLab 仓库能不能连上 (SSH 鉴权 + 分支是否存在) */
 export async function testGitLab(): Promise<TestResult> {
   return (await request.post('/settings/test/gitlab')) as TestResult;
+}
+
+/**
+ * 体检**软件库存储根目录** —— 能不能写、剩多少空间、哪些版本的文件丢了.
+ *
+ * ⚠️ admin only (后端会拒) —— 存储根目录是服务端路径, 不该让普通用户知道.
+ * ⚠️ 改了存储路径后一定要点一下 —— 换根目录**不会**自动搬文件,
+ *    缺哪些文件这个端点会一次列全.
+ */
+export async function testSoftwareStorage(): Promise<TestResult> {
+  return (await request.post('/settings/test/software_storage')) as TestResult;
 }
 
 // ===== 运行时拼 URL: 把 <prefix>.embed_url 拼上 userId (后端取当前用户) + theme (前端传) =====

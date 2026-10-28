@@ -893,3 +893,73 @@ async def test_update_version_variant_by_author(client, sw_auth, sw_root):
     )
     assert r.status_code == 200, r.text
     assert r.json()["variant"] == "LTS 版"
+
+
+# ---------- 存储目录体检 (设置页的「体检存储目录」按钮) ----------
+
+
+async def test_storage_probe_reports_ok(client, sw_auth, sw_root):
+    """存储根可写 + 文件都在 → 报 ok, 并且说清路径和占用."""
+    await _create(client, sw_auth)
+    await _upload(client, sw_auth, "demo-sw", b"hello")
+
+    r = await client.post("/api/v1/settings/test/software_storage", headers=sw_auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["status"] == "ok"
+    d = body["detail"]
+    assert d["root"] == str(sw_root)
+    assert d["writable"] is True
+    assert d["missing_count"] == 0
+    # ⚠️ 占用是**软件库目录自己**的, 不是整块磁盘的
+    #    (曾经用错成 disk_usage.used → 显示"占了 725GB", 那是整块盘)
+    #    具体字节数不写死 —— 目录里还有 release.json 快照, 大小会变
+    assert d["used_bytes"] >= 5
+    assert d["used_bytes"] < 1024 * 1024
+    assert d["free_bytes"] > 0
+    # 路径是哪来的 —— 让管理员知道改了设置项到底生效没
+    assert d["source"] == "setting"
+
+
+async def test_storage_probe_lists_missing_files(client, sw_auth, sw_root, tmp_path):
+    """换了存储根目录 → 老文件不在新目录里 → 报出来缺哪些.
+
+    ⚠️ 这是「改存储路径」最常见的坑: 改完配置, 老文件不会自动搬过去,
+       用户以为软件没了. 体检接口要一次把缺的列全.
+    """
+    await _create(client, sw_auth)
+    await _upload(client, sw_auth, "demo-sw", b"hello")
+
+    # 把存储根指到一个**空的新目录** —— 模拟"换了根目录但没搬文件"
+    other = tmp_path / "other"
+    other.mkdir(parents=True, exist_ok=True)
+    await set_setting("software.storage_path", str(other))
+
+    r = await client.post("/api/v1/settings/test/software_storage", headers=sw_auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is False
+    assert body["status"] == "warn"
+    d = body["detail"]
+    assert d["missing_count"] == 1
+    assert d["missing"][0]["version"] == "1.0.0"
+
+
+async def test_storage_probe_denied_for_non_admin(client, sw_root, publisher_user):
+    """存储根是**服务端路径** —— 非管理员不该能探."""
+    r = await client.post(
+        "/api/v1/settings/test/software_storage",
+        headers={"Authorization": f"Bearer {publisher_user['token']}"},
+    )
+    assert r.status_code == 403, r.text
+
+
+async def test_storage_probe_reports_unwritable_root(client, sw_auth, sw_root, tmp_path):
+    """目录不可写 → 报出来原因 (容器里没挂卷是最常见的)."""
+    await set_setting("software.storage_path", str(tmp_path / "not-exist"))
+    r = await client.post("/api/v1/settings/test/software_storage", headers=sw_auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is False
+    assert "目录" in body["message"]

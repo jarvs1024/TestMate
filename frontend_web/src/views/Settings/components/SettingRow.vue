@@ -11,7 +11,11 @@
         <span v-if="item.is_secret" class="secret-tag">secret</span>
         <span v-if="!item.is_default" class="custom-tag">已定制</span>
       </div>
-      <div class="d">{{ item.description }}</div>
+      <!-- ⚠️ 描述里的 `**粗体**` 要渲染成真加粗 (2026-10-28) ——
+           以前直接 {{ }} 输出, 用户看到的是一堆星号 (`**最老的**`),
+           跟文档里的写法不统一. renderInlineEmphasis 内部先转义再插标签,
+           不引入 XSS. -->
+      <div class="d" v-html="descHtml" />
     </div>
     <div class="inp-col">
       <label v-if="item.value_type === 'bool'" class="switch">
@@ -39,11 +43,15 @@
           :title="show ? '隐藏' : '显示'"
         >{{ show ? '🙈' : '👁' }}</button>
       </div>
+      <!-- ⚠️ placeholder **不能直接用 description** (2026-10-28) ——
+           描述动辄两三行 (比如存储路径那条), 塞进 placeholder 里
+           输入框会被撑成一大坨灰字, 反而看不清当前值.
+           现在 placeholder 是**一句短的提示**, 完整说明在左边那一列. -->
       <input
         v-else
         :type="item.value_type === 'int' ? 'number' : 'text'"
         :value="draft"
-        :placeholder="item.description"
+        :placeholder="placeholderText"
         :disabled="!isAdmin"
         @input="$emit('update', item.key, ($event.target as HTMLInputElement).value)"
       />
@@ -60,9 +68,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { SettingItem } from '@/api/settings';
+import { renderInlineEmphasis } from '@/utils/inlineEmphasis';
 
-defineProps<{
+const props = defineProps<{
   item: SettingItem;
   isFirst: boolean;
   isAdmin: boolean;
@@ -79,6 +89,27 @@ defineEmits<{
   (e: 'save', item: SettingItem): void;
   (e: 'revert', item: SettingItem): void;
 }>();
+
+/** 描述 —— 渲染内联强调 (先转义再插标签) */
+const descHtml = computed(() => renderInlineEmphasis(props.item.description || ''));
+
+/**
+ * 输入框的 placeholder —— 一句短的提示, 不是整段描述.
+ *
+ * ⚠️ 规则:
+ *   · 有默认值 → 提示"默认是什么" (用户一眼知道留空会怎样)
+ *   · 定制过 → 提示"已定制" (当前值就是他们自己设的)
+ *   · 都没有 → 从描述里取第一句, 截断
+ */
+const placeholderText = computed(() => {
+  const it = props.item;
+  if (it.value_type === 'int' || it.value_type === 'bool') {
+    return it.default !== undefined && it.default !== null ? `默认 ${it.default}` : '';
+  }
+  if (!it.is_default) return '已定制 —— 留空不改';
+  const first = (it.description || '').split(/[.。\n]/)[0].trim();
+  return first.length > 28 ? first.slice(0, 28) + '…' : first;
+});
 </script>
 
 <style scoped>
@@ -107,6 +138,9 @@ defineEmits<{
   -webkit-text-fill-color: transparent;
 }
 .lbl-col .d { font-size: 12px; color: var(--ink-500); margin-top: 4px; line-height: 1.5; }
+/* ⚠️ 描述里的 **粗体** 渲染出来的 <strong> —— 颜色要比正文深一点,
+   否则在灰字里看不出来哪儿是重点 */
+.lbl-col .d :deep(strong) { color: var(--ink-700); font-weight: 600; }
 
 .secret-tag { font-size: 9.5px; padding: 1px 6px; background: rgba(239, 68, 68, 0.1); color: var(--err); border-radius: var(--radius-pill); font-weight: 600; }
 .custom-tag { font-size: 9.5px; padding: 1px 6px; background: var(--primary-soft); color: var(--primary); border-radius: var(--radius-pill); font-weight: 600; }

@@ -59,14 +59,15 @@ const stubs = {
   },
 };
 
-async function mountMenu(opts: { loggedIn?: boolean } = {}) {
+async function mountMenu(opts: { loggedIn?: boolean; role?: 'admin' | 'tester' | 'viewer' } = {}) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const { useUserStore } = await import('@/stores/user');
   const userStore = useUserStore(pinia);
   if (opts.loggedIn) {
     userStore.token = 'test-token';
-    userStore.user = { id: 1, username: 'tester', role: 'tester' } as any;
+    const role = opts.role || 'tester';
+    userStore.user = { id: 1, username: role === 'admin' ? 'admin' : 'tester', role } as any;
   }
   const UserMenu = (await import('../UserMenu.vue')).default;
   const w = mount(UserMenu, { global: { plugins: [pinia], stubs } });
@@ -114,9 +115,10 @@ describe('用户菜单', () => {
 });
 
 describe('用户菜单 · 登录态', () => {
-  it('已登录: 设置 + 退出登录, 没有「登录」', async () => {
+  it('已登录: 退出登录, 没有「登录」', async () => {
     const { w } = await mountMenu({ loggedIn: true });
-    expect(commands(w)).toEqual(['settings', 'logout']);
+    // ⚠️ 普通账号看不到「设置」 (设置页 adminOnly, 2026-10-28)
+    expect(commands(w)).toEqual(['logout']);
     expect(w.text()).toContain('tester');
     expect(w.text()).toContain('测试工程师');
     w.unmount();
@@ -131,10 +133,25 @@ describe('用户菜单 · 登录态', () => {
     w.unmount();
   });
 
-  it('已登录: 点「设置」→ 跳设置页', async () => {
-    const { w } = await mountMenu({ loggedIn: true });
+  it('已登录 (admin): 点「设置」→ 跳设置页', async () => {
+    const { w } = await mountMenu({ loggedIn: true, role: 'admin' });
     await clickItem(w, 'settings');
     expect(pushMock).toHaveBeenCalledWith('/settings');
+    w.unmount();
+  });
+
+  // ⚠️ 2026-10-28: 设置页整个只给管理员 —— 非管理员的菜单里**不该有「设置」**.
+  //    (以前是"能进但改不了", 现在根本进不去 —— 路由守卫也会拦一道)
+  it('已登录 (非 admin): 菜单里**没有**「设置」', async () => {
+    const { w } = await mountMenu({ loggedIn: true, role: 'tester' });
+    expect(commands(w)).toEqual(['logout']);
+    expect(w.text()).not.toContain('设置');
+    w.unmount();
+  });
+
+  it('已登录 (只读角色): 菜单里**没有**「设置」', async () => {
+    const { w } = await mountMenu({ loggedIn: true, role: 'viewer' });
+    expect(commands(w)).toEqual(['logout']);
     w.unmount();
   });
 });
@@ -164,10 +181,21 @@ describe('用户菜单 · 未登录', () => {
     w.unmount();
   });
 
-  it('登录成功后菜单自动变成 设置 + 退出登录', async () => {
+  it('登录成功后菜单自动变成 退出登录 (普通账号)', async () => {
     const { w, userStore } = await mountMenu();
     expect(commands(w)).toEqual(['login']);
     userStore.token = 'test-token';
+    userStore.user = { id: 1, username: 'tester', role: 'tester' } as any;
+    await w.vm.$nextTick();
+    // ⚠️ 普通账号看不到「设置」 (设置页 adminOnly)
+    expect(commands(w)).toEqual(['logout']);
+    w.unmount();
+  });
+
+  it('登录成功 (admin) 后菜单是 设置 + 退出登录', async () => {
+    const { w, userStore } = await mountMenu();
+    userStore.token = 'test-token';
+    userStore.user = { id: 1, username: 'admin', role: 'admin' } as any;
     await w.vm.$nextTick();
     expect(commands(w)).toEqual(['settings', 'logout']);
     w.unmount();

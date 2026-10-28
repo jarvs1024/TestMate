@@ -79,4 +79,17 @@ describe('路由表', () => {
   it('用户侧文案不再出现「智能体广场」', () => {
     expect(JSON.stringify(routes)).not.toContain('智能体广场');
   });
+
+  // ⚠️ 2026-10-28: 设置页整个 **adminOnly** ——
+  //    设置项里全是平台级配置 (存储路径 / 仓库地址 / 审核白名单 / 账号管理),
+  //    非管理员既改不了, 又是一屏机密. 路由守卫拦一道 (手敲地址 / 旧书签都进不去).
+  it('设置页是 adminOnly', () => {
+    expect(router.resolve('/settings').meta.adminOnly).toBe(true);
+  });
+
+  it('别的页面不该被误标成 adminOnly', () => {
+    for (const p of ['/market', '/kb-manage', '/software', '/']) {
+      expect(metaOf(p).adminOnly).toBeFalsy();
+    }
+  });
 });

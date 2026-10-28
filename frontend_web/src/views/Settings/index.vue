@@ -4,14 +4,28 @@
     <!-- 描述只在页头说一次 (AppHeader 的 lede) —— 原来页头下面又跟一行灰字,
          两行说的是同一件事, 白占一行的正文空间. "改完立刻生效" 已经并进页头 lede. -->
 
+    <!-- ⚠️ **非管理员整个设置页都看不到** (2026-10-28) ——
+         以前是"只读模式": 配置项照常列出来, 但每一项都是禁用的.
+         那样等于给普通用户看了一屏平台机密 (存储路径、仓库地址、审核白名单…),
+         还改不了 —— 纯干扰. 现在只有一句提示, 一个配置项都不列.
+
+         这层是**兜底** —— 真正的闸在两处:
+           · 路由守卫 (router/index.ts 的 adminOnly) —— 手敲地址 / 旧书签都进不来
+           · 顶栏菜单 (UserMenu.vue) —— 入口不出现
+         万一将来有人改路由守卫, 这一层还能挡住. -->
     <div v-if="!isAdmin" class="card warn-card">
       <div class="warn-ic">🔒</div>
       <div>
-        <div class="warn-t">只读模式</div>
-        <div class="warn-d">当前账号无 admin 权限, 配置项只能查看不能改. 请用 admin 登录.</div>
+        <div class="warn-t">设置仅管理员可见</div>
+        <div class="warn-d">
+          当前账号（{{ userStore.user?.username || '未登录' }} · {{ roleText }}）没有 admin 权限.
+          平台配置、账号管理这些都归管理员管, 请用 admin 账号登录后再来.
+        </div>
       </div>
     </div>
 
+    <!-- ⚠️ 下面这些**只在 admin 时渲染** —— 非管理员看不到任何配置项 -->
+    <template v-if="isAdmin">
     <!-- ⚠️ 配置拉失败 → 页面内明确提示 (不能只靠全局 toast:
          页面上各 section 的计数会显示「0 项」, 用户会以为配置被清空了) -->
     <div v-if="loadError" class="card err-card">
@@ -136,54 +150,66 @@
           <div class="hint">
             💡 所有外部数据源 (RAGFlow / ReviewAgent / 后续接入) 统一在 <strong>通用 → 📡 数据源</strong> 配置.
           </div>
-        </section><section v-if="activeTop === 'sec-general'" :id="'sec-general'" class="card grp">
+        </section>
+
+        <!-- 🧰 软件库 -->
+        <!-- ⚠️ 2026-10-28: 这一组后端一直有 (software.* 四项), 但前端**从来没渲染过** ——
+             所以「软件包存放根目录」这种关键配置在设置页里根本看不见, 只能手改 DB.
+             现在补上, 并且把「存储路径体检」按钮接上 (换根目录不会自动搬文件,
+             必须告诉管理员"缺哪些文件"). -->
+        <section v-if="activeTop === 'sec-software'" :id="'sec-software'" class="card grp">
           <h2>
-            <span>⚙️ 通用</span>
-            <span class="grp-cnt">{{ generalItems.length }} 项</span>
+            <span>🧰 软件库</span>
+            <span class="grp-cnt">{{ softwareItems.length }} 项</span>
           </h2>
-          <div v-for="(it, idx) in generalItems" :key="it.key" class="row" :class="{ first: idx === 0 }">
-            <div class="lbl-col">
-              <div class="k">
-                <code>{{ it.key }}</code>
-                <span v-if="it.is_secret" class="secret-tag">secret</span>
-                <span v-if="!it.is_default" class="custom-tag">已定制</span>
-              </div>
-              <div class="d">{{ it.description }}</div>
-            </div>
-            <div class="inp-col">
-              <label v-if="it.value_type === 'bool'" class="switch">
-                <input type="checkbox" :checked="!!drafts[it.key]"
-                  :disabled="!isAdmin"
-                  @change="setDraft(it.key, ($event.target as HTMLInputElement).checked)" />
-                <span class="sl"></span>
-                <span class="stxt">{{ drafts[it.key] ? 'ON' : 'OFF' }}</span>
-              </label>
-              <template v-else-if="it.value_type === 'secret'">
-                <div class="secret-wrap">
-                  <input :type="showSecrets[it.key] ? 'text' : 'password'"
-                    :value="getInputValue(it)"
-                    :placeholder="it.is_default ? '(使用 .env 默认值)' : '已设置, 留空不改'"
-                    :disabled="!isAdmin"
-                    @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-                  <button class="eye" type="button" @click="showSecrets[it.key] = !showSecrets[it.key]" :title="showSecrets[it.key] ? '隐藏' : '显示'">
-                    {{ showSecrets[it.key] ? '🙈' : '👁' }}
-                  </button>
-                </div>
-              </template>
-              <input v-else
-                :type="it.value_type === 'int' ? 'number' : 'text'"
-                :value="drafts[it.key]"
-                :placeholder="it.description"
-                :disabled="!isAdmin"
-                @input="setDraft(it.key, ($event.target as HTMLInputElement).value)" />
-            </div>
-            <div class="act-col" v-if="isAdmin">
-              <button class="primary" :disabled="!isDirty(it) || !!saving" @click="onSave(it)">
-                {{ saving === it.key ? '保存中…' : '保存' }}
-              </button>
-              <button v-if="isDirty(it)" class="ghost" @click="revert(it)">取消</button>
+          <div class="hint">
+            💡 内部软件的分发配置 —— 软件包存在哪、单包能多大、留几个历史版本、
+            未登录的人能不能下载。改完<strong>立即生效</strong>, 不用重启后端.
+          </div>
+
+          <!-- ⚠️ 存储路径体检 = admin only (后端已收紧) -->
+          <div v-if="isAdmin" class="test-row">
+            <button class="test-btn" :disabled="!!testing" @click="onTest('software-storage')">
+              {{ testing === 'software-storage' ? '体检中…' : '🔌 体检存储目录' }}
+            </button>
+            <div v-if="testResults['software-storage']"
+                 class="test-result" :class="`s-${testResults['software-storage']?.status}`">
+              <span class="dot"></span>
+              <span class="msg">{{ testResults['software-storage']?.message }}</span>
+              <span v-if="testResults['software-storage']?.detail" class="det">{{
+                storageDetailText(testResults['software-storage']?.detail)
+              }}</span>
             </div>
           </div>
+
+          <SettingRow v-for="(it, idx) in softwareItems" :key="it.key"
+            :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+            :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+            :saving="saving === it.key" :secret-display="getInputValue(it)"
+            @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+
+          <div v-if="!isAdmin" class="hint">
+            🔒 存储根目录是<strong>仅管理员可见</strong>的配置 (它是服务端路径) —— 管理员在
+            「体检存储目录」里能看到当前路径和占用情况.
+          </div>
+        </section>
+
+        <section v-if="activeTop === 'sec-general'" :id="'sec-general'" class="card grp">
+          <h2>
+            <span>⚙️ 通用</span>
+            <!-- ⚠️ 计数要算上**数据源** (2026-10-28) ——
+                 原来只数 generalItems (1 项), 下面明明还挂着 4 项数据源,
+                 目录里「通用」的计数也是 5. 两处对不上, 用户以为漏了配置. -->
+            <span class="grp-cnt">{{ generalItems.length + dataSourceItems.length }} 项</span>
+          </h2>
+          <!-- ⚠️ 这里以前是**手抄的一整套 row 模板** (跟 SettingRow 重复) ——
+               后果是 SettingRow 后来加的「描述渲染粗体」「secret 掩码提示」这些
+               改进, 通用组全都吃不到. 现在统一用 SettingRow, 一处改全场生效. -->
+          <SettingRow v-for="(it, idx) in generalItems" :key="it.key"
+            :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+            :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+            :saving="saving === it.key" :secret-display="getInputValue(it)"
+            @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
 
           <!-- 📡 数据源 (RAGFlow / ReviewAgent 统一配置入口, 按 prefix 分组) -->
           <div id="sec-general-data-source" class="sub-grp">
@@ -230,7 +256,7 @@
             <strong>市场群</strong>收「上架成功」「版本更新」「彻底下架」(都 @所有人)
             和「审核不通过」(只 @发布者)。
             两个群的 webhook / 加签密钥 / 关键词各配各的 —— 测试环境可以把两边配成一样的。
-            <br />下架要走审核: 申请阶段通知**审核群**, 等管理员确认、资产真的被移除才在**市场群**通知一次。
+            <br />下架要走审核: 申请阶段通知<b>审核群</b>, 等管理员确认、资产真的被移除才在<b>市场群</b>通知一次。
             配好 webhook 后点对应的「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
           </div>
 
@@ -299,13 +325,14 @@
         </div>
       </main>
     </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { getSchema, updateSetting, testRagflow, testReviewAgent, testDingTalk, testGitLab, type SettingItem, type TestResult } from '@/api/settings';
+import { getSchema, updateSetting, testRagflow, testReviewAgent, testDingTalk, testGitLab, testSoftwareStorage, type SettingItem, type TestResult } from '@/api/settings';
 import { getMarketConfig, listNotifications, type AssetNotification } from '@/api/assets';
 import { listUsers, type ManagedUser } from '@/api/users';
 import SettingRow from './components/SettingRow.vue';
@@ -315,6 +342,15 @@ import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 const userStore = useUserStore();
 const isAdmin = computed(() => userStore.user?.role === 'admin');
+
+/** 角色 → 中文 (「仅管理员可见」那句提示里用) */
+const roleText = computed(() => {
+  const r = userStore.user?.role;
+  if (r === 'admin') return '管理员';
+  if (r === 'tester') return '测试工程师';
+  if (r === 'viewer') return '只读';
+  return '未知角色';
+});
 
 // ===== 账号管理 (仅 admin) =====
 // 账号列表的**唯一数据源** —— 建号/停用/改角色之后都靠 loadUsers() 重新拉.
@@ -369,6 +405,9 @@ const generalItems = computed(() => itemsByCategory('general'));
 const notificationItems = computed(() => itemsByCategory('notification'));
 // 资产市场 (GitLab 仓库 / 安装目录 / 发布白名单 / 对外暴露方式)
 const marketItems = computed(() => itemsByCategory('marketplace'));
+// 软件库 (存储根目录 / 单包上限 / 保留版本数 / 公开下载)
+// ⚠️ 2026-10-28: 这一组后端一直有, 前端一直没渲染 —— 补上.
+const softwareItems = computed(() => itemsByCategory('software'));
 
 // 市场当前生效的配置 (只读, 用来展示"工作区在哪 / 远端是哪个")
 const marketWorkspace = ref('');
@@ -483,6 +522,8 @@ const sections = computed<TocSection[]>(() => {
     ],
   },
   { id: 'sec-capability',   icon: '🗂️', label: '能力墙', count: marketItems.value.length, children: [] },
+  // ⚠️ 软件库的配置 (存储路径 / 大小上限 / 版本保留) —— 跟「能力墙」里的资产市场是一对
+  { id: 'sec-software',     icon: '🧰', label: '软件库', count: softwareItems.value.length, children: [] },
   { id: 'sec-general',      icon: '⚙️', label: '通用',   count: generalItems.value.length + dataSourceItems.value.length, children: [
     { id: 'sec-general-data-source', label: '📡 数据源', count: dataSourceItems.value.length },
   ] },
@@ -506,6 +547,8 @@ function onPickTop(topId: string) {
   if (topId === 'sec-notification') loadNotifyLog();
   // 资产市场区展示当前生效的工作区/远端
   if (topId === 'sec-capability') loadMarketConfig();
+  // 软件库区体检存储目录 (admin only)
+  if (topId === 'sec-software' && isAdmin.value) onTest('software-storage');
   // 用户管理区拉账号列表
   if (topId === 'sec-users') loadUsers();
 }
@@ -613,7 +656,34 @@ const _testClients: Record<string, () => Promise<TestResult>> = {
   'dingtalk-market': () => testDingTalk('market'),
   'dingtalk-review': () => testDingTalk('review'),
   'gitlab': testGitLab,
+  // 软件库存储目录体检 (admin only)
+  'software-storage': testSoftwareStorage,
 };
+
+/**
+ * 存储目录体检结果的补充说明 —— 路径 + 来源 + 缺多少文件.
+ *
+ * ⚠️ 为什么不直接 JSON.stringify: 那是一坨原始字段, 用户看不懂.
+ *    这里挑出"这个路径是哪来的" (设置项 / 环境变量 / 默认) 和"缺几个文件",
+ *    剩下的数字太细就不显示了.
+ */
+function storageDetailText(detail: any): string {
+  if (!detail || typeof detail !== 'object') return '';
+  const parts: string[] = [];
+  if (detail.root) parts.push(`路径 ${detail.root}`);
+  if (detail.source) {
+    const srcMap: Record<string, string> = {
+      setting: '来自设置项',
+      env: '来自环境变量',
+      default: '默认值（都没配）',
+    };
+    parts.push(srcMap[detail.source] || detail.source);
+  }
+  if (detail.missing_count) {
+    parts.push(`缺 ${detail.missing_count} 个版本的文件`);
+  }
+  return parts.join(' · ');
+}
 async function onTest(testKey: string) {
   const fn = _testClients[testKey];
   if (!fn) return;

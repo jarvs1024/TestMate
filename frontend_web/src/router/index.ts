@@ -41,7 +41,11 @@ export const routes: RouteRecordRaw[] = [
         //    跟「插件·技能·连接」(GitLab 里的文本包) 在存储/权限/审核三个维度都不同.
         { path: 'software', name: 'software', meta: { title: '软件库', lede: '公司内部软件的统一入口 —— 功能 / 详情 / 适用场景 / 发布与更新说明' }, component: () => import('@/views/Software/index.vue') },
 
-        { path: 'settings', name: 'settings', meta: { title: '设置', lede: '平台配置 · 账号管理 · RAGFlow / ReviewAgent —— 改完立刻生效, 不需重启' }, component: () => import('@/views/Settings/index.vue') },
+        // ⚠️ **adminOnly** (2026-10-28): 设置页整个只给管理员.
+        //    设置项里全是平台级配置 (存储路径 / 仓库地址 / 审核白名单 / 账号管理),
+        //    非管理员进来既改不了, 又会看到一堆"看得见摸不着"的只读项 —— 纯干扰.
+        //    守卫在这里拦 (不渲染页面), 菜单里也不出现入口 (见 UserMenu.vue).
+        { path: 'settings', name: 'settings', meta: { title: '设置', adminOnly: true, lede: '平台配置 · 账号管理 · RAGFlow / ReviewAgent —— 改完立刻生效, 不需重启' }, component: () => import('@/views/Settings/index.vue') },
       ],
     },
 ];
@@ -57,6 +61,12 @@ router.beforeEach((to, _from, next) => {
   const userStore = useUserStore();
   if (to.meta.requiresAuth && !userStore.token) {
     next({ name: 'login', query: { redirect: to.fullPath } });
+  } else if (to.meta.adminOnly && !userStore.isAdmin) {
+    // ⚠️ 非管理员进设置页 → 踢回工作台 (2026-10-28).
+    //    不能只靠"菜单里不显示入口" —— 用户可以手敲 /settings 或者收藏旧书签.
+    //    ⚠️ 用 replace 而不是 push —— 免得浏览器后退又回到设置页, 再被踢一次,
+    //    用户卡在"后退 → 跳转 → 后退"的死循环里.
+    next({ name: 'home', replace: true });
   } else {
     next();
   }

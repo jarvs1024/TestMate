@@ -24,6 +24,9 @@ ADMIN_ONLY_KEYS = (
     "marketplace.git.remote",
     "marketplace.git.branch",
     "marketplace.publisher_roles",
+    # ⚠️ 2026-10-28: 软件库的存储根目录 —— **服务端文件路径**,
+    #    泄露等于告诉别人服务的目录结构. 显式标了 admin_only.
+    "software.storage_path",
 )
 
 

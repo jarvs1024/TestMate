@@ -1,6 +1,7 @@
 """/api/v1/settings — DB-backed 配置读写 + 测试连接."""
 from __future__ import annotations
 import logging
+import os
 import re
 from urllib.parse import parse_qs, urlencode, urlunparse, urlparse
 from typing import Any
@@ -106,6 +107,9 @@ async def get_schema(user: User = Depends(get_current_user)) -> dict:
             "value_type": s["value_type"],
             "description": s["description"],
             "is_secret": s["is_secret"],
+            # ⚠️ default 也**掩码** —— secret 项的默认值可能本身就是一个凭据
+            #    (比如 .env 里写死的 api_key). 掩码跟 value 用同一套规则.
+            "default": _mask(s["default"], s["is_secret"]),
             # "已定制" = 当前值跟默认值不一样 (bool 要按语义比, 不能拿 False == "false")
             "is_default": _is_default(raw, s["default"], s["value_type"]),
         }
@@ -271,6 +275,90 @@ async def test_review_agent(user: User = Depends(get_current_user)) -> SettingTe
     if status == "ok":
         return SettingTestOut(ok=True, status="ok", message=f"连通 · {msg}", detail=None)
     return SettingTestOut(ok=False, status="warn", message=f"不可读: {msg}", detail=None)
+
+@router.post("/test/software_storage", response_model=SettingTestOut)
+async def test_software_storage(user: User = Depends(get_current_user)) -> SettingTestOut:
+    """体检**软件库存储根目录** —— 能不能写、还剩多少空间、哪些版本的文件丢了.
+
+    ⚠️ 为什么单独做一个端点 (而不是让前端去调 /software/path-check):
+       · 那个接口返回的是**软件库领域**的结构 (missing 列表带 code/version),
+         设置页要的是**能不能用**的一句话结论 + 缺文件的数量;
+       · 设置页是"改配置"的地方, 改完存储路径最想知道的是
+         "这个路径能不能写" —— 写不了的话传文件必然失败, 但没人在传之前就知道.
+
+    ⚠️ admin only —— 存储根目录是**服务端路径**, 泄露等于告诉别人目录结构.
+    """
+    if user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+
+    from app.core import software_store
+    from app.core.settings_store import get
+    from app.db.session import AsyncSessionLocal
+    from app.models.software import SoftwareVersion
+    from sqlalchemy import select
+
+    configured = await get("software.storage_path", "") or ""
+    root = software_store.resolve_root(configured)
+    info = software_store.usage_info(root)
+
+    if not info["exists"]:
+        return SettingTestOut(
+            ok=False, status="warn",
+            message=f"目录不存在: {root} —— 建出来或者换个已经存在的路径",
+            detail={"root": str(root), "exists": False},
+        )
+    if not info["writable"]:
+        return SettingTestOut(
+            ok=False, status="warn",
+            message=f"目录存在但不可写: {root} —— 权限不对 (容器里通常是没挂卷)",
+            detail={"root": str(root), "writable": False},
+        )
+
+    # 有多少版本的文件真的在盘上? (换过存储根目录的话会缺)
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(SoftwareVersion).where(SoftwareVersion.status == "ready")
+            )
+        ).scalars().all()
+    missing = [v for v in rows if not software_store.file_exists(root, v.file_path)]
+
+    # ⚠️ **两个"占用"是两回事** (2026-10-28 踩过):
+    #   · software_store.used_bytes(root) —— 软件库目录**自己**占了多少
+    #   · info["used_bytes"]              —— 整块磁盘的已用 (disk_usage)
+    #     拿错的话会显示"软件库占了 725GB" —— 那是整块盘.
+    lib_bytes = software_store.used_bytes(root)
+    free_gb = int(info["free_bytes"]) / 1024 / 1024 / 1024
+    lib_gb = lib_bytes / 1024 / 1024 / 1024
+    detail = {
+        "root": str(root),
+        "exists": True,
+        "writable": True,
+        "used_bytes": int(lib_bytes),
+        "free_bytes": int(info["free_bytes"]),
+        "missing_count": len(missing),
+        "missing": [
+            {"version": v.version, "code": v.file_path.split("/")[0]}
+            for v in missing[:50]
+        ],
+        # 设置项 / 环境变量 / 默认 —— 让管理员知道这个路径**是哪来的**
+        "source": (
+            "setting" if configured.strip()
+            else ("env" if (os.environ.get("SOFTWARE_STORAGE_PATH") or "").strip() else "default")
+        ),
+    }
+    if missing:
+        return SettingTestOut(
+            ok=False, status="warn",
+            message=f"可写, 但有 {len(missing)} 个版本的文件不在这个目录里 (换过根目录?)",
+            detail=detail,
+        )
+    return SettingTestOut(
+        ok=True, status="ok",
+        message=f"可写 · 软件库已占 {lib_gb:.1f} GB / 磁盘剩余 {free_gb:.1f} GB · 文件都在",
+        detail=detail,
+    )
+
 
 @router.get("/embed/{key:path}", response_model=EmbedOut)
 async def build_embed_url(

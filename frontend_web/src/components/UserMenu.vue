@@ -21,7 +21,10 @@
              · 「设置」: 设置页所有接口都要登录, 未登录点进去必然被踢回登录页.
              跟 2026-10-25 那次删死路一个道理 —— 点了没用的菜单项比没有更糟.
              所以未登录时这一格只留「登录」, 登录完菜单自然变成 设置 + 退出登录. -->
-        <el-dropdown-item v-if="loggedIn" divided command="settings">设置</el-dropdown-item>
+        <!-- ⚠️ 「设置」只给 admin (2026-10-28) —— 设置页整个是 adminOnly.
+             非管理员进来既改不了, 又是一堆只读项, 纯干扰. 路由守卫也会拦一道
+             (手敲地址 / 旧书签都进不去) —— 这里是把**入口**藏掉. -->
+        <el-dropdown-item v-if="loggedIn && isAdmin" divided command="settings">设置</el-dropdown-item>
         <el-dropdown-item v-if="loggedIn" command="logout">退出登录</el-dropdown-item>
         <el-dropdown-item v-else divided command="login">登录</el-dropdown-item>
       </el-dropdown-menu>
@@ -48,6 +51,8 @@ const initial = computed(() => (userStore.user?.username || '?')[0]?.toUpperCase
  *   跟 views/Home/index.vue 的 loggedIn 同一口径.
  */
 const loggedIn = computed(() => userStore.isLoggedIn);
+/** 是不是管理员 —— 决定「设置」入口出不出现 (2026-10-28) */
+const isAdmin = computed(() => userStore.isAdmin);
 
 function roleText(r?: string) {
   if (r === 'admin') return '管理员';
