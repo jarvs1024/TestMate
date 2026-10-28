@@ -495,6 +495,7 @@ async def list_categories(_user: User = Depends(get_current_user)) -> dict[str, 
     ⚠️ 返回的是**完整分类表** (含计数为 0 的) —— 前端据此动态渲染筛选 chip.
     以前前端硬编码 7 个分类, 用户自建的分类**没有 chip** → 筛不出来 (孤儿分类).
     """
+    from app.core import market_categories
     from app.core.market_categories import table as category_table
 
     async with AsyncSessionLocal() as session:
@@ -509,7 +510,12 @@ async def list_categories(_user: User = Depends(get_current_user)) -> dict[str, 
     for cat, k in rows:
         if not cat:
             continue
-        counts.setdefault(cat, {})[k] = counts.setdefault(cat, {}).get(k, 0) + 1
+        # ⚠️ 计数前先**归一化** —— DB 里可能还留着旧分类名 (迁移没跑完 / 别的实例写的旧值).
+        #    不归一的话, 每个旧名字都会变成一个"未归类"的孤儿 chip:
+        #    同一批资产被拆到 7 个没人认识的 chip 上, 且 chip 显示的是旧口径的名字.
+        #    归一后旧名自动折叠进对应的新分类, 前端只认这 5 类.
+        name = market_categories.normalize(cat)
+        counts.setdefault(name, {})[k] = counts.setdefault(name, {}).get(k, 0) + 1
 
     items = []
     for c in category_table():

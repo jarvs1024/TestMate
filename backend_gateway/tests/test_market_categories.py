@@ -171,3 +171,80 @@ def test_fallback_by_old_category_is_consistent():
     valid = {n for _, n in EXPECTED}
     for old, target in mod.FALLBACK_BY_OLD.items():
         assert target in valid, f"旧分类 {old} → {target} 不是正式分类"
+
+
+def test_unpublish_list_only_contains_known_assets():
+    """下架名单里的资产必须真实存在 —— 否则是打错字, 白改."""
+    mod = _load_migration_module()
+    unknown = mod.UNPUBLISH - set(CURRENT_ASSETS)
+    assert not unknown, f"下架名单里有不存在的资产: {unknown}"
+    assert mod.UNPUBLISH, "下架名单不该是空的"
+
+
+def test_copy_patches_only_touch_known_assets():
+    """文案补丁只能改真实存在的资产."""
+    mod = _load_migration_module()
+    unknown = set(mod.COPY_PATCHES) - set(CURRENT_ASSETS)
+    assert not unknown, f"文案补丁里有不存在的资产: {unknown}"
+
+
+# ---------- 种子脚本与迁移表必须一致 ----------
+
+def _load_seed_module():
+    """加载 scripts/seed_market.py (种子资产定义)."""
+    root = Path(__file__).resolve().parents[2]
+    path = root / "scripts" / "seed_market.py"
+    spec = importlib.util.spec_from_file_location("seed_market", path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_seed_categories_match_migration_table():
+    """种子里的分类必须跟迁移表一致.
+
+    ⚠️ 这两处**必须一样**: 种子是"新环境怎么长出这个市场"的说明书,
+       迁移表是"现有市场怎么改过来"的说明书. 说的不是一回事 = 迟早漂移.
+    """
+    seed = _load_seed_module()
+    mod = _load_migration_module()
+    by_code = {a["code"]: a for a in seed.ASSETS}
+    for code, target in mod.TARGET_CATEGORY.items():
+        if code not in by_code:
+            continue  # 故意不种的 (已下架的连接器) 不在种子里
+        assert by_code[code]["category"] == target, (
+            f"{code}: 种子写的是「{by_code[code]['category']}」, 迁移表写的是「{target}」"
+        )
+
+
+def test_seed_copy_matches_migration_patches():
+    """种子里的文案必须跟迁移补丁一致 (否则新环境灌出来的话跟线上不一样)."""
+    seed = _load_seed_module()
+    mod = _load_migration_module()
+    by_code = {a["code"]: a for a in seed.ASSETS}
+    for code, patch in mod.COPY_PATCHES.items():
+        if code not in by_code:
+            continue
+        for field, want in patch.items():
+            got = by_code[code].get(field)
+            assert got == want, f"{code}.{field}: 种子写的是 {got!r}, 迁移补丁是 {want!r}"
+
+
+def test_seed_has_no_orphan_or_dead_assets():
+    """种子里不能有: ① 已下架的资产 ② 指向已下线服务的资产.
+
+    ⚠️ 这两条都是踩过的坑:
+       · kb-search 指向已下线的 RAGFlow —— 再灌一次就把死连接器又造出来了
+       · pr-agent-review / testmate-machine-ops 的目标服务不在部署范围内 —— 已下架
+    """
+    seed = _load_seed_module()
+    mod = _load_migration_module()
+    codes = {a["code"] for a in seed.ASSETS}
+    assert not (mod.UNPUBLISH & codes), f"种子里不该有已下架的资产: {mod.UNPUBLISH & codes}"
+    assert "kb-search" not in codes, "kb-search 指向已下线的 RAGFlow, 不该再种"
+    # 连接器必须显式写 mcp_server (别让脚本兜一个连不上的默认 url)
+    for a in seed.ASSETS:
+        if a["kind"] == "mcp":
+            assert a.get("mcp_server"), f"{a['code']}: 连接器必须显式写 mcp_server"
+

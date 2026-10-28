@@ -315,6 +315,35 @@ async def test_categories_endpoint_never_crashes(client, auth):
     assert isinstance(r.json()["items"], list)
 
 
+async def test_categories_fold_legacy_names_into_new_table(client, auth):
+    """DB 里还留着**旧分类名**的资产 → 计数要折进对应的新分类, 不能多出孤儿 chip.
+
+    ⚠️ 2026-10-26 分类重排踩过: 迁移没跑完 (或别的实例写的旧值) 时,
+       每个旧名字都会变成一个"未归类"的 chip —— 同一批资产被拆到 7 个
+       没人认识的 chip 上, 筛选也跟着乱.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        s.add(Asset(
+            code="legacy-cat-demo", name="老分类资产", icon="🧩", kind="skill",
+            version="1.0.0", category="质量诊断", publish_status="published",
+            author="admin_t", git_path="assets/skills/diagnose/legacy-cat-demo",
+        ))
+        await s.commit()
+
+    items = (await client.get(f"{API}/categories", headers=auth)).json()["items"]
+    names = {i["name"] for i in items}
+    assert "质量诊断" not in names, "旧分类名不该再单独占一个 chip"
+    assert "环境运维" not in names
+    # 折进新分类, 且计数对得上
+    by_name = {i["name"]: i for i in items}
+    assert by_name["质量保障"]["total"] >= 1
+    # chip 总数就是分类表那一套 (5 类), 不多不少
+    assert names == {"质量保障", "效率工具", "流程规范", "管理协同", "其他"}, names
+
+
 async def test_projects_endpoint_never_crashes(client, auth):
     r = await client.get(f"{API}/projects", headers=auth)
     assert r.status_code == 200
