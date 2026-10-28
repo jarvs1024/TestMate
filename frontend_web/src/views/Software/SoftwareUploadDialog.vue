@@ -15,10 +15,19 @@
           <button type="button" class="pick-btn" @click="fileInput?.click()">
             <span class="pb-ic">📦</span>选择软件包
           </button>
-          <span v-if="file" class="file-chip">
-            {{ file.name }}<b @click="clearFile">×</b>
+          <!-- ⚠️ 这里**不能**用两个兄弟节点的 v-if / v-else (chip 一个 / hint 一个):
+               选中文件时 chip 的分支会**替换**掉 hint 那个节点, Vue 的兄弟节点 patch
+               会把 input 一起挪动 —— input 的 change 监听器就此失灵,
+               **选了文件界面却毫无反应** (2026-10-28 踩过).
+               改成**一个元素内部**用 template v-if 切换文字, DOM 骨架不动. -->
+          <span class="file-chip" :class="{ 'is-empty': !file }">
+            <template v-if="file">
+              {{ file.name }}<b @click="clearFile">×</b>
+            </template>
+            <template v-else>
+              <span class="pick-hint">未选择文件 (可以拖进来)</span>
+            </template>
           </span>
-          <span v-else class="pick-hint">未选择文件 (可以拖进来)</span>
         </div>
         <p class="hint">
           任意格式都行 (exe / zip / tar.gz / deb …), 单个最大
@@ -68,7 +77,9 @@
             <el-input v-model="form.version" maxlength="32" placeholder="如 1.0.0" />
           </el-form-item>
           <el-form-item label="适用平台">
-            <el-select v-model="form.platform" style="width:100%">
+            <!-- ⚠️ 必须给中文 placeholder —— Element Plus 默认是英文 "Select",
+                 整个界面都是中文, 夹一个英文下拉框很扎眼 -->
+            <el-select v-model="form.platform" style="width:100%" placeholder="不限">
               <el-option v-for="p in PLATFORMS" :key="p.value" :value="p.value" :label="p.label" />
             </el-select>
           </el-form-item>
@@ -174,10 +185,15 @@ const emit = defineEmits<{
 
 const mode = computed(() => props.mode || 'create');
 
-const form = ref({
-  code: '', name: '', icon: '🧰', version: '1.0.0', summary: '', description: '',
-  use_when: '', not_for: '', platform: '', category: '', tags: '', keywords: '',
-});
+/** 新建软件时的空表单 —— 每次打开抽屉都回到这个状态 */
+function emptyForm() {
+  return {
+    code: '', name: '', icon: '🧰', version: '1.0.0', summary: '', description: '',
+    use_when: '', not_for: '', platform: '', category: '', tags: '', keywords: '',
+  };
+}
+
+const form = ref(emptyForm());
 const versionForm = ref({ version: '' });
 const featuresText = ref('');
 const tagsText = ref('');
@@ -212,14 +228,59 @@ async function loadConfig() {
   }
 }
 
-watch(() => props.modelValue, (open) => {
-  if (!open) return;
+/**
+ * 清掉**浏览器里**残留的文件列表.
+ *
+ * ⚠️ 2026-10-28 踩到的真 bug: 只清 Vue 状态 (file.value = null) 是不够的 ——
+ *    input.files 里还留着上一次选的文件. 浏览器判断"文件列表没变"时
+ *    **不会**再派发 change 事件 → onPick 不跑 → 用户以为自己换了新文件,
+ *    实际提交的还是上一次的旧文件 (界面上的文件名也会停在旧的).
+ *    必须 input.value = '' 把浏览器那份也清掉, 再选同一个文件才会重新派发 change.
+ */
+function clearDomFile() {
+  const el = fileInput.value;
+  if (el) el.value = '';
+}
+
+/**
+ * 草稿重置 —— **在抽屉关闭时**做, 不是打开时.
+ *
+ * ⚠️ 2026-10-28 踩过的坑: 原来在「打开」时清 file.value, 结果**文件选不上了** ——
+ *    打开的瞬间改 file 会让 Vue 立刻 patch 掉刚挂上的 DOM,
+ *    紧接着的 file input 选择事件就丢了 (e2e 里 uploadFile 后 change 没触发,
+ *    手动 dispatch 才生效). 挪到关闭时做就没有这个问题 ——
+ *    下次打开时状态早就是干净的, 打开本身不做任何会改 DOM 的事.
+ */
+function resetDraft() {
   formError.value = '';
   fileError.value = '';
   codeError.value = '';
   versionError.value = '';
   percent.value = 0;
   uploadedBytes.value = 0;
+  // ① 发新版本时, 上一版的「发布与更新说明」会被带进新版本的表单 ——
+  //    用户以为在写新说明, 实际提交的是上一版的文字;
+  // ② 上传完 A 软件再去上传 B 软件, A 的「功能清单 / 标签 / 名称 / 文件」会带过去 ——
+  //    看着像填好了, 实际提交的是别的软件的内容.
+  releaseNotes.value = '';
+  featuresText.value = '';
+  tagsText.value = '';
+  file.value = null;
+  clearDomFile();
+  // ⚠️ 必须**逐字段**重置, 不能整个换对象 ——
+  //    `form.value = emptyForm()` 换掉整个 ref 后, el-input 绑定的旧值
+  //    不会同步到 DOM (输入框里还留着上一次的简介), 看着像没清干净.
+  Object.assign(form.value, emptyForm());
+  versionForm.value = { version: '' };
+}
+
+watch(() => props.modelValue, (open) => {
+  if (!open) {
+    resetDraft();
+    return;
+  }
+  // 打开时也清一次浏览器那份 (首次挂载时本来就没有, 重复清是幂等的)
+  clearDomFile();
   loadConfig();
   if (mode.value === 'version') {
     const cur = props.item?.version || '';
@@ -393,6 +454,8 @@ async function submit() {
   border-radius: var(--radius-sm); font-family: var(--font-mono);
 }
 .file-chip b { cursor: pointer; color: var(--ink-500); }
+/* 空状态: 别带 chip 的底色 —— 那看着像"已经选了一个文件" */
+.file-chip.is-empty { background: transparent; padding: 4px 0; }
 .pick-hint { font-size: 12px; color: var(--ink-500); }
 .pick-err { margin: 0; font-size: 11.5px; color: var(--err); }
 .hint { margin: 0; font-size: 11px; color: var(--ink-500); line-height: 1.6; }

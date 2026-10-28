@@ -202,6 +202,16 @@ const FILE_NAME = `${CODE}.bin`;
     }
 
     // ---------- 发新版本 ----------
+    // ⚠️ 2026-10-28: 两个要点.
+    //    ① 新版本要用**内容不同**的文件, 并断言新版本记的 sha256 是新内容的 ——
+    //       否则"用户选了新文件、实际传的还是旧文件"这种错位抓不到.
+    //    ② 更新说明必须是**空的** —— 打开发新版本抽屉时不能带上上一版的说明.
+    //       (以前抽屉里的草稿不清, 上一版的说明会直接躺在新版本的输入框里.)
+    const PAYLOAD2 = Buffer.concat([PAYLOAD, Buffer.from('\n-- v2 增加了 CSV 导出 --\n')]);
+    const PAYLOAD2_SHA = crypto.createHash('sha256').update(PAYLOAD2).digest('hex');
+    const srcFile2 = path.join(tmpDir, `${CODE}-v2.bin`);
+    fs.writeFileSync(srcFile2, PAYLOAD2);
+
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('.sw-drawer button')]
         .find((b) => (b.textContent || '').includes('发新版本'));
@@ -209,10 +219,29 @@ const FILE_NAME = `${CODE}.bin`;
     });
     await page.waitForSelector('.sw-up-drawer input[type=file]', { timeout: 10000 });
     await sleep(600);
+
+    check('E20a 发新版本时「更新说明」是空的 (不带上版的)',
+      await page.evaluate(() => {
+        const ta = [...document.querySelectorAll('.sw-up-drawer textarea')]
+          .find((t) => (t.placeholder || '').includes('这次改了什么'));
+        return !!ta && ta.value.trim() === '';
+      }),
+      await page.evaluate(() => {
+        const ta = [...document.querySelectorAll('.sw-up-drawer textarea')]
+          .find((t) => (t.placeholder || '').includes('这次改了什么'));
+        return ta ? JSON.stringify(ta.value) : '(找不到输入框)';
+      }));
+
     await setValue('这次改了什么', '第二个版本: 加了 CSV 导出');
     const fileInput2 = await page.$('.sw-up-drawer input[type=file]');
-    await fileInput2.uploadFile(srcFile);
+    await fileInput2.uploadFile(srcFile2);
     await sleep(400);
+    check('E21a 发新版本时抽屉里选中了文件',
+      await page.evaluate((c) => {
+        const chip = document.querySelector('.file-chip')?.textContent || '';
+        return chip.includes(c) && !chip.includes('未选择文件');
+      }, CODE),
+      await page.evaluate(() => document.querySelector('.file-chip')?.textContent?.trim() || ''));
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('.sw-up-drawer button, .up-foot button')]
         .find((b) => (b.textContent || '').includes('发布新版本'));
@@ -220,6 +249,18 @@ const FILE_NAME = `${CODE}.bin`;
     });
     // 等抽屉刷新 (发完新版本后详情抽屉要自动重读 —— 否则用户看到的是旧的版本历史)
     await sleep(4000);
+
+    // 新版本记的 sha256 必须是**新内容**的, 不能是旧文件的
+    const v2Sha = await page.evaluate(async (c) => {
+      const t = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/software/' + c, { headers: { Authorization: 'Bearer ' + t } });
+      const d = await r.json();
+      const v = (d.versions || []).find((x) => x.version === '1.0.1');
+      return v ? v.sha256 : '';
+    }, CODE);
+    check('E21b 新版本记录的 sha256 是新内容的 (不是旧文件的)',
+      v2Sha === PAYLOAD2_SHA && v2Sha !== PAYLOAD_SHA,
+      `新 ${v2Sha.slice(0, 12)} / 旧 ${PAYLOAD_SHA.slice(0, 12)}`);
 
     const after = await page.evaluate(() => {
       const d = document.querySelector('.sw-drawer');

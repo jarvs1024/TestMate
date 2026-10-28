@@ -214,9 +214,20 @@ async function openDetail(item: SoftwareItem) {
   drawerOpen.value = true;
 }
 
+/**
+ * 发新版本.
+ *
+ * ⚠️ 2026-10-28 修: 以前直接开上传抽屉, 结果**两个抽屉叠在一起** ——
+ *    el-drawer 的 z-index 是"打开时递增"分配的, 同一个抽屉实例(create → version)
+ *    复用第一次的 z-index, 比详情抽屉小 → **发新版本的表单被详情抽屉压住**,
+ *    用户点了"发新版本"却只看见详情. 现在先把详情抽屉关掉再开.
+ */
 async function openVersion(item: SoftwareDetail) {
   currentItem.value = item;
   uploadMode.value = 'version';
+  drawerOpen.value = false;
+  // 等详情抽屉的关闭动画走完, 再开上传抽屉 (否则两层会闪一下)
+  await new Promise((r) => setTimeout(r, 320));
   uploadOpen.value = true;
 }
 
@@ -230,9 +241,12 @@ async function onDone() {
   await loadCategories();
   // 详情抽屉开着的话, 刷新一下它 (版本历史变了)
   detailRefreshKey.value += 1;
-  if (drawerOpen.value && currentCode.value) {
+  if (currentCode.value) {
     try {
       currentItem.value = await getSoftware(currentCode.value);
+      // 发新版本完成后**回到详情抽屉** —— 用户能直接看到版本历史多了条,
+      // 不用自己再点开卡片 (发版时详情抽屉是先关掉的, 见 openVersion).
+      drawerOpen.value = true;
     } catch {
       /* 读不到就算了, 抽屉里显示旧数据 */
     }
