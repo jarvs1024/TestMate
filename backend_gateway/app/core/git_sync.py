@@ -648,15 +648,29 @@ def sync_paths_blocking(
     paths: list[str],
     message: str,
     author: tuple[str, str],
+    commit_paths: list[str] | None = None,
 ) -> SyncResult:
-    """把指定路径 commit + push. 阻塞版本 (在线程里跑)."""
+    """把指定路径 commit + push. 阻塞版本 (在线程里跑).
+
+    ⚠️ `commit_paths` 与 `paths` 分开, 是为了**目录搬家**这种场景:
+       资产从 `assets/skills/diagnose/x` 搬到 `assets/skills/quality/x` 时,
+       `git mv` 已经把旧路径从索引里删掉了 —— 这时
+         · `git add -A -- <旧路径>` 会直接失败:
+           "pathspec did not match any files" (旧路径既不在索引也不在工作区)
+         · 但 `git commit -- <旧路径> <新路径>` **是好的** ——
+           提交用的临时索引是 "HEAD + pathspec 对应的工作区内容",
+           旧路径的删除已经在索引里, 会一起进这次提交.
+       所以: `paths` 给**还能 add 的**路径 (新路径 + index.json),
+       `commit_paths` 给**要进提交**的路径 (新路径 + 旧路径 + index.json).
+       不传就等于两者相同 (原来的行为).
+    """
     with _FileLock(LOCK_FILE):
         ensure_workspace()
         # ⚠️ 记下 commit **之前**的 HEAD —— push 失败时要靠它把本地那条 commit 撤掉
         #    (否则它会滞留到下次任意 job 的 push, 被悄悄带上远端)
         prev_sha = _head_sha()
         _stage(paths)
-        sha = _commit(message, paths, author)
+        sha = _commit(message, commit_paths or paths, author)
         if not sha:
             # 没有新提交 —— 但可能是「上次提交成功、推送失败」后的重试,
             # 这时**必须继续推**, 否则本地永远领先远端, 资产卡在机器上.
@@ -675,11 +689,13 @@ async def sync_paths(
     paths: list[str],
     message: str,
     author: tuple[str, str],
+    commit_paths: list[str] | None = None,
 ) -> SyncResult:
     """异步版: 进程内锁 + 线程池执行阻塞的 git 操作."""
     async with _async_lock:
         return await asyncio.to_thread(
-            sync_paths_blocking, paths=paths, message=message, author=author
+            sync_paths_blocking, paths=paths, message=message, author=author,
+            commit_paths=commit_paths,
         )
 
 

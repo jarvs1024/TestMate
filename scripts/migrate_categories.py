@@ -221,6 +221,27 @@ def git(ws: Path, *args: str) -> tuple[int, str, str]:
     return p.returncode, p.stdout, p.stderr
 
 
+def _scan_workspace(ws: Path) -> list[tuple[Path, dict]]:
+    """扫出工作区里所有资产的 (manifest 路径, manifest 内容).
+
+    目录结构: assets/{kind}/{slug}/{code}/manifest.json
+
+    ⚠️ 方案要按 **manifest** 算, 不按 DB ——
+       manifest 是 GitLab 里的真源; DB 只是镜像, 两边可能暂时不同步
+       (迁移做一半、或别的实例写过旧值). 按 DB 算会得出空计划, 看着像"没活儿".
+    """
+    out: list[tuple[Path, dict]] = []
+    root = ws / "assets"
+    if not root.is_dir():
+        return out
+    for mf in sorted(root.glob("*/*/*/manifest.json")):
+        try:
+            out.append((mf, json.loads(mf.read_text(encoding="utf-8"))))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return out
+
+
 async def main(apply: bool) -> int:
     load_env()
 
@@ -246,36 +267,53 @@ async def main(apply: bool) -> int:
 
     async with AsyncSessionLocal() as session:
         assets = list((await session.execute(select(Asset).order_by(Asset.code))).scalars().all())
+        db_by_code = {a.code: a for a in assets}
 
         # ===== 1. 算方案 =====
+        # ⚠️ 方案以**工作区**为准, 不是 DB ——
+        #    真源是 GitLab (工作区就是它的本地检出), DB 只是镜像.
+        #    从 DB 算的话: DB 已经迁过、工作区还没迁 (或反过来) 时,
+        #    算出来是空计划 —— 脚本啥也不干, 看着像"没活儿", 其实根本没迁完.
         plan: list[dict] = []
         unmapped: list[str] = []
-        for a in assets:
-            target = TARGET_CATEGORY.get(a.code)
+        for mf_path, mdata in _scan_workspace(ws):
+            code = mdata.get("code") or ""
+            kind = mdata.get("kind") or ""
+            old_cat = mdata.get("category") or ""
+            old_path = str(mf_path.parent.relative_to(ws))
+            target = TARGET_CATEGORY.get(code)
             if not target:
-                target = FALLBACK_BY_OLD.get(a.category or "", "其他")
-                unmapped.append(a.code)
+                target = FALLBACK_BY_OLD.get(old_cat, "其他")
+                unmapped.append(code)
             if target not in market_categories.names():
-                print(f"❌ 目标分类 '{target}' 不在分类表里: {a.code}")
+                print(f"❌ 目标分类 '{target}' 不在分类表里: {code}")
                 return 1
-            new_path = asset_git_path(a.kind, target, a.code)
+            new_path = asset_git_path(kind, target, code)
             # 文案补丁: 只算**真的有差异**的字段 (少改一处就少一处不一致的风险)
             copy_changes = {
-                k: v for k, v in COPY_PATCHES.get(a.code, {}).items()
-                if getattr(a, k, None) != v
+                k: v for k, v in COPY_PATCHES.get(code, {}).items()
+                if mdata.get(k) != v
             }
             # 下架: 状态也要变 —— 分类对了但还在架上, 等于没下
-            unpublish = a.code in UNPUBLISH and (a.publish_status or "published") != "unpublished"
-            if (new_path == a.git_path and (a.category or "") == target
-                    and not copy_changes and not unpublish):
+            unpublish = code in UNPUBLISH and (mdata.get("publish_status") or "published") != "unpublished"
+            if new_path == old_path and not copy_changes and not unpublish:
                 continue
             plan.append({
-                "code": a.code, "kind": a.kind,
-                "old_cat": a.category or "", "new_cat": target,
-                "old_path": a.git_path, "new_path": new_path,
+                "code": code, "kind": kind,
+                "old_cat": old_cat, "new_cat": target,
+                "old_path": old_path, "new_path": new_path,
                 "copy": copy_changes,
                 "unpublish": unpublish,
             })
+
+        # 工作区里有、DB 里没有的 (或反之) —— 报出来, 别装作没看见
+        ws_codes = {str(d.get("code") or "") for _, d in _scan_workspace(ws)}
+        only_db = set(db_by_code) - ws_codes
+        only_ws = ws_codes - set(db_by_code) - {""}
+        if only_db:
+            print(f"⚠️ 这些资产 DB 里有、工作区里找不到 (可能已被删除): {sorted(only_db)}")
+        if only_ws:
+            print(f"⚠️ 这些资产工作区里有、DB 里没有 (同步一下再迁): {sorted(only_ws)}")
 
         print(f"\n分类表 (新): {', '.join(market_categories.names())}")
         print(f"分支: {branch} · 涉及 {len(plan)}/{len(assets)} 个资产")
@@ -370,14 +408,19 @@ async def main(apply: bool) -> int:
                 print(f"  ✓ 删空目录 {p['old_path']}")
 
         # ===== 6. commit + push =====
-        # ⚠️ pathspec 里**必须同时带上旧路径和新路径**:
-        #    git commit -- <pathspec> 只提交这些路径的当前状态, 不在 pathspec 里的
-        #    暂存内容会被**忽略** —— 旧目录的"删除"记录就是 git mv 暂存出来的,
-        #    漏了它, 远端会同时留着新旧两份目录.
-        paths = sorted({p["new_path"] for p in plan} | {p["old_path"] for p in plan} | {"index.json"})
-        print(f"\n=== commit + push ({len(paths)} 条路径) ===")
+        # ⚠️ **暂存路径**与**提交路径**必须分开:
+        #    · 暂存 (git add -A -- paths) 只给**还能 add 的**路径: 新路径 + index.json.
+        #      旧路径已经被 git mv 从索引里删掉了, 再 add 它会报
+        #      "pathspec did not match any files" —— 整个提交直接失败.
+        #    · 提交 (git commit -- paths) 要给**新 + 旧 + index.json**:
+        #      提交的临时索引 = HEAD + pathspec 对应的工作区内容,
+        #      旧路径的删除记录在索引里, 不显式带上它, 远端就会**同时留着新旧两份目录**.
+        stage_paths = sorted({p["new_path"] for p in plan} | {"index.json"})
+        commit_paths = sorted(set(stage_paths) | {p["old_path"] for p in plan})
+        print(f"\n=== commit + push (暂存 {len(stage_paths)} 条 / 提交 {len(commit_paths)} 条) ===")
         result = git_sync.sync_paths_blocking(
-            paths=paths,
+            paths=stage_paths,
+            commit_paths=commit_paths,
             message="refactor(market): 分类整改 —— 改成按协作角色划分 (质量保障/效率工具/流程规范/管理协同)",
             author=("market-migrate", "market-migrate@testmate.internal"),
         )
