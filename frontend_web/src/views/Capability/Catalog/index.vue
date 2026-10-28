@@ -385,16 +385,22 @@ async function loadProjects() {
     refreshFilterError();
   }
 }
-async function loadCategories() {
+async function loadCategories(silent = false) {
   try {
     const r = await listCategories();
     categories.value = (r?.items || []) as typeof categories.value;
     filterErrors.categories = '';
     refreshFilterError();
   } catch (e: any) {
-    /* 分类表拿不到就不显示 chip —— 但要说出来 */
-    filterErrors.categories = errText(e, '未知错误');
-    refreshFilterError();
+    if (silent) {
+      // ⚠️ 静默刷新失败 → **保留旧计数**, 只在页脚说一声.
+      //    把旧值清掉的话, 用户会以为分类凭空消失了.
+      refreshError.value = httpErrorText(errorStatus(e), errorDetail(e), '未知错误');
+    } else {
+      /* 分类表拿不到就不显示 chip —— 但要说出来 */
+      filterErrors.categories = errText(e, '未知错误');
+      refreshFilterError();
+    }
   }
 }
 
@@ -428,7 +434,11 @@ async function loadKindCounts() {
  *    比实际能看到的多, 点进去发现是空的, 像是分类坏了.
  */
 function catCount(c: { by_kind?: Record<string, number>; total?: number }): number {
-  if (!onlyMine.value && c.by_kind && c.by_kind[kind.value] !== undefined) {
+  if (!onlyMine.value && c.by_kind) {
+    // ⚠️ 别在"这个分类没有当前形态的资产"时退回 total ——
+    //    那样 chip 上会显示一个点进去看不到的数字:
+    //    插件 tab 下「质量保障 2」, 点进去却一张卡都没有 (质量保障全是技能).
+    //    by_kind 里有当前形态的键就按它算 (缺键 = 0); 没有 by_kind 才退回 total.
     return c.by_kind[kind.value] || 0;
   }
   return c.total || 0;
@@ -735,6 +745,9 @@ watch(kind, () => load());
 function autoRefresh() {
   if (typeof document !== 'undefined' && document.hidden) return;
   silentLoad();
+  // ⚠️ 分类计数也要跟着刷 —— 上架/下架/删除之后, chip 上的数字还停在旧值,
+  //    点进去条数对不上 (看着像分类坏了). 静默刷新失败就保留旧计数.
+  loadCategories(true);
 }
 function onVisibilityChange() {
   if (!document.hidden) autoRefresh();

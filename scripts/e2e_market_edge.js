@@ -391,23 +391,43 @@ async function openUpload(page, kindLabel) {
   }
 
   // ================= ⑤ 分类 chip 计数与实际条数对得上 =================
+  // ⚠️ **逐个** chip 核对, 别只看第一个 ——
+  //    以前只取"第一个带数字的 chip", 恰好是当前形态下有资产的分类,
+  //    于是"这个分类在当前形态下没有资产"的情况 (chip 退回 total, 点进去是空的)
+  //    一直测不出来. 现在每个分类都点一遍, 数字对不上就报出来.
+  //
+  // ⚠️ 先**刷新页面**再核对: 上面刚删过一个资产, 而 chip 的计数是页面加载时的快照,
+  //    不刷新的话拿到的是删除前的旧数字 —— 那是测试自己制造的时差, 不是产品的锅.
+  await page.reload({ waitUntil: 'networkidle2' });
+  await sleep(1800);
   await page.evaluate(() => {
     const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
     t && t.click();
   });
   await sleep(1600);
-  const chipVsActual = await page.evaluate(() => {
-    const chip = [...document.querySelectorAll('.cat-chips .chip')]
-      .find((c) => /\d/.test(c.textContent) && !c.textContent.includes('全部'));
-    const count = chip ? Number((chip.textContent.match(/\d+/) || [0])[0]) : -1;
-    // 点这个分类, 看实际有多少张
-    if (chip) chip.click();
-    return { count };
-  });
-  await sleep(1600);
-  const actual = await page.evaluate(() => document.querySelectorAll('.asset-card').length);
-  check('E15 分类 chip 计数 = 该分类实际条数', chipVsActual.count === actual,
-    `chip=${chipVsActual.count} actual=${actual}`);
+  const chipNames = await page.evaluate(() =>
+    [...document.querySelectorAll('.cat-chips .chip')]
+      .filter((c) => !c.textContent.includes('全部') && !c.textContent.includes('精选'))
+      .map((c) => ({
+        name: c.textContent.replace(/\d+/g, '').trim(),
+        count: Number((c.textContent.match(/\d+/) || [0])[0]),
+      })));
+  const chipMismatches = [];
+  for (const c of chipNames) {
+    await page.evaluate((n) => {
+      const b = [...document.querySelectorAll('.cat-chips .chip')]
+        .find((x) => x.textContent.replace(/\d+/g, '').trim() === n);
+      b && b.click();
+    }, c.name);
+    await sleep(1400);
+    const actual = await page.evaluate(() => document.querySelectorAll('.asset-card').length);
+    if (actual !== c.count) {
+      chipMismatches.push(`${c.name}: chip=${c.count} actual=${actual}`);
+    }
+  }
+  check('E15 每个分类 chip 计数 = 实际条数',
+    chipNames.length > 0 && chipMismatches.length === 0,
+    chipMismatches.length ? chipMismatches.join(' | ') : `${chipNames.length} 个分类全对`);
 
   // ================= ⑥ 未登录 / 无权访问详情 =================
   const anon = await browser.createBrowserContext();

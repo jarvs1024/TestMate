@@ -26,7 +26,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 // ⚠️ 互斥锁: 并行跑 e2e 会互相改生产设置/删资产 (见 e2e_lock.js)
 require('./e2e_lock').acquire(__filename);
-const { deleteTestUsers } = require('./e2e_cleanup');
+const { deleteTestUsers, mysql } = require('./e2e_cleanup');
 
 
 const CHROME = process.env.CHROME_PATH
@@ -127,6 +127,18 @@ async function getSettings(token, keys) {
 function mysqlRootPw() {
   const env = fs.readFileSync(path.join(__dirname, '..', 'deploy', '.env'), 'utf8');
   return (env.match(/^MYSQL_ROOT_PASSWORD=(.*)$/m) || [])[1]?.trim().replace(/^["']|["']$/g, '') || '';
+}
+
+/**
+ * 直接动 DB 删资产 —— **走 e2e_cleanup 的 mysql()**, 裸机/Docker 自动判定.
+ *
+ * ⚠️ 以前这里硬编码 `docker exec test-mate-mysql-1` ——
+ *    裸机部署时后端连的是**本机** MySQL, 而 docker 里的容器还开着 (数据是旧的),
+ *    DELETE 打进了另一个库 → 资产根本没被删 → 断言"应为 404"拿到 200, 假失败.
+ *    ⚠️ 更糟的是: 这种假失败会让人以为"DB 记录删了还能查到"是产品 bug.
+ */
+function deleteAssetRow(code) {
+  mysql(`DELETE FROM assets WHERE code='${String(code).replace(/[^A-Za-z0-9_.@-]/g, '')}';`);
 }
 
 // ---------- 包 ----------
@@ -529,8 +541,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     .json.items || [];
   const row = dbRows.find((i) => i.code === pkg.code);
   if (row) {
-    execFileSync('docker', ['exec', 'test-mate-mysql-1', 'mysql', '-uroot', `-p${mysqlRootPw()}`,
-      'testmate', '-e', `DELETE FROM assets WHERE code='${pkg.code}';`], { stdio: 'ignore' });
+    deleteAssetRow(pkg.code);
     const goneDb = await api(A, { token });
     check(`${tag} ㉘ 模拟 DB 记录丢失`, goneDb.status === 404, `status=${goneDb.status}`);
     const sync = await api('/api/v1/assets/sync', { method: 'POST', token });
