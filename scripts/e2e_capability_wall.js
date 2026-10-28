@@ -102,6 +102,34 @@ function check(name, ok, detail) {
     });
     check('软件库不再是「规划中 / 未接入」(功能已落地)', sw && !sw.includes('规划中') && !sw.includes('未接入'), sw.slice(0, 60));
 
+    // ⑥-2 点「软件库」**卡片** → 应该跳到 /software 页.
+    //    ⚠️ 2026-10-28 补的断言: 以前只查"卡片不是规划中", 抓不住真问题 ——
+    //    库里 route 是 NULL, 前端 capabilityRouteName() 回落到 'tool-runner',
+    //    点卡跳进了**工具运行页** (参数配置/运行/重置) —— 用户看到的死路.
+    //    卡片点了跳哪儿, 必须真点一次看 URL 才算数.
+    const swHandle = await page.evaluateHandle(() =>
+      [...document.querySelectorAll('.cap-card')].find((c) => c.textContent.includes('软件库')));
+    const swCardEl = swHandle.asElement();
+    check('能力墙上找得到「软件库」卡片', !!swCardEl);
+    if (swCardEl) {
+      await swCardEl.click();
+      await sleep(2500);
+      const swUrl = page.url();
+      // ⚠️ 必须比 **pathname 精确相等**, 不能用 includes ——
+      //    工具运行页的地址是 /c/software-library, 它**包含** "/software" 子串,
+      //    includes 会假通过 (2026-10-28 踩过).
+      const swPath = new URL(swUrl).pathname;
+      check('点「软件库」卡跳到 /software 页 (精确)', swPath === '/software', swUrl);
+      check('点「软件库」卡不是工具运行页', !swPath.startsWith('/c/'), swPath);
+      const hasUpload = await page.evaluate(() =>
+        /上传|软件包/.test(document.body.innerText) && !/参数配置/.test(document.body.innerText));
+      check('软件库页有上传入口 (不是参数配置页)', hasUpload, swPath);
+      await page.screenshot({ path: path.join(OUT_DIR, 'wall-4-software.png') });
+      // 回首页 —— 后面还要点侧栏的「插件·技能·连接」
+      await page.goto(`${BASE}/`, { waitUntil: 'networkidle2' });
+      await sleep(1500);
+    }
+
     // 角色 chips 的顺序
     const chips = await page.evaluate(() =>
       [...document.querySelectorAll('.filter')].map((f) => f.textContent.replace(/\s+/g, ' ').trim()));

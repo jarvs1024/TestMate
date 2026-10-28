@@ -52,6 +52,13 @@ vi.mock('@/api/kb', () => ({
   })),
 }));
 
+// ⚠️ 软件库也要桩 —— 首页给「软件库」卡取真实软件数.
+//    不桩的话它会发**真请求**, jsdom 里挂着不返回 → loadMetas 的 await 链多挂一轮,
+//    flushPromises() 一轮 flush 不完 → 后面知识库的取数来不及跑, 断言就废了.
+vi.mock('@/api/software', () => ({
+  listSoftware: vi.fn(async () => ({ items: [], total: 0 })),
+}));
+
 function cap(over: any = {}) {
   return {
     id: 1, code: 'log-analysis', name: '日志分析', icon: '📜',

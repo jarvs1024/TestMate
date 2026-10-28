@@ -62,16 +62,17 @@ export function capabilityCta(c: { kind: string; cta?: string | null }): string 
 }
 
 /**
- * 资产卡的取数来源 —— 同属资产组, 但一个数插件技能一个数语料.
+ * 资产卡的取数来源 —— 同属资产组, 但一个数插件技能一个数语料一个数软件.
  *
  * ⚠️ 按 code 而不是按 category: 取数逻辑是**这张卡自己的实现细节**
  * (数什么、去哪个接口), 不是业务域的通用属性.
  */
-export type MetaSource = 'assets' | 'kb';
+export type MetaSource = 'assets' | 'kb' | 'software';
 
 export const PLATFORM_META_SOURCE: Record<string, MetaSource> = {
   'agent-market': 'assets',
   'kb-inventory': 'kb',
+  'software-library': 'software',
 };
 
 /** 相对时间 —— "刚刚 / 12 分钟前 / 3 小时前 / 2 天前" */

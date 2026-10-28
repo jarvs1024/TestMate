@@ -122,6 +122,51 @@ async def test_seed_agents_syncs_cta_of_existing_row():
         assert row.cta == "检索语料"
 
 
+async def test_seed_agents_syncs_route_of_existing_row():
+    """route 也是平台级契约 —— 存量行的 route 要被 seed 改回来.
+
+    ⚠️ 2026-10-28 加这个用例: route 以前不在 sync_keys 里, 库里 software-library
+    的 route 一直是 NULL → 前端 capabilityRouteName() 回落到 'tool-runner',
+    点「软件库」卡跳进了工具运行页 —— 死路.
+    """
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.agent import Agent
+
+    await seed_agents()
+    async with AsyncSessionLocal() as s:
+        row = (await s.execute(select(Agent).where(Agent.code == "software-library"))).scalar_one()
+        row.route = None  # 故意改坏成没接路由
+        s.add(row)
+        await s.commit()
+
+    await seed_agents()
+    async with AsyncSessionLocal() as s:
+        row = (await s.execute(select(Agent).where(Agent.code == "software-library"))).scalar_one()
+        assert row.route == "page:software"
+
+
+async def test_seed_agents_keeps_route_when_seed_has_none():
+    """seed 没指定 route 的卡 (工具型 → 走 /c/:code 运行页) 不该被 seed 抹掉管理员配的跳转."""
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.agent import Agent
+
+    await seed_agents()
+    async with AsyncSessionLocal() as s:
+        row = (await s.execute(select(Agent).where(Agent.code == "env-ops"))).scalar_one()
+        row.route = "page:code-review"  # 管理员自己配的
+        s.add(row)
+        await s.commit()
+
+    await seed_agents()
+    async with AsyncSessionLocal() as s:
+        row = (await s.execute(select(Agent).where(Agent.code == "env-ops"))).scalar_one()
+        assert row.route == "page:code-review"
+
+
 async def test_list_agents_is_anonymous_readable(client):
     """首页对匿名用户开放只读 —— 不带 token 也要能拿到能力清单."""
     await seed_agents()

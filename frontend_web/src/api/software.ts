@@ -110,8 +110,12 @@ export interface SoftwareCreateForm {
 
 // ---------- 类型收敛的请求封装 ----------
 
-async function apiGet<T>(url: string, params?: Record<string, unknown>): Promise<T> {
-  return (await request.get(url, { params })) as unknown as T;
+async function apiGet<T>(
+  url: string,
+  params?: Record<string, unknown>,
+  config?: { silent?: boolean },
+): Promise<T> {
+  return (await request.get(url, { params, ...config })) as unknown as T;
 }
 async function apiPost<T>(url: string, body?: unknown, params?: Record<string, unknown>): Promise<T> {
   return (await request.post(url, body, { params })) as unknown as T;
@@ -128,8 +132,8 @@ async function apiDelete<T>(url: string, params?: Record<string, unknown>): Prom
 export async function listSoftware(params: {
   q?: string; category?: string; platform?: string; sort?: SoftwareSort;
   status?: string; limit?: number; offset?: number;
-} = {}): Promise<SoftwareListResp> {
-  return apiGet<SoftwareListResp>('/software', params);
+} = {}, opts: { silent?: boolean } = {}): Promise<SoftwareListResp> {
+  return apiGet<SoftwareListResp>('/software', params, opts);
 }
 
 export async function listSoftwareCategories(): Promise<{

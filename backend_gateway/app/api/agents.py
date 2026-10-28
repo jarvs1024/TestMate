@@ -214,6 +214,17 @@ async def seed_agents() -> None:
                 if getattr(agent, k) != cfg[k]:
                     setattr(agent, k, cfg[k])
                     changed = True
+            # route 是**平台级契约** (卡片点了跳哪儿) —— 跟 kind / cta 同一类.
+            # ⚠️ 2026-10-28 修: route 以前不在 sync_keys 里, 所以 seed 同步**从不更新
+            #    已有行的 route** —— 库里的 software-library 一直是 NULL,
+            #    前端 capabilityRouteName() 拿到 NULL 就回落到 'tool-runner',
+            #    点「软件库」卡跳进了工具运行页 (参数配置/运行/重置) —— 死路.
+            #    seed 指定了 route 就以平台为准 (平台说这张卡该去哪儿, 就得是哪儿);
+            #    seed 没指定 (工具型卡 → 走 /c/:code 运行页) 就不动, 保留管理员自己配的.
+            cfg_route = cfg.get("route")
+            if cfg_route and agent.route != cfg_route:
+                agent.route = cfg_route
+                changed = True
             # status 升级: 仅 draft → 非 draft 自动升, 不降档
             if agent.status == AgentStatus.draft and cfg["status"] != AgentStatus.draft.value:
                 agent.status = AgentStatus(cfg["status"])

@@ -87,6 +87,7 @@ import type { Capability } from '@/api/capabilities';
 import { getOverview } from '@/api/reviewagent';
 import { getSyncStatus, listAssets } from '@/api/assets';
 import { kbHealth, listDatasets } from '@/api/kb';
+import { listSoftware } from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 interface Todo {
@@ -147,6 +148,7 @@ async function retryLoad() {
 const boardMeta = ref<MetaItem[]>([]);
 const catalogMeta = ref<MetaItem[]>([]);
 const libraryMeta = ref<MetaItem[]>([]);
+const softwareMeta = ref<MetaItem[]>([]);
 
 function metaOf(c: Capability): MetaItem[] {
   if (c.kind === 'board') {
@@ -159,6 +161,8 @@ function metaOf(c: Capability): MetaItem[] {
         return catalogMeta.value.length ? catalogMeta.value : [{ icon: '🧩', text: '技能沉淀' }];
       case 'kb':
         return libraryMeta.value.length ? libraryMeta.value : [{ icon: '📚', text: 'RAG 语料' }];
+      case 'software':
+        return softwareMeta.value.length ? softwareMeta.value : [{ icon: '📦', text: '内部软件' }];
       default:
         return [{ icon: '📦', text: '平台资产' }];
     }
@@ -291,6 +295,14 @@ async function loadMetas() {
   try {
     const assets = await listAssets({ limit: 200 }, { silent: true });
     catalogMeta.value = [{ icon: '🗂', text: `${assets.total ?? assets.items?.length ?? 0} 个资产` }];
+  } catch {
+    /* 同上 */
+  }
+  // 资产 · 软件库: 软件数 (跟插件·技能·连接一样, 卡片上给真实数字)
+  // ⚠️ 只取 total → limit=1 就够, 不用把整个列表拉回来.
+  try {
+    const sw = await listSoftware({ limit: 1 }, { silent: true });
+    softwareMeta.value = [{ icon: '📦', text: `${sw.total ?? sw.items?.length ?? 0} 个软件` }];
   } catch {
     /* 同上 */
   }
