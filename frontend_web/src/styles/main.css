@@ -90,6 +90,19 @@ html, html[data-theme] {
 }
 /* 已选中的状态开关 (市场的通知开关在用) */
 .mini-btn.on { background: rgba(16, 185, 129, 0.12); border-color: transparent; color: var(--ok); font-weight: 600; }
+/* 危险操作 —— **描边弱化**版 (2026-10-28).
+ * ⚠️ 什么时候用哪个:
+ *    · danger      —— 不可逆的主操作 (下架整个软件) —— 用户点之前要想清楚
+ *    · danger-ghost —— 次要的危险操作 (下架某一个版本) —— 挨着别的按钮,
+ *                      太红会抢注意力, 但危险信号还要有 */
+.mini-btn.danger-ghost {
+  color: var(--err); border-color: rgba(239, 68, 68, 0.22);
+  background: transparent; font-size: 11.5px; padding: 4px 9px;
+}
+.mini-btn.danger-ghost:hover:not(:disabled) {
+  color: var(--err); border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.08);
+}
 
 /* 主按钮 — 蓝→靛→青 渐变, hover 提亮 + 上抬 1px */
 button.tm-btn,

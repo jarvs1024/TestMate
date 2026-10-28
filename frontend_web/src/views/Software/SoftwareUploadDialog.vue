@@ -81,6 +81,14 @@
           <el-form-item label="版本号" required>
             <el-input v-model="form.version" maxlength="32" placeholder="如 1.0.0" />
           </el-form-item>
+          <el-form-item label="版本变体">
+            <!-- ⚠️ 变体标签 (选填) —— 一个软件挂两个版本时靠它区分:
+                 「Windows版」「LTS版」「内测版」. 不填就用版本号. -->
+            <el-input v-model="form.variant" maxlength="32" placeholder="如 Windows版 / LTS版" />
+          </el-form-item>
+        </div>
+
+        <div class="row-2">
           <el-form-item label="适用平台">
             <!-- ⚠️ 必须给中文 placeholder —— Element Plus 默认是英文 "Select",
                  整个界面都是中文, 夹一个英文下拉框很扎眼 -->
@@ -117,6 +125,19 @@
                     placeholder="什么情况下别用它 (别让人踩坑)" />
         </el-form-item>
 
+        <!-- ===== 安装说明 / 注意事项 —— **选填**, 详情页有则显示、无则不占位 ===== -->
+        <el-form-item label="安装说明">
+          <el-input v-model="form.install_steps" type="textarea" :rows="3"
+                    placeholder="怎么装、怎么跑起来, 如&#10;解压到 /opt/tool&#10;运行 install.sh&#10;配好环境变量 PATH" />
+          <p class="hint">选填 —— 填了详情页会显示「安装说明」一栏, 没填就不占位.</p>
+        </el-form-item>
+
+        <el-form-item label="注意事项">
+          <el-input v-model="form.caveats" type="textarea" :rows="2"
+                    placeholder="有什么坑、什么副作用, 如: 需要管理员权限, 会在系统目录留下配置" />
+          <p class="hint">选填 —— 详情页会用醒目的提示块显示, 避免别人踩坑.</p>
+        </el-form-item>
+
         <div class="row-2">
           <el-form-item label="分类">
             <el-input v-model="form.category" maxlength="64" placeholder="如 工具 / 驱动 / 脚本" />
@@ -130,6 +151,12 @@
       <!-- ============ ③ 版本信息 (发新版本时) ============ -->
       <section v-else class="up-sec">
         <div class="sec-h"><span class="sec-no">2</span>版本信息</div>
+        <el-form-item label="版本变体">
+          <!-- ⚠️ 变体标签 (选填) —— 两个版本并存时靠它区分谁是谁 -->
+          <el-input v-model="versionForm.variant" maxlength="32" placeholder="如 Windows版 / LTS版" />
+          <p class="hint">选填 —— 一个软件挂两个版本、两个都有用时, 靠这个标签区分 (如「LTS版」).</p>
+        </el-form-item>
+
         <el-form-item label="版本号" required>
           <el-input v-model="versionForm.version" maxlength="32" placeholder="如 1.1.0" />
           <!-- ⚠️ 版本号**可以自增, 也可以自己写** ——
@@ -149,6 +176,16 @@
             </template>
           </p>
           <p v-if="versionError" class="pick-err">{{ versionError }}</p>
+        </el-form-item>
+
+        <!-- ⚠️ 推荐下载版本 —— 一个条目只能有一个推荐版本.
+             新版本默认接管推荐; 想让老版本继续当默认 (比如 LTS 版还在给老环境用),
+             就把这里关掉, 之后在详情页也能随时改. -->
+        <el-form-item label="设为推荐下载版本">
+          <el-checkbox v-model="versionForm.is_default">把这个版本设成默认下载的那个</el-checkbox>
+          <p class="hint">
+            关掉的话, 推荐位留给现有版本 —— 适合「老版本还在给老环境用」的场景.
+          </p>
         </el-form-item>
       </section>
 
@@ -211,11 +248,16 @@ function emptyForm() {
   return {
     code: '', name: '', icon: '🧰', version: '1.0.0', summary: '', description: '',
     use_when: '', not_for: '', platform: '', category: '', tags: '', keywords: '',
+    // 安装说明 / 注意事项 —— 选填 (2026-10-28)
+    install_steps: '', caveats: '',
+    // 变体标签 —— 选填 (2026-10-28)
+    variant: '',
   };
 }
 
 const form = ref(emptyForm());
-const versionForm = ref({ version: '' });
+// ⚠️ is_default 默认 **true** —— 新版本默认接管推荐位 (2026-10-28)
+const versionForm = ref({ version: '', variant: '', is_default: true });
 const featuresText = ref('');
 const tagsText = ref('');
 const releaseNotes = ref('');
@@ -322,7 +364,11 @@ function resetDraft() {
   //    `form.value = emptyForm()` 换掉整个 ref 后, el-input 绑定的旧值
   //    不会同步到 DOM (输入框里还留着上一次的简介), 看着像没清干净.
   Object.assign(form.value, emptyForm());
-  versionForm.value = { version: '' };
+  // ⚠️ 逐字段重置 versionForm —— 换整个对象的话 el-checkbox 的选中状态
+  //    不会同步 (界面上还留着上一次的勾).
+  versionForm.value.version = '';
+  versionForm.value.variant = '';
+  versionForm.value.is_default = true;
   // 下次打开时图标由 loadConfig 重新挑一个空闲的
   iconTouched.value = false;
 }
@@ -339,6 +385,10 @@ watch(() => props.modelValue, (open) => {
     const cur = props.item?.version || '';
     // 默认给下一个补丁版本号 —— 省得用户自己想
     versionForm.value.version = cur ? bumpVersion(cur) : '1.0.0';
+    // ⚠️ 新版本默认**接管**推荐位 (勾上) —— 这是最常见的用法:
+    //    发新版 = 让大家下新的. 想让老版本继续当默认 (比如 LTS 版还在给老环境用),
+    //    就把勾去掉 —— 这就是下面那个复选框的用处.
+    versionForm.value.is_default = true;
   }
 });
 
@@ -444,6 +494,9 @@ async function submit() {
         features: splitFeatures(featuresText.value),
         use_when: form.value.use_when,
         not_for: form.value.not_for,
+        // 安装说明 / 注意事项 (选填)
+        install_steps: form.value.install_steps,
+        caveats: form.value.caveats,
         platform: form.value.platform,
         category: form.value.category.trim(),
         tags: splitTags(tagsText.value),
@@ -451,6 +504,8 @@ async function submit() {
         file_name: f.name,
         file_size: f.size,
         release_notes: releaseNotes.value,
+        // 变体标签 (选填)
+        variant: form.value.variant.trim(),
       });
       code = created.code;
       version = created.version;
@@ -461,6 +516,10 @@ async function submit() {
         release_notes: releaseNotes.value,
         file_name: f.name,
         file_size: f.size,
+        // 变体标签 (选填) —— 两个版本并存时靠它区分
+        variant: versionForm.value.variant.trim(),
+        // 是否接管推荐下载位
+        is_default: versionForm.value.is_default,
       });
       version = created.version;
     }

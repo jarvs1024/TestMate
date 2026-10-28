@@ -303,7 +303,12 @@ async def test_new_version_keeps_old_downloadable(client, sw_auth, sw_root):
 
 
 async def test_keep_versions_prunes_oldest(client, sw_auth, sw_root):
-    """超过保留数时, 最老的版本被清掉 (行 + 磁盘文件)."""
+    """超过保留数时, 最老的版本被清掉 (行 + 磁盘文件).
+
+    ⚠️ 2026-10-28: **推荐版本永远不参与清理** —— 上传者特意把某个版本标成推荐,
+       正是因为那个版本还在用. 所以 keep_versions=2 时, 最多留 3 个
+       (最近 2 个 + 推荐的那 1 个).
+    """
     await set_setting("software.keep_versions", "2")
     await _create(client, sw_auth)
     await _upload(client, sw_auth, "demo-sw", b"v1")
@@ -317,10 +322,40 @@ async def test_keep_versions_prunes_oldest(client, sw_auth, sw_root):
 
     detail = await client.get("/api/v1/software/demo-sw", headers=sw_auth)
     versions = [v["version"] for v in detail.json()["versions"]]
-    assert len(versions) == 2, versions
-    assert "1.0.0" not in versions
+    # 最近 2 个 (2.0.0 / 3.0.0) + 推荐版本 (3.0.0 本身就是最新, 已算在内)
+    # → 实际留下 2.0.0 和 3.0.0
+    assert set(versions) == {"2.0.0", "3.0.0"}, versions
     # 老版本的目录也被清掉了
     assert not (sw_root / "demo-sw" / "1.0.0").exists()
+
+
+async def test_keep_versions_never_prunes_default_version(client, sw_auth, sw_root):
+    """推荐版本再老也不会被自动清掉 (2026-10-28).
+
+    ⚠️ 场景: 软件挂两个版本, 一个是「LTS版」还在给老环境用, 一个是新版.
+       自动清理把 LTS 版清掉 → 用户的"该下哪个"就悬空了.
+
+    ⚠️ 注意顺序: 发新版本时选「不设为推荐」, 否则新版本会接管推荐标记,
+       老版本就成了普通版本 (照常被清理) —— 那是用户自己的选择.
+    """
+    await set_setting("software.keep_versions", "1")
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+    for v in ("2.0.0", "3.0.0"):
+        await client.post(
+            "/api/v1/software/demo-sw/versions",
+            # is_default=False → 1.0.0 保持推荐, 新版本不抢
+            json={"version": v, "is_default": False, "file_name": f"{v}.bin", "file_size": 2},
+            headers=sw_auth,
+        )
+        await _upload(client, sw_auth, "demo-sw", b"xx", filename=f"{v}.bin")
+
+    detail = await client.get("/api/v1/software/demo-sw", headers=sw_auth)
+    versions = {v["version"] for v in detail.json()["versions"]}
+    assert "1.0.0" in versions, versions
+    assert (sw_root / "demo-sw" / "1.0.0").is_dir()
+    # 普通的 2.0.0 该被清掉 (keep=1, 只留最近的 3.0.0 + 推荐的 1.0.0)
+    assert "2.0.0" not in versions, versions
 
 
 async def test_duplicate_version_conflicts(client, sw_auth, sw_root):
@@ -627,3 +662,234 @@ async def test_audit_is_recorded(client, sw_auth, sw_root):
     actions = {r.action for r in rows}
     assert "create" in actions
     assert "upload" in actions
+
+
+# ---------- 安装说明 / 注意事项 (2026-10-28) ----------
+
+
+async def test_create_keeps_install_steps_and_caveats(client, sw_auth, sw_root):
+    """安装说明 / 注意事项是**选填**字段 —— 填了要存下来, 详情里能读出来."""
+    await _create(
+        client,
+        sw_auth,
+        install_steps="1. 解压到 /opt\n2. 运行 install.sh",
+        caveats="需要管理员权限, 别在生产机上乱试",
+    )
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    assert d["install_steps"] == "1. 解压到 /opt\n2. 运行 install.sh"
+    assert d["caveats"] == "需要管理员权限, 别在生产机上乱试"
+
+
+async def test_install_steps_are_optional(client, sw_auth, sw_root):
+    """不填 = 空串 (老条目没有这两栏, 详情页不该报错)."""
+    await _create(client, sw_auth)
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    assert d["install_steps"] == ""
+    assert d["caveats"] == ""
+
+
+async def test_update_can_change_install_steps(client, sw_auth, sw_root):
+    """改元信息时能补上安装说明 (上架时忘了写, 后面再补)."""
+    await _create(client, sw_auth)
+    r = await client.put(
+        "/api/v1/software/demo-sw",
+        json={"install_steps": "解压即用", "caveats": "别在 32 位系统上跑"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 200, r.text
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    assert d["install_steps"] == "解压即用"
+    assert d["caveats"] == "别在 32 位系统上跑"
+
+
+# ---------- 多版本: 变体标签 / 推荐版本 / 单版本下架 (2026-10-28) ----------
+
+
+async def test_two_versions_both_downloadable(client, sw_auth, sw_root):
+    """一个软件挂两个版本, **两个都能下** —— 「两个版本都有用」的基础."""
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "release_notes": "第二个版本", "file_name": "v2.bin"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 201, r.text
+    await _upload(client, sw_auth, "demo-sw", b"v2-file", filename="v2.bin")
+
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    assert len(d["versions"]) == 2
+    ready = {v["version"] for v in d["versions"] if v["status"] == "ready"}
+    assert ready == {"1.0.0", "2.0.0"}
+
+    # 两个版本都能拿到下载票
+    for ver in ("1.0.0", "2.0.0"):
+        t = await client.post(
+            "/api/v1/software/demo-sw/download-ticket",
+            params={"version": ver},
+            headers=sw_auth,
+        )
+        assert t.status_code == 200, t.text
+        assert f"v={ver}" in t.json()["url"]
+
+
+async def test_version_variant_label(client, sw_auth, sw_root):
+    """变体标签 —— 两个版本光看版本号分不清, 标签就是那个「小名」."""
+    await _create(client, sw_auth, version="1.0.0")
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "variant": "Windows 版", "file_name": "v2.bin"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 201, r.text
+
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    by_ver = {v["version"]: v for v in d["versions"]}
+    assert by_ver["2.0.0"]["variant"] == "Windows 版"
+    assert by_ver["1.0.0"]["variant"] == ""
+
+
+async def test_set_default_version_changes_download_target(client, sw_auth, sw_root):
+    """推荐下载版本 —— 手动指定后, 头部「⬇ 下载」跟着走, 不再永远是最新的."""
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+    await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "file_name": "v2.bin"},
+        headers=sw_auth,
+    )
+    await _upload(client, sw_auth, "demo-sw", b"v2-file", filename="v2.bin")
+
+    # 新版本默认成了推荐 —— 下载目标指向它
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    assert d["download_version"] == "2.0.0"
+
+    # 手动把 1.0.0 设成推荐 → 下载目标切回去
+    r = await client.patch(
+        "/api/v1/software/demo-sw/versions/1.0.0",
+        json={"is_default": True},
+        headers=sw_auth,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["is_default"] is True
+
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    assert d["download_version"] == "1.0.0"
+    # ⚠️ 推荐必须**唯一** —— 2.0.0 的标记要被摘掉
+    by_ver = {v["version"]: v for v in d["versions"]}
+    assert by_ver["2.0.0"]["is_default"] is False
+    assert by_ver["1.0.0"]["is_default"] is True
+
+
+async def test_new_version_takes_over_default(client, sw_auth, sw_root):
+    """发新版本 (默认 is_default=true) → 旧的推荐标记自动摘掉."""
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+    await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "file_name": "v2.bin"},
+        headers=sw_auth,
+    )
+    await _upload(client, sw_auth, "demo-sw", b"v2-file", filename="v2.bin")
+
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    by_ver = {v["version"]: v for v in d["versions"]}
+    assert by_ver["1.0.0"]["is_default"] is False
+    assert by_ver["2.0.0"]["is_default"] is True
+
+
+async def test_new_version_can_skip_default(client, sw_auth, sw_root):
+    """发新版本时选「不设为推荐」 → 老的推荐版本保持不变."""
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+    await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "is_default": False, "file_name": "v2.bin"},
+        headers=sw_auth,
+    )
+    await _upload(client, sw_auth, "demo-sw", b"v2-file", filename="v2.bin")
+
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    assert d["download_version"] == "1.0.0"
+    by_ver = {v["version"]: v for v in d["versions"]}
+    assert by_ver["1.0.0"]["is_default"] is True
+    assert by_ver["2.0.0"]["is_default"] is False
+
+
+async def test_cannot_unset_last_downloadable_default(client, sw_auth, sw_root):
+    """只有一个能下载的版本 → 不许取消推荐 (否则条目就没有「该下哪个」了)."""
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+    r = await client.patch(
+        "/api/v1/software/demo-sw/versions/1.0.0",
+        json={"is_default": False},
+        headers=sw_auth,
+    )
+    assert r.status_code == 409, r.text
+
+
+async def test_delete_single_version_keeps_others(client, sw_auth, sw_root):
+    """**单版本下架** —— 只删这一个版本的文件, 其他版本照旧能下."""
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+    await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "file_name": "v2.bin"},
+        headers=sw_auth,
+    )
+    await _upload(client, sw_auth, "demo-sw", b"v2-file", filename="v2.bin")
+    assert (sw_root / "demo-sw" / "1.0.0").is_dir()
+    assert (sw_root / "demo-sw" / "2.0.0").is_dir()
+
+    r = await client.delete("/api/v1/software/demo-sw/versions/1.0.0", headers=sw_auth)
+    assert r.status_code == 200, r.text
+    # 1.0.0 的文件没了, 2.0.0 的还在
+    assert not (sw_root / "demo-sw" / "1.0.0").exists()
+    assert (sw_root / "demo-sw" / "2.0.0").is_dir()
+
+    d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
+    assert [v["version"] for v in d["versions"]] == ["2.0.0"]
+    # 条目还在, 还能下
+    assert d["publish_status"] == "published"
+    t = await client.post(
+        "/api/v1/software/demo-sw/download-ticket",
+        params={"version": "2.0.0"},
+        headers=sw_auth,
+    )
+    assert t.status_code == 200, t.text
+
+
+async def test_delete_last_version_unpublishes_item(client, sw_auth, sw_root):
+    """删掉最后一个能下载的版本 → 条目一起下架 (不能空着上架)."""
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+    r = await client.delete("/api/v1/software/demo-sw/versions/1.0.0", headers=sw_auth)
+    assert r.status_code == 200, r.text
+    assert (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).status_code == 404
+
+
+async def test_delete_version_denied_for_others(client, sw_auth, sw_root, publisher_user):
+    """下架**别人的**某个版本 → 403 (反过来: 管理员有权限, 普通发布者没有)."""
+    auth2 = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _create(client, sw_auth, code="a-sw", name="管理员的", icon="🖥")
+    await _upload(client, sw_auth, "a-sw", b"v1")
+    # publisher_user 不是作者 → 403
+    r = await client.delete("/api/v1/software/a-sw/versions/1.0.0", headers=auth2)
+    assert r.status_code == 403, r.text
+    # 管理员自己当然可以
+    r2 = await client.delete("/api/v1/software/a-sw/versions/1.0.0", headers=sw_auth)
+    assert r2.status_code == 200, r2.text
+
+
+async def test_update_version_variant_by_author(client, sw_auth, sw_root):
+    """上传者本人能改自己版本的变体标签."""
+    await _create(client, sw_auth, version="1.0.0")
+    await _upload(client, sw_auth, "demo-sw", b"v1")
+    r = await client.patch(
+        "/api/v1/software/demo-sw/versions/1.0.0",
+        json={"variant": "LTS 版"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["variant"] == "LTS 版"

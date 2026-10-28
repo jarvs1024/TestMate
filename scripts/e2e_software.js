@@ -129,6 +129,10 @@ const FILE_NAME = `${CODE}.bin`;
     check('E9 填功能清单', await setValue('一行一条', '读取 SMART 日志\n定位失败扇区\n导出 CSV'));
     check('E10 填适用场景', await setValue('什么情况下该用它', '排查 SSD 掉盘问题时'));
     check('E11 填更新说明', await setValue('这次改了什么', '首个版本'));
+    // ⚠️ 选填栏: 安装说明 / 注意事项 / 版本变体标签 (2026-10-28)
+    check('E11a 填安装说明', await setValue('怎么装', '解压到 /opt/tool\n运行 install.sh'));
+    check('E11b 填注意事项', await setValue('有什么坑', '需要管理员权限, 会往系统目录写配置'));
+    check('E11c 填版本变体标签', await setValue('如 Windows版', '通用版'));
 
     // ---------- 选文件 + 上传 ----------
     const fileInput = await page.$('.sw-up-drawer input[type=file]');
@@ -205,12 +209,17 @@ const FILE_NAME = `${CODE}.bin`;
         features: [...d.querySelectorAll('.feature-list li')].map((x) => x.textContent.trim()),
         versions: [...d.querySelectorAll('.ver-row .vr-ver')].map((x) => x.textContent.trim()),
         notes: [...d.querySelectorAll('.vr-notes')].map((x) => x.textContent.trim()),
+        variants: [...d.querySelectorAll('.ver-row .vr-variant')].map((x) => x.textContent.trim()),
       };
     });
     check('E14 详情里有功能清单', detail.features.length === 3, detail.features.join(' | '));
     check('E15 详情里有适用场景', detail.text.includes('排查 SSD 掉盘问题时'));
     check('E16 详情里有发布与更新说明', detail.notes.some((n) => n.includes('首个版本')), detail.notes.join(' | '));
     check('E17 版本历史有 1 条', detail.versions.length === 1, detail.versions.join(' | '));
+    // ⚠️ 选填栏在详情里要真的显示出来 (2026-10-28)
+    check('E17a 详情里有安装说明', detail.text.includes('解压到 /opt/tool'), detail.text.slice(0, 120));
+    check('E17b 详情里有注意事项', detail.text.includes('需要管理员权限'));
+    check('E17c 详情里有版本变体标签', detail.variants.includes('通用版'), detail.variants.join(' | '));
     await page.screenshot({ path: path.join(OUT_DIR, 'sw-2-detail.png') });
 
     // ---------- 下载 ----------
@@ -323,6 +332,127 @@ const FILE_NAME = `${CODE}.bin`;
       return !!btn;
     });
     check('E23 旧版本仍然有下载按钮', oldDl);
+
+    // ---------- 多版本: 变体标签 / 推荐版本 / 单版本下架 (2026-10-28) ----------
+    // 场景: 一个软件挂两个版本、**两个都有用** —— 一个是「LTS版」还在给老环境用,
+    // 一个是新版. 这时要能: ① 看得出谁是谁; ② 指定该下哪个; ③ 单独撤掉一个.
+    await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('.sw-drawer button')]
+        .find((b) => (b.textContent || '').includes('发布新版本'));
+      if (btn) btn.click();
+    });
+    await page.waitForSelector('.sw-up-drawer input[type=file]', { timeout: 10000 });
+    await sleep(800);
+    // 版本号改成 2.0.0 (自增建议是 1.0.1), 变体标签填「LTS版」, 并且**不抢推荐位**
+    check('E23a 版本号可自定义 (不限于自增建议)',
+      await setValue('如 1.1.0', '2.0.0'));
+    check('E23b 发新版本可填变体标签',
+      await setValue('如 Windows版', 'LTS版'));
+    // ⚠️ el-checkbox 的可点区域是它自己的 label, 点 input 未必触发 —— 直接点 label
+    const noTake = await page.evaluate(() => {
+      const cb = [...document.querySelectorAll('.sw-up-drawer .el-checkbox')]
+        .find((c) => (c.textContent || '').includes('默认下载的那个'));
+      if (!cb) return null;
+      const input = cb.querySelector('input');
+      const was = input ? input.checked : null;
+      if (input && input.checked) {
+        // 点 label 里的文字区域 —— Element Plus 把 input 藏起来了
+        const label = cb.querySelector('.el-checkbox__label') || cb;
+        label.click();
+      }
+      return was;
+    });
+    check('E23c 推荐位默认勾上 (可以手动取消)', noTake === true, `checkbox=${noTake}`);
+
+    const fileInput3 = await page.$('.sw-up-drawer input[type=file]');
+    await fileInput3.uploadFile(srcFile2);
+    await sleep(400);
+    await setValue('这次改了什么', 'LTS 分支: 继续支持老环境');
+    await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('.sw-up-drawer button, .up-foot button')]
+        .find((b) => (b.textContent || '').includes('发布新版本'));
+      if (btn) btn.click();
+    });
+    await sleep(4000);
+
+    const multi = await page.evaluate(async (c) => {
+      const t = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/software/' + c, { headers: { Authorization: 'Bearer ' + t } });
+      const d = await r.json();
+      const dom = document.querySelector('.sw-drawer');
+      return {
+        apiVersions: (d.versions || []).map((v) => ({
+          version: v.version, variant: v.variant, is_default: v.is_default, status: v.status,
+        })),
+        download_version: d.download_version,
+        domVariants: dom ? [...dom.querySelectorAll('.ver-row .vr-variant')].map((x) => x.textContent.trim()) : [],
+        domDefaults: dom ? dom.querySelectorAll('.ver-row .vr-default').length : 0,
+        domText: dom ? dom.innerText : '',
+      };
+    }, CODE);
+    // ⚠️ 前面已经发过 1.0.1, 这里再发 2.0.0 → 共 3 个版本并存
+    check('E24a 多个版本并存 (都有用)', multi.apiVersions.length === 3,
+      JSON.stringify(multi.apiVersions));
+    check('E24b 两个版本都能下载 (status 都是 ready)',
+      multi.apiVersions.every((v) => v.status === 'ready'),
+      JSON.stringify(multi.apiVersions.map((v) => `${v.version}:${v.status}`)));
+    check('E24c 变体标签存住了',
+      multi.apiVersions.some((v) => v.variant === 'LTS版') && multi.apiVersions.some((v) => v.variant === '通用版'),
+      JSON.stringify(multi.apiVersions.map((v) => `${v.version}=${v.variant}`)));
+    check('E24d 详情里两个变体标签都显示', multi.domVariants.length === 2, multi.domVariants.join(' | '));
+    check('E24e 不抢推荐位时, 推荐还是原来那个',
+      multi.download_version === '1.0.1',
+      `download_version=${multi.download_version}`);
+    check('E24e2 三个版本里只有一个是推荐',
+      multi.apiVersions.filter((v) => v.is_default).length === 1,
+      JSON.stringify(multi.apiVersions.filter((v) => v.is_default)));
+    await page.screenshot({ path: path.join(OUT_DIR, 'sw-4-multi-version.png') });
+
+    // 把 2.0.0 设成推荐 → 下载目标切过去
+    await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.ver-row')];
+      const row = rows.find((r) => r.querySelector('.vr-ver')?.textContent.trim() === '2.0.0');
+      const btn = row ? [...row.querySelectorAll('button')].find((b) => (b.textContent || '').includes('设为推荐')) : null;
+      if (btn) btn.click();
+    });
+    await sleep(2500);
+    const afterDefault = await page.evaluate(async (c) => {
+      const t = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/software/' + c, { headers: { Authorization: 'Bearer ' + t } });
+      const d = await r.json();
+      return {
+        download_version: d.download_version,
+        defaults: (d.versions || []).filter((v) => v.is_default).map((v) => v.version),
+      };
+    }, CODE);
+    check('E24f 手动设推荐后, 下载目标切过去',
+      afterDefault.download_version === '2.0.0',
+      `download_version=${afterDefault.download_version}`);
+    check('E24g 推荐版本只有一个', afterDefault.defaults.length === 1, afterDefault.defaults.join(' | '));
+
+    // 单版本下架: 只删 2.0.0, 1.0.0 / 1.0.1 照旧
+    const delRes = await page.evaluate(async (c) => {
+      const t = localStorage.getItem('testmate:token');
+      const r = await fetch(`/api/v1/software/${c}/versions/2.0.0`, {
+        method: 'DELETE', headers: { Authorization: 'Bearer ' + t },
+      });
+      return r.status;
+    }, CODE);
+    check('E24h 单版本下架成功', delRes === 200, 'HTTP ' + delRes);
+    const afterDel = await page.evaluate(async (c) => {
+      const t = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/software/' + c, { headers: { Authorization: 'Bearer ' + t } });
+      const d = await r.json();
+      return {
+        versions: (d.versions || []).map((v) => v.version),
+        publish_status: d.publish_status,
+      };
+    }, CODE);
+    check('E24i 下架一个版本后, 其他版本还在',
+      afterDel.versions.length === 2 && !afterDel.versions.includes('2.0.0'),
+      afterDel.versions.join(' | '));
+    check('E24j 下架一个版本后, 条目仍然是上架状态',
+      afterDel.publish_status === 'published', afterDel.publish_status);
 
     // ---------- 收尾: 彻底清理 (记录 + 磁盘文件) ----------
     // ⚠️ 清理之后会故意再读一次详情 (预期 404) —— 那一下的报错不算"JS 错误",

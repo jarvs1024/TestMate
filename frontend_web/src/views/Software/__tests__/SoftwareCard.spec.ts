@@ -13,6 +13,7 @@ function item(over: Partial<SoftwareItem> = {}): SoftwareItem {
   return {
     code: 'demo', name: '演示软件', icon: '🧰', version: '1.0.0',
     summary: '摘要', description: '', features: [], use_when: '', not_for: '',
+    install_steps: '', caveats: '',
     platform: '', category: '工具', tags: [], keywords: [], author: 'admin',
     download_count: 0, publish_status: 'published',
     created_at: null, updated_at: '2026-10-27 12:00:00',

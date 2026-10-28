@@ -11,7 +11,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import String, Text, JSON, BigInteger, Integer, DateTime
+from sqlalchemy import String, Text, JSON, BigInteger, Boolean, Integer, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -42,6 +42,11 @@ class SoftwareItem(Base):
     # 适用场景 / 不适合的场景 —— 沿用市场那套"该用与不该用"的说法
     use_when: Mapped[str] = mapped_column(Text, nullable=False, default="")
     not_for: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # 安装说明 (怎么装、怎么跑起来) —— **选填**, 有则详情页显示, 没有就不占位
+    install_steps: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 注意事项 (坑、副作用、别乱用的地方) —— **选填**, 详情页用醒目提示块显示
+    caveats: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     # 适用平台: windows / linux / macos / 通用 —— 只是标签, 不做平台校验
     platform: Mapped[str] = mapped_column(String(32), nullable=False, default="", index=True)
@@ -79,6 +84,18 @@ class SoftwareVersion(Base):
 
     # 发布与更新说明 —— 用户在版本历史里看到的"这次改了什么"
     release_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # 变体标签 (2026-10-28) —— **选填**, 给版本起个小名.
+    # ⚠️ 为什么需要: 一个软件挂两个版本、两个都有用时 (如「Windows版」「LTS版」),
+    #    光看版本号 1.2.0 / 2.0.0 分不清哪个是哪个 —— 标签就是那个"小名".
+    variant: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+
+    # 是否是**推荐下载**的版本 (2026-10-28).
+    # ⚠️ 一个条目最多一个推荐版本 —— 发新版本时自动把旧的推荐标记摘掉.
+    #    头部那个「⬇ 下载」按钮下的是它, 不是"时间上最新的那个".
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, index=True
+    )
 
     # 原始文件名 (清洗后) —— 下载时的 Content-Disposition 用它
     file_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")

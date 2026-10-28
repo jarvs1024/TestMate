@@ -11,6 +11,11 @@ class SoftwareVersionOut(BaseModel):
     id: int
     version: str
     release_notes: str = ""
+    # 变体标签 (选填) —— 如「Windows版」「LTS版」. 一个软件挂两个版本时,
+    # 光看版本号分不清谁是谁, 标签就是那个"小名".
+    variant: str = ""
+    # 是否是**推荐下载**的版本 —— 头部那个「⬇ 下载」按钮下的是它.
+    is_default: bool = False
     file_name: str = ""
     file_size: int = 0
     sha256: str = ""
@@ -40,6 +45,9 @@ class SoftwareOut(BaseModel):
     # 适用场景 / 不适合的场景
     use_when: str = ""
     not_for: str = ""
+    # 安装说明 / 注意事项 —— **选填**, 详情页有则显示、无则不占位
+    install_steps: str = ""
+    caveats: str = ""
     platform: str = ""
     category: str = ""
     tags: list[str] = []
@@ -125,6 +133,9 @@ class SoftwareCreateIn(BaseModel):
     features: list[str] = []
     use_when: str = ""
     not_for: str = ""
+    # 安装说明 / 注意事项 —— 选填
+    install_steps: str = ""
+    caveats: str = ""
     platform: str = Field(default="", max_length=32)
     category: str = Field(default="", max_length=64)
     tags: list[str] = []
@@ -134,6 +145,8 @@ class SoftwareCreateIn(BaseModel):
     # 声明的文件大小 —— 实收对不上 → 409 (文件不完整)
     file_size: int = Field(default=0, ge=0)
     release_notes: str = ""
+    # 变体标签 (选填) —— 如「Windows版」「LTS版」
+    variant: str = Field(default="", max_length=32)
 
 
 class SoftwareUpdateIn(BaseModel):
@@ -146,6 +159,9 @@ class SoftwareUpdateIn(BaseModel):
     features: list[str] | None = None
     use_when: str | None = None
     not_for: str | None = None
+    # 安装说明 / 注意事项 —— 选填, 改的时候不传就是不动它
+    install_steps: str | None = None
+    caveats: str | None = None
     platform: str | None = Field(default=None, max_length=32)
     category: str | None = Field(default=None, max_length=64)
     tags: list[str] | None = None
@@ -157,8 +173,19 @@ class SoftwareVersionCreateIn(BaseModel):
 
     version: str = Field(min_length=1, max_length=32)
     release_notes: str = ""
+    # 变体标签 (选填) —— 如「Windows版」「LTS版」
+    variant: str = Field(default="", max_length=32)
+    # 是否把这个版本设成**推荐下载**的那个 (默认 = 是, 新版本最常用)
+    is_default: bool = True
     file_name: str = Field(default="", max_length=255)
     file_size: int = Field(default=0, ge=0)
+
+
+class SoftwareVersionUpdateIn(BaseModel):
+    """改某个版本的元信息 (变体标签 / 推荐标记) —— 不动文件."""
+
+    variant: str | None = Field(default=None, max_length=32)
+    is_default: bool | None = None
 
 
 class SoftwareUploadOut(BaseModel):

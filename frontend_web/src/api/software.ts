@@ -22,6 +22,10 @@ export interface SoftwareVersion {
   version: string;
   /** 发布与更新说明 */
   release_notes: string;
+  /** 变体标签 (选填) —— 如「Windows版」「LTS版」. 两个版本并存时靠它区分. */
+  variant: string;
+  /** 是否是**推荐下载**的版本 —— 头部那个「⬇ 下载」按钮下的是它. */
+  is_default: boolean;
   file_name: string;
   file_size: number;
   sha256: string;
@@ -47,6 +51,10 @@ export interface SoftwareItem {
   /** 适用场景 / 不适合的场景 */
   use_when: string;
   not_for: string;
+  /** 安装说明 (选填) —— 怎么装、怎么跑起来 */
+  install_steps: string;
+  /** 注意事项 (选填) —— 坑、副作用、别乱用的地方 */
+  caveats: string;
   platform: string;
   category: string;
   tags: string[];
@@ -101,6 +109,10 @@ export interface SoftwareCreateForm {
   features: string[];
   use_when: string;
   not_for: string;
+  /** 安装说明 (选填) */
+  install_steps: string;
+  /** 注意事项 (选填) */
+  caveats: string;
   platform: string;
   category: string;
   tags: string[];
@@ -108,6 +120,8 @@ export interface SoftwareCreateForm {
   file_name: string;
   file_size: number;
   release_notes: string;
+  /** 变体标签 (选填) —— 如「Windows版」 */
+  variant: string;
 }
 
 // ---------- 类型收敛的请求封装 ----------
@@ -124,6 +138,9 @@ async function apiPost<T>(url: string, body?: unknown, params?: Record<string, u
 }
 async function apiPut<T>(url: string, body?: unknown): Promise<T> {
   return (await request.put(url, body)) as unknown as T;
+}
+async function apiPatch<T>(url: string, body?: unknown): Promise<T> {
+  return (await request.patch(url, body)) as unknown as T;
 }
 async function apiDelete<T>(url: string, params?: Record<string, unknown>): Promise<T> {
   return (await request.delete(url, { params })) as unknown as T;
@@ -173,8 +190,41 @@ export async function createSoftware(form: SoftwareCreateForm): Promise<{
 
 export async function createSoftwareVersion(code: string, payload: {
   version: string; release_notes: string; file_name: string; file_size: number;
+  /** 变体标签 (选填) —— 如「Windows版」 */
+  variant?: string;
+  /** 是否把这个版本设成推荐下载的那个 (默认 true) */
+  is_default?: boolean;
 }): Promise<{ ok: boolean; code: string; version: string; upload_path: string }> {
   return apiPost(`/software/${encodeURIComponent(code)}/versions`, payload);
+}
+
+/**
+ * 改某个版本的元信息 —— **变体标签** / **推荐标记** (不动文件).
+ *
+ * ⚠️ 把 is_default 设成 true 时, 同条目的其他版本会被摘掉推荐 ——
+ *    "推荐哪个" 必须唯一, 前端才知道头部按钮该指哪.
+ */
+export async function updateSoftwareVersion(
+  code: string,
+  version: string,
+  payload: { variant?: string; is_default?: boolean },
+): Promise<SoftwareVersion> {
+  return apiPatch<SoftwareVersion>(
+    `/software/${encodeURIComponent(code)}/versions/${encodeURIComponent(version)}`,
+    payload,
+  );
+}
+
+/**
+ * **下架单个版本** —— 只删这一个版本的文件, 其他版本不受影响.
+ *
+ * ⚠️ 删掉最后一个能下载的版本 → 整个条目一起下架 (后端行为).
+ */
+export async function deleteSoftwareVersion(
+  code: string,
+  version: string,
+): Promise<{ ok: boolean; code: string; deleted_files: number }> {
+  return apiDelete(`/software/${encodeURIComponent(code)}/versions/${encodeURIComponent(version)}`);
 }
 
 export async function updateSoftware(code: string, payload: Partial<SoftwareItem>): Promise<SoftwareItem> {

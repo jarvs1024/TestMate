@@ -17,11 +17,16 @@
             <template v-if="item.category"> · {{ item.category }}</template>
             <template v-if="item.platform"> · {{ item.platform }}</template>
           </div>
+          <!-- ⚠️ 软件挂多个版本时, 标题区要**说清推荐下哪个** (2026-10-28) -->
+          <div v-if="versions.length > 1" class="sw-sub">
+            共 {{ versions.length }} 个版本 · 推荐下载
+            <b class="mono">{{ defaultLabel }}</b>
+          </div>
         </div>
         <div class="sw-hd-actions">
           <button class="mini-btn primary" :disabled="!item.download_version"
                   @click="doDownload(item.download_version)">
-            ⬇ 下载{{ item.download_version ? ` ${item.download_version}` : '' }}
+            ⬇ 下载{{ item.download_version ? ` ${defaultLabel}` : '' }}
           </button>
           <button v-if="item.can_edit" class="mini-btn" @click="emit('new-version', item)">
             ↑ 发布新版本
@@ -70,19 +75,49 @@
         </div>
       </section>
 
+      <!-- ===== 安装说明 (选填) ===== -->
+      <section v-if="item.install_steps" class="sw-sec">
+        <div class="sec-h"><span class="sec-no">4</span>安装说明</div>
+        <ol class="step-list">
+          <li v-for="(s, i) in installStepList" :key="i">{{ s }}</li>
+        </ol>
+      </section>
+
+      <!-- ===== 注意事项 (选填) —— 醒目一点, 免得别人踩坑 ===== -->
+      <section v-if="item.caveats" class="sw-sec">
+        <div class="sec-h"><span class="sec-no">5</span>注意事项</div>
+        <div class="caveat-box">
+          <span class="cb-icon">⚠</span>
+          <div class="pre-wrap">{{ item.caveats }}</div>
+        </div>
+      </section>
+
       <!-- ===== 版本历史 ===== -->
       <section class="sw-sec">
         <div class="sec-h">
-          <span class="sec-no">4</span>版本与更新说明
+          <span class="sec-no">6</span>版本与更新说明
           <span class="sec-tip">{{ versions.length }} 个版本</span>
         </div>
         <div v-if="!versions.length" class="empty">还没有版本记录</div>
         <div v-for="v in versions" :key="v.id" class="ver-row" :class="v.status">
           <div class="vr-hd">
             <span class="vr-ver mono">{{ v.version }}</span>
+            <!-- ⚠️ 变体标签 —— 两个版本并存时靠它区分谁是谁 (2026-10-28) -->
+            <span v-if="v.variant" class="vr-variant">{{ v.variant }}</span>
+            <!-- ⚠️ 推荐标记 —— 头部那个「⬇ 下载」下的就是它 -->
+            <span v-if="v.is_default" class="vr-default">推荐</span>
             <span class="vr-status" :class="`vs-${v.status}`">{{ statusLabel(v.status) }}</span>
             <span class="vr-size mono">{{ formatSize(v.file_size) }}</span>
             <button v-if="v.status === 'ready'" class="mini-btn" @click="doDownload(v.version)">⬇ 下载</button>
+            <!-- ⚠️ 设为推荐 / 取消推荐 (2026-10-28) -->
+            <button v-if="item.can_edit && v.status === 'ready' && !v.is_default"
+                    class="mini-btn" @click="setDefault(v)">
+              ⭐ 设为推荐
+            </button>
+            <!-- ⚠️ 单版本下架 —— 只删这一个版本, 其他版本不受影响 -->
+            <button v-if="item.can_edit" class="mini-btn danger-ghost" @click="onDeleteVersion(v)">
+              下架这版
+            </button>
           </div>
           <div class="vr-notes">{{ v.release_notes || '（这次没写更新说明）' }}</div>
           <div class="vr-meta mono">
@@ -97,7 +132,7 @@
 
       <!-- ===== 标签 / 元信息 ===== -->
       <section v-if="item.tags?.length || item.keywords?.length" class="sw-sec">
-        <div class="sec-h"><span class="sec-no">5</span>标签</div>
+        <div class="sec-h"><span class="sec-no">7</span>标签</div>
         <div class="ac-tags">
           <span v-for="t in item.tags" :key="t" class="tag">#{{ t }}</span>
           <span v-for="k in item.keywords" :key="'k' + k" class="tag kw">{{ k }}</span>
@@ -122,9 +157,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { downloadSoftware, purgeSoftware, getSoftware, type SoftwareDetail, type SoftwareVersion } from '@/api/software';
+import {
+  deleteSoftwareVersion, downloadSoftware, getSoftware, purgeSoftware,
+  updateSoftwareVersion,
+  type SoftwareDetail, type SoftwareVersion,
+} from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { formatSize } from './softwareForm';
 
@@ -148,6 +187,26 @@ const emit = defineEmits<{
 const item = ref<SoftwareDetail | null>(null);
 const versions = ref<SoftwareVersion[]>([]);
 const loading = ref(false);
+
+/**
+ * 推荐下载版本的显示名 —— 版本号 + 变体标签 (有的话).
+ *
+ * ⚠️ 2026-10-28: 一个软件挂两个版本时, 光显示 "1.2.0" 用户不知道该下哪个 ——
+ *    所以带上网标的标签, 比如「1.2.0 LTS版」.
+ */
+const defaultLabel = computed(() => {
+  const v = versions.value.find((x) => x.is_default);
+  if (!v) return item.value?.download_version || '';
+  return v.variant ? `${v.version} ${v.variant}` : v.version;
+});
+
+/** 安装说明 —— 一行一条 (空行忽略) */
+const installStepList = computed(() =>
+  (item.value?.install_steps || '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
 
 // ⚠️ 不再单独判断 admin —— 「下架软件」对**上传者本人**和**管理员**都显示
 //    (后端 _assert_can_modify 才是真正的闸: 上传者本人 或 管理员).
@@ -185,6 +244,57 @@ async function doDownload(version: string) {
     await downloadSoftware(item.value.code, version);
   } catch (e: any) {
     ElMessage.error(errText(e, '拿下载票据失败'));
+  }
+}
+
+/**
+ * 把某个版本设成**推荐下载**的那个.
+ *
+ * ⚠️ 2026-10-28: 一个软件挂两个版本、两个都有用时, "该下哪个" 得有人说了算.
+ *    后端保证推荐位唯一 —— 设了新的, 旧的自动摘掉.
+ */
+async function setDefault(v: SoftwareVersion) {
+  if (!item.value) return;
+  try {
+    await updateSoftwareVersion(item.value.code, v.version, { is_default: true });
+    ElMessage.success(`已把 ${v.version} 设为推荐下载版本`);
+    await load();
+  } catch (e: any) {
+    ElMessage.error(errText(e, '设置推荐版本失败'));
+  }
+}
+
+/**
+ * **下架单个版本** —— 只删这一个版本的文件, 其他版本照旧能下.
+ *
+ * ⚠️ 2026-10-28: 传错的那一版要能单独撤掉, 不能为了删一个版本
+ *    把整个软件连别的版本一起下架.
+ */
+async function onDeleteVersion(v: SoftwareVersion) {
+  if (!item.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `确定下架版本 ${v.version} 吗?\n\n` +
+      '这个版本的**文件会被删掉**, 不可恢复. 其他版本不受影响.',
+      '下架这个版本',
+      {
+        type: 'warning',
+        confirmButtonText: '下架这版',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'mini-btn danger',
+        dangerouslyUseHTMLString: false,
+      },
+    );
+  } catch {
+    return; // 用户取消
+  }
+  try {
+    await deleteSoftwareVersion(item.value.code, v.version);
+    ElMessage.success(`版本 ${v.version} 已下架`);
+    await load();
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error(errText(e, '下架版本失败'));
   }
 }
 
@@ -277,6 +387,34 @@ function statusLabel(s: string): string {
 
 .feature-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-700); line-height: 1.75; }
 .pre-wrap { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; color: var(--ink-700); line-height: 1.65; }
+
+/* ===== 安装说明 (选填) ===== */
+.step-list {
+  margin: 0; padding-left: 20px;
+  font-size: 12.5px; color: var(--ink-700); line-height: 1.75;
+}
+.step-list li { margin-bottom: 2px; }
+
+/* ===== 注意事项 (选填) —— 醒目, 免得别人踩坑 ===== */
+.caveat-box {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 9px 11px; border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.09);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+.cb-icon { flex-shrink: 0; font-size: 13px; color: var(--warn); }
+.caveat-box .pre-wrap { color: var(--ink-800, #374151); }
+
+/* ===== 版本变体标签 / 推荐标记 (2026-10-28) ===== */
+.vr-variant {
+  font-size: 10.5px; padding: 2px 7px; border-radius: var(--radius-pill);
+  background: rgba(59, 130, 246, 0.12); color: var(--primary);
+  font-weight: 600;
+}
+.vr-default {
+  font-size: 10.5px; padding: 2px 7px; border-radius: var(--radius-pill);
+  background: rgba(16, 185, 129, 0.14); color: var(--ok); font-weight: 700;
+}
 
 .use-block { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; }
 .ub-tag {

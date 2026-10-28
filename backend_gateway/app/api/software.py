@@ -53,6 +53,7 @@ from app.schemas.software import (
     SoftwareUploadOut,
     SoftwareVersionCreateIn,
     SoftwareVersionOut,
+    SoftwareVersionUpdateIn,
 )
 
 logger = logging.getLogger(__name__)
@@ -358,7 +359,12 @@ async def list_software(
 
 
 async def _latest_ready_versions(session, item_ids: list[int]) -> dict[int, str]:
-    """条目 id → 当前可下载的版本号 (最新的 ready 版本).
+    """条目 id → 当前可下载的版本号.
+
+    ⚠️ 2026-10-28 改: **优先取「推荐版本」**, 没有推荐才取时间上最新的.
+       之前是"永远取最新" —— 但一个软件挂两个版本、两个都有用时
+       (如「Windows版」和「LTS版」), "最新"不等于"该下的那个".
+       上传者可以手动把某个版本标成推荐 (is_default).
 
     ⚠️ 一次查询批量取 —— 逐条查就是 N+1 (列表 60 条 = 60 次往返).
     """
@@ -371,7 +377,12 @@ async def _latest_ready_versions(session, item_ids: list[int]) -> dict[int, str]
                 SoftwareVersion.item_id.in_(item_ids),
                 SoftwareVersion.status == "ready",
             )
-            .order_by(SoftwareVersion.created_at.desc(), SoftwareVersion.id.desc())
+            .order_by(
+                # 推荐版本排最前 (同一条目只应有一个 is_default, 后端保证)
+                SoftwareVersion.is_default.desc(),
+                SoftwareVersion.created_at.desc(),
+                SoftwareVersion.id.desc(),
+            )
         )
     ).all()
     out: dict[int, str] = {}
@@ -630,6 +641,8 @@ async def create_software(
             features=[f.strip() for f in payload.features if f and f.strip()],
             use_when=payload.use_when,
             not_for=payload.not_for,
+            install_steps=payload.install_steps,
+            caveats=payload.caveats,
             platform=payload.platform.strip(),
             category=payload.category.strip(),
             tags=[t.strip() for t in payload.tags if t and t.strip()],
@@ -644,6 +657,10 @@ async def create_software(
             item_id=item.id,
             version=version,
             release_notes=payload.release_notes,
+            # 变体标签 (选填) —— 如「Windows版」
+            variant=payload.variant.strip()[:32],
+            # 第一个版本默认就是推荐下载的那个
+            is_default=True,
             file_name=software_store.sanitize_filename(
                 payload.file_name, f"{code}-{version}.bin"
             ),
@@ -708,6 +725,9 @@ async def create_version(
             item_id=item.id,
             version=version,
             release_notes=payload.release_notes,
+            # 变体标签 (选填) —— 如「LTS版」; 不填就留空, 版本号本身够用
+            variant=payload.variant.strip()[:32],
+            is_default=bool(payload.is_default),
             file_name=software_store.sanitize_filename(
                 payload.file_name, f"{code}-{version}.bin"
             ),
@@ -716,9 +736,29 @@ async def create_version(
             author=user.username,
         )
         session.add(ver)
+        # ⚠️ 必须**先 flush** —— ver.id 要拿到才能在 WHERE 里排除自己.
+        #    (flush 前 ver.id 是 None, 拼出来的 `id != NULL` 在 SQL 里恒不成立,
+        #    而 SQLAlchemy 的 synchronize_session='evaluate' 又会在 Python 侧
+        #    按同样的条件改内存对象 —— 两边不一致, 推荐标记会错乱.)
+        await session.flush()
+        # ⚠️ 一个条目**最多一个**推荐版本 (2026-10-28) ——
+        #    新版本设成推荐时, 把旧的推荐标记摘掉, 否则两个都是 is_default,
+        #    "该下哪个" 就有歧义了.
+        if payload.is_default:
+            await session.execute(
+                update(SoftwareVersion)
+                .where(
+                    SoftwareVersion.item_id == item.id,
+                    SoftwareVersion.id != ver.id,
+                    SoftwareVersion.is_default.is_(True),
+                )
+                .values(is_default=False)
+                # ⚠️ 不让 ORM 自动同步内存状态 —— 上面那句 UPDATE 的影响范围
+                #    只有"同条目的别的版本", 手工改比 ORM 猜得准.
+                .execution_options(synchronize_session=False)
+            )
         # 指针切到新版本 (并发保护: 指针没被别人改过才切)
         item.version = version
-        await session.flush()
 
         await _audit(
             session,
@@ -736,6 +776,155 @@ async def create_version(
         "version": version,
         "upload_path": f"/api/v1/software/{quote(code)}/file",
     }
+
+
+@router.patch("/{code}/versions/{version}", response_model=SoftwareVersionOut)
+async def update_version(
+    code: str,
+    version: str,
+    payload: SoftwareVersionUpdateIn,
+    user: User = Depends(require_publisher),
+) -> SoftwareVersionOut:
+    """改某个版本的元信息 —— **变体标签** / **推荐标记** (不动文件).
+
+    ⚠️ 2026-10-28 加: 一个软件挂两个版本、两个都有用时, 光有版本号分不清谁是谁.
+       变体标签 (如「Windows版」「LTS版」) 就是那个"小名";
+       推荐标记决定头部那个「⬇ 下载」按钮下的是哪个.
+
+    ⚠️ 改推荐标记时, **同一个条目的其他版本会被摘掉推荐** ——
+       "推荐哪个" 必须唯一, 否则前端不知道该显示哪个.
+    """
+    async with AsyncSessionLocal() as session:
+        item = (
+            await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
+        ).scalar_one_or_none()
+        if item is None or item.deleted_at is not None:
+            raise HTTPException(status_code=404, detail=f"软件 {code} 不存在")
+        _assert_can_modify(item, user)
+
+        ver = (
+            await session.execute(
+                select(SoftwareVersion).where(
+                    SoftwareVersion.item_id == item.id,
+                    SoftwareVersion.version == version,
+                )
+            )
+        ).scalar_one_or_none()
+        if ver is None:
+            raise HTTPException(status_code=404, detail=f"版本 {version} 不存在")
+
+        data = payload.model_dump(exclude_unset=True)
+        if "variant" in data and data["variant"] is not None:
+            ver.variant = data["variant"].strip()[:32]
+        if data.get("is_default") is True:
+            # 摘掉别的版本的推荐标记 —— 推荐必须唯一
+            await session.execute(
+                update(SoftwareVersion)
+                .where(
+                    SoftwareVersion.item_id == item.id,
+                    SoftwareVersion.id != ver.id,
+                    SoftwareVersion.is_default.is_(True),
+                )
+                .values(is_default=False)
+            )
+            ver.is_default = True
+        elif data.get("is_default") is False:
+            # ⚠️ 不允许把最后一个 ready 版本取消推荐 ——
+            #    否则条目就没有"该下哪个"了 (头部按钮会空).
+            others = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(SoftwareVersion)
+                    .where(
+                        SoftwareVersion.item_id == item.id,
+                        SoftwareVersion.id != ver.id,
+                        SoftwareVersion.status == "ready",
+                    )
+                )
+            ).scalar_one()
+            if others == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="这个软件只有这一个能下载的版本, 不能取消推荐",
+                )
+            ver.is_default = False
+
+        await _audit(
+            session,
+            code=code,
+            action="update_version",
+            actor=user,
+            comment=f"修改版本 {version} 的信息",
+            detail={"version": version, **data},
+        )
+        await session.commit()
+        await session.refresh(ver)
+
+    return SoftwareVersionOut.model_validate(ver)
+
+
+@router.delete("/{code}/versions/{version}", response_model=SoftwareDeleteOut)
+async def delete_version(
+    code: str, version: str, user: User = Depends(require_publisher)
+) -> SoftwareDeleteOut:
+    """**下架单个版本** —— 只删这一个版本的文件, 其他版本不受影响.
+
+    ⚠️ 2026-10-28 加: 一个软件挂两个版本、两个都有用时, 传错的那版要能单独撤掉,
+       不能为了删一个版本把整个软件连别的版本一起下架.
+
+    ⚠️ 删的是**最后一个**能下载的版本 → 整个条目一起下架 (条目不能空着上架).
+    """
+    root = await _root()
+    async with AsyncSessionLocal() as session:
+        item = (
+            await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
+        ).scalar_one_or_none()
+        if item is None or item.deleted_at is not None:
+            raise HTTPException(status_code=404, detail=f"软件 {code} 不存在")
+        _assert_can_modify(item, user)
+
+        ver = (
+            await session.execute(
+                select(SoftwareVersion).where(
+                    SoftwareVersion.item_id == item.id,
+                    SoftwareVersion.version == version,
+                )
+            )
+        ).scalar_one_or_none()
+        if ver is None:
+            raise HTTPException(status_code=404, detail=f"版本 {version} 不存在")
+
+        # 这个条目还剩几个能下载的版本?
+        remaining = (
+            await session.execute(
+                select(func.count())
+                .select_from(SoftwareVersion)
+                .where(
+                    SoftwareVersion.item_id == item.id,
+                    SoftwareVersion.id != ver.id,
+                    SoftwareVersion.status == "ready",
+                )
+            )
+        ).scalar_one()
+
+        await session.delete(ver)
+        if remaining == 0:
+            # 没有可下载的版本了 → 条目不能空着上架, 一起下架
+            item.publish_status = "hidden"
+            item.deleted_at = datetime.utcnow()
+
+        await _audit(
+            session,
+            code=code,
+            action="delete_version",
+            actor=user,
+            comment=f"下架版本 {version}",
+            detail={"version": version, "item_unpublished": remaining == 0},
+        )
+        await session.commit()
+
+    software_store.remove_version_dir(root, code, version)
+    return SoftwareDeleteOut(ok=True, code=code, deleted_files=1)
 
 
 @router.put("/{code}/file")
@@ -925,6 +1114,12 @@ async def _prune_versions_for(code: str) -> None:
     """按 ``software.keep_versions`` 清理老版本 (行 + 磁盘文件).
 
     ⚠️ 保留策略是"保留最近 N 个 ready 版本" —— 正在上传中的版本不参与清理.
+    ⚠️ **推荐版本额外豁免** (2026-10-28) —— 上传者特意把某个版本标成推荐,
+       正是因为那个版本还在用 (比如给老环境兜底). 悄悄把它清掉, 用户的"该下哪个"
+       就悬空了.
+
+    ⚠️ 豁免是**额外加回**而不是"排除在计数之外" ——
+       否则 keep=2 就会变成"保留 2 个非推荐的 + 1 个推荐的", 名义上的 N 变了.
     """
     keep = await _keep_versions()
     if keep <= 0:
@@ -946,7 +1141,10 @@ async def _prune_versions_for(code: str) -> None:
                 .order_by(SoftwareVersion.created_at.desc(), SoftwareVersion.id.desc())
             )
         ).scalars().all()
+        # 最近 keep 个 —— 这批之外的都是"老版本"
         stale = rows[keep:]
+        # 但推荐版本**永远不删** —— 从待删名单里摘出去
+        stale = [v for v in stale if not v.is_default]
         for v in stale:
             await session.delete(v)
         await session.commit()
