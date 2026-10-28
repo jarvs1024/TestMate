@@ -282,7 +282,7 @@ def test_agent_market_renamed_to_plugin_skill_connector():
 
 
 def test_software_library_seed():
-    """软件库卡: 存内部软件, 展示功能 / 详情 / 适用 / 发布更新说明."""
+    """软件库卡: 存公司内部软件 (自研 + 基于开源改造的版本), 找到就能下."""
     sw = next(c for c in SEED_AGENTS if c["code"] == "software-library")
     assert sw["name"] == "软件库"
     assert sw["kind"] == "platform"
@@ -293,5 +293,11 @@ def test_software_library_seed():
     assert sw["status"] == "beta"
     assert sw["route"] == "page:software"
     blob = " ".join(str(sw.get(f) or "") for f in ("summary", "use_when"))
-    for word in ("功能", "详情", "适用", "更新"):
+    # ⚠️ 2026-10-28 晚: 文案改成**说人话** —— 说清"放什么 + 拿来干什么"
+    #    (原来写的是"功能清单 / 详情 / 适用场景 / 发布与更新说明", 那是一份
+    #    表单字段清单, 而且「详情」那个字段已经从上架页删了).
+    for word in ("自研", "开源改造", "软件"):
         assert word in blob, f"软件库的说明里少了「{word}」: {blob}"
+    # 旧的那套字段清单别再回来 —— 跟 /software 页的页头 lede 保持同一口径
+    assert "详情" not in sw["summary"]
+    assert "适用场景" not in sw["summary"]
