@@ -52,6 +52,11 @@ _ACTIONS: dict[str, tuple[tuple[str, ...], str, str]] = {
     "unpublish_request": ((PUBLISHED,), UNPUBLISH_PENDING, "author"),
     "unpublish_cancel": ((UNPUBLISH_PENDING,), PUBLISHED, "author"),
     "unpublish_approve": ((UNPUBLISH_PENDING,), "", "admin"),   # 通过 = 彻底删除
+    # ---- 免审核自助下架 (保留文件) ----
+    # ⚠️ 这是「审核总开关关掉」时走的路: 作者自己就能把资产从货架上拿下来,
+    #    **不用等管理员点头**, 而且文件**保留** (unpublished, 不是删掉).
+    #    为什么不给作者"直接删"的权限: 删除不可逆, 共享市场里资产是别人也在用的.
+    "take_down": ((PUBLISHED,), UNPUBLISHED, "author"),
     # ---- 重新上架 ----
     "publish": ((UNPUBLISHED,), PUBLISHED, "author"),
 }
@@ -65,6 +70,7 @@ _ACTION_LABEL: dict[str, str] = {
     "unpublish_request": "申请下架",
     "unpublish_cancel": "撤销下架申请",
     "unpublish_approve": "通过下架申请",
+    "take_down": "自助下架（免审核）",
     "publish": "重新上架",
 }
 
@@ -87,6 +93,7 @@ AUDIT_ACTION_LABEL: dict[str, str] = {
     "unpublish_request": "申请下架",
     "unpublish_cancel": "撤销下架申请",
     "unpublish_approve": "通过下架申请 (资产已删除)",
+    "take_down": "自助下架 (免审核, 文件保留)",
     "approve": "审核通过",
     "reject": "审核驳回",
     "submit": "提交审核",

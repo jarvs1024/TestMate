@@ -157,6 +157,8 @@ export interface MarketConfig {
   install_enabled: boolean;
   is_repo: boolean;
   head: string;
+  /** 审核总开关的生效值 —— 关 = 上架/下架都免审核, 前端要改按钮文案 */
+  review_enabled: boolean;
 }
 
 export interface SyncStatus {
@@ -369,19 +371,22 @@ export async function deleteAsset(code: string, comment = ''): Promise<{
 }
 
 /**
- * **申请下架** —— 提交后等管理员确认, 确认通过资产会被彻底删除.
+ * 下架 —— **走哪条路看审核总开关** (`marketplace.review.enabled`).
+ *
+ * · 开关**开** (默认) → 提交申请, 等管理员确认, 确认通过资产被**彻底删除**.
+ * · 开关**关** (免审) → 立刻下架, **文件保留**, 可随时「重新上架」.
  *
  * ⚠️ confirmCode 必须与资产 code 一致 —— 后端会校验, 绕不过去.
  *    (前端弹窗只是提醒, 不是防线)
  */
 export async function unpublishAsset(
   code: string, confirmCode: string, comment = '',
-): Promise<{ ok: boolean; code: string; publish_status: string; changed: boolean }> {
+): Promise<{ ok: boolean; code: string; publish_status: string; changed: boolean; needs_review: boolean }> {
   const fd = new FormData();
   fd.append('confirm_code', confirmCode);
   fd.append('comment', comment);
   return (await request.post(`/assets/${encodeURIComponent(code)}/unpublish`, fd)) as unknown as {
-    ok: boolean; code: string; publish_status: string; changed: boolean;
+    ok: boolean; code: string; publish_status: string; changed: boolean; needs_review: boolean;
   };
 }
 

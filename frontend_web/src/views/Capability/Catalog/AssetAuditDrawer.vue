@@ -94,6 +94,7 @@ const ACTIONS = [
   { value: 'unpublish_request', label: '申请下架' },
   { value: 'unpublish_cancel', label: '撤销下架' },
   { value: 'unpublish_approve', label: '下架通过' },
+  { value: 'take_down', label: '自助下架' },
   { value: 'delete', label: '删除' },
 ];
 

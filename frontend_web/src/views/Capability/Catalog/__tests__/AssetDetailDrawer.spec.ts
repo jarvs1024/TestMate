@@ -41,7 +41,9 @@ function item(over: Partial<AssetItem> = {}): AssetItem {
   };
 }
 
-async function mountDrawer(opts: { it?: AssetItem; canEdit?: boolean; role?: 'admin' | 'tester' } = {}) {
+async function mountDrawer(opts: {
+  it?: AssetItem; canEdit?: boolean; role?: 'admin' | 'tester'; reviewEnabled?: boolean;
+} = {}) {
   // ⚠️ 必须用**同一个** pinia 实例: setActivePinia 给测试代码用, mount 的 plugins
   //    给组件用 —— 两个实例的话组件拿到的是另一个空 store (user 为 null).
   const pinia = createPinia();
@@ -49,7 +51,13 @@ async function mountDrawer(opts: { it?: AssetItem; canEdit?: boolean; role?: 'ad
   const store = useUserStore(pinia);
   store.user = { id: 1, username: 'jarvs', role: opts.role || 'tester' };
   const w = mount(AssetDetailDrawer, {
-    props: { modelValue: true, item: opts.it || item(), canEdit: opts.canEdit ?? true },
+    props: {
+      modelValue: true,
+      item: opts.it || item(),
+      canEdit: opts.canEdit ?? true,
+      // ⚠️ 缺省**不传** reviewEnabled —— 测的正是"取不到开关时按开着处理"
+      reviewEnabled: opts.reviewEnabled,
+    },
     global: { plugins: [pinia, ElementPlus] },
   });
   await flushPromises();
@@ -109,6 +117,28 @@ describe('资产详情抽屉 · 下架申请制', () => {
   it('已下架 (unpublished) 的资产显示「重新上架」', async () => {
     const w = await mountDrawer({ it: item({ publish_status: 'unpublished' }) });
     expect(buttonTexts(w)).toContain('重新上架');
+  });
+
+  // ---------- 免审核 (审核总开关关掉) ----------
+
+  it('免审时按钮是「下架」而不是「申请下架」', async () => {
+    const w = await mountDrawer({ reviewEnabled: false });
+    const texts = buttonTexts(w);
+    expect(texts).toContain('下架');
+    expect(texts).not.toContain('申请下架');
+  });
+
+  it('开关开着时按钮仍是「申请下架」', async () => {
+    const w = await mountDrawer({ reviewEnabled: true });
+    expect(buttonTexts(w)).toContain('申请下架');
+  });
+
+  it('取不到开关时按「开着」处理 (保守: 宁可多走一次审核)', async () => {
+    // ⚠️ 这是 Vue Boolean prop 的坑: 不显式给 `default: undefined` 的话,
+    //    缺省会被**强转成 false** —— "取不到 → 按开着处理" 就反成了
+    //    "取不到 → 按免审处理" (方向正好反了: 拿不准时该多走一次审核).
+    const w = await mountDrawer({ reviewEnabled: undefined });
+    expect(buttonTexts(w)).toContain('申请下架');
   });
 });
 

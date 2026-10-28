@@ -186,7 +186,7 @@
         <el-button v-if="canEdit" class="ad-btn" @click="emit('edit', item)">发布新版本</el-button>
         <el-button v-if="canEdit && item.publish_status === 'published'"
                    class="ad-btn" type="warning" plain @click="doApplyUnpublish">
-          申请下架
+          {{ reviewOn ? '申请下架' : '下架' }}
         </el-button>
         <el-button v-if="canEdit && item.publish_status === 'unpublished'"
                    class="ad-btn" type="primary" plain @click="doRepublish">
@@ -223,11 +223,21 @@ import { kindMeta } from './kindMeta';
 import { isAuthor } from './identity';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: boolean;
   item: AssetItem | null;
   canEdit?: boolean;
-}>();
+  /**
+   * 审核总开关的**生效值** (后端 /assets/config 给的) —— 关 = 免审核.
+   *
+   * ⚠️ 必须显式 `default: undefined` —— Vue 对 **Boolean 类型的 prop** 有一条
+   *    "缺省强转成 false" 的规则 (Boolean casting): 父组件没传这个 prop 时,
+   *    不声明默认值的话 `props.reviewEnabled` 会是 `false` 而不是 `undefined`,
+   *    于是"取不到开关 → 保守按开着处理"变成"取不到 → 按免审处理" ——
+   *    方向正好反了 (拿不准时该多走一次审核, 而不是少走).
+   */
+  reviewEnabled?: boolean | undefined;
+}>(), { reviewEnabled: undefined });
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void;
   (e: 'edit', item: AssetItem): void;
@@ -239,6 +249,13 @@ const emit = defineEmits<{
 const doc = ref<AssetDoc | null>(null);
 const docLoading = ref(false);
 const docError = ref('');
+/**
+ * 审核总开关是否开着 —— 关 = 免审核 (上架直接生效, 下架也自助完成).
+ *
+ * ⚠️ 缺省按"开着"算: 后端取不到开关时宁可多走一次审核,
+ *    也不能在没确认的情况下让用户以为"点一下就生效".
+ */
+const reviewOn = computed(() => props.reviewEnabled !== false);
 const busy = ref(false);
 /** 技术信息 (GitLab 路径/commit/同步状态) 默认收起 —— 普通用户用不上 */
 const techOpen = ref(false);
@@ -441,16 +458,27 @@ async function doApplyUnpublish() {
   if (!it) return;
   const code = it.code;
   const name = it.name;
+  // ⚠️ 免审时走的是**自助下架** (立刻生效, 文件保留) —— 确认框和成功提示
+  //    都要说清楚, 别让用户以为"还要等管理员", 回头才发现资产已经没了.
+  const instant = !reviewOn.value;
   try {
+    // ⚠️ ElMessageBox 是**纯文本**, 不渲染 Markdown —— 别写 `**强调**`,
+    //    星号会原样显示出来 (设置页的 description 才是走 Markdown 的).
     await ElMessageBox.prompt(
-      `申请下架「${name}」?\n`
-      + `下架是「不可逆」的: 管理员确认后资产会被彻底删除 —— `
-      + `GitLab 上的文件、索引与记录都会消失。\n`
-      + `请输入资产 code「${code}」以确认。`,
-      '申请下架',
+      instant
+        ? `下架「${name}」?\n`
+          + `当前「免审核」, 下架「立刻生效」: 资产马上从市场消失, `
+          + `卡片会标「已下架」。\n`
+          + `GitLab 上的文件会「保留」, 随时可以「重新上架」, 不会丢。\n`
+          + `请输入资产 code「${code}」以确认。`
+        : `申请下架「${name}」?\n`
+          + `下架是「不可逆」的: 管理员确认后资产会被彻底删除 —— `
+          + `GitLab 上的文件、索引与记录都会消失。\n`
+          + `请输入资产 code「${code}」以确认。`,
+      instant ? '下架' : '申请下架',
       {
         type: 'warning',
-        confirmButtonText: '提交下架申请',
+        confirmButtonText: instant ? '确认下架' : '提交下架申请',
         cancelButtonText: '取消',
         inputPlaceholder: code,
         inputValidator: (v: string) => (v || '').trim() === code || '输入与 code 不一致',
@@ -461,8 +489,8 @@ async function doApplyUnpublish() {
   }
   busy.value = true;
   try {
-    await unpublishAsset(code, code, '申请下架');
-    ElMessage.success('下架申请已提交, 等管理员确认');
+    await unpublishAsset(code, code, instant ? '自助下架 (免审核)' : '申请下架');
+    ElMessage.success(instant ? '已下架 (免审核), 文件保留, 可随时重新上架' : '下架申请已提交, 等管理员确认');
     emit('changed');
   } catch (e: any) {
     ElMessage.error('申请失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));

@@ -158,6 +158,7 @@
 
     <AssetDetailDrawer
       v-model="drawerOpen" :item="current" :can-edit="canEdit"
+      :review-enabled="reviewEnabled"
       @edit="openUpdate" @deleted="current = null" @changed="onAssetChanged" />
 
     <AssetUploadDialog
@@ -592,10 +593,20 @@ const gitRemoteText = computed(() => {
   // ⚠️ 只显示仓库路径 —— 完整 SSH 地址 (带内网 host:port) 不该摊在页脚上
   return repoPathOf(gitRemote.value) || GITLAB_PROJECT_FALLBACK;
 });
+/**
+ * 审核总开关的**生效值** —— 关 = 上架更新与下架都免审核.
+ *
+ * ⚠️ 详情抽屉的按钮文案要跟着它变: 免审时点「下架」是**立刻生效**,
+ *    不是「申请下架」那种要等管理员点头 —— 按钮还写"申请"会让人以为不急.
+ * ⚠️ 取不到时按"开启"处理 (保守): 宁可多走一次审核, 也不要在没确认的情况下
+ *    做出不可逆的操作.
+ */
+const reviewEnabled = ref(true);
 async function loadMarketConfig() {
   try {
     const c = await getMarketConfig();
     gitRemote.value = c?.remote || '';
+    reviewEnabled.value = c?.review_enabled !== false;
   } catch {
     // ⚠️ 取不到就用兜底常量 (总比空着强)
     gitRemote.value = GITLAB_PROJECT_FALLBACK;

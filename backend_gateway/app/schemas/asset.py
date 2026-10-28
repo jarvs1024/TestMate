@@ -129,6 +129,9 @@ class MarketConfigOut(BaseModel):
     install_enabled: bool = True
     is_repo: bool = False
     head: str = ""
+    # ⚠️ 审核总开关的**生效值** —— 前端要用它改按钮文案与确认提示
+    #    ("申请下架" vs "下架"), 免得用户点了才发现走的是另一条路.
+    review_enabled: bool = True
 
 
 class AssetDeleteOut(BaseModel):

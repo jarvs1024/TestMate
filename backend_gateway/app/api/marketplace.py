@@ -772,6 +772,9 @@ async def get_market_config(user: User = Depends(get_current_user)) -> MarketCon
         install_enabled=True,
         is_repo=bool(st.get("is_repo")),
         head=st.get("head", ""),
+        # ⚠️ 审核总开关的**生效值** (不是 schema 默认值) —— 前端要靠它决定
+        #    「申请下架」还是「下架」, 以及确认框里怎么措辞.
+        review_enabled=await _setting_bool("marketplace.review.enabled", True),
     )
 
 
@@ -1097,6 +1100,9 @@ _ACTION_COMMIT_TEXT = {
     "unpublish_approve": "通过下架",
     "unpublish_reject": "驳回下架",
     "unpublish_cancel": "撤销下架",
+    # ⚠️ 免审自助下架 (文件保留) —— 漏了会落成兜底的"更新资产",
+    #    提交历史里就看不出这次到底是上架还是下架了.
+    "take_down": "自助下架",
     "approve": "通过审核, 上架",
     "reject": "驳回审核",
     "submit": "提交审核",
@@ -1225,13 +1231,17 @@ async def unpublish_asset(
     comment: str = Form("", description="下架理由 (给管理员看)"),
     user: User = Depends(require_publisher),
 ) -> dict[str, Any]:
-    """**申请下架** —— 提交后等管理员确认, 确认通过资产会被**彻底删除**.
+    """下架 —— **走哪条路看审核总开关** (`marketplace.review.enabled`).
 
-    为什么不是"点了就下架":
-      · 下架是**不可逆的终态** —— 确认后资产连文件带索引带 DB 记录一起没
-      · 市场是**共享**的 —— 资产下架了, 别人第二天就装不上, 得有人拍板
-
-    所以拆两步: 作者申请 (必须手打 code 确认) → 管理员确认 → 自动删除.
+    · 审核总开关**开** (默认) → **申请制**: 作者提交申请, 等管理员确认,
+      确认通过资产被**彻底删除** (连文件带索引带 DB 记录一起没).
+      为什么不是"点了就下架":
+        · 删除是**不可逆的终态**
+        · 市场是**共享**的 —— 资产下架了, 别人第二天就装不上, 得有人拍板
+    · 审核总开关**关** (免审核) → **自助下架**: 立刻从货架消失, **文件保留**,
+      随时能「重新上架」. 不用等管理员点头.
+      ⚠️ 免审只免掉"等审核", **不**把不可逆的删除权限放给作者 ——
+         要彻底删除仍然只能走申请制那条路.
 
     ⚠️ confirm_code 必须等于 code —— 光靠前端弹窗拦不住, 直接调 API 就绕过了.
     """
@@ -1251,8 +1261,28 @@ async def unpublish_asset(
             raise HTTPException(status_code=409, detail="下架申请已提交, 等管理员确认")
         if a.publish_status != "published":
             raise HTTPException(
-                status_code=409, detail=f"当前状态是「{a.publish_status}」, 不能申请下架"
+                status_code=409, detail=f"当前状态是「{a.publish_status}」, 不能下架"
             )
+
+    # ⚠️ 免审核 → 自助下架 (保留文件), 不进申请流程
+    if not await _setting_bool("marketplace.review.enabled", True):
+        out = await _set_publish_state(
+            code=code, publish_status="unpublished", action="take_down",
+            comment=comment or "自助下架 (免审核)", user=user, review_note="",
+        )
+        if out.get("changed"):
+            await market_notify.notify_asset(
+                "unpublish", out,
+                actor=user.username,
+                detail=comment or "作者自助下架 (免审核), 文件保留, 可重新上架",
+                # ⚠️ 事件 key 仍是 unpublish (开关映射靠 key, 不能乱换),
+                #    只换标题 —— 免审下架**不是**彻底删除, 标题别再写 🗑.
+                title_override="📦 资产已下架 (文件保留)",
+            )
+        return {
+            "ok": True, "code": code, "publish_status": "unpublished",
+            "changed": out.get("changed", False), "needs_review": False,
+        }
 
     out = await _set_publish_state(
         code=code, publish_status="unpublish_pending", action="unpublish_request",
@@ -1268,7 +1298,7 @@ async def unpublish_asset(
         )
     return {
         "ok": True, "code": code, "publish_status": "unpublish_pending",
-        "changed": out.get("changed", False),
+        "changed": out.get("changed", False), "needs_review": True,
     }
 
 

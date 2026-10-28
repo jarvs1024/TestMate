@@ -423,10 +423,15 @@ async def test_unpublish_and_publish(client, auth, ws, restore_git_config,  # no
     """
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    # ⚠️ 审核总开关开着 → 上传要审核、下架也走申请制 (两个一起管).
+    #    以前这里把它设成 false 拿在架资产, 现在那样下架会变自助 —— 测不到申请制了.
+    await set_setting("marketplace.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="updown-demo")
+    # 上传落在「待审核」→ 代管理员通过, 拿到在架资产
+    await client.post(f"{API}/updown-demo/review",
+                      data={"decision": "approve", "comment": "测试代通过"}, headers=auth)
 
     r = await client.post(f"{API}/updown-demo/unpublish",
                           data={"confirm_code": "updown-demo", "comment": "下架"},

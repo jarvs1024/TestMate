@@ -16,9 +16,23 @@ API = "/api/v1/assets"
 
 
 async def _publish_asset(client, auth, pauth, code):
-    """发布者上传一个资产 (免审直接上架), 返回 (code, author)."""
+    """发布者上传一个资产 —— **上传后什么状态就是什么状态**.
+
+    ⚠️ 别在这里代为通过审核: 审核开着时上传落「待审核」,
+       有些用例要的正是这个状态 (审核人能看到待审列表).
+    """
     r = await _upload(client, pauth, code=code)
     assert r.status_code == 202, f"上传失败: {r.status_code} {r.text[:200]}"
+    return code
+
+
+async def _published_asset(client, auth, pauth, code):
+    """上传并确保资产**在架** (审核开着时代管理员通过一下)."""
+    await _publish_asset(client, auth, pauth, code)
+    d = await client.get(f"{API}/{code}", headers=auth)
+    if d.status_code == 200 and d.json().get("publish_status") == "pending":
+        await client.post(f"{API}/{code}/review",
+                          data={"decision": "approve", "comment": "测试代通过审核"}, headers=auth)
     return code
 
 
@@ -106,10 +120,14 @@ async def test_author_can_request_unpublish_own_asset(
     """
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    # ⚠️ 审核总开关**开着** → 下架走申请制 (它现在同时管上架与下架).
+    #    免审时下架会变自助, 拿不到「待下架审核」这个状态.
+    await set_setting("marketplace.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
-    await _publish_asset(client, auth, pauth, "own-ok")
+    # ⚠️ 要的是「在架」的资产 —— 审核开着时上传落「待审核」,
+    #    得先代管理员通过一下才能申请下架.
+    await _published_asset(client, auth, pauth, "own-ok")
 
     r = await client.post(f"{API}/own-ok/unpublish",
                           data={"confirm_code": "own-ok", "comment": "自己下架"},
