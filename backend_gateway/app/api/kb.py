@@ -15,6 +15,7 @@
 ⚠️ **删除仍然只有 admin 能做** —— 用户上传的内容进的是**共享**知识库,
    要能删就意味着能把别人的东西删掉, 那不能给普通用户.
 """
+import asyncio
 import logging
 import os
 import re
@@ -361,6 +362,118 @@ async def get_documents(
     except Exception as e:
         logger.exception("list_documents failed")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+
+@router.get("/documents/search")
+async def search_documents(
+    keywords: str = "",
+    dataset_id: str = "",
+    limit: int = 200,
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """按**文件名**搜文档 (默认跨**所有**数据集).
+
+    权限: 所有登录用户 —— 搜索是**只读**操作, 跟「看数据集」「下载文档」同一档.
+
+    ⚠️ RAGFlow 的 `keywords` 语义是 `LOWER(name).contains(keywords.lower())`
+       —— **不区分大小写的子串匹配** (`api/db/services/document_service.py:135`),
+       正好就是「按文件名搜」想要的. 搜不到是因为它**只搜文件名**, 不搜内容.
+
+    ⚠️ RAGFlow 的 keywords 是**按单个数据集**过滤的 —— 搜全部库要**逐个库**查.
+       这里并发发出去 (`asyncio.gather`), 别一个一个等.
+    """
+    kw = (keywords or "").strip()
+    if not kw:
+        return {"items": [], "total": 0, "keywords": "", "datasets": 0}
+
+    limit = max(1, min(int(limit or 200), 500))
+
+    try:
+        datasets = await list_datasets(page=1, page_size=100)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("search_documents: 取数据集列表失败")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    targets = [
+        d for d in datasets
+        if not dataset_id or str(d.get("id") or "") == dataset_id
+    ]
+    if not targets:
+        return {"items": [], "total": 0, "keywords": kw, "datasets": 0}
+
+    async def one(ds: dict) -> list[dict]:
+        """在**一个**数据集里搜 —— 翻页拿全 (单页上限 100)."""
+        ds_id = str(ds.get("id") or "")
+        ds_name = str(ds.get("name") or "")
+        out: list[dict] = []
+        page = 1
+        while page <= 5:          # 一个库最多翻 5 页 = 500 条匹配
+            try:
+                data = await list_documents(
+                    dataset_id=ds_id, page=page, page_size=100, keywords=kw,
+                )
+            except Exception as e:  # noqa: BLE001 — 一个库搜失败不能拖垮整个搜索
+                logger.warning("搜文档失败 (库 %s): %s", ds_name, e)
+                break
+            docs = data.get("docs") or []
+            for d in docs:
+                out.append({
+                    "id": d.get("id"),
+                    "name": d.get("name"),
+                    "dataset_id": ds_id,
+                    "dataset_name": ds_name,
+                    "location": d.get("location", ""),
+                    "type": d.get("type", ""),
+                    "size": d.get("size", 0),
+                    "chunk_count": d.get("chunk_count", 0),
+                    "token_count": d.get("token_count", 0),
+                    "chunk_method": d.get("chunk_method", ""),
+                    "run": d.get("run", "UNSTART"),
+                    "progress": d.get("progress", 0.0),
+                    "progress_msg": d.get("progress_msg", ""),
+                    "process_begin_at": d.get("process_begin_at"),
+                    "process_duration": d.get("process_duration", 0.0),
+                    "source_type": d.get("source_type", ""),
+                    "parser_config": d.get("parser_config") or {},
+                    "status": d.get("status", "1"),
+                    "create_date": d.get("create_date", ""),
+                    "update_date": d.get("update_date", ""),
+                    "create_time": d.get("create_time", 0),
+                    "update_time": d.get("update_time", 0),
+                })
+            if len(docs) < 100:
+                break
+            page += 1
+        return out
+
+    # ⚠️ 并发查 —— 4 个库串行等就是 4 倍延迟
+    parts = await asyncio.gather(*(one(d) for d in targets), return_exceptions=True)
+    items: list[dict] = []
+    for p in parts:
+        if isinstance(p, BaseException):
+            logger.warning("搜文档: 某个库出错了: %s", p)
+            continue
+        items.extend(p)
+
+    # 归属: 「谁传的」—— RAGFlow 那边记不了 TestMate 的账号
+    owners = await _owners_for_documents([str(x.get("id") or "") for x in items])
+    for item in items:
+        o = owners.get(str(item.get("id") or ""), {})
+        item["uploaded_by"] = o.get("uploaded_by")
+        item["uploaded_by_name"] = o.get("uploaded_by_name", "")
+        item["uploaded_at"] = o.get("uploaded_at")
+
+    # 排序: 先按库名, 再按文档名 —— 结果稳定, 不会每次刷新跳来跳去
+    items.sort(key=lambda x: (str(x.get("dataset_name") or ""), str(x.get("name") or "")))
+    total = len(items)
+    truncated = total > limit
+    return {
+        "items": items[:limit],
+        "total": total,
+        "keywords": kw,
+        "datasets": len(targets),
+        "truncated": truncated,
+    }
 
 
 @router.get("/datasets/{dataset_id}/documents/{document_id}/chunks")

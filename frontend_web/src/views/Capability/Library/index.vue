@@ -214,6 +214,89 @@
       </table>
     </div>
 
+    <!-- 文档搜索 (2026-10-29) —— 按**文件名**跨所有数据集找文档 -->
+    <div class="card">
+      <div class="ds-hd">
+        <h2><span>文档搜索</span></h2>
+        <div class="ds-tools">
+          <div class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+            </svg>
+            <input
+              v-model="docSearchKw"
+              placeholder="按文件名搜索（不区分大小写）"
+              title="只搜**文件名**, 不搜文档内容"
+              @input="onDocSearchInput"
+              @keyup.enter="doDocSearch" />
+          </div>
+          <button v-if="docSearchKw" class="ghost-btn srch-clear" @click="clearDocSearch">清空</button>
+        </div>
+      </div>
+
+      <div v-if="docSearchError" class="empty err">
+        搜索失败：{{ docSearchError }}
+        <button class="ghost-btn" @click="doDocSearch">重试</button>
+      </div>
+
+      <table v-else-if="docSearchKw" class="ds-tbl srch-tbl">
+        <thead>
+          <tr>
+            <th>文档名</th><th style="width:140px">所属数据集</th><th>大小</th><th>分段</th>
+            <th>解析</th><th>上传者</th><th style="width:200px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="hit in docSearchHits" :key="hit.dataset_id + '/' + hit.id">
+            <td class="nm">
+              <span class="doc-ic">{{ docIcon(hit.type) }}</span>
+              <span class="doc-name" :title="hit.location" @click="openDocDetail(hit)" style="cursor:pointer">{{ hit.name }}</span>
+            </td>
+            <td class="ds-desc" :title="hit.dataset_id">{{ hit.dataset_name || '—' }}</td>
+            <td class="mono">{{ fmtSize(hit.size) }}</td>
+            <td class="mono">{{ hit.chunk_count }}</td>
+            <td>
+              <span class="run-badge" :class="runStatusClass(hit.run)" :title="hit.progress_msg">{{ runStatusLabel(hit.run) }}</span>
+            </td>
+            <td class="mono">{{ hit.uploaded_by_name || '—' }}</td>
+            <td>
+              <button class="link-btn" @click="openChunks(dsOf(hit), hit)" title="查看分段内容">分段</button>
+              <button class="link-btn" title="下载原始文件" @click="onDownload(dsOf(hit), hit)">下载</button>
+              <!-- ⚠️ 更新 / 重解析 = 写操作 → tester 及以上 -->
+              <button
+                v-if="canWrite"
+                class="link-btn"
+                title="换新文件替换这一篇的内容 (旧版本会被永久删除)"
+                @click="openUpdate(dsOf(hit), hit)">更新</button>
+              <button
+                v-if="canWrite"
+                class="link-btn"
+                title="内容不变, 重跑一遍解析"
+                @click="doReparse(dsOf(hit), hit)">重解析</button>
+            </td>
+          </tr>
+          <tr v-if="!docSearchHits.length && docSearchLoading">
+            <td colspan="7" class="empty">搜索中…</td>
+          </tr>
+          <tr v-else-if="!docSearchHits.length && docSearched">
+            <td colspan="7" class="empty">
+              没找到含「{{ docSearchKw }}」的文档
+              <span class="ds-hint">（只搜文件名，不搜文档内容）</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div v-else class="empty">
+        输入文件名关键词，在 {{ datasets.length || '所有' }} 个知识库里找文档
+        <span class="ds-hint">（只搜文件名，不搜文档内容）</span>
+      </div>
+
+      <div v-if="docSearchTruncated" class="empty err">
+        命中 {{ docSearchTotal }} 篇，只显示前 {{ docSearchHits.length }} 篇 —— 请把关键词写得更具体些
+      </div>
+    </div>
+
     <!-- 操作记录 (谁在什么时候动了知识库) -->
     <!-- ⚠️ 只有 **admin** 能看 —— 里面有别人的**操作人账号和文件名**,
          那是治理信息, 跟「删除文档/删除数据集」同一档: 破坏性和治理性的
@@ -494,7 +577,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { buildEmbedUrl as apiBuildEmbedUrl, getSchema } from '@/api/settings';
 import {
@@ -504,6 +587,7 @@ import {
   uploadKbDocuments, downloadKbDocument, listKbAudits, type KbAuditItem,
   createKbDataset, type KbChunkMethod, deleteKbDataset,
   updateKbDocument, reparseKbDocument,
+  searchKbDocuments, type KbDocSearchHit,
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
 import { useUserStore } from '@/stores/user';
@@ -798,7 +882,7 @@ async function doUpload() {
 }
 
 /** 下载文档原始文件 (只读操作 → 所有登录用户都能用). */
-async function onDownload(d: KbDataset, doc: KbDocument) {
+async function onDownload(d: DsRef, doc: KbDocument) {
   try {
     await downloadKbDocument(d.id, doc.id, doc.name);
   } catch (e: any) {
@@ -925,7 +1009,7 @@ async function doCreate() {
 //      ① 更新完**文档 id 变了** —— 必须重新拉列表, 别拿旧 id 继续操作;
 //      ② 旧版本是**永久删除**的 —— 得让用户看清楚再点.
 const updateOpen = ref(false);
-const updateDs = ref<KbDataset | null>(null);
+const updateDs = ref<DsRef | null>(null);
 const updateDoc = ref<KbDocument | null>(null);
 const updateFile = ref<File | null>(null);
 const updating = ref(false);
@@ -933,7 +1017,7 @@ const updateError = ref('');
 const updateResult = ref<{ name: string; warning?: string; ingest_started?: boolean } | null>(null);
 const updateFileInput = ref<HTMLInputElement | null>(null);
 
-function openUpdate(d: KbDataset, doc: KbDocument) {
+function openUpdate(d: DsRef, doc: KbDocument) {
   updateDs.value = d;
   updateDoc.value = doc;
   updateFile.value = null;
@@ -997,7 +1081,7 @@ async function doUpdate() {
 }
 
 /** 重新解析 (内容不变, 重跑一遍切片/向量化). */
-async function doReparse(d: KbDataset, doc: KbDocument) {
+async function doReparse(d: DsRef, doc: KbDocument) {
   const chunks = doc.chunk_count || 0;
   try {
     await ElMessageBox.confirm(
@@ -1022,6 +1106,78 @@ async function doReparse(d: KbDataset, doc: KbDocument) {
     ElMessage.error('重新解析失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
   }
 }
+
+// === 文档搜索 (2026-10-29) ===
+//
+// ⚠️ **只搜文件名, 不搜文档内容** —— RAGFlow 的 keywords 语义是
+//    `LOWER(name).contains(keywords.lower())` (api/db/services/document_service.py:135),
+//    **不区分大小写的子串匹配**. 页面上得说清楚, 别让人以为搜不到就是没有.
+/**
+ * 数据集引用 —— **只要 id 就够了**.
+ *
+ * ⚠️ 搜索结果里没有完整的 KbDataset 对象 (只有 dataset_id / dataset_name),
+ *    所以这几个操作函数的第一个参数收窄成 `{ id: string }` ——
+ *    完整的 KbDataset 照样能传 (结构化类型).
+ */
+type DsRef = { id: string };
+
+const docSearchKw = ref('');
+const docSearchHits = ref<KbDocSearchHit[]>([]);
+const docSearchLoading = ref(false);
+const docSearchError = ref('');
+/** 已经搜过了 —— 用来区分「搜了没结果」和「还没搜」 */
+const docSearched = ref(false);
+const docSearchTotal = ref(0);
+const docSearchTruncated = ref(false);
+/** 防抖定时器 —— 必须清, 否则离开页面后它照样触发 */
+let docSearchTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 搜索结果里的文档 → 它所在的库 */
+function dsOf(hit: KbDocSearchHit): DsRef { return { id: hit.dataset_id }; }
+
+function onDocSearchInput() {
+  if (docSearchTimer) clearTimeout(docSearchTimer);
+  const kw = docSearchKw.value.trim();
+  if (!kw) { clearDocSearch(); return; }
+  // ⚠️ 防抖 —— 每敲一个字就发一轮「每个库一次请求」, 库多了会把 RAGFlow 打爆
+  docSearchTimer = setTimeout(() => { void doDocSearch(); }, 400);
+}
+
+async function doDocSearch() {
+  const kw = docSearchKw.value.trim();
+  if (!kw) { clearDocSearch(); return; }
+  docSearchLoading.value = true;
+  docSearchError.value = '';
+  try {
+    const r = await searchKbDocuments(kw);
+    docSearchHits.value = r.items || [];
+    docSearchTotal.value = r.total || 0;
+    docSearchTruncated.value = !!r.truncated;
+    docSearched.value = true;
+  } catch (e: any) {
+    docSearchError.value = httpErrorText(errorStatus(e), errorDetail(e), '搜索失败');
+    docSearchHits.value = [];
+    docSearchTotal.value = 0;
+    docSearchTruncated.value = false;
+  } finally {
+    docSearchLoading.value = false;
+  }
+}
+
+function clearDocSearch() {
+  if (docSearchTimer) { clearTimeout(docSearchTimer); docSearchTimer = null; }
+  docSearchKw.value = '';
+  docSearchHits.value = [];
+  docSearchError.value = '';
+  docSearched.value = false;
+  docSearchTotal.value = 0;
+  docSearchTruncated.value = false;
+}
+
+// ⚠️ 离开页面要把定时器清掉 —— 不然它在后台照样触发, 白发一轮请求
+onBeforeUnmount(() => {
+  if (docSearchTimer) clearTimeout(docSearchTimer);
+});
 
 // === 操作记录 (审计) ===
 const audits = ref<KbAuditItem[]>([]);
@@ -1105,7 +1261,7 @@ watch(isAdmin, (ok) => {
   }
 });
 
-async function openChunks(d: KbDataset, doc: KbDocument) {
+async function openChunks(d: DsRef, doc: KbDocument) {
   chunksTitle.value = `📑 ${doc.name} · 分段预览`;
   chunksOpen.value = true;
   chunksList.value = [];
@@ -1336,6 +1492,18 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 /* 标题行右侧的主操作条 —— 建库和上传是知识库最高频的两个动作, 摆这儿一眼就能看见 */
 .ds-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ds-act { padding: 5px 13px; font-size: 12.5px; }
+/* 文档搜索框 —— 沿用「资产市场」那套 .search 样式 (放大镜 + 输入框) */
+.search {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 5px 10px; border-radius: 8px; color: var(--ink-500);
+}
+.search input {
+  border: 0; outline: none; background: transparent;
+  font-size: 12.5px; color: var(--ink-900); font-family: inherit; width: 230px;
+}
+/* 搜索结果下面的补充说明 —— 告诉用户「只搜文件名」 */
+.ds-hint { color: var(--ink-500); font-size: 11.5px; }
 /* 行内操作列 —— 「⬆ 上传」和「详情」并排, 别让按钮糊成一坨 */
 .ds-ops { white-space: nowrap; }
 .ds-ops .link-btn, .ds-ops .ghost-btn { margin-right: 4px; }

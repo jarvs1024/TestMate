@@ -386,6 +386,41 @@ export async function reparseKbDocument(
   )) as { ok: boolean; document_id: string; name: string };
 }
 
+// ---------- 文档搜索 (2026-10-29) ----------
+
+export interface KbDocSearchHit extends KbDocument {
+  /** 文档所在的库 —— 跨库搜索必须带上, 否则用户不知道东西在哪 */
+  dataset_id: string;
+  dataset_name: string;
+}
+
+export interface KbDocSearchResult {
+  items: KbDocSearchHit[];
+  /** 命中的**总数**(可能被 limit 截断) */
+  total: number;
+  keywords: string;
+  /** 搜了几个库 */
+  datasets: number;
+  /** 结果被截断了(总数 > limit) */
+  truncated?: boolean;
+}
+
+/**
+ * 按**文件名**跨数据集搜文档.
+ *
+ * ⚠️ RAGFlow 的 keywords 是 `LOWER(name).contains(keywords.lower())`
+ *    —— **不区分大小写的子串匹配**, 只搜**文件名**, 不搜内容.
+ * ⚠️ 搜全部库要**逐个库**查 (后端并发做), 库多了会慢一点.
+ */
+export async function searchKbDocuments(
+  keywords: string,
+  datasetId = '',
+): Promise<KbDocSearchResult> {
+  return (await request.get('/kb/documents/search', {
+    params: { keywords, ...(datasetId ? { dataset_id: datasetId } : {}) },
+  })) as KbDocSearchResult;
+}
+
 export interface KbAuditItem {
   id: number;
   dataset_id: string;
