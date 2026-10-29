@@ -67,6 +67,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { parseApiTime } from '@/utils/format';
 import {
   listAudits, listNotifications, type AssetAudit, type AssetNotification,
 } from '@/api/assets';
@@ -163,8 +164,9 @@ function eventLabel(e: string): string {
 
 function fmt(iso: string | null): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
+  // ⚠️ 后端给的是 **UTC** —— 走 parseApiTime, 否则本地时区解析会差 8 小时
+  const d = parseApiTime(iso);
+  if (!d) return iso;
   return d.toLocaleString('zh-CN', { hour12: false });
 }
 

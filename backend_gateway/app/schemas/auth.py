@@ -2,6 +2,8 @@
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
+from app.schemas.base import UTCModel
+
 from app.models.user import UserRole
 
 # bcrypt 只取前 **72 字节** (不是 72 个字符) —— 超出的部分被**静默丢弃**,
@@ -55,7 +57,7 @@ class AccountHintOut(BaseModel):
     username: str | None = None
 
 
-class UserOut(BaseModel):
+class UserOut(UTCModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int

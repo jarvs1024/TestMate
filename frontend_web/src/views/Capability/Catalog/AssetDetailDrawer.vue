@@ -117,7 +117,7 @@
 
       <div class="ad-foot mono">
         <span>作者 {{ item.author || '未知' }}</span>
-        <span>更新 {{ (item.updated_at || '').slice(0, 10) || '—' }}</span>
+        <span>更新 {{ fmtDate(item.updated_at) }}</span>
       </div>
 
       <!-- 技术信息: GitLab 路径 / commit / 同步状态 —— 普通用户用不上, 默认收起 -->
@@ -222,6 +222,7 @@ import { downloadBlob } from '@/utils/download';
 import { kindMeta } from './kindMeta';
 import { isAuthor } from './identity';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
+import { fmtDate } from '@/utils/format';
 
 const props = withDefaults(defineProps<{
   modelValue: boolean;

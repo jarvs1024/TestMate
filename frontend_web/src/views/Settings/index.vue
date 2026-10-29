@@ -420,6 +420,7 @@ import SettingRow from './components/SettingRow.vue';
 import UserManage from './components/UserManage.vue';
 import { useUserStore } from '@/stores/user';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
+import { parseApiTime } from '@/utils/format';
 
 const userStore = useUserStore();
 const isAdmin = computed(() => userStore.user?.role === 'admin');
@@ -567,8 +568,9 @@ async function loadNotifyLog() {
 }
 function fmtTime(iso: string | null): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
+  // ⚠️ 后端给的是 **UTC** —— 走 parseApiTime, 否则本地时区解析会差 8 小时
+  const d = parseApiTime(iso);
+  if (!d) return iso;
   return d.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 

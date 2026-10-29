@@ -613,6 +613,8 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
     try {
       await api(`/api/v1/assets/${CODE}?comment=重试场景清理`, { method: 'DELETE', token: adminToken });
     } catch (e) { /* 尽力而为 */ }
+    // ⚠️ 测试回执也别留在生产的通知记录里 (管理员看的回执列表会被测试条目刷屏)
+    try { mysql(`DELETE FROM asset_notifications WHERE code = '${CODE}';`); } catch (e) { /* 尽力而为 */ }
   }
 }
 

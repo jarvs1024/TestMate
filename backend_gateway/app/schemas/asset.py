@@ -4,8 +4,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.schemas.base import UTCModel
 
-class AssetOut(BaseModel):
+
+class AssetOut(UTCModel):
     code: str
     name: str
     icon: str
@@ -142,7 +144,7 @@ class AssetDeleteOut(BaseModel):
     commit_sha: str = ""
 
 
-class AssetNotificationOut(BaseModel):
+class AssetNotificationOut(UTCModel):
     """钉钉通知的回执 (送达记录)."""
 
     id: int
@@ -164,7 +166,7 @@ class AssetNotificationListOut(BaseModel):
     total: int
 
 
-class AssetJobOut(BaseModel):
+class AssetJobOut(UTCModel):
     id: int
     action: str
     status: str
@@ -190,7 +192,7 @@ class AssetJobListOut(BaseModel):
     total: int
 
 
-class AssetAuditOut(BaseModel):
+class AssetAuditOut(UTCModel):
     id: int
     asset_id: int | None = None
     code: str = ""
@@ -242,7 +244,7 @@ class UploadAssetIn(BaseModel):
     mcp_config: dict[str, Any] | None = None
 
 
-class SyncStatusOut(BaseModel):
+class SyncStatusOut(UTCModel):
     """前端顶部状态条用."""
 
     has_remote_updates: bool = False

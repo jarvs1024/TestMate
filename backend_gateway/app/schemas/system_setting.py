@@ -3,8 +3,10 @@ from datetime import datetime
 from typing import Any
 from pydantic import BaseModel, Field
 
+from app.schemas.base import UTCModel
 
-class SettingOut(BaseModel):
+
+class SettingOut(UTCModel):
     key: str
     value: Any
     category: str

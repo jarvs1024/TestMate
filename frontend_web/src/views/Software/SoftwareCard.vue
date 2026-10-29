@@ -45,13 +45,15 @@
 
 <script setup lang="ts">
 import type { SoftwareItem } from '@/api/software';
+import { fmtDate } from '@/utils/format';
 
 defineProps<{ item: SoftwareItem }>();
 const emit = defineEmits<{ (e: 'open', item: SoftwareItem): void }>();
 
 function shortDate(iso: string | null): string {
-  if (!iso) return '—';
-  return iso.slice(0, 10);
+  // ⚠️ 以前是 `iso.slice(0, 10)` —— 直接截字符串, 显示的是 **UTC 那一天**,
+  //    跟页面上其它按本地时区显示的时间对不上 (晚上更新的资产差一天).
+  return fmtDate(iso);
 }
 
 function platformIcon(p: string): string {

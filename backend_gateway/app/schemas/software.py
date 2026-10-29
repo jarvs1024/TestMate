@@ -4,8 +4,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.schemas.base import UTCModel
 
-class SoftwareVersionOut(BaseModel):
+
+class SoftwareVersionOut(UTCModel):
     """一个版本的对外形状 —— 详情页的"版本历史"用它."""
 
     id: int
@@ -31,7 +33,7 @@ class SoftwareVersionOut(BaseModel):
         from_attributes = True
 
 
-class SoftwareOut(BaseModel):
+class SoftwareOut(UTCModel):
     """软件条目 —— 卡片与列表用它."""
 
     code: str

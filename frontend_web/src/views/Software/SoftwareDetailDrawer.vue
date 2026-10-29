@@ -165,6 +165,7 @@ import {
   type SoftwareDetail, type SoftwareVersion,
 } from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
+import { fmtDate } from '@/utils/format';
 import { formatSize } from './softwareForm';
 
 const props = defineProps<{
@@ -386,8 +387,9 @@ async function onUnpublish() {
 }
 
 function shortDate(iso: string | null): string {
-  if (!iso) return '—';
-  return iso.slice(0, 10);
+  // ⚠️ 以前是 `iso.slice(0, 10)` —— 直接截字符串, 显示的是 **UTC 那一天**,
+  //    跟页面上其它按本地时区显示的时间对不上 (晚上更新的资产差一天).
+  return fmtDate(iso);
 }
 
 function statusLabel(s: string): string {

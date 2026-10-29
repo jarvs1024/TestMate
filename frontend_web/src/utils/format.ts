@@ -98,14 +98,49 @@ export function sourceLabel(type: string): string {
   }
 }
 
-/** 把 ISO 8601 字符串 / epoch ms 转 'YYYY-MM-DD HH:mm' (无时区 → 当本地时间) */
+/**
+ * 解析后端 / 外部服务返回的时间 —— **没带时区后缀的一律当 UTC**.
+ *
+ * ⚠️ 这是本项目的老约定 (后端 `review_agent_client._v2_state` 也是这么干的):
+ *    库里存的是 naive UTC (`datetime.utcnow()`), MySQL 的 DATETIME 没时区概念.
+ * ⚠️ 但 JS 的 `new Date("2026-10-28T16:09:01")` 会按**本地时区**解析 ——
+ *    本机是 UTC+8, 于是显示出来比真实时间**晚 8 小时**
+ *    (通知记录、审计记录、资产更新时间、"X 分钟前" 全错).
+ * ⚠️ 后端现在会补 `Z` (`app/schemas/base.py` 的 UTCModel), 但这里仍然兜住
+ *    **没有时区后缀**的老数据 / 第三方数据 —— 宁可当 UTC, 也不能当本地时间.
+ */
+export function parseApiTime(v: string | number | null | undefined): Date | null {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  let s = String(v).trim();
+  if (!s) return null;
+  // 只有日期 ("2026-10-28") → 当 UTC 当天 00:00
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) s += 'T00:00:00';
+  // "2026-10-28 16:09:01" → ISO 用 'T' 分隔 (有的库这么存)
+  else if (!s.includes('T') && s.includes(' ')) s = s.replace(' ', 'T');
+  // 已经带时区 (Z / ±HH:MM) → 原样解析; 没有 → 补 'Z' 当 UTC
+  const hasZone = /(?:Z|z|[+-]\d{2}:?\d{2})$/.test(s);
+  const d = new Date(hasZone ? s : `${s}Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** 把 ISO 8601 字符串 / epoch ms 转 'YYYY-MM-DD HH:mm' (**本地时区**) */
 export function fmtIso(v: string | number | null | undefined): string {
-  if (v === null || v === undefined || v === '') return '—';
-  const d = typeof v === 'number' ? new Date(v) : new Date(v);
-  const t = d.getTime();
-  if (Number.isNaN(t)) return '—';
+  const d = parseApiTime(v);
+  if (!d) return '—';
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 把 ISO 8601 字符串 / epoch ms 转 'YYYY-MM-DD' (**本地时区**) */
+export function fmtDate(v: string | number | null | undefined): string {
+  const d = parseApiTime(v);
+  if (!d) return '—';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /** 0-1 小数 → 百分比字符串 'xx.x%' */

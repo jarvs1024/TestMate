@@ -7,6 +7,7 @@
  */
 import type { Capability } from '@/api/capabilities';
 import { isPlanned, kindMeta } from '@/constants/capabilityKinds';
+import { parseApiTime } from '@/utils/format';
 
 /**
  * 能力卡片的排序规则.
@@ -78,7 +79,10 @@ export const PLATFORM_META_SOURCE: Record<string, MetaSource> = {
 /** 相对时间 —— "刚刚 / 12 分钟前 / 3 小时前 / 2 天前" */
 export function relativeTime(iso: string | null | undefined): string {
   if (!iso) return '还没用过';
-  const diff = Date.now() - new Date(iso).getTime();
+  // ⚠️ 后端给的是 **UTC** —— 别让 `new Date()` 按本地时区解析 (差 8 小时)
+  const d = parseApiTime(iso);
+  if (!d) return '—';
+  const diff = Date.now() - d.getTime();
   if (Number.isNaN(diff)) return '—';
   const m = Math.floor(diff / 60000);
   if (m < 1) return '刚刚';

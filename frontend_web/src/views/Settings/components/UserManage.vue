@@ -119,6 +119,7 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { createUser, updateUser, getAuthConfig, type ManagedUser, type UserRole } from '@/api/users';
+import { parseApiTime } from '@/utils/format';
 
 defineProps<{ users: ManagedUser[]; error?: string }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
@@ -161,8 +162,9 @@ function roleLabel(role: UserRole): string {
 
 function fmtTime(iso: string | null): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
+  // ⚠️ 后端给的是 **UTC** —— 走 parseApiTime, 否则本地时区解析会差 8 小时
+  const d = parseApiTime(iso);
+  if (!d) return iso;
   return d.toLocaleString('zh-CN', {
     hour12: false, year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit',

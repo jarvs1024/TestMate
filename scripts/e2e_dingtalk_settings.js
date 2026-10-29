@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 // ⚠️ 互斥锁: 并行跑 e2e 会互相改生产设置/删资产 (见 e2e_lock.js)
 require('./e2e_lock').acquire(__filename);
+const { mysql } = require('./e2e_cleanup');
 
 
 const CHROME = process.env.CHROME_PATH
@@ -407,6 +408,10 @@ function check(name, ok, detail) {
     // ⚠️ 复位到**产品默认值** (而不是"跑之前的值" —— 那可能就是上一轮崩溃留下的脏值)
     await resetToDefaults();
     await sleep(500);
+    // ⚠️ 测试回执别留在生产的通知记录里 —— 管理员看的回执列表会被测试条目刷屏
+    try {
+      mysql("DELETE FROM asset_notifications WHERE code = 'e2e-notify-live';");
+    } catch { /* 清不掉也不算失败 */ }
   }
 
   // 恢复后页面上的回执应能看到这两条

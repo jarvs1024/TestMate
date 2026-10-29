@@ -3,8 +3,10 @@ from datetime import datetime
 from typing import Any
 from pydantic import BaseModel, Field
 
+from app.schemas.base import UTCModel
 
-class AgentOut(BaseModel):
+
+class AgentOut(UTCModel):
     id: int
     code: str
     name: str

@@ -193,7 +193,7 @@
            「GitLab 最近对齐」= 后端最后一次从 GitLab 拉取的时间;
            「本页上次刷新」= 前端最后一次读本地镜像的时间. -->
       <span v-if="sync.last_sync_at" class="muted">
-        · GitLab 最近对齐 {{ new Date(sync.last_sync_at).toLocaleTimeString('zh-CN') }}
+        · GitLab 最近对齐 {{ fmtSyncAt(sync.last_sync_at) }}
       </span>
       <span class="muted" :class="{ 'refresh-fail': !!refreshError }">
         · 本页上次刷新 {{ lastRefreshText }}
@@ -213,6 +213,7 @@ import AssetAuditDrawer from './AssetAuditDrawer.vue';
 import MarketFilterMenu from './MarketFilterMenu.vue';
 import CapabilityShell from '@/components/CapabilityShell.vue';
 import { useUserStore } from '@/stores/user';
+import { parseApiTime } from '@/utils/format';
 import { MARKET_KINDS, type MarketProjectItem, type MarketSort } from './marketCatalog';
 import { KIND_META } from './kindMeta';
 import {
@@ -368,6 +369,16 @@ const lastRefreshText = computed(() => {
   if (!lastRefreshAt.value) return '—';
   return lastRefreshAt.value.toLocaleTimeString('zh-CN');
 });
+
+/**
+ * 「GitLab 最近对齐」的时间 —— 后端给的是 **UTC**, 别按本地时区直接 parse.
+ * @param iso 后端返回的时间串 (naive UTC 或带 Z 都行)
+ */
+function fmtSyncAt(iso: string | null | undefined): string {
+  const d = parseApiTime(iso);
+  if (!d) return '—';
+  return d.toLocaleTimeString('zh-CN');
+}
 
 /** 防御: items 可能是 undefined (响应形状异常 / 请求被中断), 绝不能让 list.length 抛错
  *  —— 一旦渲染抛异常, Vue 会保留上一次的 DOM, 页面就会永远停在 loading 态. */
