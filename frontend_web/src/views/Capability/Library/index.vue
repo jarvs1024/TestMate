@@ -204,7 +204,10 @@
     </div>
 
     <!-- 操作记录 (谁在什么时候动了知识库) -->
-    <div class="card">
+    <!-- ⚠️ 只有 **admin** 能看 —— 里面有别人的**操作人账号和文件名**,
+         那是治理信息, 跟「删除文档/删除数据集」同一档: 破坏性和治理性的
+         操作都由 admin 掌握 -->
+    <div v-if="isAdmin" class="card">
       <div class="ds-hd">
         <h2><span>操作记录</span> <button class="reload" @click="loadAudits" :disabled="auditLoading">↻ 刷新</button></h2>
       </div>
@@ -919,6 +922,8 @@ async function doDeleteDataset(d: KbDataset) {
 }
 
 async function loadAudits() {
+  // ⚠️ 只有 admin 能看操作记录 —— 别去请求 (后端会 403, 还会弹一个没意义的错误)
+  if (!isAdmin.value) return;
   auditLoading.value = true;
   auditError.value = '';
   try {
@@ -930,6 +935,14 @@ async function loadAudits() {
     auditLoading.value = false;
   }
 }
+
+// 角色变了(比如切账号 / 权限被改) —— 顺手把已经看到的记录清掉, 别留在屏幕上
+watch(isAdmin, (ok) => {
+  if (!ok) {
+    audits.value = [];
+    auditError.value = '';
+  }
+});
 
 async function openChunks(d: KbDataset, doc: KbDocument) {
   chunksTitle.value = `📑 ${doc.name} · 分段预览`;
@@ -983,7 +996,12 @@ async function warmupAllDocs() {
 }
 
 onMounted(async () => {
-  await Promise.allSettled([loadAll(), loadShareConfig(), loadAudits()]);
+  await Promise.allSettled([
+    loadAll(),
+    loadShareConfig(),
+    // ⚠️ 操作记录只有 admin 能看 —— 别的角色别去请求
+    isAdmin.value ? loadAudits() : Promise.resolve(),
+  ]);
   // 不阻塞 UI: 后台预热文档列表, 概览总大小 / 分段数 / 文档数随后到位
   warmupAllDocs();
   if (activeTab.value === 'search' && searchEmbedUrl.value) await reResolve('search');

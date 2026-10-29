@@ -342,8 +342,12 @@ async def test_upload_is_audited(client, publisher_user, fake_rf):
     assert row.error == ""
 
 
-async def test_audit_endpoint_lists_records(client, publisher_user, fake_rf):
-    """审计列表能读到."""
+async def test_audit_endpoint_lists_records(client, publisher_user, admin_user, fake_rf):
+    """审计列表能读到.
+
+    ⚠️ **admin only** (2026-10-29 收紧) —— 所以这里用 admin 去读,
+       但**上传的是 tester**, 正好验证「记的是实际操作人, 不是看的人」.
+    """
     await client.post(
         f"{API}/kb/datasets/ds-1/documents",
         files=_files("a.txt"),
@@ -351,7 +355,7 @@ async def test_audit_endpoint_lists_records(client, publisher_user, fake_rf):
     )
     r = await client.get(
         f"{API}/kb/audits",
-        headers={"Authorization": f"Bearer {publisher_user['token']}"},
+        headers={"Authorization": f"Bearer {admin_user['token']}"},
     )
     assert r.status_code == 200, r.text
     items = r.json()["items"]

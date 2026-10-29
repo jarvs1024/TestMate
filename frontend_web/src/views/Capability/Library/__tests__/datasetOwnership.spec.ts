@@ -203,6 +203,41 @@ describe('删除数据集的二次确认', () => {
   });
 });
 
+// ---------- ④ 操作记录收紧到 admin only ----------
+
+describe('操作记录的可见范围', () => {
+  /** 页面上的「操作记录」卡片在不在 */
+  function hasAuditCard(w: any): boolean {
+    return w.findAll('.card').some((c: any) => {
+      const h2 = c.find('.ds-hd h2');
+      return h2.exists() && (h2.text() || '').includes('操作记录');
+    });
+  }
+
+  it('viewer 看不到「操作记录」卡片', async () => {
+    userState.user = { role: 'viewer', username: 'lisi' };
+    const w = await mountLib();
+    expect(hasAuditCard(w)).toBe(false);
+  });
+
+  it('tester 也看不到「操作记录」卡片 —— 能上传 ≠ 能看治理信息', async () => {
+    const w = await mountLib();
+    expect(hasAuditCard(w)).toBe(false);
+  });
+
+  it('非 admin 连请求都不该发 (后端会 403, 还会弹没意义的错误)', async () => {
+    await mountLib();
+    expect(h.listKbAudits).not.toHaveBeenCalled();
+  });
+
+  it('admin 能看到「操作记录」卡片', async () => {
+    userState.user = { role: 'admin', username: 'admin' };
+    const w = await mountLib();
+    expect(hasAuditCard(w)).toBe(true);
+    expect(h.listKbAudits).toHaveBeenCalled();
+  });
+});
+
 // ---------- ③ 归属: 详情里能看到谁建的 / 谁传的 ----------
 
 describe('归属展示', () => {

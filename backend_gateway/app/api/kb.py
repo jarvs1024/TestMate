@@ -8,7 +8,7 @@
 2026-10-29 新增 (普通用户也能往知识库加内容了):
 - POST /api/v1/kb/datasets/{id}/documents            上传文档 (tester 及以上)
 - GET  /api/v1/kb/datasets/{id}/documents/{doc}/download  下载文档 (所有登录用户)
-- GET  /api/v1/kb/audits                             操作审计 (所有登录用户)
+- GET  /api/v1/kb/audits                             操作审计 (admin only)
 
 ⚠️ **删除仍然只有 admin 能做** —— 用户上传的内容进的是**共享**知识库,
    要能删就意味着能把别人的东西删掉, 那不能给普通用户.
@@ -778,13 +778,23 @@ async def download_doc(
 @router.get("/audits")
 async def get_audits(
     limit: int = 50,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> dict:
     """知识库操作审计 (谁在什么时候传了什么).
 
+    权限: **admin only** (2026-10-29 收紧).
+
     ⚠️ 内容存在 RAGFlow 里, RAGFlow 自己记不了 TestMate 的账号
        (所有人共用一把 API key) —— "谁传的"只能靠这张表.
+
+    ⚠️ 以前是**所有登录用户**都能看 —— 那是"共享知识库要透明"的思路,
+       但操作记录里除了动作, 还有**操作人账号和文件名**, 那是治理信息.
+       现在归到 admin 一档 —— 跟「删除文档」「删除数据集」同一档:
+       **破坏性和治理性的操作, 都由 admin 掌握**.
     """
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="只有管理员能查看操作记录")
+
     from sqlalchemy import desc, select
 
     from app.db.session import AsyncSessionLocal

@@ -318,3 +318,39 @@ async def test_delete_dataset_clears_ownership(client, admin_user, fake_rf):
             select(KbDatasetMeta).where(KbDatasetMeta.dataset_id == ds_id)
         )).scalars().all()
     assert not after, "库删了, 归属记录也要清掉"
+
+
+# ---------- ④ 操作记录收紧到 admin only ----------
+
+async def test_viewer_cannot_read_audits(client, stranger_user, fake_rf):
+    """⚠️ 操作记录里有别人的**操作人账号和文件名** —— viewer 不该看到.
+
+    以前是所有登录用户都能看 (共享知识库要透明), 2026-10-29 收紧到
+    **admin only** (跟删除文档/删除数据集同一档).
+    """
+    r = await client.get(
+        f"{API}/kb/audits",
+        headers={"Authorization": f"Bearer {stranger_user['token']}"},
+    )
+    assert r.status_code == 403, r.text
+
+
+async def test_tester_cannot_read_audits(client, publisher_user, fake_rf):
+    """⚠️ tester 也不能看 —— 能上传 ≠ 能看治理信息.
+
+    跟删除文档/删除数据集一个口径: **破坏性和治理性的操作都归 admin**.
+    """
+    r = await client.get(
+        f"{API}/kb/audits",
+        headers={"Authorization": f"Bearer {publisher_user['token']}"},
+    )
+    assert r.status_code == 403, r.text
+
+
+async def test_admin_can_read_audits(client, admin_user, fake_rf):
+    """admin 能看."""
+    r = await client.get(
+        f"{API}/kb/audits",
+        headers={"Authorization": f"Bearer {admin_user['token']}"},
+    )
+    assert r.status_code == 200, r.text
