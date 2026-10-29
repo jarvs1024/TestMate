@@ -31,8 +31,9 @@ from app.core.ragflow_client import (
     list_documents, ingest_documents, delete_documents,
     list_doc_chunks,
     upload_documents, download_document,
-    create_dataset, delete_dataset,
+    create_dataset, delete_dataset, update_dataset,
     update_document, parse_documents,
+    CHUNK_METHODS, KB_LANGUAGES,
 )
 from app.models.user import User
 from app.models.user import UserRole
@@ -112,8 +113,14 @@ class CreateDatasetIn(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=128, description="数据集名称")
     description: str = Field("", max_length=500, description="说明 (一句话讲清这个库放什么)")
-    #: RAGFlow v0.26.1 的 chunk_method: naive(通用/自动分段) | manual(手动切分)
+    #: RAGFlow v0.26.1 的 chunk_method: naive(通用/自动分段) | manual(手动切分) | ...
+    #: ⚠️ **合法值是 RAGFlow 的那一套** (见 ragflow_client.CHUNK_METHODS),
+    #:    传不在集合里的值 → RAGFlow 返 code 101, 库建不出来.
     chunk_method: str = Field("naive", description="切片方式")
+    #: 数据集语言 (Chinese / English) —— 影响自动问答/关键词提取.
+    #: ⚠️ **RAGFlow 建库接口不认这个字段** (`CreateDatasetReq` 里没有),
+    #:    网关会**建完再补一次 PUT** 把它设上 (真机实测: POST 传 language → 400).
+    language: str = Field("Chinese", description="数据集语言 (Chinese / English)")
     embedding_model: str = Field("", description="嵌入模型 (空=跟现有数据集一致)")
 
 
@@ -134,8 +141,16 @@ async def create_kb_dataset(
         raise HTTPException(status_code=403, detail="只读账号不能创建数据集")
 
     chunk_method = (payload.chunk_method or "naive").strip().lower()
-    if chunk_method not in ("naive", "manual"):
-        raise HTTPException(status_code=422, detail="切片方式只能是 naive 或 manual")
+    # ⚠️ 合法值必须**跟 RAGFlow 对齐** —— 传不在集合里的, RAGFlow 会返 code 101
+    if chunk_method not in CHUNK_METHODS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"切片方式只能是 {' / '.join(CHUNK_METHODS)}",
+        )
+
+    language = (payload.language or "Chinese").strip()
+    if language not in KB_LANGUAGES:
+        raise HTTPException(status_code=422, detail="语言只能是 Chinese 或 English")
 
     # 嵌入模型: 用户没指定就**跟现有数据集保持一致** ——
     # RAGFlow 租户默认值未必是这台机器上真装着的那个, 跟现有的走最稳
@@ -164,6 +179,21 @@ async def create_kb_dataset(
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
     ds = ds or {}
+
+    # ⚠️ **建库接口不吃 `language`** (RAGFlow 的 `CreateDatasetReq` 里没这个字段,
+    #    传了直接 400 "Extra inputs are not permitted") —— 但 `UpdateDatasetReq` 有.
+    #    而且 RAGFlow 建库时的默认语言是 **English** (容器 LANG 不是 zh_CN),
+    #    我们要的是中文库 —— 所以建完必须**补一次 PUT**.
+    #    ⚠️ 这一步失败**不能**把整个建库搞失败 —— 库已经建出来了,
+    #    只是语言没设上; 记个 warning, 让用户知道, 不谎报成功.
+    ds_id = str(ds.get("id") or "")
+    lang_warn = ""
+    if ds_id and language:
+        try:
+            await update_dataset(ds_id, language=language)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("set dataset language failed: %s", e)
+            lang_warn = f"语言没能设成「{language}」(RAGFlow 拒绝了), 可以稍后在详情里改"
     result = {
         "ok": True,
         "dataset": {
@@ -175,8 +205,14 @@ async def create_kb_dataset(
             "permission": ds.get("permission", "me"),
             "document_count": ds.get("document_count", 0),
             "chunk_count": ds.get("chunk_count", 0),
+            # ⚠️ 建库响应里 language 是 RAGFlow 的**默认值** (English),
+            #    不是我们要的 —— 真正生效的是刚才那次 PUT. 这里回填用户要的那个.
+            "language": language,
         },
     }
+    # ⚠️ 语言没设上 → 如实说, 别让用户以为建成了就是全对的
+    if lang_warn:
+        result["warning"] = lang_warn
     # 归属: 记下「这个库是谁建的」—— RAGFlow 那边记不了 TestMate 的账号
     await _save_dataset_owner(ds, user)
     await _audit(
@@ -1217,10 +1253,12 @@ async def download_doc(
 
 @router.get("/audits")
 async def get_audits(
-    limit: int = 50,
+    page: int = 1,
+    page_size: int = 20,
+    limit: int | None = None,
     user: User = Depends(get_current_user),
 ) -> dict:
-    """知识库操作审计 (谁在什么时候传了什么).
+    """知识库操作审计 (谁在什么时候传了什么) —— **分页**.
 
     权限: **admin only** (2026-10-29 收紧).
 
@@ -1231,23 +1269,64 @@ async def get_audits(
        但操作记录里除了动作, 还有**操作人账号和文件名**, 那是治理信息.
        现在归到 admin 一档 —— 跟「删除文档」「删除数据集」同一档:
        **破坏性和治理性的操作, 都由 admin 掌握**.
+
+    ⚠️ **分页 (2026-10-29)** —— 审计流水是只增不减的, 一次拉 50 条往后
+       什么都不管, 新的记录反而看不见了. 现在按页拉:
+         · `page`     从 1 开始
+         · `page_size` 每页条数 (上限 200)
+       返回 `total` 是**真实总条数**(以前返回的是"本页有几条" —— 跟分页
+       控件对不上, 第 2 页就显示"共 N 条"还停在第 1 页的数).
+
+    ⚠️ `limit` 保留为**向后兼容别名** —— 老脚本/老前端还在用 `?limit=50`,
+       传了就当 page_size 用 (仍返回第一页).
     """
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="只有管理员能查看操作记录")
 
-    from sqlalchemy import desc, select
+    from sqlalchemy import desc, func, select
 
     from app.db.session import AsyncSessionLocal
     from app.models.kb import KbAudit
 
-    limit = max(1, min(int(limit or 50), 200))
+    # 向后兼容: ?limit=N 等价于 page_size=N
+    if limit is not None:
+        page_size = limit
+    try:
+        page = max(1, int(page))
+        # ⚠️ 别写 `page_size or 20` —— 0 是 falsy, 会被当成"没传"给成 20.
+        #    用户/脚本传 0 的意思是"我要 0 条"? 不, 是"我手滑了" —— 兜到 1 更合理
+        page_size = max(1, min(int(page_size), 200))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="page / page_size 必须是整数")
+
     try:
         async with AsyncSessionLocal() as s:
+            # ⚠️ total 必须是**真实总条数**, 不是本页条数
+            total = int(
+                (await s.execute(select(func.count()).select_from(KbAudit))).scalar_one()
+            )
             rows = (
                 await s.execute(
-                    select(KbAudit).order_by(desc(KbAudit.id)).limit(limit)
+                    select(KbAudit)
+                    .order_by(desc(KbAudit.id))
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
                 )
             ).scalars().all()
+        pages = max(1, (total + page_size - 1) // page_size)
+        # ⚠️ 页码越界 (比如刚删过数据, 或前端还停在旧页码) → 回到最后一页
+        #    而不是给一个空表 + "共 N 条" 的怪状态
+        if rows == [] and total > 0 and page > pages:
+            page = pages
+            async with AsyncSessionLocal() as s:
+                rows = (
+                    await s.execute(
+                        select(KbAudit)
+                        .order_by(desc(KbAudit.id))
+                        .offset((page - 1) * page_size)
+                        .limit(page_size)
+                    )
+                ).scalars().all()
         return {
             "items": [
                 {
@@ -1264,8 +1343,13 @@ async def get_audits(
                 }
                 for r in rows
             ],
-            "total": len(rows),
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": pages,
         }
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         logger.exception("list kb audits failed")
         raise HTTPException(status_code=500, detail=f"读取审计失败: {e}")

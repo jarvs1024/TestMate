@@ -189,7 +189,7 @@ describe('新建数据集', () => {
     await submit.trigger('click');
     await flushPromises();
 
-    expect(h.createKbDataset).toHaveBeenCalledWith('协议管理', '协议规范类文档', 'manual');
+    expect(h.createKbDataset).toHaveBeenCalledWith('协议管理', '协议规范类文档', 'manual', 'Chinese');
   });
 
   it('默认是「通用」切片 (RAGFlow 的值是 naive, 不是 general)', async () => {
@@ -200,7 +200,8 @@ describe('新建数据集', () => {
     const submit = panel.findAll('.up-foot button').find((b: any) => b.text().includes('创建'));
     await submit.trigger('click');
     await flushPromises();
-    expect(h.createKbDataset).toHaveBeenCalledWith('默认库', '', 'naive');
+    // ⚠️ 第 4 个参数是语言 —— 默认中文
+    expect(h.createKbDataset).toHaveBeenCalledWith('默认库', '', 'naive', 'Chinese');
   });
 
   it('建库时选了文件 → 建完顺手传进去 (少开一次抽屉)', async () => {

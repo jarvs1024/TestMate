@@ -52,3 +52,7 @@ deploy/native/runtime/
 
 # 软件库存放目录 (裸机运行时的数据, 不进仓库)
 /data/
+
+# ⚠️ 仓库根下的 software/ —— 也是运行时数据 (e2e_software.js 跑软件库用例时
+#    落在这儿的临时包: software/<资产标识>/<版本>/...)。不进仓库。
+/software/

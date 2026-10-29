@@ -25,41 +25,6 @@
       </div>
     </div>
 
-    <!-- 知识检索 / 知识对话: 两个 tab 共享一张卡 -->
-    <div class="card card-share">
-      <div class="share-hd">
-        <div class="share-t">🔎 知识检索<span class="share-sub-inline">{{ activeSubLabel }}</span></div>
-        <div class="share-tabs" role="tablist">
-          <button class="share-tab" :class="{ active: activeTab === 'search' }" @click="activeTab = 'search'"><span class="lbl">搜索</span></button>
-          <button class="share-tab" :class="{ active: activeTab === 'chat' }" @click="activeTab = 'chat'"><span class="lbl">对话</span></button>
-        </div>
-      </div>
-      <template v-if="activeTab === 'search'">
-        <template v-if="searchEmbedUrl">
-          <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
-            <iframe :key="`search-${themeKey}-${themeNonce}`" :src="searchIframeSrc" frameborder="0" class="share-frame" :style="{ minHeight: searchMinHeight + 'px' }" title="knowledge-search" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy="no-referrer"></iframe>
-          </div>
-          <a :href="searchEmbedUrl" target="_blank" rel="noopener" class="share-pop">{{ searchOpenUrlLabel }}</a>
-        </template>
-        <div v-else class="search-placeholder">
-          <div class="ph-ic">🔎</div><div class="ph-t">知识检索建设中</div>
-          <div class="ph-d">admin 可在 设置 → 知识检索 配置 <code>search.embed_url</code> 启用</div>
-        </div>
-      </template>
-      <template v-else-if="activeTab === 'chat'">
-        <template v-if="chatEmbedUrl">
-          <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
-            <iframe :key="`chat-${themeKey}-${themeNonce}`" :src="chatIframeSrc" frameborder="0" class="share-frame" :style="{ minHeight: searchMinHeight + 'px' }" title="knowledge-chat" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy="no-referrer"></iframe>
-          </div>
-          <a :href="chatEmbedUrl" target="_blank" rel="noopener" class="share-pop">{{ chatOpenUrlLabel }}</a>
-        </template>
-        <div v-else class="search-placeholder">
-          <div class="ph-ic">💬</div><div class="ph-t">知识对话建设中</div>
-          <div class="ph-d">admin 可在 设置 → 知识对话 配置 <code>chat.embed_url</code> 启用</div>
-        </div>
-      </template>
-    </div>
-
     <!-- 数据集列表 (P1 加列 + 行可展开看文档) -->
     <div class="card">
       <div class="ds-hd">
@@ -141,6 +106,12 @@
                   class="link-btn"
                   title="内容不变, 重跑一遍解析"
                   @click="doReparse(dsOf(hit), hit)">重解析</button>
+                <!-- ⚠️ 删除文档 = 硬删 → 只给 admin (跟文档子表里那个一个口径) -->
+                <button
+                  v-if="isAdmin"
+                  class="link-btn danger"
+                  title="删除这一篇文档 (源文件和分段一起永久删除)"
+                  @click="doDeleteDocument(dsOf(hit), hit)">🗑 删除</button>
               </td>
             </tr>
             <tr v-if="!docSearchHits.length && docSearchLoading">
@@ -173,15 +144,27 @@
         <tbody>
           <template v-for="d in datasets" :key="d.id">
             <tr class="ds-row" :class="{ open: expandedId === d.id }">
-              <td>
-                <button class="exp" @click="toggleExpand(d.id)" :title="expandedId === d.id ? '收起' : '展开文档'">
-                  {{ expandedId === d.id ? '▾' : '▸' }}
+              <td class="exp-cell">
+                <!-- ⚠️ 折叠按钮要做得很**显眼** (2026-10-29) ——
+                     以前就是一个灰色的 ▸ 字, 没人知道那能点.
+                     现在做成带边框的胶囊 + 「展开/收起」文字, 一眼就知道能展开. -->
+                <button
+                  class="exp"
+                  :class="{ on: expandedId === d.id }"
+                  @click="toggleExpand(d.id)"
+                  :title="expandedId === d.id ? '收起文档列表' : '展开文档列表'">
+                  <span class="exp-ic">{{ expandedId === d.id ? '▾' : '▸' }}</span>
+                  <span class="exp-tx">{{ expandedId === d.id ? '收起' : '展开' }}</span>
                 </button>
               </td>
               <td class="nm">
                 <span class="ds-ic">📁</span>
-                <span>{{ d.name }}</span>
-                <span class="ds-id mono">{{ d.id.slice(0, 8) }}…</span>
+                <!-- ⚠️ 点**名字**也能展开 —— 用户看到名字就想点, 别只让用户猜那个小箭头.
+                     ⚠️ 名字后面的 id 哈希 (`ec40ed92…`) 去掉了 —— 对用户没意义, 还占地方 -->
+                <span
+                  class="ds-name"
+                  title="点击展开文档列表"
+                  @click="toggleExpand(d.id)">{{ d.name }}</span>
               </td>
               <td class="ds-desc" :title="d.description">{{ d.description || '—' }}</td>
               <td>
@@ -214,19 +197,17 @@
                   <div class="doc-hd">
                     <div class="doc-t">📄 {{ d.name }} · 文档列表</div>
                     <div class="doc-tools">
-                      <!-- ⚠️ 只有 tester 及以上能上传 (viewer 是只读角色) -->
-                      <button
-                        v-if="canWrite"
-                        class="reload sm upload-btn"
-                        title="往这个数据集上传文档 (单文件 ≤20MB, 单次 ≤5 个)"
-                        @click="openUpload(d)">⬆ 上传文档</button>
-                      <button class="reload sm" @click="loadDocs(d.id)" :disabled="docLoading(d.id)">↻</button>
+                      <!-- ⚠️ 这里原来还有一个「⬆ 上传文档」按钮 —— **删掉了** (2026-10-29).
+                           重复: 同一行的操作列里已经有「⬆ 上传」(锁定这个库),
+                           页面顶部工具条也还有一个全局的「⬆ 上传文档」.
+                           三个入口干同一件事, 看着像出了 bug. 这里只留「↻」 -->
+                      <button class="reload sm" @click="loadDocs(d.id, true)" :disabled="docLoading(d.id)">↻</button>
                     </div>
                   </div>
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th>名称</th><th>大小</th><th>分段</th><th>解析</th><th>启用</th><th>更新</th><th style="width:220px">操作</th>
+                        <th>名称</th><th>大小</th><th>分段</th><th>解析</th><th>启用</th><th>更新</th><th style="width:270px">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -262,6 +243,13 @@
                             class="link-btn"
                             title="内容不变, 重跑一遍解析 (解析失败了可以用)"
                             @click="doReparse(d, doc)">重解析</button>
+                          <!-- ⚠️ 删除文档 = **硬删** (源文件 + 分段一起没, 没回收站)
+                               → 只给 admin, 且要输入文档名二次确认 (跟删数据集一个口径) -->
+                          <button
+                            v-if="isAdmin"
+                            class="link-btn danger"
+                            title="删除这一篇文档 (源文件和分段一起永久删除)"
+                            @click="doDeleteDocument(d, doc)">🗑 删除</button>
                         </td>
                       </tr>
                       <tr v-if="docsOf(d.id).length === 0 && !docLoading">
@@ -291,17 +279,59 @@
       </table>
     </div>
 
+    <!-- 知识检索 / 知识对话: 两个 tab 共享一张卡 -->
+    <div class="card card-share">
+      <div class="share-hd">
+        <div class="share-t">🔎 知识检索<span class="share-sub-inline">{{ activeSubLabel }}</span></div>
+        <div class="share-tabs" role="tablist">
+          <button class="share-tab" :class="{ active: activeTab === 'search' }" @click="activeTab = 'search'"><span class="lbl">搜索</span></button>
+          <button class="share-tab" :class="{ active: activeTab === 'chat' }" @click="activeTab = 'chat'"><span class="lbl">对话</span></button>
+        </div>
+      </div>
+      <template v-if="activeTab === 'search'">
+        <template v-if="searchEmbedUrl">
+          <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
+            <iframe :key="`search-${themeKey}-${themeNonce}`" :src="searchIframeSrc" frameborder="0" class="share-frame" :style="{ minHeight: searchMinHeight + 'px' }" title="knowledge-search" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy="no-referrer"></iframe>
+          </div>
+          <a :href="searchEmbedUrl" target="_blank" rel="noopener" class="share-pop">{{ searchOpenUrlLabel }}</a>
+        </template>
+        <div v-else class="search-placeholder">
+          <div class="ph-ic">🔎</div><div class="ph-t">知识检索建设中</div>
+          <div class="ph-d">admin 可在 设置 → 知识检索 配置 <code>search.embed_url</code> 启用</div>
+        </div>
+      </template>
+      <template v-else-if="activeTab === 'chat'">
+        <template v-if="chatEmbedUrl">
+          <div class="share-frame-wrap" :style="{ minHeight: searchMinHeight + 'px' }">
+            <iframe :key="`chat-${themeKey}-${themeNonce}`" :src="chatIframeSrc" frameborder="0" class="share-frame" :style="{ minHeight: searchMinHeight + 'px' }" title="knowledge-chat" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy="no-referrer"></iframe>
+          </div>
+          <a :href="chatEmbedUrl" target="_blank" rel="noopener" class="share-pop">{{ chatOpenUrlLabel }}</a>
+        </template>
+        <div v-else class="search-placeholder">
+          <div class="ph-ic">💬</div><div class="ph-t">知识对话建设中</div>
+          <div class="ph-d">admin 可在 设置 → 知识对话 配置 <code>chat.embed_url</code> 启用</div>
+        </div>
+      </template>
+    </div>
+
     <!-- 操作记录 (谁在什么时候动了知识库) -->
     <!-- ⚠️ 只有 **admin** 能看 —— 里面有别人的**操作人账号和文件名**,
          那是治理信息, 跟「删除文档/删除数据集」同一档: 破坏性和治理性的
          操作都由 admin 掌握 -->
     <div v-if="isAdmin" class="card">
       <div class="ds-hd">
-        <h2><span>操作记录</span> <button class="reload" @click="loadAudits" :disabled="auditLoading">↻ 刷新</button></h2>
+        <h2>
+          <span>操作记录</span>
+          <!-- ⚠️ `loadAudits()` 必须带括号 —— 直接写 `loadAudits` 会把
+               MouseEvent 当成 page 参数传进去, 页码直接变成 NaN -->
+          <button class="reload" @click="loadAudits()" :disabled="auditLoading">↻ 刷新</button>
+        </h2>
+        <!-- ⚠️ 总条数得说清楚 —— 这是 admin 的治理视图, 要知道一共发生过多少事 -->
+        <span class="ds-count" v-if="auditTotal">共 {{ auditTotal }} 条</span>
       </div>
       <div v-if="auditError" class="empty err">
         操作记录加载失败：{{ auditError }}
-        <button class="ghost-btn" @click="loadAudits">重试</button>
+        <button class="ghost-btn" @click="loadAudits()">重试</button>
       </div>
       <table v-else class="ds-tbl">
         <thead>
@@ -327,6 +357,28 @@
           </tr>
         </tbody>
       </table>
+      <!-- ⚠️ 分页控件 (2026-10-29) —— 只有一页的时候不显示, 别占地方 -->
+      <div v-if="auditPages > 1" class="pg-bar">
+        <span class="pg-info">
+          第 <b>{{ auditPage }}</b> / {{ auditPages }} 页
+        </span>
+        <div class="pg-btns">
+          <button class="pg-btn" :disabled="auditPage <= 1 || auditLoading" @click="gotoAuditPage(1)">« 首页</button>
+          <button class="pg-btn" :disabled="auditPage <= 1 || auditLoading" @click="gotoAuditPage(auditPage - 1)">‹ 上一页</button>
+          <button class="pg-btn" :disabled="auditPage >= auditPages || auditLoading" @click="gotoAuditPage(auditPage + 1)">下一页 ›</button>
+          <button class="pg-btn" :disabled="auditPage >= auditPages || auditLoading" @click="gotoAuditPage(auditPages)">末页 »</button>
+        </div>
+        <label class="pg-size">
+          每页
+          <select v-model.number="auditPageSize" class="pg-select" @change="onAuditPageSizeChange">
+            <option :value="10">10</option>
+            <option :value="20">20</option>
+            <option :value="50">50</option>
+            <option :value="100">100</option>
+          </select>
+          条
+        </label>
+      </div>
     </div>
 
     <!-- 数据集详情抽屉 (P1) -->
@@ -383,27 +435,65 @@
           <label class="cd-lbl">切片方式</label>
           <div class="cd-choices">
             <label class="cd-choice" :class="{ on: createForm.chunkMethod === 'naive' }">
-              <input type="radio" value="naive" v-model="createForm.chunkMethod" />
+              <input type="radio" value="naive" v-model="createForm.chunkMethod" @change="onQuickChunk" />
               <span class="cd-ct">通用</span>
               <span class="cd-cd">自动分段，txt / md / docx / pdf 都能用</span>
             </label>
             <label class="cd-choice" :class="{ on: createForm.chunkMethod === 'manual' }">
-              <input type="radio" value="manual" v-model="createForm.chunkMethod" />
+              <input type="radio" value="manual" v-model="createForm.chunkMethod" @change="onQuickChunk" />
               <span class="cd-ct">手动</span>
               <span class="cd-cd">只认 pdf / docx，分段要自己再调</span>
+            </label>
+          </div>
+          <!-- ⚠️ RAGFlow 还有 11 种解析器 (2026-10-29) —— 上面两个是最常用的,
+               剩下的放这个下拉里, 免得把抽屉撑成一长串卡片.
+               ⚠️ 值是 RAGFlow 的**内部名** (naive/qa/table/...) ——
+               「通用」在 RAGFlow 里叫 naive, 叫 general 是**更新版本**的说法, 这版不认. -->
+          <div class="cd-more">
+            <select v-model="createForm.parserExtra" class="cd-select2" @change="onExtraParser">
+              <option value="">更多解析方式…（不选就用上面的）</option>
+              <option v-for="p in EXTRA_PARSERS" :key="p.v" :value="p.v">{{ p.label }} — {{ p.desc }}</option>
+            </select>
+            <div class="cd-hint" v-if="createForm.parserExtra">
+              选中「{{ extraParserLabel }}」—— 这个解析器有自己的一套分段规则, 建完建议先传一份试一下
+            </div>
+          </div>
+        </div>
+
+        <!-- ⚠️ 语言 (2026-10-29) —— RAGFlow 的数据集有 language 字段,
+             影响自动问答 / 关键词提取. 默认中文 (RAGFlow 那边默认是 English!). -->
+        <div class="cd-field">
+          <label class="cd-lbl">文档语言</label>
+          <div class="cd-choices">
+            <label class="cd-choice" :class="{ on: createForm.language === 'Chinese' }">
+              <input type="radio" value="Chinese" v-model="createForm.language" />
+              <span class="cd-ct">中文</span>
+              <span class="cd-cd">默认。RAGFlow 建库默认是英文，中文库要在这里改</span>
+            </label>
+            <label class="cd-choice" :class="{ on: createForm.language === 'English' }">
+              <input type="radio" value="English" v-model="createForm.language" />
+              <span class="cd-ct">英文</span>
+              <span class="cd-cd">英文文档 / 中英混合</span>
             </label>
           </div>
         </div>
 
         <div class="cd-field">
           <label class="cd-lbl">先放几个文档进去（选填）</label>
-          <input
-            ref="createFileInput"
-            type="file"
-            multiple
-            class="up-input"
-            :accept="UPLOAD_ACCEPT"
-            @change="onPickCreateFiles" />
+          <div class="fpick">
+            <input
+              ref="createFileInput"
+              type="file"
+              multiple
+              class="up-input up-file-hidden"
+              :accept="UPLOAD_ACCEPT"
+              @change="onPickCreateFiles" />
+            <button type="button" class="fpick-btn" @click="openFilePicker(createFileInput)">
+              <span class="fpick-ic">📎</span>
+              <span class="fpick-tx">选择文件</span>
+              <span class="fpick-hint">可多选 · 单个 ≤ {{ MAX_FILE_MB }}MB · 一次 ≤ {{ MAX_FILES }} 个</span>
+            </button>
+          </div>
           <ul v-if="createFiles.length" class="up-files">
             <li v-for="(f, i) in createFiles" :key="f.name + i">
               <span class="up-fn">{{ f.name }}</span>
@@ -438,13 +528,25 @@
           · 上传后会自动启动解析，解析完成即可被检索到<br />
           · 内容进入<b>共享</b>知识库，所有登录用户都能看到；删除只有管理员能做
         </div>
-        <input
-          ref="fileInput"
-          type="file"
-          multiple
-          class="up-input"
-          :accept="UPLOAD_ACCEPT"
-          @change="onPickFiles" />
+        <!-- ⚠️ **自定义文件选择器** (2026-10-29) ——
+             原生 <input type="file"> 渲染出来是浏览器自带的灰色小按钮, 宽度还随
+             系统语言变, 跟抽屉里其它控件摆一起特别突兀 (图1).
+             做法: input 藏起来 (还在 DOM 里 —— change 照样触发, 测试也还能定位到它),
+             外面套一个自定义按钮, 点它转发给 input.click(). -->
+        <div class="fpick">
+          <input
+            ref="fileInput"
+            type="file"
+            multiple
+            class="up-input up-file-hidden"
+            :accept="UPLOAD_ACCEPT"
+            @change="onPickFiles" />
+          <button type="button" class="fpick-btn" @click="openFilePicker(fileInput)">
+            <span class="fpick-ic">📎</span>
+            <span class="fpick-tx">选择文件</span>
+            <span class="fpick-hint">可多选 · 单个 ≤ {{ MAX_FILE_MB }}MB · 一次 ≤ {{ MAX_FILES }} 个</span>
+          </button>
+        </div>
         <ul v-if="uploadFiles.length" class="up-files">
           <li v-for="(f, i) in uploadFiles" :key="f.name + i">
             <span class="up-fn">{{ f.name }}</span>
@@ -482,12 +584,19 @@
           · 新文档名 = 你选的文件名；内容换完会自动重新解析<br />
           · 只能换<b>内容</b>，不能换文件类型（扩展名必须跟原来一致）
         </div>
-        <input
-          ref="updateFileInput"
-          type="file"
-          class="up-input up-input-update"
-          :accept="UPLOAD_ACCEPT"
-          @change="onPickUpdateFile" />
+        <div class="fpick">
+          <input
+            ref="updateFileInput"
+            type="file"
+            class="up-input up-input-update up-file-hidden"
+            :accept="UPLOAD_ACCEPT"
+            @change="onPickUpdateFile" />
+          <button type="button" class="fpick-btn" @click="openFilePicker(updateFileInput)">
+            <span class="fpick-ic">📎</span>
+            <span class="fpick-tx">选择新文件</span>
+            <span class="fpick-hint">只能选 1 个 · 扩展名必须跟原来一致</span>
+          </button>
+        </div>
         <ul v-if="updateFile" class="up-files">
           <li>
             <span class="up-fn">{{ updateFile.name }}</span>
@@ -579,7 +688,7 @@ import {
   listDocuments, listDocChunks,
   type KbDocChunk,
   uploadKbDocuments, downloadKbDocument, listKbAudits, type KbAuditItem,
-  createKbDataset, type KbChunkMethod, deleteKbDataset,
+  createKbDataset, type KbChunkMethod, type KbLanguage, deleteKbDataset, deleteKbDocuments,
   updateKbDocument, reparseKbDocument,
   searchKbDocuments, type KbDocSearchHit,
 } from '@/api/kb';
@@ -723,8 +832,16 @@ async function toggleExpand(datasetId: string) {
   if (!docsByDataset.value[datasetId]) await loadDocs(datasetId);
 }
 
-async function loadDocs(datasetId: string) {
-  if (docsByDataset.value[datasetId]) return; // 已缓存, 不重复拉
+async function loadDocs(datasetId: string, force = false, silent = false) {
+  // ⚠️ **force** —— 「↻ 刷新」按钮必须真的重新拉!
+  //    以前这里只有 `if (已缓存) return`, 结果两个刷新按钮全是摆设:
+  //      · 文档子表的 ↻ → 缓存命中 → 直接 return, 什么都没干
+  //      · 数据集卡片的 ↻ 刷新 → warmupAllDocs 也走这里 → 文档列表还是旧的
+  //
+  // ⚠️ **silent** —— 轮询时用. 轮询失败不该弹错误框 (每 3 秒弹一次能把人逼疯),
+  //    也不该把文档列表清空 (网络抖一下, 用户看着文档全没了, 更慌).
+  //    静默失败 → 保留上一次的数据, 等下一轮.
+  if (!force && docsByDataset.value[datasetId]) return; // 已缓存, 不重复拉
   docLoadingByDs.value[datasetId] = true;
   try {
     // RAGFlow 单页上限 100, 分页拿全量用于准确汇总 totalSize
@@ -740,11 +857,73 @@ async function loadDocs(datasetId: string) {
     }
     docsByDataset.value[datasetId] = all;
   } catch (e: any) {
-    ElMessage.error('加载文档失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
-    docsByDataset.value[datasetId] = [];
+    if (!silent) {
+      ElMessage.error('加载文档失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
+      docsByDataset.value[datasetId] = [];
+    }
   } finally {
     docLoadingByDs.value[datasetId] = false;
+    // ⚠️ 拉完看一眼要不要继续轮询 (解析是异步的, 状态会自己变)
+    scheduleDocPoll();
   }
+}
+
+// ---------- 文档状态轮询 ----------
+//
+// ⚠️ **为什么需要**: 解析是 RAGFlow **后台异步**跑的 —— 上传/更新完立刻拉一次,
+//    拿到的还是「解析中」, 之后就没人管了, 用户盯着看永远不变.
+//    所以只要还有文档在解析, 就定期重拉.
+//
+// ⚠️ 只认 `run === 'RUNNING'` ——
+//    「UNSTART」不能算: 手动分块的数据集我们压根不发解析, 那些文档会**永远**
+//    停在 UNSTART, 算进去就是无限轮询.
+//    上传后那段「还没变成 RUNNING」的空窗, 用下面的**观察窗口**兜住.
+const DOC_POLL_INTERVAL = 3000;      // 轮询间隔
+const DOC_POLL_WINDOW = 90_000;      // 上传/更新后的观察窗口 (90 秒)
+const DOC_POLL_MAX_MS = 10 * 60_000; // 轮询总时长上限 (防跑飞)
+let docPollTimer: ReturnType<typeof setTimeout> | null = null;
+let docPollStartedAt = 0;
+/** 观察窗口截止时间 —— 上传/更新/重解析后延长 */
+let docWatchUntil = 0;
+
+function markDocsWatch() {
+  docWatchUntil = Date.now() + DOC_POLL_WINDOW;
+  docPollStartedAt = 0;      // 重新起算总时长
+  scheduleDocPoll();
+}
+
+function hasRunningDocs(): boolean {
+  return Object.values(docsByDataset.value)
+    .some((list) => (list || []).some((d) => d.run === 'RUNNING'));
+}
+
+function scheduleDocPoll() {
+  if (docPollTimer) { clearTimeout(docPollTimer); docPollTimer = null; }
+  // 页面在后台就别轮询 —— 白费 RAGFlow 的请求
+  if (typeof document !== 'undefined' && document.hidden) return;
+  const running = hasRunningDocs();
+  const inWindow = Date.now() < docWatchUntil;
+  if (!running && !inWindow) return;
+  // 兜底: 轮询跑太久就停 (万一有个文档卡在 RUNNING 不出来)
+  if (docPollStartedAt && Date.now() - docPollStartedAt > DOC_POLL_MAX_MS) return;
+  if (!docPollStartedAt) docPollStartedAt = Date.now();
+  docPollTimer = setTimeout(() => {
+    docPollTimer = null;
+    void pollDocs();
+  }, DOC_POLL_INTERVAL);
+}
+
+async function pollDocs() {
+  const ids = Object.keys(docsByDataset.value);
+  for (const id of ids) {
+    // ⚠️ 页面切走了就别拉了
+    if (typeof document !== 'undefined' && document.hidden) return;
+    // ⚠️ 库已经被删了 (本页面删的) → 别再去问 RAGFlow, 那是 404
+    if (!datasets.value.some((d) => d.id === id)) continue;
+    // ⚠️ silent=true —— 轮询失败不弹框、不清列表 (详见 loadDocs 注释)
+    await loadDocs(id, true, true);
+  }
+  scheduleDocPoll();
 }
 
 // === 详情抽屉 ===
@@ -820,6 +999,18 @@ function openUploadTop() {
   uploadOpen.value = true;
 }
 
+/**
+ * 打开系统文件选择框 —— 自定义按钮转发给藏起来的原生 input.
+ *
+ * ⚠️ 先把 value 清空 —— 否则**连续选同一个文件**第二次不会触发 change,
+ *    用户看着就是"按钮没反应".
+ */
+function openFilePicker(el: HTMLInputElement | null) {
+  if (!el) return;
+  el.value = '';
+  el.click();
+}
+
 function onPickFiles(e: Event) {
   const el = e.target as HTMLInputElement;
   const picked = Array.from(el.files || []);
@@ -867,7 +1058,8 @@ async function doUpload() {
     // 刷新文档列表 —— 新文档要能马上看见
     delete docsByDataset.value[ds.id];
     await loadDocs(ds.id);
-    await loadAudits();
+    markDocsWatch();          // ⚠️ 解析是异步的 —— 接着轮询, 让「解析中」自己变成「已完成」
+    await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页, 别停在旧页码看不见
   } catch (e: any) {
     uploadError.value = httpErrorText(errorStatus(e), errorDetail(e), '上传失败');
   } finally {
@@ -890,9 +1082,52 @@ const creating = ref(false);
 const createError = ref('');
 const createFiles = ref<File[]>([]);
 const createFileInput = ref<HTMLInputElement | null>(null);
-const createForm = ref<{ name: string; description: string; chunkMethod: KbChunkMethod }>({
-  name: '', description: '', chunkMethod: 'naive',
+
+/**
+ * RAGFlow v0.26.1 的**其余**解析器 (「通用」「手动」在上面做成大卡片了).
+ *
+ * ⚠️ 值是 RAGFlow 的**内部名** —— 「通用」在 RAGFlow 里叫 `naive`,
+ *    叫 `general` 是**更新版本**的说法, 这版不认 (真机实测 code 101).
+ * ⚠️ 合法集合跟 RAGFlow 的校验器对齐 —— 不在集合里的值, 库根本建不出来.
+ */
+const EXTRA_PARSERS: { v: KbChunkMethod; label: string; desc: string }[] = [
+  { v: 'qa', label: '问答', desc: '按问答对切, 适合 FAQ / 售后话术' },
+  { v: 'table', label: '表格', desc: '按表格切, 适合台账 / 清单' },
+  { v: 'paper', label: '论文', desc: '按论文结构切, 适合研究报告' },
+  { v: 'book', label: '书籍', desc: '按章节切, 适合手册 / 教材' },
+  { v: 'laws', label: '法规', desc: '按条款切, 适合制度 / 协议' },
+  { v: 'presentation', label: 'PPT', desc: '按页切, 适合幻灯片' },
+  { v: 'picture', label: '图片', desc: '按图片说明切' },
+  { v: 'one', label: '单段', desc: '整个文件当一段' },
+  { v: 'email', label: '邮件', desc: '按邮件切' },
+  { v: 'tag', label: '标签', desc: '按标签切' },
+  { v: 'resume', label: '简历', desc: '按简历字段切' },
+];
+
+const createForm = ref<{
+  name: string; description: string; chunkMethod: KbChunkMethod;
+  /** 「更多解析方式」下拉的值 —— 空 = 跟着上面的大卡片走 */
+  parserExtra: string;
+  language: KbLanguage;
+}>({
+  name: '', description: '', chunkMethod: 'naive', parserExtra: '', language: 'Chinese',
 });
+
+const extraParserLabel = computed(
+  () => EXTRA_PARSERS.find((p) => p.v === createForm.value.parserExtra)?.label || '',
+);
+
+/** 点了上面的大卡片 (通用/手动) → 把「更多解析方式」清掉, 免得两个选择打架 */
+function onQuickChunk() {
+  createForm.value.parserExtra = '';
+}
+
+/** 点了「更多解析方式」→ 它**覆盖**大卡片的选择 */
+function onExtraParser() {
+  const v = createForm.value.parserExtra;
+  if (!v) return;
+  createForm.value.chunkMethod = v as KbChunkMethod;
+}
 
 /**
  * ⚠️ 重名在前端先拦一道.
@@ -920,7 +1155,9 @@ const canSubmitCreate = computed(() => {
 });
 
 function openCreate() {
-  createForm.value = { name: '', description: '', chunkMethod: 'naive' };
+  createForm.value = {
+    name: '', description: '', chunkMethod: 'naive', parserExtra: '', language: 'Chinese',
+  };
   createFiles.value = [];
   createError.value = '';
   createOpen.value = true;
@@ -965,7 +1202,11 @@ async function doCreate() {
   const form = { ...createForm.value };
   const files = [...createFiles.value];
   try {
-    const r = await createKbDataset(form.name.trim(), form.description.trim(), form.chunkMethod);
+    // ⚠️ 最终生效的切片方式 = 「更多解析方式」优先, 没有就用大卡片选的
+    const chunkMethod = (createForm.value.parserExtra || createForm.value.chunkMethod) as KbChunkMethod;
+    const r = await createKbDataset(
+      form.name.trim(), form.description.trim(), chunkMethod, form.language,
+    );
     const ds = r.dataset;
     let upStatus: 'none' | 'ok' | 'warn' | 'fail' = 'none';
     let upMsg = '';
@@ -984,7 +1225,10 @@ async function doCreate() {
     // 自动展开新库 —— 建完得让人**马上看见**自己建了什么
     if (ds?.id) { expandedId.value = ds.id; await loadDocs(ds.id); }
     const head = `数据集「${ds?.name || form.name}」已创建`;
-    if (upStatus === 'ok') ElMessage.success(`${head}，${upMsg}`);
+    // ⚠️ 后端可能带回 warning (比如语言没设上) —— 如实说, 别只报"成功"
+    if (r.warning) {
+      ElMessage.warning(`${head}，但 ${r.warning}`);
+    } else if (upStatus === 'ok') ElMessage.success(`${head}，${upMsg}`);
     else if (upStatus === 'warn') ElMessage.warning(`${head}，但 ${upMsg}`);
     else if (upStatus === 'fail') ElMessage.error(`${head}，但 ${upMsg}`);
     else ElMessage.success(head);
@@ -1054,7 +1298,8 @@ async function doUpdate() {
     // ⚠️ 文档 id 变了 —— 必须丢掉缓存重新拉, 不然前端拿着旧 id 继续操作会 404
     delete docsByDataset.value[ds.id];
     await loadDocs(ds.id);
-    await loadAudits();
+    markDocsWatch();          // ⚠️ 解析是异步的 —— 接着轮询, 让「解析中」自己变成「已完成」
+    await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页, 别停在旧页码看不见
     if (r.warning) {
       // ⚠️ 有 warning 说明文档换了但**没参与检索** —— 别弹"成功"把用户骗了,
       //    抽屉也别关, 让他把这段话看完
@@ -1095,7 +1340,8 @@ async function doReparse(d: DsRef, doc: KbDocument) {
     ElMessage.success(`「${doc.name}」已重新提交解析`);
     delete docsByDataset.value[d.id];
     await loadDocs(d.id);
-    await loadAudits();
+    markDocsWatch();          // ⚠️ 重解析也是异步的 —— 状态要自己跟上
+    await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页, 别停在旧页码看不见
   } catch (e: any) {
     ElMessage.error('重新解析失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
   }
@@ -1171,12 +1417,19 @@ function clearDocSearch() {
 // ⚠️ 离开页面要把定时器清掉 —— 不然它在后台照样触发, 白发一轮请求
 onBeforeUnmount(() => {
   if (docSearchTimer) clearTimeout(docSearchTimer);
+  if (docPollTimer) { clearTimeout(docPollTimer); docPollTimer = null; }
 });
 
 // === 操作记录 (审计) ===
 const audits = ref<KbAuditItem[]>([]);
 const auditLoading = ref(false);
 const auditError = ref('');
+// ⚠️ 分页状态 (2026-10-29) —— 审计流水只增不减, 一次拉 50 条后面全是旧的
+// ⚠️ 默认每页 **10** 条 —— 20 条的话表格太长, 分页条被顶到屏幕外看不见了
+const auditPage = ref(1);
+const auditPageSize = ref(10);
+const auditTotal = ref(0);
+const auditPages = ref(1);
 
 function auditActionLabel(a: string): string {
   return ({
@@ -1226,25 +1479,93 @@ async function doDeleteDataset(d: KbDataset) {
     delete docLoadingByDs.value[d.id];
     if (expandedId.value === d.id) expandedId.value = '';
     await loadAll();
-    await loadAudits();
+    await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页, 别停在旧页码看不见
   } catch (e: any) {
     ElMessage.error('删除失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
   }
 }
 
-async function loadAudits() {
+/**
+ * 删除**一篇文档** —— 只给 admin, 且要**输入文档名**确认.
+ *
+ * ⚠️ RAGFlow 的删除是**硬删**: 源文件(MinIO)、分段(ES) 一起没了, **没有回收站**.
+ *    所以跟删数据集一个口径 —— 让用户把文档名敲出来, 逼他确认删的是哪一篇.
+ * ⚠️ 权限跟「删除数据集/查看操作记录」同一档: **admin only**.
+ * ⚠️ ElMessageBox 是**纯文本**, 不渲染 Markdown —— 别写 `**强调**`.
+ */
+async function doDeleteDocument(d: DsRef, doc: KbDocument) {
+  const chunks = doc.chunk_count || 0;
+  const scope = chunks
+    ? `源文件和 ${chunks} 个分段会一起永久删除，无法恢复`
+    : '源文件会永久删除，无法恢复';
+  try {
+    await ElMessageBox.prompt(
+      `即将删除文档「${doc.name}」—— ${scope}。\n请输入文档名称「${doc.name}」以确认：`,
+      '删除文档',
+      {
+        type: 'warning',
+        confirmButtonText: '永久删除',
+        cancelButtonText: '取消',
+        inputPlaceholder: doc.name,
+        inputValidator: (v: string) =>
+          (v || '').trim() === doc.name ? true : '名称对不上 —— 请原样输入上面的文档名称',
+      },
+    );
+  } catch {
+    // 用户取消 —— 不是错误
+    return;
+  }
+  try {
+    await deleteKbDocuments(d.id, [doc.id]);
+    ElMessage.success(`文档「${doc.name}」已删除`);
+    // ⚠️ 本地缓存要立刻清 —— 不然列表里还挂着那一篇 (下一次轮询才会消失)
+    const list = docsByDataset.value[d.id];
+    if (list) {
+      docsByDataset.value[d.id] = list.filter((x) => x.id !== doc.id);
+    }
+    await loadAll();
+    await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  }
+}
+
+async function loadAudits(page?: number) {
   // ⚠️ 只有 admin 能看操作记录 —— 别去请求 (后端会 403, 还会弹一个没意义的错误)
   if (!isAdmin.value) return;
+  // ⚠️ 不传 page 就留在当前页; 传了就跳到那一页
+  //    (操作完一个动作后要跳回第 1 页 —— 最新的记录在**最前面**)
+  if (page && page >= 1) auditPage.value = page;
   auditLoading.value = true;
   auditError.value = '';
   try {
-    const r = await listKbAudits(50);
+    const r = await listKbAudits(auditPage.value, auditPageSize.value);
     audits.value = r.items || [];
+    // ⚠️ 这里再做一次兜底 —— 测试里 mock 掉的是整个 listKbAudits,
+    //    api 层那套归一化不会跑, 组件自己也得扛住缺字段的情况
+    auditTotal.value = Number(r.total ?? audits.value.length);
+    auditPages.value = Number(
+      r.pages ?? Math.max(1, Math.ceil(auditTotal.value / auditPageSize.value)),
+    );
+    // ⚠️ 后端可能把越界页码纠正回最后一页 —— 跟着它走, 别让页码显示跟内容对不上
+    if (r.page && r.page !== auditPage.value) auditPage.value = r.page;
   } catch (e: any) {
     auditError.value = httpErrorText(errorStatus(e), errorDetail(e), '读取失败');
   } finally {
     auditLoading.value = false;
   }
+}
+
+/** 翻页 —— 目标页跟当前页一样就什么都不干 (别白发一轮请求) */
+function gotoAuditPage(p: number) {
+  if (p < 1 || p > auditPages.value || p === auditPage.value) return;
+  void loadAudits(p);
+}
+
+/** 改每页条数 —— 回到第 1 页 */
+function onAuditPageSizeChange() {
+  auditPage.value = 1;
+  void loadAudits(1);
 }
 
 // 角色变了(比如切账号 / 权限被改) —— 顺手把已经看到的记录清掉, 别留在屏幕上
@@ -1297,13 +1618,17 @@ async function loadAll() {
 
 async function onReload() {
   await loadAll();
-  warmupAllDocs();
+  // ⚠️ **文档缓存也得清掉** —— 以前只 loadAll() (刷数据集列表),
+  //    文档列表走的是缓存, 结果点「↻ 刷新」数据集变了、文档还是旧的.
+  //    用户看着「点了没反应」就是这个原因.
+  for (const id of Object.keys(docsByDataset.value)) delete docsByDataset.value[id];
+  await warmupAllDocs(true);
 }
 
 // 预热所有数据集的文档, 让概览的总大小/分段/文档数立即准确, 且展开时直接命中缓存
-async function warmupAllDocs() {
+async function warmupAllDocs(force = false) {
   if (!datasets.value.length) return;
-  await Promise.allSettled(datasets.value.map(d => loadDocs(d.id)));
+  await Promise.allSettled(datasets.value.map(d => loadDocs(d.id, force)));
 }
 
 onMounted(async () => {
@@ -1365,6 +1690,29 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .reload:disabled { opacity: 0.5; }
 .reload.sm { padding: 2px 8px; font-size: 11px; }
 
+/* ⚠️ 分页条 (2026-10-29) —— 操作记录页数多, 必须能翻 */
+.ds-count { font-size: 12px; color: var(--ink-500); }
+.pg-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--ink-500);
+}
+.pg-info b { color: var(--ink-700); }
+.pg-btns { display: flex; gap: 6px; }
+.pg-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--ink-700); font-size: 11.5px; padding: 4px 10px;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.pg-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.pg-size { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.pg-select {
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+  color: var(--ink-700); font-size: 12px; padding: 3px 6px; font-family: inherit;
+  cursor: pointer;
+}
+
 .ds-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ds-tbl th { text-align: left; padding: 10px 12px; color: var(--ink-500); font-weight: 500; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); }
 .ds-tbl td { padding: 10px 12px; color: var(--ink-700); border-bottom: 1px solid var(--border); vertical-align: middle; }
@@ -1372,12 +1720,25 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .ds-row.open { background: var(--surface-sunken); }
 .ds-row.open td { border-bottom-color: transparent; }
 
-.exp { background: transparent; border: 0; color: var(--ink-500); cursor: pointer; font-size: 12px; padding: 2px 4px; }
-.exp:hover { color: var(--primary); }
+/* ⚠️ 折叠按钮 (2026-10-29) —— 以前是个灰色的 ▸ 字, 没人知道能点.
+   改成带边框的胶囊 + 「展开/收起」文字, 一眼就知道这个库能展开看文档. */
+.exp-cell { width: 92px; }
+.exp {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  color: var(--ink-700); cursor: pointer; font-size: 11.5px; font-family: inherit;
+  padding: 3px 10px; white-space: nowrap;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.exp:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
+.exp.on { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
+.exp-ic { font-size: 10px; line-height: 1; }
 
 .nm { display: flex; align-items: center; gap: 6px; color: var(--ink-900); font-weight: 500; }
 .ds-ic { font-size: 16px; }
-.ds-id { font-size: 10.5px; color: var(--ink-500); margin-left: 4px; }
+/* ⚠️ 名字也能点开 —— 给个手型 + 悬停变色, 让用户知道这是个可点的入口 */
+.ds-name { cursor: pointer; border-bottom: 1px dashed transparent; }
+.ds-name:hover { color: var(--primary); border-bottom-color: var(--primary); }
 .emb { color: var(--ink-500); font-size: 11.5px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-desc { color: var(--ink-700); font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -1446,14 +1807,36 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .link-btn:last-child { margin-right: 0; }
 
 /* 上传文档 (2026-10-29) */
-.upload-btn { border-color: var(--primary); color: var(--primary); }
-.upload-btn:hover { background: var(--primary-soft); }
+/* ⚠️ `.upload-btn` 已删 (2026-10-29) —— 它只挂在文档子表那个重复的
+   「⬆ 上传文档」按钮上, 那个按钮删了以后这行样式也一起删掉, 别留死代码 */
 .up-panel { display: flex; flex-direction: column; gap: 12px; }
 .up-tip { font-size: 13px; color: var(--ink-700); }
 .up-tip b { color: var(--ink-900); }
 .up-rules { font-size: 12px; color: var(--ink-500); line-height: 1.9; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .up-rules b { color: var(--ink-900); }
 .up-input { font-size: 12px; color: var(--ink-700); }
+/* ⚠️ **自定义文件选择器** (2026-10-29) ——
+   原生 <input type="file"> 渲染出来是浏览器自带的灰色小按钮, 宽度还随系统语言变,
+   跟抽屉里其它控件摆一起特别突兀 (图1).
+   做法: input 藏起来 (还在 DOM 里 —— change 照样触发, 测试也还能定位到它),
+   外面套一个自定义按钮, 点它转发给 input.click(). */
+.up-file-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.fpick { display: flex; }
+.fpick-btn {
+  display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;
+  background: var(--surface); border: 1px dashed var(--border);
+  border-radius: 8px; padding: 10px 12px; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; color: var(--ink-700); text-align: left;
+  transition: border-color .15s, background .15s;
+}
+.fpick-btn:hover { border-color: var(--primary); background: var(--primary-soft); }
+.fpick-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.fpick-ic { font-size: 15px; line-height: 1; }
+.fpick-tx { font-weight: 600; color: var(--ink-900); white-space: nowrap; }
+.fpick-hint { color: var(--ink-500); font-size: 11.5px; margin-left: auto; text-align: right; }
 .up-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .up-files li { display: flex; align-items: center; gap: 8px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; font-size: 12px; }
 .up-fn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-900); }
@@ -1545,5 +1928,15 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .cd-choice input { grid-row: 1 / 3; margin: 0; accent-color: var(--primary); }
 .cd-ct { font-size: 13px; font-weight: 600; color: var(--ink-900); }
 .cd-cd { font-size: 11.5px; color: var(--ink-500); }
+
+/* 「更多解析方式」下拉 (2026-10-29) —— 其余 11 种 RAGFlow 解析器 */
+.cd-more { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.cd-select2 {
+  width: 100%; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+  color: var(--ink-700); font-size: 12.5px; font-family: inherit;
+  padding: 8px 10px; cursor: pointer;
+}
+.cd-select2:focus { border-color: var(--primary); outline: none; }
 
 </style>

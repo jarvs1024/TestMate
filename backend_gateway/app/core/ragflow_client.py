@@ -53,10 +53,35 @@ async def list_datasets(page: int = 1, page_size: int = 50) -> list[dict[str, An
 #: ⚠️ 对外字段是 **`chunk_method`**, **不是 `parser_id`** ——
 #:    `parser_id` 只是 RAGFlow 服务内部的别名 (CreateDatasetReq 里标了
 #:    serialization_alias="parser_id"), 直接当请求字段传会被判
-#:    "Extra inputs are not permitted" 而 400.
+#:    "Extra inputs are not permitted" 而 400. **真机实测过**:
+#:      POST {"parser_id": "naive"} → code 101 Extra inputs are not permitted
+#:      POST {"chunk_method": "naive"} → code 0 ✅
 #: ⚠️ 通用切片的值是 **`naive`** —— "general" 是更新的说法, v0.26.1 不认.
+#:    真机实测: POST {"chunk_method": "general"} → code 101 (合法值枚举里没有).
+#:    ⚠️ 但 `parser_config` 里有个 **method** 字段, 那个是 "light"/"general"/"ner",
+#:       跟 chunk_method 是两回事, 别混.
 CHUNK_NAIVE = "naive"
 CHUNK_MANUAL = "manual"
+
+#: RAGFlow v0.26.1 **建库接口允许的全部** chunk_method (真机枚举 + 容器源码核对).
+#:
+#: 容器里的校验: `allowed = {"naive", "book", "email", "laws", "manual", "one",
+#:                          "paper", "picture", "presentation", "qa", "table",
+#:                          "tag", "resume"}`
+#: ⚠️ 传不在这个集合里的值 → code 101, 库建不出来.
+CHUNK_METHODS: tuple[str, ...] = (
+    "naive", "qa", "table", "paper", "book", "laws",
+    "presentation", "picture", "one", "email", "tag", "resume", "manual",
+)
+
+#: 数据集语言 (RAGFlow 的 `Knowledgebase.language` 列).
+#:
+#: ⚠️ **建库接口不认 language** —— `CreateDatasetReq` 里根本没这个字段,
+#:    传了会被判 "Extra inputs are not permitted" (真机实测).
+#:    只有 `UpdateDatasetReq` (PUT /datasets/{id}) 有它 —— 所以建完库再补一次 PUT.
+#: ⚠️ 而且建库时的**默认值是 "English"** —— 容器里 LANG 不是 zh_CN,
+#:    DB 默认值就是 English. 我们要的是中文库, 所以必须显式补一次 PUT.
+KB_LANGUAGES: tuple[str, ...] = ("Chinese", "English")
 
 
 async def create_dataset(
@@ -125,6 +150,7 @@ async def update_dataset(
     name: str | None = None,
     description: str | None = None,
     chunk_method: str | None = None,
+    language: str | None = None,
 ) -> dict[str, Any]:
     """改数据集 (代理 RAGFlow PUT /datasets/{id}).
 
@@ -133,6 +159,10 @@ async def update_dataset(
     ⚠️ 实测过: 只传 `description` 不会把库名冲成空串
        (UpdateDatasetReq 虽然继承自 CreateDatasetReq 且 name 默认 "",
         但服务端只把**实际传的字段**带进更新).
+
+    ⚠️ **`language` 只有 PUT 能设** —— `CreateDatasetReq` 里**没有** language 字段,
+       建库时传 language 会被 RAGFlow 判 "Extra inputs are not permitted" (真机实测).
+       但 `UpdateDatasetReq` 有, 所以建完库再补一次 PUT 就能设上.
     """
     base, key = await _config()
     if not base or "xxxxx" in key or "mock" in key:
@@ -144,6 +174,8 @@ async def update_dataset(
         body["description"] = description
     if chunk_method is not None:
         body["chunk_method"] = chunk_method
+    if language is not None:
+        body["language"] = language
     if not body:
         return {}
     url = f"{base}/datasets/{quote(dataset_id, safe='')}"

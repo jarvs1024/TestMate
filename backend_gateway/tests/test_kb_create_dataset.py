@@ -136,20 +136,33 @@ async def test_empty_name_rejected(client, publisher_user, fake_rf):
 
 
 async def test_invalid_chunk_method_rejected(client, publisher_user, fake_rf):
-    """⚠️ 切片方式只能是 naive / manual —— 别的值传下去 RAGFlow 会拒.
+    """⚠️ 切片方式必须跟 RAGFlow 的合法集合对齐 —— 别的值传下去 RAGFlow 会拒.
 
     放开了只会让用户收到一句看不懂的 "ragflow error".
     ⚠️ 特别地 **"general" 不行** —— 那是更新版本 RAGFlow 的说法,
-    这台机器上的 v0.26.1 只认 "naive".
+    这台机器上的 v0.26.1 只认 "naive"(真机实测 code 101).
+
+    ⚠️ 2026-10-29 第七轮: 合法集合**放开**成了 RAGFlow 真正支持的那 13 种
+    (之前只让 naive/manual 过, `qa`/`table` 这些其实 RAGFlow 是支持的) ——
+    所以现在拿 `qa` 举例是**非法**了, 得拿真正不存在的值.
     """
+    for bad in ("general", "xyz"):
+        r = await client.post(
+            f"{API}/kb/datasets",
+            json={"name": "奇怪的库", "chunk_method": bad},
+            headers={"Authorization": f"Bearer {publisher_user['token']}"},
+        )
+        assert r.status_code == 422, f"{bad!r}: {r.text}"
+        assert "naive" in r.json()["detail"], r.text
+    assert fake_rf.calls == []
+
+    # ⚠️ 空串 = "没指定" → 走默认的 naive (不是非法值)
     r = await client.post(
         f"{API}/kb/datasets",
-        json={"name": "奇怪的库", "chunk_method": "qa"},
+        json={"name": "空切片的库", "chunk_method": ""},
         headers={"Authorization": f"Bearer {publisher_user['token']}"},
     )
-    assert r.status_code == 422, r.text
-    assert "naive" in r.json()["detail"], r.text
-    assert fake_rf.calls == []
+    assert r.status_code == 200, r.text
 
 
 async def test_general_chunk_method_rejected(client, publisher_user, fake_rf):

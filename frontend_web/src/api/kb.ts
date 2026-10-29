@@ -219,11 +219,20 @@ export async function listDocChunks(
 
 /**
  * RAGFlow v0.26.1 的切片方式.
+/**
+ * RAGFlow v0.26.1 建库接口支持的**全部**切片方式.
  *
  * ⚠️ 对外字段是 `chunk_method` —— 传 `parser_id` 会被 RAGFlow 当多余字段拒掉.
- * ⚠️ 通用切片的值是 `'naive'` (界面显示「通用」), `'general'` 是更新版本的说法.
+ * ⚠️ 通用切片的值是 `'naive'` (界面显示「通用」), `'general'` 是更新版本的说法,
+ *    **这版 RAGFlow 不认** (真机实测 → code 101).
  */
-export type KbChunkMethod = 'naive' | 'manual';
+export type KbChunkMethod =
+  | 'naive' | 'qa' | 'table' | 'paper' | 'book' | 'laws'
+  | 'presentation' | 'picture' | 'one' | 'email' | 'tag' | 'resume'
+  | 'manual';
+
+/** 数据集语言 (影响自动问答 / 关键词提取). */
+export type KbLanguage = 'Chinese' | 'English';
 
 export interface KbCreateResult {
   ok: boolean;
@@ -236,23 +245,29 @@ export interface KbCreateResult {
     permission: string;
     document_count: number;
     chunk_count: number;
+    language?: string;
   };
+  /** ⚠️ 语言没设上之类的"部分成功"提示 —— 如实告诉用户 */
+  warning?: string;
 }
 
 /**
  * 新建知识库数据集.
  *
  * ⚠️ 新建的库**立刻出现在所有人的列表里** —— 名字要说清楚这个库放什么.
- * ⚠️ `chunkMethod`: 'naive'(通用/自动分段, 默认) | 'manual'(手动切分).
- *    manual 的解析器只认 pdf/docx, 传 .txt/.md 进去解析不了.
+ * ⚠️ `chunkMethod`: 默认 `'naive'`(通用/自动分段).
+ *    `'manual'`(手动切分)的解析器只认 pdf/docx, 传 .txt/.md 进去解析不了.
+ * ⚠️ `language`: 默认 `'Chinese'` —— ⚠️ **RAGFlow 建库接口不认这个字段**,
+ *    是网关建完库再补一次 PUT 设上的, 所以这一步失败会有 `warning` 返回.
  */
 export async function createKbDataset(
   name: string,
   description = '',
   chunkMethod: KbChunkMethod = 'naive',
+  language: KbLanguage = 'Chinese',
 ): Promise<KbCreateResult> {
   return (await request.post('/kb/datasets', {
-    name, description, chunk_method: chunkMethod,
+    name, description, chunk_method: chunkMethod, language,
   })) as KbCreateResult;
 }
 
@@ -439,10 +454,40 @@ export interface KbAuditItem {
  *
  * ⚠️ 内容存在 RAGFlow 里, RAGFlow 自己记不了 TestMate 的账号
  *    (所有人共用一把 API key) —— "谁传的"只能靠这张表.
+ *
+ * ⚠️ **分页** (2026-10-29) —— 审计流水只增不减, 一次全拉几千条会把页面
+ *    拖死, 而且新记录反而看不见. 现在按页拉.
+ *
+ * ⚠️ 这里的兜底不是为了好看 —— 后端返回结构变了以后, 老测试的 mock 还是
+ *    `{items, total}` 两字段. 归一化在**这一层**做, 页面里就不用到处
+ *    写 `r.pages ?? ...`.
  */
-export async function listKbAudits(limit = 50): Promise<{ items: KbAuditItem[]; total: number }> {
-  return (await request.get('/kb/audits', { params: { limit } })) as {
-    items: KbAuditItem[]; total: number;
+export interface KbAuditPage {
+  items: KbAuditItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+}
+
+export async function listKbAudits(
+  page = 1,
+  pageSize = 20,
+): Promise<KbAuditPage> {
+  const r = (await request.get('/kb/audits', {
+    params: { page, page_size: pageSize },
+  })) as Partial<KbAuditPage> & { items?: KbAuditItem[] };
+
+  const items = r?.items || [];
+  const total = Number(r?.total ?? items.length);
+  const ps = Number(r?.page_size ?? pageSize) || pageSize;
+  const pages = Number(r?.pages ?? Math.max(1, Math.ceil(total / ps)));
+  return {
+    items,
+    total,
+    page: Number(r?.page ?? page) || page,
+    page_size: ps,
+    pages,
   };
 }
 
