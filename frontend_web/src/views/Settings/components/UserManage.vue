@@ -24,10 +24,13 @@
             <input
               v-model="form.username"
               type="text"
+              :class="{ invalid: !!fieldErr.username }"
               :placeholder="isAdminRole ? '账号名 (不带 @)' : 'zhangsan'"
               @keyup.enter="onCreate" />
             <span v-if="showDomain" class="suffix">{{ emailDomain }}</span>
           </div>
+          <!-- ⚠️ 字段级错误: 贴在出问题的字段下面 (以前所有错误都甩到整行下方) -->
+          <div v-if="fieldErr.username" class="field-err">{{ fieldErr.username }}</div>
         </div>
 
         <div class="field">
@@ -44,14 +47,23 @@
           <input
             v-model="form.password"
             type="password"
+            :class="{ invalid: !!(fieldErr.password || pwdErr) }"
             :placeholder="isAdminRole ? '管理员必须设置' : '留空 = 免密登录'"
             @keyup.enter="onCreate" />
+          <!-- ⚠️ 字段级错误: 管理员账号没设密码时, 错误要**贴着密码框**,
+               而不是冒在三个字段下面那条红框里 (以前根本看不出是哪个字段错了).
+               pwdErr 是**实时**的 —— 「创建账号」按钮已经禁用了, 用户必须一眼
+               看得出为什么点不动. -->
+          <div v-if="fieldErr.password || pwdErr" class="field-err">{{ fieldErr.password || pwdErr }}</div>
         </div>
 
-        <button class="primary create-btn" :disabled="busy || !form.username.trim()" @click="onCreate">
+        <button class="primary create-btn"
+                :disabled="busy || !form.username.trim() || !!pwdErr"
+                @click="onCreate">
           {{ busy ? '创建中…' : '创建账号' }}
         </button>
       </div>
+      <!-- ⚠️ 只放**通用**错误 (后端返回的、说不清是哪个字段的那些) -->
       <div v-if="formErr" class="err">{{ formErr }}</div>
     </div>
 
@@ -150,11 +162,40 @@ const form = reactive<{ username: string; password: string; role: UserRole }>({
   role: 'tester',
 });
 const busy = ref(false);
+/**
+ * 表单级错误 —— 只装**通用**错误 (说不清是哪个字段的那些).
+ *
+ * ⚠️ 以前所有错误 (包括"管理员账号必须设置密码") 都塞在这一个变量里,
+ *    冒在三个字段下面 —— 密码框旁边一点提示都没有.
+ *    现在按字段定位 (见 fieldErr), 这里只兜底.
+ */
 const formErr = ref('');
+/**
+ * 字段级错误 —— username / password 各一条.
+ *
+ * ⚠️ 有了它, 用户一眼能看出**是哪个字段**错了, 不用猜.
+ */
+const fieldErr = reactive<{ username: string; password: string }>({
+  username: '',
+  password: '',
+});
 
 /** 管理员账号名不带 @ —— 这时候不显示固定后缀 */
 const isAdminRole = computed(() => form.role === 'admin');
 const showDomain = computed(() => !isAdminRole.value && !form.username.includes('@'));
+
+/**
+ * 管理员账号必须设密码 —— 前端**提前拦一道**.
+ *
+ * ⚠️ 后端 (auth.py) 本来就会拒 (422 管理员账号必须设置密码), 但以前前端不拦,
+ *    点了「创建账号」整个表单往返一次, 才在三个字段下面冒出一条红框,
+ *    密码框旁边什么都没有 —— placeholder 写着「管理员必须设置」, 却没有必填标记.
+ *    ⚠️ 这里只是**提前告诉用户**, 后端仍是最终校验, 安全性不变.
+ */
+const pwdErr = computed(() => {
+  if (isAdminRole.value && !form.password.trim()) return '管理员账号必须设置密码';
+  return '';
+});
 
 function roleLabel(role: UserRole): string {
   return role === 'admin' ? '管理员' : role === 'tester' ? '测试者' : '只读';
@@ -182,8 +223,16 @@ function errText(e: any, fallback: string): string {
 async function onCreate() {
   const username = form.username.trim();
   if (!username) return;
-  busy.value = true;
+  // ⚠️ 每次提交先把上一轮的错清干净 (否则旧错误还挂着)
+  fieldErr.username = '';
+  fieldErr.password = '';
   formErr.value = '';
+  // ⚠️ 管理员账号没设密码 → 提前拦下, 并把错贴在密码字段下面
+  if (pwdErr.value) {
+    fieldErr.password = pwdErr.value;
+    return;
+  }
+  busy.value = true;
   try {
     await createUser({
       username,
@@ -195,13 +244,37 @@ async function onCreate() {
     form.password = '';
     emit('changed');
   } catch (e: any) {
-    formErr.value = errText(e, '创建失败');
+    // ⚠️ 按字段定位 —— 后端的话里说的是哪个字段, 错就贴到哪个字段下面.
+    //    (后端 detail 是纯字符串, 只能按关键词分; 分不出来就落表单底部)
+    const msg = errText(e, '创建失败');
+    if (msg.includes('密码')) fieldErr.password = msg;
+    else if (msg.includes('用户名') || msg.includes('账号') || msg.includes('邮箱')) fieldErr.username = msg;
+    else formErr.value = msg;
   } finally {
     busy.value = false;
   }
 }
 
 async function onToggleActive(u: ManagedUser) {
+  // ⚠️ 停用是**立刻生效**的破坏性操作 (2026-10-30) ——
+  //    以前点一下就直接发请求: 对方手上的 token 当场作废, 下一次请求就被踢,
+  //    当场登录不了, 而按钮文案只有两个字「停用」, 没说任何后果.
+  //    同一文件里「重置密码」**有**确认框 —— 两个危险操作标准不一致, 这里补齐.
+  if (u.is_active) {
+    try {
+      await ElMessageBox.confirm(
+        `停用后「${u.username}」将立刻无法登录（其名下资产会保留，可随时「启用」恢复）。确认停用？`,
+        '停用账号',
+        {
+          type: 'warning',
+          confirmButtonText: '确认停用',
+          cancelButtonText: '取消',
+        },
+      );
+    } catch {
+      return;  // 用户取消 —— 不发请求
+    }
+  }
   busy.value = true;
   try {
     await updateUser(u.id, { is_active: !u.is_active });
@@ -315,6 +388,12 @@ async function onResetPwd(u: ManagedUser) {
   outline: none; border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-soft);
 }
+/* ⚠️ 出错的字段标红 (2026-10-30) —— 以前错误统一甩在整行下方,
+   密码框红不红根本看不出来, 用户不知道是哪个字段没填 */
+.field input.invalid { border-color: var(--err); }
+.field input.invalid:focus { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15); }
+/* 字段级错误: 贴着出问题的那个字段 */
+.field-err { font-size: 11.5px; color: var(--err); line-height: 1.4; }
 .create-btn { flex: 0 0 auto; height: 35px; padding: 0 18px; }
 
 /* 用户名 + 固定后缀拼成一个输入框 */

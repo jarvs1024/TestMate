@@ -155,7 +155,11 @@ const hintText = computed(() => {
   const u = form.username.trim();
   if (!u) return '';
   if (hintState.value === 'checking') return '正在核对账号…';
-  if (hintState.value === 'failed') return '账号需管理员提前开通';
+  // ⚠️ 探测失败的**唯一来源**是 getAccountHint 返回 null, 而 api/users.ts 把
+  //    所有异常 (网络失败 / 502 / 429 限流) 都吞成了 null ——
+  //    所以这里**不能**说成"账号需管理员提前开通" (那是 h.account === 'missing' 的结论).
+  //    以前两句话一模一样, 用户以为自己账号没开通, 去找管理员, 实际是平台挂了.
+  if (hintState.value === 'failed') return '账号状态暂时查不到（服务未就绪或查询过频），可直接尝试登录';
   const h = hint.value;
   if (!h) return '';
   if (h.account === 'ok') {
@@ -169,9 +173,12 @@ const hintText = computed(() => {
   return '';
 });
 
-/** 提示的语气 (ok / bad / busy / need-pw) */
+/** 提示的语气 (ok / bad / busy / need-pw / warn) */
 const hintKind = computed(() => {
   if (hintState.value === 'checking') return 'busy';
+  // ⚠️ failed 以前落回 'plain' (灰字) —— 灰字跟"一切正常"长得一样,
+  //    用户看不出这是**异常**. 探测失败是"服务没就绪/被限流", 用 warn (黄) 才看得出.
+  if (hintState.value === 'failed') return 'warn';
   const h = hint.value;
   if (h?.account === 'ok') return h.needs_password ? 'need-pw' : 'ok';
   if (h?.account === 'missing' || h?.account === 'disabled') return 'bad';
@@ -395,6 +402,8 @@ async function onSubmit() {
 .hint.need-pw { color: var(--ink-700); }
 .hint.bad { color: var(--err); }
 .hint.busy { color: var(--ink-500); }
+/* ⚠️ warn = 探测失败 (服务没就绪 / 查询过频) —— 黄色, 跟"一切正常"的灰字区分开 */
+.hint.warn { color: var(--warn); }
 
 .primary {
   width: 100%;

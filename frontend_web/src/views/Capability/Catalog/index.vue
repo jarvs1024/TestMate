@@ -41,7 +41,7 @@
         <!-- ===== 上传入口: 先选形态, 再进对应表单 (2026-10-24) =====
              以前点开就是「技能」表单, 传连接器得滚到底改类型下拉才知道要填 JSON。 -->
         <div class="upload-pick" ref="pickWrap">
-          <button class="mini-btn primary" @click="pickOpen = !pickOpen">
+          <button class="mini-btn primary" :aria-expanded="pickOpen" @click="pickOpen = !pickOpen">
             ＋ 上传资产 <span class="up-caret">▾</span>
           </button>
           <div v-if="pickOpen" class="pick-menu">
@@ -74,7 +74,10 @@
       <button v-if="sync.failed_count" class="sb-btn" :disabled="retrying" @click="retryFailed">
         {{ retrying ? '重试中…' : '重试失败任务' }}
       </button>
-      <button class="sb-btn ghost" @click="load">刷新</button>
+      <!-- ⚠️ 「重新载入状态」不是「重新同步」: 前者只重读本地镜像 (快),
+           后者会全量拉 GitLab (慢得多). 一个页面上三个「刷新」含义都不一样,
+           以前全叫「刷新」, 用户点哪个都一样. 这里把话说清 (只改文案, 不删按钮). -->
+      <button class="sb-btn ghost" @click="load">重新载入状态</button>
     </div>
 
     <!-- ⚠️ 资产状态取不到 → 说清楚 (别让"同步状态条"整段消失, 看着像"一切正常") -->
@@ -111,7 +114,7 @@
     </div>
     <div v-if="isAdmin && othersUnpublishCount > 0" class="my-review-bar admin">
       <span>🗑 有 <b>{{ othersUnpublishCount }}</b> 个资产在等下架确认 —— 通过后会被彻底删除</span>
-      <button class="mrb-btn" @click="load">刷新</button>
+      <button class="mrb-btn" @click="load">重新载入状态</button>
     </div>
 
     <!-- ===== 分类 + 项目/排序筛选 (状态不在这层过滤 —— 每张卡片自己标着) ===== -->
@@ -148,22 +151,40 @@
     </div>
 
     <!-- ===== 加载 / 空态 / 错误 ===== -->
-    <div v-if="loading" class="state">
-      <div class="spinner" />
-      <div>正在从 GitLab 加载资产索引…</div>
+    <!-- ⚠️ 超时提示条: **独立于下面那组互斥分支** (2026-10-30).
+         原来超时文案是写进 loadError 的, 而错误分支排在 `v-if="loading"` 之后 ——
+         loading 为真时那个分支**永远不渲染**, 于是「加载超时」一次都没出现过,
+         用户只能干等 axios 的 30s. 现在超时是自己的条, 还带一个「重试」. -->
+    <div v-if="loading && timedOut" class="timeout-bar">
+      <span class="tb-ic">⏱</span>
+      <span class="tb-text">加载超时（已等 15 秒），请检查后端服务后点「重试」</span>
+      <button class="tb-btn" @click="load">重试</button>
     </div>
+    <!-- ⚠️ 整页 spinner 只在**还没有旧列表**时出现 ——
+         有旧列表时走下面的遮罩 (列表留在原地, 滚动位置不丢). -->
+    <div v-if="loading && !list.length" class="state">
+      <div class="spinner" />
+      <div>正在加载资产列表…</div>
+    </div>
+    <!-- ⚠️ 请求失败 → **整块替换**网格 (旧数据跟新错误不能同时出现) -->
     <div v-else-if="loadError" class="state err">
       <div style="font-size: 28px">⚠️</div>
       <div>{{ loadError }}</div>
       <button class="reset" @click="load">重试</button>
     </div>
-    <div v-else-if="list.length === 0" class="state">
+    <div v-else-if="!list.length" class="state">
       <div style="font-size: 30px; opacity: 0.4">🏪</div>
       <div>当前筛选下没有资产</div>
       <button class="reset" @click="resetFilters">清空筛选</button>
     </div>
-    <div v-else class="grid">
-      <AssetCard v-for="it in list" :key="it.code" :item="it" @open="openDetail" />
+    <!-- ⚠️ 网格**始终渲染** (2026-10-30): 以前这里是 `v-else`, loading 时整块网格
+         被卸载 → 页面高度塌缩 → 浏览器把滚动位置夹回顶部, 列表回来后用户被弹回页首.
+         现在保留旧列表, 只盖一层轻量遮罩 (降透明度 + 禁点) + 顶部一条进度条. -->
+    <div v-else class="grid-wrap">
+      <div v-if="loading" class="reloading-bar" />
+      <div class="grid" :class="{ reloading: loading }">
+        <AssetCard v-for="it in list" :key="it.code" :item="it" @open="openDetail" />
+      </div>
     </div>
 
     <AssetDetailDrawer
@@ -179,12 +200,15 @@
 
     <p v-if="total > 0" class="foot-hint mono">
       共 {{ total }} 项 · 数据源: GitLab {{ gitRemoteText }}
+      <!-- ⚠️ 页脚这两个按钮以前都叫「刷新」/「重新同步」, 但含义差很远:
+           「刷新列表」只重读本地镜像 (快), 「从 GitLab 重新同步（慢）」会全量回灌.
+           以前用户点哪个都一样 —— 现在把差别写进文案. -->
       <button v-if="!syncing" class="link-btn" title="重新读一次市场数据 (不拉 GitLab, 快)"
-              @click="manualRefresh">刷新</button>
+              @click="manualRefresh">刷新列表</button>
       <!-- ⚠️ 「重新同步」= 从 GitLab 全量回灌 + 重新入队 → 后端已收紧成 **admin only**.
            非管理员点了只吃一个 403, 不如直接不显示. -->
       <button v-if="isAdmin && !syncing" class="link-btn" title="从 GitLab 拉取最新资产 (慢一点, 仅管理员)"
-              @click="doSync">重新同步</button>
+              @click="doSync">从 GitLab 重新同步（慢）</button>
       <!-- ⚠️ 这里**不能**用 v-else: 非管理员 (isAdmin=false) 时按钮不渲染,
            v-else 会跟着渲染出「同步中…」—— 看着像有个同步一直在跑, 实际根本没有.
            所以单独判 syncing: 只有**真的在同步**时才显示. -->
@@ -321,6 +345,15 @@ const items = ref<AssetItem[]>([]);
 const total = ref(0);
 const loading = ref(false);
 const loadError = ref('');
+/**
+ * 加载超时 —— **独立于 loadError** (2026-10-30).
+ *
+ * ⚠️ 原来超时文案写进 loadError, 但错误分支排在 `v-if="loading"` 之后,
+ *    loading 为真时那个分支永远不渲染 → 「加载超时」**一次都没出现过**
+ *    (请求成功后被清掉, 失败时被真实错误覆盖). 用户只能干等 axios 的 30s.
+ *    现在超时是独立状态, 渲染成一条自己的提示条.
+ */
+const timedOut = ref(false);
 const syncing = ref(false);
 const retrying = ref(false);
 const kindCounts = ref<Record<string, number>>({});
@@ -477,20 +510,28 @@ async function loadKindCounts() {
 }
 
 /**
- * 分类 chip 上的计数 —— **按当前类型 tab 算**.
+ * 分类 chip 上的计数 —— **前端按当前列表聚合** (2026-10-30 整改).
  *
- * ⚠️ 以前用的是后端给的 total (全部形态的总数) → 切到「技能」tab 时数字
- *    比实际能看到的多, 点进去发现是空的, 像是分类坏了.
+ * ⚠️ 以前用的是后端给的 `by_kind` —— 那是"全局按形态"的口径, **不受搜索/项目筛选影响**
+ *    (listCategories 只接受 status 参数, 没有 q/project 维度). 于是搜索「日志」后
+ *    列表只剩 1 张卡, chip 还写着「质量保障 8」→ 点进去是空的, chip 的 8 一动不动,
+ *    用户以为分类坏了.
+ * ⚠️ 现在按**当前请求回来的 rawItems** 分组 —— chip 上的数字必然等于
+ *    「点进去能看到几张卡」, 也跟左边的「全部 N」同一口径.
+ * ⚠️ rawItems 是 `limit: 500` 的结果 —— 超过 500 的市场会漏计 (既有上限, 本次不扩).
+ * ⚠️ listCategories 现在只用来拿分类的**名字和说明**, 计数一律前端算.
  */
-function catCount(c: { by_kind?: Record<string, number>; total?: number }): number {
-  if (!onlyMine.value && c.by_kind) {
-    // ⚠️ 别在"这个分类没有当前形态的资产"时退回 total ——
-    //    那样 chip 上会显示一个点进去看不到的数字:
-    //    插件 tab 下「质量保障 2」, 点进去却一张卡都没有 (质量保障全是技能).
-    //    by_kind 里有当前形态的键就按它算 (缺键 = 0); 没有 by_kind 才退回 total.
-    return c.by_kind[kind.value] || 0;
+const catCounts = computed(() => {
+  const m: Record<string, number> = {};
+  for (const it of rawItems.value) {
+    const c = (it.category || '').trim();
+    if (!c) continue;
+    m[c] = (m[c] || 0) + 1;
   }
-  return c.total || 0;
+  return m;
+});
+function catCount(c: { name?: string }): number {
+  return catCounts.value[c.name || ''] || 0;
 }
 
 /**
@@ -514,10 +555,14 @@ async function fetchList(opts: { silent?: boolean } = {}) {
     loading.value = true;
     loadingSeq = seq;
     loadError.value = '';
+    // ⚠️ 新的一轮请求 → 之前的超时提示作废 (不然旧的超时条会一直挂着)
+    timedOut.value = false;
   }
   // 看门狗: 请求卡住 (网络中断 / 上游异常) 时给出可操作提示, 而不是无限转圈
+  // ⚠️ 超时**不再**写进 loadError —— 那个分支在 loading 为真时永远不渲染 (见 timedOut 的说明).
+  //    这里只置独立的超时标记, 由模板渲染成一条带「重试」的提示条.
   const watchdog = window.setTimeout(() => {
-    if (seq === listSeq && loading.value) loadError.value = '加载超时, 请检查后端服务后点「重试」';
+    if (seq === listSeq && loading.value) timedOut.value = true;
   }, LOAD_TIMEOUT_MS);
   try {
     // ⚠️ 「只看这些」时**只按状态过滤**, 别的筛选一律让路 ——
@@ -562,10 +607,10 @@ async function fetchList(opts: { silent?: boolean } = {}) {
     total.value = items.value.length;
     lastRefreshAt.value = new Date();
     refreshError.value = '';
-    // ⚠️ 成功后要**清掉看门狗置的 loadError** —— 以前只在请求开始时清,
-    //    看门狗超时置的错误会一直留着, 页面永远停在「加载超时」面板,
-    //    尽管数据早就加载好了.
+    // ⚠️ 成功后要**清掉看门狗置的超时标记** —— 否则数据早就加载好了,
+    //    「加载超时」那条提示还挂着 (以前它写进 loadError, 同一个毛病).
     loadError.value = '';
+    timedOut.value = false;
     // 抽屉里开着的资产同步一下 (静默刷新后抽屉别停在旧数据上).
     // ⚠️ 找不到**不关抽屉** —— 刷新期间资产可能被并发删掉, 关抽屉会打断用户.
     if (current.value) {
@@ -781,8 +826,24 @@ function onDocClick(e: MouseEvent) {
   if (pickWrap.value && pickWrap.value.contains(e.target as Node)) return;
   pickOpen.value = false;
 }
-onMounted(() => document.addEventListener('click', onDocClick));
-onUnmounted(() => document.removeEventListener('click', onDocClick));
+/**
+ * Esc → 关掉形态菜单.
+ *
+ * ⚠️ 2026-10-30: 以前这个菜单**没有** Esc 支持 —— 键盘用户打开后只能点外面或 Tab 走人.
+ *    同一页的项目筛选菜单 (MarketFilterMenu) 是支持的, 两边不一致.
+ *    这里照抄那边的写法 (见 MarketFilterMenu.vue 的 onKey).
+ */
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && pickOpen.value) pickOpen.value = false;
+}
+onMounted(() => {
+  document.addEventListener('click', onDocClick);
+  document.addEventListener('keydown', onKey);
+});
+onUnmounted(() => {
+  document.removeEventListener('click', onDocClick);
+  document.removeEventListener('keydown', onKey);
+});
 
 function resetFilters() {
   kind.value = 'plugin';
@@ -992,6 +1053,42 @@ onUnmounted(() => {
 @media (max-width: 1400px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+
+/* ⚠️ 重新加载时的遮罩 (2026-10-30): 旧列表**留在原地**, 只降透明度 + 禁点.
+   以前 loading 时整块网格被 v-else 换掉 → 页面高度塌缩 → 浏览器把滚动位置
+   夹回顶部 → 列表回来后用户被弹回页首, 之前滚到第几屏全丢了. */
+.grid-wrap { position: relative; }
+.grid.reloading { opacity: 0.55; pointer-events: none; transition: opacity 0.15s ease; }
+/* 网格顶部一条 2px 进度条 —— 让用户知道"在加载", 而不是"卡住了" */
+.reloading-bar {
+  height: 2px; margin-bottom: 10px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--primary), var(--primary-2));
+  background-size: 200% 100%;
+  animation: reload-slide 1.1s linear infinite;
+}
+@keyframes reload-slide {
+  from { background-position: 200% 0; }
+  to { background-position: 0 0; }
+}
+
+/* ===== 加载超时提示条 (2026-10-30) =====
+   ⚠️ 独立于加载/错误分支 —— 以前超时文案写进 loadError, 而那个分支排在
+      `v-if="loading"` 之后, loading 为真时永远不渲染 → 用户看不到任何提示. */
+.timeout-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-card);
+  padding: 9px 14px; font-size: 12.5px; color: var(--warn);
+}
+.timeout-bar .tb-ic { font-size: 15px; }
+.timeout-bar .tb-text { flex: 1; min-width: 200px; }
+.timeout-bar .tb-btn {
+  background: var(--surface); border: 1px solid var(--warn); color: var(--warn);
+  padding: 4px 12px; border-radius: var(--radius-pill);
+  font-size: 12px; cursor: pointer; font-family: inherit;
+}
+.timeout-bar .tb-btn:hover { background: var(--warn); color: #fff; }
 
 .state {
   background: var(--surface-soft); backdrop-filter: blur(8px);

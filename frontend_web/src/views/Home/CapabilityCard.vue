@@ -188,7 +188,13 @@ function onClick() {
   font-size: 11px; font-weight: 600; color: var(--ink-700);
   pointer-events: none;
 }
-html[data-theme="dark"] .cc-overlay { background: rgba(15, 22, 40, 0.85); color: var(--ink-300); }
+/* ⚠️ 暗色覆盖用 `html.dark` (class), 不是 `html[data-theme="dark"]` (属性) ——
+   主题 store 在 auto 模式下写的是 data-theme="auto", 而 auto **是默认模式**
+   (DEFAULT = 'auto'), 系统一暗色首屏就是这个状态 → 老选择器永远不命中,
+   "规划中"药丸就保持白底 + 浅灰字 (对比度约 1.4:1, 几乎读不出来).
+   store 的 applyTheme() 在**任何**模式下都会按实际解析结果给 html 加 .dark class,
+   这个 class 才可靠. */
+html.dark .cc-overlay { background: rgba(15, 22, 40, 0.85); color: var(--ink-300); }
 .cc-overlay .ov-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--ink-500);

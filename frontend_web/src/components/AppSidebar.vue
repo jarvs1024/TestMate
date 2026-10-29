@@ -45,4 +45,22 @@ onMounted(() => {
   flex-direction: column;
   gap: 12px;
 }
+/* ⚠️ **窄屏收窄侧栏** (2026-10-29 整改) ——
+   侧栏原来 220px 是写死的, 窄屏下它一个人就吃掉大部分宽度:
+   实测 375px 视口里侧栏占 220px, 主内容只剩 155px —— 基本没法用.
+
+   ⚠️ 这里**只收窄**, 不做"图标条 / 抽屉态"那种大改 ——
+      侧栏里的内容是文字导航 (能力名), 收成图标条要另做一套图标映射,
+      反而更容易认错. 收窄后:
+        1100px 以下 → 190px
+        860px  以下 → 160px
+      配合 MainLayout 里同步收掉的留白, 窄屏主内容能多出一半. */
+@media (max-width: 1100px) {
+  .tm-side { width: 190px; }
+  .side-inner { padding: 12px 8px 14px; gap: 10px; }
+}
+@media (max-width: 860px) {
+  .tm-side { width: 160px; }
+  .side-inner { padding: 10px 6px 12px; }
+}
 </style>

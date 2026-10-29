@@ -26,6 +26,16 @@
 
     <!-- ⚠️ 下面这些**只在 admin 时渲染** —— 非管理员看不到任何配置项 -->
     <template v-if="isAdmin">
+    <!-- ⚠️ 首次进入要有**加载态** (2026-10-30) ——
+         以前进页面立刻渲染出完整目录树, 但每个标题后面都是「0 项」
+         (「🗂️ 能力墙 0 项 / 📦 资产 0 项 …」), 下面一排排空分组标题,
+         一个输入框都没有 —— 跟"平台上没有配置项"长得一模一样.
+         内容要 1~2 秒后才突然冒出来; 后端没起时更糟: axios 30s 超时,
+         空壳要挂满 30 秒才变成错误卡.
+         ⚠️ 加载中**绝不能**显示「0 项」计数 —— 那等于把"还没加载"说成"没有配置". -->
+    <div v-if="loading" class="card loading-card">正在读取平台配置…</div>
+
+    <template v-else>
     <!-- ⚠️ 配置拉失败 → 页面内明确提示 (不能只靠全局 toast:
          页面上各 section 的计数会显示「0 项」, 用户会以为配置被清空了) -->
     <div v-if="loadError" class="card err-card">
@@ -407,6 +417,7 @@
       </main>
     </div>
     </template>
+    </template>
   </div>
 </template>
 
@@ -759,8 +770,19 @@ function toBool(v: any, def = false): boolean {
  */
 const loadError = ref('');
 
+/**
+ * 配置正在读取 —— 首次进入的**加载态** (2026-10-30).
+ *
+ * ⚠️ 以前没有这个状态: 页面一进来就把**空目录树**渲染出来, 每个标题后面
+ *    都写着「0 项」, 跟"平台上没有配置项"长得一模一样, 1~2 秒后内容才冒出来.
+ *    后端没起时更离谱 —— axios 30s 超时, 空壳要挂满 30 秒才变错误卡.
+ *    现在加载期间只显示一句"正在读取平台配置…", 计数**不出现**.
+ */
+const loading = ref(true);
+
 async function load() {
   loadError.value = '';
+  loading.value = true;
   try {
     const resp = await getSchema();
     groups.value = resp.groups;
@@ -774,6 +796,9 @@ async function load() {
   } catch (e: any) {
     // 失败不抛 —— 抛出去就是 unhandled rejection, 页面上什么都看不出来
     loadError.value = httpErrorText(errorStatus(e), errorDetail(e), '配置加载失败');
+  } finally {
+    // ⚠️ 成功/失败都要收掉加载态 —— 否则失败时永远停在"正在读取…" (跟"还在转圈"没区别)
+    loading.value = false;
   }
 }
 
@@ -977,6 +1002,14 @@ onMounted(() => {
   margin-bottom: 16px;
   background: rgba(239, 68, 68, 0.06);
   border-color: var(--err);
+}
+/* ⚠️ 首次进入的加载态 (2026-10-30) —— 加载期间**不显示任何「0 项」计数**,
+   只给一句话, 免得"还没加载"被读成"平台上没有配置项" */
+.loading-card {
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--ink-500);
+  font-size: 13px;
 }
 .err-ic { font-size: 24px; }
 .err-body { display: flex; flex-direction: column; gap: 6px; }
@@ -1366,8 +1399,14 @@ onMounted(() => {
 }
 .notif-empty.err .mini-link { margin-left: 0; }
 .notif-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+/* ⚠️ 2026-10-30 改成 grid —— 以前是 flex + wrap:
+   资产 code 一长 (如 asset:knowledge-base-dataset-v2), flex 把「时间」挤到第二行,
+   又被 margin-left:auto 顶到最右 → 这行的时间跟其它行对不齐, 整列没法竖着扫读.
+   现在四列固定: 事件 / code / 状态 / 时间, code 用 minmax(0,1fr) + 省略号,
+   长了就在自己列里截断, 不再把行撑开. */
 .notif-list li {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center; gap: 8px;
   border: 1px solid var(--border); border-left: 3px solid var(--border);
   border-radius: var(--radius-sm); padding: 7px 10px; background: var(--surface-soft);
   font-size: 12px;
@@ -1376,18 +1415,26 @@ onMounted(() => {
 .notif-list li.failed { border-left-color: var(--err); background: rgba(239, 68, 68, 0.06); }
 .notif-list li.pending { border-left-color: var(--warn); }
 .notif-list li.skipped { border-left-color: var(--ink-500); opacity: 0.7; }
-.nl-act { font-weight: 600; color: var(--ink-900); }
-.nl-code { font-family: var(--font-mono); font-size: 11px; color: var(--ink-700); }
+/* ⚠️ 每一列**显式定位** —— code 是 v-if, 缺了以后后面的列也不会往前挪 */
+.nl-act { grid-column: 1; font-weight: 600; color: var(--ink-900); }
+.nl-code {
+  grid-column: 2;
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-700);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .nl-chip {
+  grid-column: 3;
   font-size: 10.5px; font-weight: 600; padding: 1px 8px; border-radius: var(--radius-pill);
 }
 .nl-chip.sent { background: rgba(16, 185, 129, 0.14); color: var(--ok); }
 .nl-chip.failed { background: rgba(239, 68, 68, 0.14); color: var(--err); }
 .nl-chip.pending { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
 .nl-chip.skipped { background: rgba(100, 116, 139, 0.16); color: var(--ink-600); }
-.nl-time { font-size: 11px; color: var(--ink-500); margin-left: auto; }
+/* ⚠️ 去掉 margin-left:auto —— grid 里时间就靠列定位, 不该再靠 auto 顶 */
+.nl-time { grid-column: 4; font-size: 11px; color: var(--ink-500); }
 .nl-err {
-  width: 100%; font-size: 11px; color: var(--err); opacity: 0.85;
+  grid-column: 1 / -1;      /* 错误详情独占一行 (不占上面四列) */
+  width: auto; font-size: 11px; color: var(--err); opacity: 0.85;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 

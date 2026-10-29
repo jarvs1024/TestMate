@@ -16,7 +16,16 @@
 
         <div v-if="loading" class="state">读取中…</div>
         <div v-else-if="loadError" class="state err">取数失败: {{ loadError }}</div>
-        <div v-else-if="!rows.length" class="state">还没有操作记录</div>
+        <!-- ⚠️ 2026-10-30: 空态文案要**分情况** ——
+             筛到某个动作却 0 条时, 说「还没有操作记录」是**错的**:
+             明明有一屏记录 (切回「全部」能看到), 只是这个动作没有 →
+             用户会得出"记录丢了"的错误结论. 现在说清是"这个动作没有记录". -->
+        <div v-else-if="!rows.length" class="state">
+          <template v-if="actFilter !== 'all'">
+            没有「{{ actFilterLabel(actFilter) }}」的记录（全部 {{ audits.length }} 条里没有匹配的）
+          </template>
+          <template v-else>还没有操作记录</template>
+        </div>
         <ul v-else class="log-list">
           <li v-for="r in rows" :key="r.id" :class="['log-item', r.action]">
             <div class="log-hd">
@@ -116,6 +125,16 @@ const rows = computed(() =>
 
 function countBy(action: string): number {
   return audits.value.filter((a) => a.action === action).length;
+}
+
+/**
+ * 筛选动作 → 中文名 (给空态文案用).
+ *
+ * ⚠️ 2026-10-30: 空态要说「没有「版本更新」的记录」——
+ *    直接把 action id (update) 摆出来对用户没意义, 要用 chip 上那个中文名.
+ */
+function actFilterLabel(action: string): string {
+  return ACTIONS.find((a) => a.value === action)?.label || action;
 }
 
 /** 动作中文 —— **后端给的** (action_label), 前端只做兜底 */

@@ -3,7 +3,7 @@
     type="button"
     class="tm-theme"
     :title="`当前: ${label} · 点击切换`"
-    :aria-label="label"
+    :aria-label="`切换主题 (当前: ${label})`"
     @click="themeStore.toggle()"
   >
     <svg v-if="themeStore.resolved === 'light'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -19,7 +19,14 @@
 import { computed } from 'vue';
 import { useThemeStore } from '@/stores/theme';
 const themeStore = useThemeStore();
-const label = computed(() => themeStore.resolved === 'dark' ? '深色' : '浅色');
+// ⚠️ label 要**把 auto 说出来** —— 以前只看 resolved (只有 light/dark),
+//    用户看到的永远是「深色」/「浅色」, 完全不知道系统暗色时页面其实是
+//    **自动跟随**的, 于是以为"点一下就固定成浅色"是对的, 把 auto 永久吃掉.
+//    现在 auto 显式显示「跟随系统」, 用户才知道还能切回去.
+const label = computed(() => {
+  if (themeStore.mode === 'auto') return '跟随系统';
+  return themeStore.resolved === 'dark' ? '深色' : '浅色';
+});
 </script>
 
 <style scoped>

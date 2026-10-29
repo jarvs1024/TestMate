@@ -46,22 +46,25 @@
         <p v-if="agent.summary" class="run-lead">{{ agent.summary }}</p>
 
         <div v-for="f in agent.input_schema" :key="f.key" class="field">
-          <label>
+          <!-- ⚠️ 2026-10-30: 以前这个 <label> **既没有 for, 也不是控件的祖先**
+               (label 和 input 是兄弟节点) —— 点字段标题不会聚焦输入框.
+               现在补 for + 给控件补 id, 点标题就能跳到对应控件. -->
+          <label :for="`f-${f.key}`">
             {{ f.label }}
             <span v-if="f.required" class="req">*</span>
             <span v-if="f.placeholder" class="hint">— {{ f.placeholder }}</span>
           </label>
 
           <input v-if="f.type === 'text'" v-model="form[f.key]" type="text"
-            :placeholder="f.placeholder || ''" />
+            :id="`f-${f.key}`" :placeholder="f.placeholder || ''" />
 
           <textarea v-else-if="f.type === 'textarea'" v-model="form[f.key]" rows="3"
-            :placeholder="f.placeholder || ''" />
+            :id="`f-${f.key}`" :placeholder="f.placeholder || ''" />
 
           <input v-else-if="f.type === 'number'" v-model.number="form[f.key]" type="number"
-            :min="f.min" :max="f.max" :placeholder="f.placeholder || ''" />
+            :id="`f-${f.key}`" :min="f.min" :max="f.max" :placeholder="f.placeholder || ''" />
 
-          <select v-else-if="f.type === 'select'" v-model="form[f.key]">
+          <select v-else-if="f.type === 'select'" v-model="form[f.key]" :id="`f-${f.key}`">
             <option v-for="o in f.options || []" :key="o" :value="o">{{ o }}</option>
           </select>
 
@@ -75,7 +78,7 @@
           </div>
 
           <div v-else-if="f.type === 'machine_select'" class="machine-pick">
-            <select v-model="form[f.key]">
+            <select v-model="form[f.key]" :id="`f-${f.key}`">
               <option value="">— 选择机台 —</option>
               <option v-for="m in machines" :key="m.id" :value="m.id">
                 {{ m.name }} ({{ m.ip }})
@@ -95,6 +98,11 @@
           </div>
 
           <div v-else class="unknown">⚠ 未实现的字段类型: {{ f.type }}</div>
+
+          <!-- ⚠️ 2026-10-30: 必填字段以前只有个红星号, 点「运行」**不做任何校验**,
+               空值照跑不误, 用户一点反馈都没有. 现在必填没填就拦下,
+               错误贴在**出问题的那个字段下面** (复用 .unknown 的样式). -->
+          <div v-if="fieldErrs[f.key]" class="unknown">⚠ {{ fieldErrs[f.key] }}</div>
         </div>
 
         <div class="actions">
@@ -102,7 +110,9 @@
             <span v-if="!running">▶ 运行</span>
             <span v-else>⏳ 运行中...</span>
           </button>
-          <button class="secondary" @click="onReset">重置</button>
+          <!-- ⚠️ 2026-10-30: 运行中禁用「重置」 ——
+               以前运行中也能点, 点了不清状态 (事件还会冒回来, 状态卡一直「运行中」) -->
+          <button class="secondary" :disabled="running" @click="onReset">重置</button>
         </div>
 
         <details class="sop">
@@ -202,6 +212,39 @@ const running = ref(false);
 const lastRun = ref(false);
 const elapsed = ref(0);
 const events = ref<Array<{ type: string; title?: string; content: string }>>([]);
+/**
+ * 字段级错误 (key → 文案) —— 2026-10-30.
+ *
+ * ⚠️ 以前必填字段只有一个红星号, 点「运行」时**完全不做校验**,
+ *    空值照跑不误, 用户拿不到任何反馈.
+ *    现在按 agent.input_schema 里的 required 逐个查, 错的贴到字段下面.
+ */
+const fieldErrs = reactive<Record<string, string>>({});
+
+/**
+ * 必填校验 —— 返回是否通过.
+ *
+ * ⚠️ 判据来自后端给的 `input_schema` (AgentInputField.required),
+ *    不是前端写死的字段名 —— 后端加字段/改必填都不用动这里.
+ */
+function validateRequired(): boolean {
+  for (const k of Object.keys(fieldErrs)) delete fieldErrs[k];
+  const schema = agent.value?.input_schema || [];
+  let ok = true;
+  for (const f of schema) {
+    if (!f.required) continue;
+    const v = form[f.key];
+    const empty =
+      v === undefined || v === null ||
+      (typeof v === 'string' && !v.trim()) ||
+      (Array.isArray(v) && v.length === 0);
+    if (empty) {
+      fieldErrs[f.key] = `请填写 ${f.label}`;
+      ok = false;
+    }
+  }
+  return ok;
+}
 
 const embedLabel = computed(() => {
   if (!agent.value?.embed_url) return '内嵌外部应用';
@@ -268,6 +311,10 @@ async function loadMachines() {
 async function onRun() {
   try {
   if (!agent.value) return;
+  // ⚠️ 2026-10-30: 兜底防重入 —— 按钮禁用之外再加一道, 双击「运行」不该跑两遍
+  if (running.value) return;
+  // ⚠️ 必填校验 —— 以前这里什么都不查, 空参数也照跑
+  if (!validateRequired()) return;
   events.value = [];
   lastRun.value = true;
   running.value = true;
@@ -315,6 +362,11 @@ async function onRun() {
 }
 
 function onReset() {
+  // ⚠️ 2026-10-30: 以前没置 running = false ——
+  //    运行中点「重置」只清了事件, onRun 的循环条件 `if (!running.value) break;`
+  //    还在成立 (running 仍是 true) → 事件又陆续冒回来, 状态卡一直显示「运行中 · 0s」,
+  //    直到原来那条 sleep 链跑完才恢复. 现在先停掉运行态.
+  running.value = false;
   if (agent.value) initDefaults(agent.value.input_schema);
   for (const k of Object.keys(files)) files[k] = null;
   events.value = [];
@@ -385,8 +437,11 @@ function errText(e: any, fallback: string): string {
   font-size: 11px;
 }
 .embed-hint { flex: 1; color: var(--ink-500); font-family: var(--font-mono, monospace); font-size: 11px; }
+/* ⚠️ 2026-10-30: 去掉 var(--primary, #3b82f6) / var(--primary-soft, #dbeafe) 的 fallback ——
+   --primary / --primary-soft 在 tokens.css 里**一定存在**, fallback 永远用不上,
+   属于误导性写法 (看着像"没有主题色时降级", 实际是死的). */
 .embed-pop {
-  color: var(--primary, #3b82f6);
+  color: var(--primary);
   text-decoration: none;
   font-size: 12px;
   padding: 4px 10px;
@@ -394,7 +449,7 @@ function errText(e: any, fallback: string): string {
   border-radius: 6px;
   transition: all 0.15s;
 }
-.embed-pop:hover { background: var(--primary-soft, #dbeafe); }
+.embed-pop:hover { background: var(--primary-soft); }
 .embed-frame {
   width: 100%;
   flex: 1;
@@ -404,10 +459,14 @@ function errText(e: any, fallback: string): string {
 }
 
 .run-body {
-  display: grid; grid-template-columns: 360px 1fr;
+  /* ⚠️ 2026-10-30: 1fr → minmax(0, 1fr) ——
+     `1fr` 轨道的**自动最小尺寸**就是内容的 min-content, 一条 300 字符无空格
+     的 token (2516px) 就能把整页撑到 2622px, 375px 视口下横向要滑 7 屏.
+     minmax(0,1fr) 允许轨道收缩到 0, 溢出交给内容自己换行. */
+  display: grid; grid-template-columns: 360px minmax(0, 1fr);
   gap: 16px; align-items: start;
 }
-@media (max-width: 1024px) { .run-body { grid-template-columns: 1fr; } }
+@media (max-width: 1024px) { .run-body { grid-template-columns: minmax(0, 1fr); } }
 
 .run-form h2, .run-output h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900); }
 /* 能力描述 (从外壳移到这里) */
@@ -475,7 +534,9 @@ button.secondary {
   font-size: 13px; font-weight: 500; font-family: inherit; cursor: pointer;
   transition: all 0.15s ease;
 }
-button.secondary:hover { border-color: var(--border-strong); color: var(--ink-900); }
+button.secondary:hover:not(:disabled) { border-color: var(--border-strong); color: var(--ink-900); }
+/* ⚠️ 2026-10-30: 运行中「重置」是禁用的 —— 禁用态得画出来, 否则看着还能点 */
+button.secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .sop { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 12px; }
 .sop summary { font-size: 12.5px; color: var(--ink-500); cursor: pointer; padding: 4px 0; }
@@ -487,6 +548,8 @@ button.secondary:hover { border-color: var(--border-strong); color: var(--ink-90
   background: var(--surface-sunken); padding: 8px 10px;
   border-radius: 6px; white-space: pre-wrap; font-family: inherit;
   line-height: 1.6;
+  /* ⚠️ 2026-10-30: 同样补断词 —— pre-wrap 不等于会断长 token */
+  overflow-wrap: anywhere; word-break: break-word;
 }
 
 .run-output { min-height: 400px; display: flex; flex-direction: column; }
@@ -527,7 +590,13 @@ button.secondary:hover { border-color: var(--border-strong); color: var(--ink-90
 }
 .ev-body { flex: 1; min-width: 0; }
 .ev-title { font-size: 12.5px; font-weight: 600; color: var(--ink-900); margin-bottom: 2px; }
-.ev-content { font-size: 12.5px; color: var(--ink-700); line-height: 1.55; white-space: pre-wrap; }
+/* ⚠️ 2026-10-30: 补 overflow-wrap / word-break ——
+   只有 white-space: pre-wrap 的话, 一条没空格的长 token 仍然不换行, 照样撑爆卡片 */
+.ev-content {
+  font-size: 12.5px; color: var(--ink-700); line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere; word-break: break-word;
+}
 
 .ev-info {
   /* 左边 3px 渐变线: box-shadow inset 不支持渐变, 用 background gradient + mask 模拟 */

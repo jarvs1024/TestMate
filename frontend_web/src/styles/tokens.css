@@ -50,6 +50,11 @@ html[data-theme="light"] {
   --ok:    #10B981;
   --warn:  #F59E0B;
   --err:   #EF4444;
+  /* ⚠️ --info 以前**根本没定义** (2026-10-29 补) ——
+     有一处 `color-mix(in srgb, var(--info) 35%, transparent)` 引用了它,
+     var() 引用未定义变量 → **整条声明失效** → 背景静默变成 transparent,
+     那一段数据在界面上**根本不存在**. 补上这个 token, 免得以后再踩. */
+  --info:  #64748B;
 
   /* 代码区 */
   --code-bg:   #0F172A;
@@ -109,6 +114,7 @@ html[data-theme="dark"] {
   --ok:    #34D399;
   --warn:  #FBBF24;
   --err:   #F87171;
+  --info:  #94A3B8;
 
   --code-bg:   #050714;
   --code-text: #CBD5E1;
@@ -146,6 +152,7 @@ html[data-theme="dark"] {
     --ok:    #34D399;
     --warn:  #FBBF24;
     --err:   #F87171;
+    --info:  #94A3B8;
     --code-bg:   #050714;
     --code-text:   #CBD5E1;
   }

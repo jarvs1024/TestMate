@@ -174,7 +174,8 @@ describe('删除数据集的二次确认', () => {
     await w.findAll('.ds-ops .link-btn.danger')[1].trigger('click');
     await flushPromises();
 
-    expect(h.deleteKbDataset).toHaveBeenCalledWith('ds-2');
+    // ⚠️ { silent: true } —— 页面自己弹错误, 全局拦截器别重复弹
+    expect(h.deleteKbDataset).toHaveBeenCalledWith('ds-2', { silent: true });
     expect(h.msg.success).toHaveBeenCalled();
   });
 

@@ -12,7 +12,12 @@
 import { describe, expect, it, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 
 const { ElMessageError } = vi.hoisted(() => ({ ElMessageError: vi.fn() }));
-const { logout, userState } = vi.hoisted(() => ({ logout: vi.fn(), userState: { token: '' } }));
+// ⚠️ 拦截器现在只调 clearSession() (不清「记住的用户名」), logout() 不再被 401 路径调用
+const { logout, clearSession, userState } = vi.hoisted(() => ({
+  logout: vi.fn(),
+  clearSession: vi.fn(),
+  userState: { token: '' },
+}));
 
 vi.mock('element-plus', () => ({
   ElMessage: { error: ElMessageError },
@@ -23,6 +28,7 @@ vi.mock('@/stores/user', () => ({
   useUserStore: () => ({
     get token() { return userState.token; },
     logout,
+    clearSession,
   }),
 }));
 
@@ -52,6 +58,7 @@ function okWith(data: any) {
 beforeEach(() => {
   ElMessageError.mockClear();
   logout.mockClear();
+  clearSession.mockClear();
   userState.token = '';
   jumpedTo = '';
 });
@@ -65,6 +72,7 @@ beforeAll(() => {
     value: {
       // pathname 要留着 —— 拦截器靠它判断是不是 publicRead 路由
       pathname: realLocation.pathname,
+      search: '',
       get href() { return jumpedTo; },
       set href(v: string) { jumpedTo = v; },
     },
@@ -111,19 +119,23 @@ describe('axios 拦截器', () => {
  *      匿名访问 (带 ANONYMOUS_TOKEN) 的 401 → 不处理 (那是后端配置问题).
  */
 describe('axios 拦截器 · 401', () => {
-  it('publicRead 路由上带着用户 token 的 401 → 清会话 + 跳登录', async () => {
+  it('publicRead 路由上带着用户 token 的 401 → 清会话 + 跳登录 (带 redirect)', async () => {
     userState.token = 'user-token';
     failWith(401, 'token 过期');
     await expect(request.get('/x')).rejects.toBeTruthy();
-    expect(logout).toHaveBeenCalled();
-    expect(jumpedTo).toBe('/login');
+    // ⚠️ 只清会话 (clearSession), **不**调 logout() ——
+    //    logout() 会把「记住的用户名」也抹掉, 被过期踢出去的人连用户名都得重打
+    expect(clearSession).toHaveBeenCalled();
+    expect(logout).not.toHaveBeenCalled();
+    // 跳登录时带上 redirect, 登录完能回原来那页 (草稿不至于全蒸发)
+    expect(jumpedTo).toContain('/login?redirect=');
   });
 
   it('匿名访问的 401 → 不清会话 (用户压根没登录, 跟用户无关)', async () => {
     userState.token = '';
     failWith(401, '后端没配好');
     await expect(request.get('/x')).rejects.toBeTruthy();
-    expect(logout).not.toHaveBeenCalled();
+    expect(clearSession).not.toHaveBeenCalled();
     expect(jumpedTo).toBe('');
   });
 });

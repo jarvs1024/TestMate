@@ -309,7 +309,8 @@ describe('重新解析', () => {
     expect(h.confirm).toHaveBeenCalledTimes(1);
     // ⚠️ 确认框里要说清楚会清掉多少分段
     expect((h.confirm.mock.calls[0] as any)[0]).toContain('3');
-    expect(h.reparseKbDocument).toHaveBeenCalledWith('ds-1', 'doc-1');
+    // ⚠️ { silent: true } —— 页面自己弹错误, 全局拦截器别重复弹
+    expect(h.reparseKbDocument).toHaveBeenCalledWith('ds-1', 'doc-1', { silent: true });
   });
 
   it('取消 → 不调接口, 也不报错', async () => {

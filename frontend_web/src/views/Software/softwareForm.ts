@@ -27,6 +27,23 @@ export const PLATFORMS = [
   { value: 'macos', label: 'macOS', desc: '只在 macOS 上用' },
 ];
 
+/**
+ * 平台值 → **显示名**.
+ *
+ * ⚠️ 2026-10-30: 以前卡片 / 详情页直接显示后端存的原值 ('windows' / 'linux'),
+ *    上传表单里却是 'Windows' / 'Linux' —— 同一页面两种写法, 用户以为不是一回事.
+ *    现在**可见文字**统一走这个映射.
+ * ⚠️ **只改显示, 不改存储** —— 后端存的仍是 'windows'/'linux'/'macos' 小写原值,
+ *    提交表单时也照旧传原值 (见 SoftwareUploadDialog 里的 form.platform).
+ */
+export function platformLabel(platform: string): string {
+  const v = (platform || '').trim().toLowerCase();
+  if (v === 'windows') return 'Windows';
+  if (v === 'linux') return 'Linux';
+  if (v === 'macos') return 'macOS';
+  return '通用';
+}
+
 /** 图标候选 —— 软件库跟资产市场的图标池分开 (两边的东西长得不一样) */
 export const ICONS = [
   '🧰', '📦', '💿', '🖴', '🧪', '🔬', '📊', '📈',

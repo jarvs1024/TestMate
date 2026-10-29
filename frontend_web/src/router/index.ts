@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
+import { nextTick } from 'vue';
 import { useUserStore } from '@/stores/user';
 
 /**
@@ -55,6 +56,47 @@ export const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+  /**
+   * 路由切换后的滚动处理.
+   *
+   * ⚠️ 内部滚动容器是 `.tm-main` (MainLayout 里 `height:100vh; overflow:hidden`),
+   *    **不是 window** —— 浏览器原生的 scrollRestoration 只管 window,
+   *    恢复不到 .tm-main, 于是新页面直接停在上一个页面的 2000px 处, 首屏是空的.
+   *    vue-router 4 没有 scrollBehavior 时**什么都不做**, 所以必须自己接.
+   *
+   * ⚠️ 同页跳转 (to.path === from.path) 必须返回 false 让位 ——
+   *    设置页里点目录会用 scrollIntoView 做同页锚点滚动, 被这里接管就废了.
+   *
+   * ⚠️ "切页面回到顶部"**不在这里做** (见下面的 afterEach) ——
+   *    scrollBehavior 的 el 选项是在**新页面渲染之前**执行的, 那时 .tm-main
+   *    还不存在, 实测直接报 "Couldn't find element using selector .tm-main".
+   *    这里只留"后退/前进恢复位置"这一件必须靠它的事.
+   */
+  scrollBehavior: (to, from, savedPosition) => {
+    if (to.path === from.path) return false;   // 同页 hash 跳转不接管
+    if (savedPosition) return { el: '.tm-main', top: savedPosition.top };
+    return false;
+  },
+});
+
+/**
+ * 标签页标题跟着页面走 + 切页面把内部滚动容器复位.
+ *
+ * ⚠️ 标题以前永远是「TestMate」—— 开几个标签页分不清哪个是哪个.
+ *    路由表里每个页面都已有 meta.title (见上面的 routes), 这里拼成
+ *    「设置 · TestMate」这种形式; 没有 title 的 (如登录页) 退回裸的 TestMate.
+ */
+router.afterEach((to, from) => {
+  const t = to.meta?.title as string | undefined;
+  document.title = t ? `${t} · TestMate` : 'TestMate';
+
+  // ⚠️ 切页面 → 把 .tm-main 滚回顶部 (等 DOM 更新完再动, 这时元素必定在).
+  //    window 根本不滚, 浏览器原生的 scrollRestoration 只管 window → 管不到这里.
+  if (to.path === from.path) return;   // 同页锚点跳转不碰
+  nextTick(() => {
+    const main = document.querySelector('.tm-main') as HTMLElement | null;
+    if (main) main.scrollTop = 0;
+  });
 });
 
 router.beforeEach((to, _from, next) => {

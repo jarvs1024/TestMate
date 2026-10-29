@@ -27,7 +27,7 @@
               :aria-hidden="i > 1 ? 'true' : undefined"
             >
               <template v-for="(seg, j) in renderSegments(current)" :key="`${i}-${j}`">
-                <a v-if="seg.kind === 'link'" :href="seg.href" class="nb-link">{{ seg.text }}</a>
+                <a v-if="seg.kind === 'link'" :href="seg.href" class="nb-link" @click="onLinkClick($event, seg.href)">{{ seg.text }}</a>
                 <strong v-else-if="seg.kind === 'strong'">{{ seg.text }}</strong>
                 <span v-else>{{ seg.text }}</span>
               </template>
@@ -37,7 +37,7 @@
         </div>
         <template v-else>
           <template v-for="(seg, i) in renderSegments(current)" :key="i">
-            <a v-if="seg.kind === 'link'" :href="seg.href" class="nb-link">{{ seg.text }}</a>
+            <a v-if="seg.kind === 'link'" :href="seg.href" class="nb-link" @click="onLinkClick($event, seg.href)">{{ seg.text }}</a>
             <strong v-else-if="seg.kind === 'strong'">{{ seg.text }}</strong>
             <span v-else>{{ seg.text }}</span>
           </template>
@@ -62,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, getCurrentInstance, onBeforeUnmount, ref, watch } from 'vue';
 
 /** 单条通知 */
 export interface NoticeItem {
@@ -80,7 +80,15 @@ export interface NoticeItem {
 type Segment = { kind: 'text'; text: string } | { kind: 'strong'; text: string } | { kind: 'link'; text: string; href: string };
 
 const props = defineProps<{ notices: NoticeItem[] }>();
-const emit = defineEmits<{ (e: 'dismiss', id: string): void }>();
+const emit = defineEmits<{ (e: 'dismiss', id: string): void; (e: 'navigate', href: string): void }>();
+
+/**
+ * 组件实例 —— 在 **setup 里**取一次存着.
+ *
+ * ⚠️ getCurrentInstance() 只在 setup / 生命周期钩子里才拿得到 currentInstance,
+ *    在 DOM 事件回调里调用会返回 **null** —— 所以不能等到点击时再取.
+ */
+const inst = getCurrentInstance();
 
 const ROTATE_MS = 5000;
 
@@ -141,6 +149,29 @@ function dismissCurrent() {
   locallyDismissed.value.add(n.id);
   locallyDismissed.value = new Set(locallyDismissed.value);
   emit('dismiss', n.id);
+}
+
+/** 站内链接 (以 / 开头, 且不是协议相对地址 //host) */
+function isInternal(href: string): boolean {
+  return href.startsWith('/') && !href.startsWith('//');
+}
+
+/**
+ * 站内链接 → 交给父组件用 router.push 走 (2026-10-30).
+ *
+ * ⚠️ 以前通知栏里的「登录」是原生 <a href>: 点一下**整页导航** ——
+ *    SPA 白屏重启, 所有接口重拉, 匿名用户点完直接掉回白屏.
+ * ⚠️ 只有父组件**真的接了** navigate 才拦默认行为 ——
+ *    没接的话还按老路走 (整页跳), 免得链接直接点不动.
+ */
+function onLinkClick(e: MouseEvent, href: string) {
+  if (!isInternal(href)) return;   // 外链照旧, 交给浏览器
+  // ⚠️ 只有父组件**真的接了** navigate 才拦默认行为 ——
+  //    没接的话还按老路走 (整页跳), 免得链接直接点不动.
+  //    (父组件写 @navigate="..." → vnode.props.onNavigate 就有值)
+  if (!inst?.vnode?.props?.onNavigate) return;
+  e.preventDefault();
+  emit('navigate', href);
 }
 
 function iconFor(type?: NoticeItem['type']): string {

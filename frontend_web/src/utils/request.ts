@@ -96,8 +96,18 @@ request.interceptors.response.use(
     //      待办静默消失, 用户以为"今天没待办".
     if (status === 401 && (!isPublicReadRoute() || hasUserToken(err.config))) {
       const userStore = useUserStore();
-      userStore.logout();
-      window.location.href = '/login';
+      // ⚠️ 用 clearSession() 而不是 logout() ——
+      //    logout() 会顺手清掉「记住的用户名」(testmate:last-username),
+      //    于是**被 token 过期踢出去的人连用户名都得重打** —— 最烦的是这个.
+      //    clearSession() 只清 token/user, 真正的"退出登录"仍然走 UserMenu 里的 logout().
+      userStore.clearSession();
+      // ⚠️ 带上 redirect —— 登录页靠 route.query.redirect 决定登录后回哪 (views/Login/index.vue).
+      //    以前直接跳 '/login' (无 query) → 登录成功一律回首页,
+      //    刚才那页半成品配置草稿全蒸发 (草稿只在内存里, 页面一刷新就没了).
+      // ⚠️ 这里**不能 import router** (本文件头部注释说了: 会跟路由懒加载形成循环依赖),
+      //    所以走整页跳转 —— 反正会话已经清了, 整页刷新是安全的.
+      const back = window.location.pathname + (window.location.search || '');
+      window.location.href = '/login?redirect=' + encodeURIComponent(back);
     } else if (status !== 401 && !err.config?.silent) {
       // ⚠️ silent: 调用方自己会兜底降级的请求 (比如首页给卡片取指标数字),
       //    失败时**不要**弹全局错误 —— 否则首页一进来就弹一个"ragflow error",

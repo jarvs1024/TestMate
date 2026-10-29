@@ -52,6 +52,17 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   const iconTouched = ref(false);
   /** 分类表 (后端下发) —— 上传/更新时只能从里面选 */
   const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
+  /**
+   * 分类表**加载失败的原因** —— 空串 = 没失败.
+   *
+   * ⚠️ 2026-10-30 整改: 以前 catch 是空的, 失败被吞成空数组 →
+   *    「分类」被记成**缺项** → 页脚一直挂「还缺: 分类」, 「上架」按钮**永久置灰**,
+   *    而且**看不出为什么不行** (只能关掉抽屉重开).
+   *    现在把失败原因记在这里, 由界面显式告诉用户 + 给一个「重试」.
+   */
+  const categoriesError = ref('');
+  /** 分类表正在加载 —— 下拉要显示 loading 态 (别让用户以为是"没分类") */
+  const categoriesLoading = ref(false);
   /** 项目列表 (后端下发, 设置项里可改) —— 适用项目的下拉选项 */
   const projectOptions = ref<string[]>([]);
 
@@ -239,7 +250,12 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
       // code 必须跟包名 / MCP 连接器名一致 —— 不一致不让上架
       if (codeSyncError.value) out.push('code 与名称一致');
     }
-    if (!form.category) out.push('分类');
+    if (!form.category) {
+      // ⚠️ 分类表加载失败时, 「还缺: 分类」是**误导** ——
+      //    用户会以为自己没选 (其实下拉是空的, 选不了).
+      //    说清是"列表加载失败", 并给出还能走的路 (兜底分类「其他」).
+      out.push(categoriesError.value ? '分类 (列表加载失败, 可先选「其他」)' : '分类');
+    }
     if (versionError.value) out.push('版本');
     if (pkgNameError.value) out.push('安装包名');
     return out;
@@ -250,12 +266,20 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
 
   // ---------- 加载 ----------
   async function loadCategories() {
-    if (categories.value.length) return;
+    // ⚠️ 原来 `if (categories.value.length) return` —— 失败过一次之后**再也刷不进来**
+    //    (旧列表还留着 → 直接 return → 永远重试不了). 失败时必须允许重试.
+    if (categories.value.length && !categoriesError.value) return;
+    categoriesLoading.value = true;
     try {
       const r = await listCategories();
       categories.value = (r?.items || []) as typeof categories.value;
-    } catch {
-      /* 拿不到就退回空列表 —— 后端还会再归一成「其他」 */
+      categoriesError.value = '';
+    } catch (e: any) {
+      // ⚠️ 原来这里是空 catch —— 失败被吞成空数组, 「上架」按钮**永久置灰**且无任何说明.
+      //    现在把原因记下来: 界面会显示「分类列表加载失败」+ 一个「重试」按钮.
+      categoriesError.value = httpErrorText(errorStatus(e), errorDetail(e), '未知错误');
+    } finally {
+      categoriesLoading.value = false;
     }
   }
 
@@ -453,7 +477,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     // 状态
     form, tagsText, keywordsText, mcpConfigText, step, hasSource,
     fileInput, pkgFile, preview, previewing, iconPanel, usedIcons, iconTouched,
-    categories, projectOptions,
+    categories, categoriesError, categoriesLoading, projectOptions,
     // 派生
     isMcp, kind, mcpParsed, mcpConfigError, mcpHint, mcpHintState,
     codeError, codeFieldError,

@@ -187,7 +187,11 @@ describe('删除文档', () => {
     const msg = String((h.prompt.mock.calls[0] as any)[0]);
     expect(msg).toContain('接口规范.pdf');
     expect(msg).toContain('永久删除');
-    expect(h.deleteKbDocuments).toHaveBeenCalledWith('ec40ed92837c11f1ab4eefda79d2f959', ['doc-1']);
+    // ⚠️ 第三个参数 deleteAll=false, 第四个是 { silent: true } ——
+    //    silent 是 2026-10-29 加的: 页面自己会弹错误提示, 全局拦截器就别再弹一遍
+    //    (一次失败弹两个一模一样的红条, 用户分不清哪个是哪个).
+    expect(h.deleteKbDocuments).toHaveBeenCalledWith(
+      'ec40ed92837c11f1ab4eefda79d2f959', ['doc-1'], false, { silent: true });
   });
 
   it('取消 → 不调删除接口', async () => {

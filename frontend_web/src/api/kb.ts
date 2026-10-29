@@ -159,8 +159,12 @@ export async function kbHealth(
 export async function listDocuments(
   datasetId: string,
   params: { page?: number; page_size?: number; keywords?: string; run?: string } = {},
+  opts: { silent?: boolean } = {},
 ): Promise<KbDocumentListResult> {
-  return (await request.get(`/kb/datasets/${encodeURIComponent(datasetId)}/documents`, { params })) as KbDocumentListResult;
+  return (await request.get(`/kb/datasets/${encodeURIComponent(datasetId)}/documents`, {
+    params,
+    silent: opts.silent,
+  })) as KbDocumentListResult;
 }
 
 export async function ingestDocuments(
@@ -178,9 +182,11 @@ export async function deleteKbDocuments(
   datasetId: string,
   docIds?: string[],
   deleteAll = false,
+  opts: { silent?: boolean } = {},
 ): Promise<{ ok: boolean }> {
   return (await request.delete(`/kb/datasets/${encodeURIComponent(datasetId)}/documents`, {
     data: { ids: docIds, delete_all: deleteAll },
+    silent: opts.silent,
   })) as { ok: boolean };
 }
 
@@ -190,11 +196,16 @@ export async function deleteKbDocuments(
  * ⚠️ **硬删, 不可逆** —— 库里的所有文档、分段、源文件一起没了, 没有回收站.
  * ⚠️ 前端要**先让用户输入库名确认**再调这个 —— RAGFlow 那边不提供任何撤销.
  */
-export async function deleteKbDataset(datasetId: string): Promise<{
+export async function deleteKbDataset(
+  datasetId: string,
+  opts: { silent?: boolean } = {},
+): Promise<{
   ok: boolean;
   deleted: { dataset_id: string; name: string; documents: number; chunks: number };
 }> {
-  return (await request.delete(`/kb/datasets/${encodeURIComponent(datasetId)}`)) as {
+  return (await request.delete(`/kb/datasets/${encodeURIComponent(datasetId)}`, {
+    silent: opts.silent,
+  })) as {
     ok: boolean;
     deleted: { dataset_id: string; name: string; documents: number; chunks: number };
   };
@@ -299,6 +310,7 @@ export interface KbUploadResult {
 export async function uploadKbDocuments(
   datasetId: string,
   files: File[],
+  opts: { silent?: boolean } = {},
 ): Promise<KbUploadResult> {
   const fd = new FormData();
   for (const f of files) fd.append('file', f);
@@ -309,7 +321,7 @@ export async function uploadKbDocuments(
     //    写成 'multipart/form-data' (没有 boundary) 后端直接解析失败.
     //    交给浏览器自己设就行.
     // ⚠️ 超时放宽: 5 个 20MB 的文件传完还要等 RAGFlow 收, 30 秒不够.
-    { timeout: 180000 },
+    { timeout: 180000, silent: opts.silent },
   )) as KbUploadResult;
 }
 
@@ -374,6 +386,7 @@ export async function updateKbDocument(
   datasetId: string,
   documentId: string,
   file: File,
+  opts: { silent?: boolean } = {},
 ): Promise<KbUpdateResult> {
   const fd = new FormData();
   fd.append('file', file);
@@ -382,7 +395,7 @@ export async function updateKbDocument(
     fd,
     // ⚠️ 别手动设 Content-Type —— axios 不会替你补 boundary
     // ⚠️ 超时放宽: 20MB 文件传完还要等 RAGFlow 收 + 删旧 + 改名
-    { timeout: 180000 },
+    { timeout: 180000, silent: opts.silent },
   )) as KbUpdateResult;
 }
 
@@ -395,9 +408,12 @@ export async function updateKbDocument(
 export async function reparseKbDocument(
   datasetId: string,
   documentId: string,
+  opts: { silent?: boolean } = {},
 ): Promise<{ ok: boolean; document_id: string; name: string }> {
   return (await request.post(
     `/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}/reparse`,
+    undefined,
+    { silent: opts.silent },
   )) as { ok: boolean; document_id: string; name: string };
 }
 
@@ -430,9 +446,11 @@ export interface KbDocSearchResult {
 export async function searchKbDocuments(
   keywords: string,
   datasetId = '',
+  opts: { silent?: boolean } = {},
 ): Promise<KbDocSearchResult> {
   return (await request.get('/kb/documents/search', {
     params: { keywords, ...(datasetId ? { dataset_id: datasetId } : {}) },
+    silent: opts.silent,
   })) as KbDocSearchResult;
 }
 

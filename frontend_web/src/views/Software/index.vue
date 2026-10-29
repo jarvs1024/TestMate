@@ -45,8 +45,17 @@
       <div v-if="filterError" class="filter-err">⚠️ {{ filterError }}</div>
     </div>
 
-    <!-- ===== 没有发布权限 → 说清楚, 别让人以为按钮坏了 ===== -->
-    <div v-if="!canPublish && configLoaded" class="sw-note">
+    <!-- ⚠️ 配置读不到 ≠ 没有上架权限 (2026-10-30) ——
+         以前 GET /software/config 一挂 (502/断网) → config=null → canPublish 永远 false,
+         页面还告诉用户「当前账号没有上架权限」. 其实人家有权限, 是**服务挂了**,
+         而且**没有重试入口** —— 按钮就一直灰着.
+         所以配置错误单独一个 ref, 单独一条提示 + 重试按钮. -->
+    <div v-if="configError" class="sw-note err">
+      <div>读不到发布配置（{{ configError }}），暂时无法确认你能不能上架 —— 请重试。</div>
+      <button class="reset" @click="loadConfig">重试</button>
+    </div>
+    <!-- ✓ 只有配置**读到了**、且确实 can_publish=false, 才说"没有权限" -->
+    <div v-else-if="!canPublish && configLoaded" class="sw-note">
       当前账号没有上架权限 —— 上架软件需要「测试工程」角色, 或由管理员加进发布者白名单.
     </div>
 
@@ -70,6 +79,17 @@
       <div style="font-size: 28px">⚠️</div>
       <div>{{ loadError }}</div>
       <button class="reset" @click="load">重试</button>
+    </div>
+    <!-- ⚠️ 空态分两支 (2026-10-30): 搜不到 ≠ 库里没有.
+         以前不管有没有筛选条件, 一律显示「🧰 这里还没有软件」+「上架第一个软件」——
+         库里明明有几十个软件, 用户以为整个库空了, 甚至真去上架重复条目. -->
+    <div v-else-if="list.length === 0 && hasFilter" class="state">
+      <div style="font-size: 30px; opacity: 0.4">🔍</div>
+      <div>没有匹配「{{ filterDesc }}」的软件</div>
+      <div class="state-sub">
+        软件库里是有东西的 —— 只是不满足当前的筛选条件. 换个关键词, 或者把筛选清掉.
+      </div>
+      <button class="reset" @click="clearFilter">清空筛选</button>
     </div>
     <div v-else-if="list.length === 0" class="state">
       <div style="font-size: 30px; opacity: 0.4">🧰</div>
@@ -97,6 +117,12 @@
 
     <p v-if="total > 0" class="foot-hint mono">
       共 {{ total }} 项
+      <!-- ⚠️ 2026-10-30: 后端一次最多给 500 条 (le=500) —— 超出部分前端**看不到**,
+           以前页脚只写「共 500 项」, 看着像下面全是, 实际只渲染了前 200 条.
+           跟用户说清楚还差多少 (⚠️ 不做"加载更多"按钮 —— 那要改分页逻辑, 风险大). -->
+      <span v-if="total > list.length" class="muted">
+        · 只显示前 {{ list.length }} 条（还有 {{ total - list.length }} 条没显示）
+      </span>
       <button class="link-btn" @click="load">刷新</button>
       <span class="muted">· 上次刷新 {{ lastRefreshText }}</span>
     </p>
@@ -131,6 +157,15 @@ const category = ref('');
 const sortBy = ref<SoftwareSort>('new');
 const config = ref<SoftwareConfig | null>(null);
 const configLoaded = ref(false);
+/**
+ * 配置读取失败的原因 —— 空串 = 没失败.
+ *
+ * ⚠️ 2026-10-30: 以前配置一挂就 config=null → canPublish 永远 false →
+ *    页面显示「当前账号没有上架权限」. 其实用户**有**权限, 是服务挂了.
+ *    单独一个 ref, 好跟"真的没权限"分开说 (⚠️ 别写进 filterError ——
+ *    那是分类 chip 下面的错, 混在一起会让人以为是分类挂了).
+ */
+const configError = ref('');
 
 const drawerOpen = ref(false);
 const currentCode = ref<string | null>(null);
@@ -166,6 +201,29 @@ const sourceText = computed(() => {
 
 const list = computed(() => items.value ?? []);
 
+/**
+ * 当前有没有筛选条件 —— 决定空态是"库里没有"还是"没匹配上".
+ *
+ * ⚠️ 2026-10-30: 以前不管有没有筛选, 空态都是「这里还没有软件」——
+ *    搜索一个不存在的词, 用户以为整个库空了.
+ */
+const hasFilter = computed(() => keyword.value.trim() !== '' || category.value !== '');
+
+/** 空态里回显的筛选条件 (关键词优先) */
+const filterDesc = computed(() => {
+  const kw = keyword.value.trim();
+  const cat = category.value;
+  if (kw && cat) return `${kw} · ${cat}`;
+  return kw || cat;
+});
+
+/** 清空筛选 —— 回到"全部", 重新取一次列表 */
+async function clearFilter() {
+  keyword.value = '';
+  category.value = '';
+  await load();
+}
+
 async function load() {
   loading.value = true;
   loadError.value = '';
@@ -174,7 +232,10 @@ async function load() {
       q: keyword.value.trim(),
       category: category.value,
       sort: sortBy.value,
-      limit: 200,
+      // ⚠️ 2026-10-30: 以前是 200 —— 库里超过 200 条时, 后面的**永远看不到**
+      //    (页脚还写「共 500 项」). 提到后端允许的上限 500 (le=500).
+      //    ⚠️ 不做"加载更多"按钮 —— 那要改分页逻辑, 风险大.
+      limit: 500,
     });
     items.value = r?.items ?? [];
     total.value = r?.total ?? 0;
@@ -200,9 +261,13 @@ async function loadCategories() {
 async function loadConfig() {
   try {
     config.value = await getSoftwareConfig();
+    configError.value = '';
   } catch (e: any) {
+    // ⚠️ 配置读不到**不是**"没权限" —— 单独记下来, 页面上给一个重试入口.
+    //    ⚠️ 2026-10-30: 以前写进 filterError (分类 chip 下面那条),
+    //    现在挪到 configError —— 配置错了跟分类没关系.
     config.value = null;
-    filterError.value = filterError.value || errText(e, '配置读取失败');
+    configError.value = errText(e, '配置读取失败');
   } finally {
     configLoaded.value = true;
   }

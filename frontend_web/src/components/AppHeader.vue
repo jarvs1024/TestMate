@@ -13,7 +13,7 @@
     <!-- 通用滚动通知栏 (匿名访问 / 系统公告等, 跨页面共享).
          NoticeBar 自己管 dismiss 持久化 (sessionStorage/localStorage, 走 dismissScope),
          这里只需要提供 notices 列表即可, 不必监听 dismiss 事件. -->
-    <NoticeBar :notices="notices" class="tm-notice" />
+    <NoticeBar :notices="notices" class="tm-notice" @navigate="onNoticeNavigate" />
     <div class="right">
       <ThemeSwitcher />
       <UserMenu />
@@ -23,7 +23,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import BrandLogo from './BrandLogo.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 import UserMenu from './UserMenu.vue';
@@ -55,13 +55,35 @@ onMounted(async () => {
 // 当前: 匿名访问提示. 后续要加系统公告 / 实验功能提示, push 到 list 即可.
 // dismiss 行为 (sessionStorage 持久 / 关掉后从可见列表移除) 由 NoticeBar 自己管, 不必回调.
 const userStore = useUserStore();
+const router = useRouter();
+/**
+ * 匿名用户点通知里的「登录」→ 跳登录页, 并**记住原来在哪**.
+ *
+ * ⚠️ 以前 redirect 写死成 '/' —— 匿名用户停在 /code-review 时点「登录」,
+ *    登录完回**首页**, 不是原来那页.
+ *    登录页靠 route.query.redirect 决定跳回哪 (views/Login/index.vue).
+ */
+const loginHref = computed(() => `/login?redirect=${encodeURIComponent(route.fullPath)}`);
+
+/**
+ * 通知栏里的站内链接 → 走 router.push, 不整页刷新.
+ *
+ * ⚠️ 以前是原生 <a href>, 点一下整页导航 —— SPA 白屏重启, 所有接口重拉.
+ */
+function onNoticeNavigate(href: string) {
+  router.push(href).catch(() => { /* 重复导航等 → 忽略 */ });
+}
+
+// 通知数据源 (AppHeader 全局管理, 跨页面共享).
+// 当前: 匿名访问提示. 后续要加系统公告 / 实验功能提示, push 到 list 即可.
+// dismiss 行为 (sessionStorage 持久 / 关掉后从可见列表移除) 由 NoticeBar 自己管, 不必回调.
 const notices = computed<NoticeItem[]>(() => {
   const list: NoticeItem[] = [];
   if (!userStore.token) {
     list.push({
       id: 'anon-readonly',
       type: 'info',
-      text: '您正在匿名访问,能力清单可看,进入具体能力需 [登录](/login?redirect=/) 后使用',
+      text: `您正在匿名访问,能力清单可看,进入具体能力需 [登录](${loginHref.value}) 后使用`,
       marquee: true,
       dismissKey: 'cr:anon-notice-dismissed',
       dismissScope: 'session',

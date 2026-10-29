@@ -14,7 +14,7 @@
  */
 <template>
   <div ref="wrap" class="filter-menu">
-    <button type="button" class="filter-trigger" :title="triggerTitle"
+    <button type="button" ref="triggerRef" class="filter-trigger" :title="triggerTitle"
             :aria-expanded="open" @click="open = !open">
       <span class="ft-text">{{ triggerText }}</span>
       <span class="ft-caret">▾</span>
@@ -66,6 +66,8 @@ const emit = defineEmits<{
 
 const open = ref(false);
 const wrap = ref<HTMLElement | null>(null);
+/** 触发按钮 —— 面板收起后要把焦点**还回来** (见 pickProject/pickSort) */
+const triggerRef = ref<HTMLButtonElement | null>(null);
 
 /** 下拉里的项目选项 —— 「全部」放在最前, 其余按后端给的顺序 */
 const projectItems = computed(() => [
@@ -106,12 +108,20 @@ const triggerTitle = computed(() => {
   return `${p?.hint || '不按项目过滤'} · 排序: ${srt}`;
 });
 
+/**
+ * 选中之后: 先把焦点**还给触发按钮**, 再收起面板.
+ *
+ * ⚠️ 2026-10-30: 以前只 `open.value = false` —— 面板里的按钮随 v-if 被销毁,
+ *    焦点掉回 body, 键盘用户得从页面顶部重新 Tab 才找得到这个菜单.
+ */
 function pickProject(v: string) {
   emit('update:project', v);
+  triggerRef.value?.focus();
   open.value = false;
 }
 function pickSort(v: MarketSort) {
   emit('update:sort', v);
+  triggerRef.value?.focus();
   open.value = false;
 }
 

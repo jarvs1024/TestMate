@@ -26,7 +26,14 @@ import AppSidebar from '@/components/AppSidebar.vue';
 .tm-shell {
   display: flex;
   flex-direction: column;
-  height: 100vh;          /* 不让 body 滚, 内部滚 */
+  /* ⚠️ **用 100dvh, 不是 100vh** (2026-10-29 整改) ——
+     移动端浏览器的 100vh **包含地址栏高度**, 比实际可见视口高 60~100px.
+     加上这里 `overflow: hidden` (body 因此不滚), 页面最底部那 ~80px
+     就永远落在屏幕外 —— 内层滚到底也看不到, 尾部内容**不可达**.
+     `dvh` = 动态视口高度, 地址栏收起/展开时会跟着变.
+     老浏览器不认 dvh, 所以 100vh 写在前面兜底. */
+  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -63,6 +70,17 @@ import AppSidebar from '@/components/AppSidebar.vue';
 /* 大屏给 grid 更多空间, 让卡片列数自然变多 */
 @media (min-width: 1600px) {
   .container { max-width: 1600px; padding: 8px 40px 48px; }
+}
+/* ⚠️ **窄屏收一收留白** (2026-10-29 整改) ——
+   侧栏固定 220px, 窄屏下 `.container` 还左右各留 32px, 主内容列被挤得
+   几乎没地方了. 侧栏也会同步收窄 (见 AppSidebar.vue). */
+@media (max-width: 1100px) {
+  .container { padding: 8px 16px 40px; }
+  .tm-main { padding: 0 6px 24px; }
+}
+@media (max-width: 760px) {
+  .container { padding: 8px 10px 32px; }
+  .tm-main { padding: 0 4px 20px; }
 }
 
 .tm-fade-enter-active, .tm-fade-leave-active { transition: opacity .15s ease, transform .15s ease; }

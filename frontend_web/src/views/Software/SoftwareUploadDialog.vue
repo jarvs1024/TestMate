@@ -7,7 +7,10 @@
       <!-- ============ ① 软件包 (放最前) ============ -->
       <section class="up-sec">
         <div class="sec-h"><span class="sec-no">1</span>软件包<span class="sec-tip">必填</span></div>
-        <div class="file-pick"
+        <!-- ⚠️ 2026-10-30: `dragging` 这个 ref 以前**只写不读** (模板里没有任何绑定),
+             样式里也没有 .dragging —— 状态等于没用: 用户把文件拖进来, 边框一点变化都没有.
+             现在把状态绑到 class 上, 拖进来时边框变主色. -->
+        <div class="file-pick" :class="{ dragging }"
              @dragover.prevent="dragging = true"
              @dragleave.prevent="dragging = false"
              @drop.prevent="onDrop">
@@ -22,7 +25,15 @@
                改成**一个元素内部**用 template v-if 切换文字, DOM 骨架不动. -->
           <span class="file-chip" :class="{ 'is-empty': !file }">
             <template v-if="file">
-              {{ file.name }}<b @click="clearFile">×</b>
+              <!-- ⚠️ 2026-10-30: 文件名最长 200 字符, mono 字体约 1400px > 抽屉 760px ——
+                   不截断的话 chip 把内容撑破, 完整文件名一个都看不到.
+                   名字单独包一层: 自己截断 (ellipsis) + title 给全名. -->
+              <span class="fc-name" :title="file.name">{{ file.name }}</span>
+              <!-- ⚠️ 2026-10-30: 以前是 `<b>×</b>` —— b 不可聚焦, **键盘用户清不掉**,
+                   屏幕阅读器也读不出这是什么. 改成真 button: 能 Tab 到, 能回车触发,
+                   还有 aria-label 说清清的是哪个文件. -->
+              <button type="button" class="file-x" :aria-label="'清除文件 ' + file.name"
+                      @click="clearFile">×</button>
             </template>
             <template v-else>
               <span class="pick-hint">未选择文件 (可以拖进来)</span>
@@ -523,6 +534,16 @@ async function submit() {
   uploading.value = true;
   percent.value = 0;
   uploadedBytes.value = 0;
+  // ⚠️ 2026-10-30: 提交是**两步**: 先建条目, 再传文件.
+  //    传到 90% 断线 → 条目**已经建好了** (库里多一条「待传文件」),
+  //    但用户只看到一句「文件大小与声明的不一致」, 不知道条目已经存在.
+  //    用户再点一次提交 → 又 POST 一次 /software → code 被占用 →
+  //    后端自动改成 xxx2 **新建一条** → 库里多一条永远传不上文件的坏条目.
+  //    所以要记住"建到哪一步了", 失败时把状态说清楚.
+  //    ⚠️ **不改提交语义** —— 不改成"再次点击只重跑传文件" (那要后端配合, 风险大).
+  let entryCreated = false;
+  let createdCode = '';
+  let createdVersion = '';
   try {
     let code = props.item?.code || '';
     let version = versionForm.value.version;
@@ -553,6 +574,13 @@ async function submit() {
       });
       code = created.code;
       version = created.version;
+      // ⚠️ 条目建好了 —— 记下**实际用的 code** (撞名时后端会自动加序号 xxx2),
+      //    失败提示里要写出来, 用户才知道自己刚才建的是哪一条.
+      //    ⚠️ 变量叫 entryCreated (不叫 created) —— 块内的 `const created`
+      //    会把它遮住, 赋值会报 "Assignment to constant variable".
+      entryCreated = true;
+      createdCode = created.code;
+      createdVersion = created.version;
     } else {
       const f = file.value!;
       const created = await createSoftwareVersion(code, {
@@ -566,6 +594,10 @@ async function submit() {
         is_default: versionForm.value.is_default,
       });
       version = created.version;
+      // ⚠️ 发新版本: 建的是**版本记录** (不是软件条目) —— 失败提示要照这个说
+      entryCreated = true;
+      createdCode = code;
+      createdVersion = created.version;
     }
 
     // ---- 第 ② 步: 传文件 (原始字节流, 边传边报进度) ----
@@ -578,10 +610,40 @@ async function submit() {
     emit('done');
     emit('update:modelValue', false);
   } catch (e: any) {
-    formError.value = errText(e, '上传失败');
+    // ⚠️ 2026-10-30: 按**阶段**分开说 —— 以前不管哪一步挂了都只给一句"上传失败",
+    //    用户不知道条目已经建好了, 再点一次提交就多一条坏条目.
+    formError.value = submitErrorText(e, entryCreated, createdCode, createdVersion);
   } finally {
     uploading.value = false;
   }
+}
+
+/**
+ * 提交失败的提示 —— **按阶段分开说** (2026-10-30).
+ *
+ * ⚠️ 提交是**先建条目、再传文件**两步:
+ *   · 条目**没建成** (第一步就挂) → 只报失败原因, 重试一次不会多东西;
+ *   · 条目**建成了**、文件没传上去 → 库里已经多了一条「待传文件」,
+ *     必须**说清楚**, 否则用户再点一次提交 → 又 POST 一次 /software →
+ *     code 被占用 → 后端自动加序号 → **多一条永远传不上文件的坏条目**.
+ *   · 顺带告诉他怎么补救 (到条目详情发新版本, 或先下架这条).
+ *
+ * ⚠️ **不改提交语义** —— 不做成"再次点击只重跑传文件" (那要后端配合, 风险大).
+ */
+function submitErrorText(
+  e: unknown,
+  entryCreated: boolean,
+  code: string,
+  version: string,
+): string {
+  const reason = errText(e, '上传失败');
+  if (!entryCreated) return reason;
+  if (mode.value === 'version') {
+    return `新版本 ${version} 的记录已建好, 但文件没传上去（${reason}）`
+      + ' —— 这一版会显示为「上传失败」. 可以重新上传, 或者把这一版下架.';
+  }
+  return `软件条目已创建（标识 ${code}）, 但文件没传上去（${reason}）`
+    + ' —— 库里会先显示为「待传文件」. 要重传请到该条目详情里发一个新版本, 或先下架这条.';
 }
 </script>
 
@@ -607,6 +669,12 @@ async function submit() {
   border: 1px dashed var(--border); border-radius: var(--radius-sm);
   padding: 11px 12px; background: var(--surface-soft);
 }
+/* ⚠️ 2026-10-30: 拖拽时的视觉反馈 —— 以前 `dragging` 只写不读, 拖进来毫无变化.
+   边框从虚线灰变成主色, 底色淡蓝 —— 一眼看出"松手就能放". */
+.file-pick.dragging {
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, .06);
+}
 .file-input { display: none; }
 .pick-btn {
   display: inline-flex; align-items: center; gap: 6px;
@@ -621,8 +689,22 @@ async function submit() {
   font-size: 12px; color: var(--ink-700);
   background: var(--surface-sunken); padding: 4px 9px;
   border-radius: var(--radius-sm); font-family: var(--font-mono);
+  /* ⚠️ 2026-10-30: chip 本身也要能收缩 —— 它是 .file-pick 的 flex 子项,
+     不给 min-width:0 的话里面的省略号不会生效 (文件名会把抽屉撑破). */
+  min-width: 0; max-width: 100%; overflow: hidden;
 }
-.file-chip b { cursor: pointer; color: var(--ink-500); }
+/* ⚠️ 2026-10-30: 文件名单独一层 —— 名字长到 200 字符时截断, 完整名字在 title 里 */
+.fc-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* ⚠️ 2026-10-30: 清除按钮 (以前是 <b>) —— 复位按钮默认样式, 别被浏览器画成灰方块;
+   flex-shrink:0 保证名字被截断时"×"不被一起截掉. */
+.file-chip .file-x {
+  border: none; background: none; padding: 0 2px; margin: 0;
+  font: inherit; line-height: 1; color: var(--ink-500);
+  cursor: pointer; flex-shrink: 0;
+}
+.file-chip .file-x:hover { color: var(--err); }
 /* 空状态: 别带 chip 的底色 —— 那看着像"已经选了一个文件" */
 .file-chip.is-empty { background: transparent; padding: 4px 0; }
 .pick-hint { font-size: 12px; color: var(--ink-500); }

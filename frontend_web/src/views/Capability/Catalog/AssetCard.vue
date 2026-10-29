@@ -7,7 +7,9 @@
     <div class="ac-hd">
       <div class="ac-icon">{{ item.icon }}</div>
       <div class="ac-title">
-        <div class="ac-name">{{ item.name }}</div>
+        <!-- ⚠️ 2026-10-30: 名字会被省略号截断, 但**没有** tooltip ——
+             看不到全名就没法确认这是哪个资产 (同文件其它徽标都有 title, 就名字没有). -->
+        <div class="ac-name" :title="item.name">{{ item.name }}</div>
         <div class="ac-ver">{{ item.version }} · {{ item.category }}</div>
       </div>
       <!-- 状态是**每张卡片自己的属性**, 不再做成视图筛选 -->

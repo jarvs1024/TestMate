@@ -342,18 +342,29 @@ select.tm-input:focus {
 
 /* ===== 原生 <select> + el-select 跟主题对齐 (边框 + focus 渐变 ring) =====
    原生 select 默认 1px 灰色边框, focus 蓝色 outline, 跟 input 风格不统一.
-   统一成 input 风格: 默认 1px border, focus 时主色边框 + 双层光晕. */
+   统一成 input 风格: 默认 1px border, focus 时主色边框 + 双层光晕.
+
+   ⚠️ **2026-10-29 整改: 尺寸不再用 !important 锁死** ——
+      以前 `padding: 7px 32px 7px 10px !important` + `border-radius: 8px !important`
+      把各视图 scoped 的尺寸声明**全废掉**了 (实测 `.mr-state-sel` 写的
+      `padding: 5px 8px` 根本没生效, select 渲染成 31px, 旁边的 input 才 26px ——
+      同一行控件高低不齐).
+      现在: **颜色/边框/箭头**继续由全局锁 (主题一致性), **尺寸**让给各组件自己定.
+      ⚠️ 但右侧必须**永远**给自绘箭头留位置 —— 所以 padding-right 单独用
+         !important 锁住, 其余三边放开. */
 select,
 .el-select__wrapper,
 .el-input__wrapper {
-  border-radius: 8px !important;
+  border-radius: 8px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
 }
 select {
   border: 1px solid var(--border) !important;
   background-color: var(--surface) !important;
   color: var(--ink-900) !important;
-  padding: 7px 32px 7px 10px !important;
+  padding: 7px 10px;
+  /* ⚠️ 箭头位置 —— 只给右侧留位, 别把各组件的 padding 锁死 */
+  padding-right: 32px !important;
   font-family: var(--font-body);
   font-size: 13px;
   cursor: pointer;
@@ -382,6 +393,33 @@ select:focus {
     linear-gradient(45deg, transparent 50%, var(--primary) 50%),
     linear-gradient(135deg, var(--primary) 50%, transparent 50%) !important;
 }
+/* ⚠️ **全局 `:focus-visible` 基线** (2026-10-29 补) ——
+   以前全站只有 4 处**局部**规则 (卡片), 按钮/链接走的是浏览器默认蓝环
+   `outline: auto 1px rgb(0,95,204)` —— 不是 token 色, 暗色主题下很扎眼,
+   而且跟项目自己的 focus ring 风格完全不是一回事.
+
+   ⚠️ **只管 button / a / [tabindex]** —— input / textarea / select 已经有自己的
+      focus 环了 (`.tm-input:focus` 的 primary-soft 光晕、`select:focus` 的光晕),
+      再加一层 outline 就变成**双环**.
+   ⚠️ 用 `:where()` 保持 **0 特异度** —— 各组件自定义的 ring 仍然能覆盖它. */
+:where(button, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ⚠️ **全局 `prefers-reduced-motion`** (2026-10-29 补) ——
+   以前只有 NoticeBar 一处处理了"用户要求减少动效", 全站的过渡动画照跑.
+   现在统一收掉 —— 只留一帧, 不影响任何功能. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ⚠️ **原生 `<select>` 的下拉列表项** (2026-10-29 补) ——
    `select` 本身的底色我们用 `background-color` 改了, 但**展开后的那一列选项**
    是 `<option>` 元素 —— 它的底色**不会**继承 select 的 background-color,

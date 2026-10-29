@@ -1389,15 +1389,61 @@ async def delete_docs(
     payload: DeleteDocsIn,
     user: User = Depends(get_current_user),
 ) -> dict:
-    """删除 dataset 下的文档. admin only."""
+    """删除 dataset 下的文档. admin only.
+
+    ⚠️ **删除文档也必须写审计** (2026-10-29 整改) ——
+       以前删完直接 `return {"ok": ok}`, 操作记录里**查无此事**.
+       可这个页面把「操作记录」定位成知识库唯一的治理台账
+       (谁传的、谁删的, 只能靠这张表) —— 删文档不记, 台账就漏了一半,
+       admin 事后根本查不出"这篇文档是谁删的".
+    """
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="admin only")
+
+    # ⚠️ 删之前先把**要删的那些文档的名字**捞出来 ——
+    #    审计里要写清楚删的是哪几篇 (删完就查不到了).
+    #    顺带把库名也取一下, 免得审计里只有一个光秃秃的 dataset_id.
+    ds_name = ""
+    try:
+        for d in await list_datasets(page=1, page_size=100):
+            if str(d.get("id") or "") == dataset_id:
+                ds_name = str(d.get("name") or "")
+                break
+    except Exception as e:  # noqa: BLE001
+        logger.warning("删文档前取数据集名失败: %s", e)
+
+    doc_names: list[str] = []
+    try:
+        wanted = set(payload.ids or [])
+        docs = (await list_documents(dataset_id, page=1, page_size=100)).get("docs") or []
+        if payload.delete_all or not wanted:
+            doc_names = [str(d.get("name") or "") for d in docs]
+        else:
+            doc_names = [str(d.get("name") or "") for d in docs if str(d.get("id") or "") in wanted]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("删文档前取文档名失败: %s", e)
+
+    # doc_name 字段只有 255 字符 —— 多篇一起删时截断, 别让数据库报错
+    doc_label = ", ".join(n for n in doc_names if n)[:250]
+
     try:
         ok = await delete_documents(dataset_id, doc_ids=payload.ids, delete_all=payload.delete_all)
-        return {"ok": ok}
     except Exception as e:
         logger.exception("delete_docs failed")
+        await _audit(
+            action="delete_doc", user=user, dataset_id=dataset_id,
+            dataset_name=ds_name, doc_name=doc_label, error=str(e)[:500],
+        )
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    # ⚠️ action 用 **delete_doc**, 不是 delete ——
+    #    delete 已经被「删除数据集」占着了 (历史上那条记录也是删库).
+    #    混用的话 admin 在操作记录里分不清删的是库还是文档.
+    await _audit(
+        action="delete_doc", user=user, dataset_id=dataset_id,
+        dataset_name=ds_name, doc_name=doc_label,
+    )
+    return {"ok": ok}
 
 class SearchIn(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)

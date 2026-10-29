@@ -97,7 +97,11 @@
               <span class="pb-ic">📦</span>选择安装包
             </button>
             <span v-if="pkgFile" class="file-chip">
-              {{ pkgFile.name }}<b @click="clearPackage">×</b>
+              {{ pkgFile.name }}
+              <!-- ⚠️ 原来是个 <b> —— 只能鼠标点, 键盘用户**清不掉**已选的包.
+                   换成真按钮 (type=button, 带 aria-label). -->
+              <button type="button" class="file-clear" @click="clearPackage"
+                      aria-label="移除已选安装包">×</button>
             </span>
             <span v-else class="pick-hint">未选择文件</span>
           </div>
@@ -184,13 +188,26 @@
           <!-- ③ 分类 (必填) + 适用项目 (选填) —— 都是"归类", 并排一行 -->
           <div class="row-2">
             <el-form-item label="分类" required>
+              <!-- ⚠️ 分类接口失败时**必须说清楚** (2026-10-30):
+                   以前 catch 把失败吞成空数组 → 下拉是空的 → 页脚挂着「还缺: 分类」→
+                   「上架」按钮**永久置灰**, 而且看不出为什么 (同一个接口在市场页是有红字的,
+                   只有这个抽屉是静默的). 现在: 红字说明 + 「重试」按钮 + 兜底分类项. -->
+              <div v-if="categoriesError" class="cat-err">
+                <span>分类列表加载失败：{{ categoriesError }}。请检查后端服务后点「重试」</span>
+                <button type="button" class="cat-retry" @click="loadCategories">重试</button>
+              </div>
               <el-select v-model="form.category" class="sel-category" style="width:100%" filterable
-                         @change="onCategoryChange">
+                         :loading="categoriesLoading" @change="onCategoryChange">
                 <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
                   <span>{{ c.name }}</span>
                   <!-- ⚠️ title 兜底 —— 下拉框挤窄时还能 hover 看全文 -->
                   <span class="cat-desc" :title="c.desc">{{ c.desc }}</span>
                 </el-option>
+                <!-- ⚠️ 兜底项: 分类接口失败时注入「其他」—— 后端本来就认这个分类
+                     (market_categories.MISC = "其他", 不认识的分类都归它),
+                     保证下拉**永不为空**, 「上架」按钮不会永久卡死.
+                     正常返回时**不注入** (表里本来就有「其他」). -->
+                <el-option v-if="categoriesError && !hasMiscCategory" value="其他" label="其他" />
               </el-select>
               <!-- ⚠️ 分类是**按协作角色**分的, 不是按流程阶段 ——
                    说清楚"该怎么选", 否则大家会按"这活儿在流程第几步"去选, 选得五花八门. -->
@@ -373,11 +390,11 @@ const advOpen = ref(false);
 const {
   form, tagsText, keywordsText, mcpConfigText, step, hasSource,
   fileInput, pkgFile, preview, previewing, iconPanel,
-  categories, projectOptions,
+  categories, categoriesError, categoriesLoading, projectOptions,
   isMcp, kind, mcpHint, mcpHintState, codeFieldError,
   versionError, pkgNameError,
   previewBad, previewIssues, iconChoices, missing, canSubmit,
-  formatMcp, useMcpTemplate,
+  formatMcp, useMcpTemplate, loadCategories,
   onCategoryChange, chooseIcon, clearPackage, onPickPackage,
   chooseKind, reset,
 } = useAssetUploadForm({
@@ -386,6 +403,15 @@ const {
   initialKind: () => props.initialKind || '',
   open: () => props.modelValue,
 });
+
+/**
+ * 分类表里有没有「其他」—— 用来决定失败时**要不要**再注入一个兜底项.
+ *
+ * ⚠️ 后端本来就把「其他」当正式分类 (market_categories.MISC),
+ *    正常返回时表里就有它 —— 再插一个会出现两个「其他」.
+ */
+const hasMiscCategory = computed(() =>
+  categories.value.some((c) => c.name === '其他'));
 
 watch(() => props.modelValue, (open) => {
   // ⚠️ 抽屉关掉 (点 X / 取消 / 关闭按钮) 都要停掉后台轮询 ——
@@ -748,8 +774,35 @@ function close() {
   background: var(--surface-sunken); color: var(--ink-700);
   padding: 3px 8px; border-radius: var(--radius-sm);
 }
-.file-chip b { cursor: pointer; color: var(--ink-500); }
-.file-chip b:hover { color: var(--err); }
+/* ⚠️ 清除按钮: 原来是 <b> —— 只能鼠标点. 现在是真 button, 得把浏览器默认样式复位:
+   去掉边框/背景/内边距, 键盘焦点还要看得见 (focus-visible 加 outline). */
+.file-clear {
+  background: none; border: 0; padding: 0 2px; margin: 0;
+  font-family: inherit; font-size: 12px; line-height: 1;
+  color: var(--ink-500); cursor: pointer; border-radius: 3px;
+}
+.file-clear:hover { color: var(--err); }
+.file-clear:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+/* ===== 分类加载失败 (2026-10-30) =====
+   ⚠️ 以前失败是**静默**的 (catch 吞成空数组) → 用户只看到「还缺: 分类」,
+      「上架」按钮永远灰着, 却不知道为什么. 现在红字说清楚 + 给一个「重试」. */
+.cat-err {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 6px; padding: 6px 10px;
+  font-size: 11.5px; line-height: 1.6; color: var(--err);
+  background: rgba(239, 68, 68, 0.07);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: var(--radius-sm);
+}
+.cat-err > span { flex: 1; min-width: 200px; }
+.cat-retry {
+  background: var(--surface); border: 1px solid var(--err); color: var(--err);
+  padding: 2px 12px; border-radius: var(--radius-pill);
+  font-size: 11.5px; cursor: pointer; font-family: inherit;
+}
+.cat-retry:hover { background: var(--err); color: #fff; }
+.cat-retry:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 
 /* ===== 底部固定条 ===== */
 .foot-bar { display: flex; align-items: center; gap: 12px; }

@@ -3,8 +3,24 @@
              :title="item ? `软件详情 · ${item.name}` : '软件详情'"
              :close-on-click-modal="false" class="sw-drawer"
              @update:model-value="emit('update:modelValue', $event)">
-    <div v-if="loading" class="state">正在读取…</div>
-    <div v-else-if="!item" class="state">读不到这个软件的详情</div>
+    <!-- ⚠️ 加载中 / 加载失败 / 没数据 —— 三种状态必须**分开** (2026-10-30).
+         以前失败时**不清 item**, 抽屉继续渲染**上一个软件的旧数据** ——
+         「打开 B 但 B 读失败」时, 抽屉里显示的还是 A 的名字/版本历史,
+         用户以为在看 B, 点下载下到的却是 A 的包 —— 下错包.
+         所以失败要**明说失败**, 不能拿"读不到详情"冒充"还在加载". -->
+    <div v-if="loading" class="state">
+      <div class="spinner" />
+      <div>正在读取…</div>
+    </div>
+    <div v-else-if="loadError" class="state err">
+      <div style="font-size: 28px">⚠️</div>
+      <div>加载失败：{{ loadError }}</div>
+      <button class="reset" @click="load">重试</button>
+    </div>
+    <div v-else-if="!item" class="state">
+      <div>读不到这个软件的详情</div>
+      <button v-if="code" class="reset" @click="load">重试</button>
+    </div>
 
     <div v-else class="sw-body">
       <!-- ===== 头部: 图标 / 名称 / 版本 / 状态 ===== -->
@@ -15,7 +31,9 @@
           <div class="sw-sub mono">
             {{ item.version || '—' }}
             <template v-if="item.category"> · {{ item.category }}</template>
-            <template v-if="item.platform"> · {{ item.platform }}</template>
+            <!-- ⚠️ 平台显示走 platformLabel —— 以前直接显示 'windows',
+                 跟上传表单里的 'Windows' 两种写法 (后端存的仍是小写原值) -->
+            <template v-if="item.platform"> · {{ platformLabel(item.platform) }}</template>
           </div>
           <!-- ⚠️ 软件挂多个版本时, 标题区要**说清推荐下哪个** (2026-10-28) -->
           <div v-if="versions.length > 1" class="sw-sub">
@@ -150,7 +168,10 @@
            管理员照旧能下架任何人的. 下架 = 条目和文件一起没. -->
       <div v-if="item.can_edit" class="sw-danger">
         <button class="mini-btn danger" @click="onUnpublish">下架这个软件</button>
-        <span class="danger-tip">下架后这个软件会从列表里消失, 服务器上的文件**一起删掉**, 不可恢复.</span>
+        <!-- ⚠️ 2026-10-30: 以前这里写的是「文件**一起删掉**」——
+             这块是**普通文本** (不是 Markdown), 星号会原样显示给用户.
+             去掉星号, 用「也会一起删掉」这种说法. -->
+        <span class="danger-tip">下架后这个软件会从列表里消失, 服务器上的文件也会一起删掉, 不可恢复.</span>
       </div>
     </div>
   </el-drawer>
@@ -166,7 +187,7 @@ import {
 } from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { fmtDate } from '@/utils/format';
-import { formatSize } from './softwareForm';
+import { formatSize, platformLabel } from './softwareForm';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -188,6 +209,14 @@ const emit = defineEmits<{
 const item = ref<SoftwareDetail | null>(null);
 const versions = ref<SoftwareVersion[]>([]);
 const loading = ref(false);
+/**
+ * 加载失败的原因 —— 空串 = 没失败.
+ *
+ * ⚠️ 2026-10-30: 以前失败只有一句 toast, 正文分支 `v-else-if="!item"` 是**死代码**
+ *    (item 从来不清空) —— 用户看到的是**上一个软件**的旧数据.
+ *    单独一个 ref, 才能把"加载失败"和"没有数据"分开说.
+ */
+const loadError = ref('');
 
 /**
  * 详情页各区块的**连续编号** —— 条件渲染的块不占号.
@@ -242,6 +271,13 @@ function errText(e: unknown, fallback: string): string {
 async function load() {
   if (!props.code) return;
   loading.value = true;
+  loadError.value = '';
+  // ⚠️ 2026-10-30: **先把上一个软件的数据清掉** ——
+  //    以前只在成功分支写 item.value, 失败分支只弹个 toast, item 里还留着
+  //    **上一个软件**的数据. 于是「打开 B 但 B 读失败」时, 抽屉正文和标题
+  //    还是 A 的 —— 用户以为在看 B, 点下载下到的却是 A 的包 (下错包).
+  item.value = null;
+  versions.value = [];
   try {
     const d = await getSoftware(props.code);
     item.value = d;
@@ -254,7 +290,10 @@ async function load() {
       emit('update:modelValue', false);
       return;
     }
-    ElMessage.error(errText(e, '读取软件详情失败'));
+    // ⚠️ 失败原因记进 loadError —— 正文里显示"加载失败: 原因" + 重试按钮,
+    //    免得用户对着上一个软件的旧数据发呆.
+    loadError.value = errText(e, '读取软件详情失败');
+    ElMessage.error(loadError.value);
   } finally {
     loading.value = false;
   }
@@ -307,19 +346,25 @@ async function onDeleteVersion(v: SoftwareVersion) {
   //    确认框必须说清楚, 不然用户以为只撤了一个版本.
   const isLast = versions.value.filter((x) => x.status === 'ready').length <= 1;
   try {
+    // ⚠️ 2026-10-30: ElMessageBox 是**纯文本**, **不渲染 Markdown** ——
+    //    以前这里写了 `**最后一个**` / `**文件会被删掉**`, 用户看到的是字面的星号.
+    //    改成纯文本说法.
+    //    ⚠️ 也**不要**把 dangerouslyUseHTMLString 改成 true —— 正文里插了软件名,
+    //    开了就是 HTML 注入面 (软件名带标签就能把确认框的内容换掉).
     await ElMessageBox.confirm(
       isLast
         ? `确定下架版本 ${v.version} 吗?\n\n`
-          + '这是**最后一个**可下载版本 —— 下架后这个软件会**一起从软件库里消失**, '
+          + '这是最后一个可下载版本 —— 下架后这个软件会一起从软件库里消失, '
           + '文件也会被删掉, 不可恢复.'
         : `确定下架版本 ${v.version} 吗?\n\n`
-          + '这个版本的**文件会被删掉**, 不可恢复. 其他版本不受影响.',
+          + '这个版本的文件会被删掉, 不可恢复. 其他版本不受影响.',
       '下架这个版本',
       {
         type: 'warning',
         confirmButtonText: '下架这版',
         cancelButtonText: '取消',
         confirmButtonClass: 'mini-btn danger',
+        // ⚠️ 保持 false —— ElMessageBox 是纯文本, 不渲染 Markdown
         dangerouslyUseHTMLString: false,
       },
     );
@@ -359,15 +404,20 @@ async function onDeleteVersion(v: SoftwareVersion) {
 async function onUnpublish() {
   if (!item.value) return;
   try {
+    // ⚠️ 2026-10-30: ElMessageBox 是**纯文本**, 不渲染 Markdown ——
+    //    以前写的是「软件包**也会一起删掉**」, 用户看到的是字面的星号.
+    //    ⚠️ 也**不要**开 dangerouslyUseHTMLString —— 正文里插了软件名,
+    //    开了就是 HTML 注入面.
     await ElMessageBox.confirm(
       `确定下架「${item.value.name}」吗?\n\n下架后它会从软件库里消失, ` +
-      '服务器上的软件包**也会一起删掉**, 不可恢复。',
+      '服务器上的软件包也会一起删掉, 不可恢复。',
       '下架软件',
       {
         type: 'warning',
         confirmButtonText: '下架',
         cancelButtonText: '取消',
         confirmButtonClass: 'mini-btn danger',
+        // ⚠️ 保持 false —— ElMessageBox 是纯文本, 不渲染 Markdown
         dangerouslyUseHTMLString: false,
       },
     );
@@ -402,7 +452,26 @@ function statusLabel(s: string): string {
 
 <style scoped>
 .sw-body { display: flex; flex-direction: column; gap: 14px; }
-.state { padding: 30px 0; text-align: center; color: var(--ink-500); font-size: 13px; }
+/* ⚠️ 加载中 / 失败 / 没数据 —— 跟列表页 (index.vue) 同一套写法,
+   别一个页面转圈一个页面光秃秃一句字 */
+.state {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 30px 0; color: var(--ink-500); font-size: 13px;
+}
+.state.err { color: var(--err); }
+.spinner {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--primary);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+/* 「重试」按钮 —— 跟列表页 .reset 同一套 (失败后必须给个重试入口) */
+.reset {
+  border: 1px solid var(--border); background: var(--surface);
+  border-radius: var(--radius-btn); padding: 5px 13px;
+  font-size: 12px; color: var(--ink-700); cursor: pointer; font-family: inherit;
+}
+.reset:hover { border-color: var(--primary); color: var(--primary); }
 
 .sw-hd { display: flex; gap: 12px; align-items: flex-start; }
 .sw-icon {

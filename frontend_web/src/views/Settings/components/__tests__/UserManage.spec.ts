@@ -7,7 +7,9 @@
  *   ② 建号失败 → 把后端的话显示出来 (比如"普通用户必须是公司邮箱"), 不吞掉;
  *   ③ 列表: 用户名 / 角色 / 登录方式 (免密 vs 需密码) / 停用状态;
  *   ④ 停用 / 启用 / 改角色 / 重置密码 → 各自打对应的接口, 改完 emit('changed');
- *   ⑤ 选「管理员」角色时**不显示** @twsc.com.cn 后缀 (管理员是账号名, 不是邮箱).
+ *      停用是**立刻生效**的破坏性操作 → 必须**二次确认** (2026-10-30);
+ *   ⑤ 选「管理员」角色时**不显示** @twsc.com.cn 后缀 (管理员是账号名, 不是邮箱);
+ *   ⑥ 管理员账号没设密码 → 禁用「创建账号」, 错误**贴在密码框下面** (字段级).
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
@@ -81,7 +83,7 @@ describe('账号管理 · 建号', () => {
     w.unmount();
   });
 
-  it('建号失败 → 显示后端给的错误 (不吞掉)', async () => {
+  it('建号失败 → 把后端给的错误显示出来 (不吞掉)', async () => {
     api.createUser.mockRejectedValueOnce({
       response: { data: { detail: '普通用户必须是公司邮箱 (如 zhangsan@twsc.com.cn)' } },
     });
@@ -89,7 +91,21 @@ describe('账号管理 · 建号', () => {
     await w.find('input[placeholder="zhangsan"]').setValue('someone@other.com');
     await w.find('.create-btn').trigger('click');
     await flushPromises();
-    expect(w.find('.err').text()).toContain('公司邮箱');
+    // ⚠️ 2026-10-30: 错误改成**按字段定位** —— 说的是用户名, 就贴在用户名框下面
+    expect(w.find('.field-err').text()).toContain('公司邮箱');
+    w.unmount();
+  });
+
+  it('选「管理员」+ 密码留空 → 禁用「创建账号」, 错误贴在密码框下', async () => {
+    const w = await mountComp();
+    await w.find('input[placeholder="zhangsan"]').setValue('opsadmin');
+    await w.find('select').setValue('admin');
+    await flushPromises();
+    // 按钮禁用 —— 不用等后端往返才知道建不了
+    expect((w.find('.create-btn').element as HTMLButtonElement).disabled).toBe(true);
+    // 错误贴着密码字段
+    expect(w.find('.field-err').text()).toContain('管理员账号必须设置密码');
+    expect(api.createUser).not.toHaveBeenCalled();
     w.unmount();
   });
 
@@ -133,13 +149,28 @@ describe('账号管理 · 列表', () => {
 });
 
 describe('账号管理 · 改账号', () => {
-  it('点「停用」→ 调 updateUser(is_active=false)', async () => {
+  it('点「停用」→ 先弹确认框, 确认后才调 updateUser(is_active=false)', async () => {
+    // ⚠️ 2026-10-30: 停用是立刻生效的破坏性操作, 现在**必须二次确认**
+    const spy = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as any);
     const w = await mountComp([user()]);
     const btn = w.findAll('button').find((b: any) => b.text().includes('停用'))!;
     await btn.trigger('click');
     await flushPromises();
+    expect(spy).toHaveBeenCalled();
     expect(api.updateUser).toHaveBeenCalledWith(1, { is_active: false });
     expect(w.emitted('changed')).toBeTruthy();
+    spy.mockRestore();
+    w.unmount();
+  });
+
+  it('停用确认框里取消 → 不调接口', async () => {
+    const spy = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel' as any);
+    const w = await mountComp([user()]);
+    const btn = w.findAll('button').find((b: any) => b.text().includes('停用'))!;
+    await btn.trigger('click');
+    await flushPromises();
+    expect(api.updateUser).not.toHaveBeenCalled();
+    spy.mockRestore();
     w.unmount();
   });
 

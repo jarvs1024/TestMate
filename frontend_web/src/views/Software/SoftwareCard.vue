@@ -7,13 +7,17 @@
     <div class="ac-hd">
       <div class="ac-icon">{{ item.icon || '🧰' }}</div>
       <div class="ac-title">
-        <div class="ac-name">{{ item.name }}</div>
-        <div class="ac-ver">{{ item.version || '—' }}<template v-if="item.category"> · {{ item.category }}</template></div>
+        <!-- ⚠️ 名字在 CSS 里是 ellipsis 截断的 —— 补个 title, 鼠标悬停能看到全名 -->
+        <div class="ac-name" :title="item.name">{{ item.name }}</div>
+        <!-- ⚠️ 版本行同理: 分类名一长就被截掉, 悬停给全的 -->
+        <div class="ac-ver" :title="verTitle">{{ item.version || '—' }}<template v-if="item.category"> · {{ item.category }}</template></div>
       </div>
       <!-- 状态是**每张卡片自己的属性** —— 不做成视图筛选 -->
       <div class="ac-badges">
+        <!-- ⚠️ 可见文字走 platformLabel —— 以前直接显示 'windows',
+             跟上传表单里的 'Windows' 两种写法 (后端存的仍是小写原值) -->
         <span v-if="item.platform" class="ac-badge plat"
-              :title="`适用平台: ${platformLabel(item.platform)}`">{{ platformIcon(item.platform) }} {{ item.platform }}</span>
+              :title="`适用平台: ${platformLabel(item.platform)}`">{{ platformIcon(item.platform) }} {{ platformLabel(item.platform) }}</span>
         <span v-if="item.publish_status === 'awaiting_file'" class="ac-badge pending"
               title="信息填好了, 文件还没传完 —— 现在还不能下载">🕐 待传文件</span>
         <span v-else-if="item.publish_status === 'hidden'" class="ac-badge off"
@@ -44,11 +48,18 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { SoftwareItem } from '@/api/software';
 import { fmtDate } from '@/utils/format';
+import { platformLabel } from './softwareForm';
 
-defineProps<{ item: SoftwareItem }>();
+const props = defineProps<{ item: SoftwareItem }>();
 const emit = defineEmits<{ (e: 'open', item: SoftwareItem): void }>();
+
+/** 版本行的完整文字 —— 卡片上会被截断, 悬停时用 title 补全 */
+const verTitle = computed(() =>
+  [props.item.version || '—', props.item.category].filter(Boolean).join(' · '),
+);
 
 function shortDate(iso: string | null): string {
   // ⚠️ 以前是 `iso.slice(0, 10)` —— 直接截字符串, 显示的是 **UTC 那一天**,
@@ -61,13 +72,6 @@ function platformIcon(p: string): string {
   if (p === 'linux') return '🐧';
   if (p === 'macos') return '🍎';
   return '💻';
-}
-
-function platformLabel(p: string): string {
-  if (p === 'windows') return 'Windows';
-  if (p === 'linux') return 'Linux';
-  if (p === 'macos') return 'macOS';
-  return '通用';
 }
 </script>
 

@@ -72,191 +72,240 @@
           搜索「{{ docSearchKw }}」找到 <b class="mono">{{ docSearchTotal }}</b> 篇文档
           <span class="ds-hint">（只搜文件名，不搜文档内容）</span>
         </div>
-        <table class="ds-tbl srch-tbl">
-          <thead>
-            <tr>
-              <th>文档名</th><th style="width:140px">所属数据集</th><th>大小</th><th>分段</th>
-              <th>解析</th><th>上传者</th><th style="width:200px">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="hit in docSearchHits" :key="hit.dataset_id + '/' + hit.id">
-              <td class="nm">
-                <span class="doc-ic">{{ docIcon(hit.type) }}</span>
-                <span class="doc-name" :title="hit.location" @click="openDocDetail(hit)" style="cursor:pointer">{{ hit.name }}</span>
-              </td>
-              <td class="ds-desc" :title="hit.dataset_id">{{ hit.dataset_name || '—' }}</td>
-              <td class="mono">{{ fmtSize(hit.size) }}</td>
-              <td class="mono">{{ hit.chunk_count }}</td>
-              <td>
-                <span class="run-badge" :class="runStatusClass(hit.run)" :title="hit.progress_msg">{{ runStatusLabel(hit.run) }}</span>
-              </td>
-              <td class="mono">{{ hit.uploaded_by_name || '—' }}</td>
-              <td>
-                <button class="link-btn" @click="openChunks(dsOf(hit), hit)" title="查看分段内容">分段</button>
-                <button class="link-btn" title="下载原始文件" @click="onDownload(dsOf(hit), hit)">下载</button>
-                <!-- ⚠️ 更新 / 重解析 = 写操作 → tester 及以上 -->
-                <button
-                  v-if="canWrite"
-                  class="link-btn"
-                  title="换新文件替换这一篇的内容 (旧版本会被永久删除)"
-                  @click="openUpdate(dsOf(hit), hit)">更新</button>
-                <button
-                  v-if="canWrite"
-                  class="link-btn"
-                  title="内容不变, 重跑一遍解析"
-                  @click="doReparse(dsOf(hit), hit)">重解析</button>
-                <!-- ⚠️ 删除文档 = 硬删 → 只给 admin (跟文档子表里那个一个口径) -->
-                <button
-                  v-if="isAdmin"
-                  class="link-btn danger"
-                  title="删除这一篇文档 (源文件和分段一起永久删除)"
-                  @click="doDeleteDocument(dsOf(hit), hit)">🗑 删除</button>
-              </td>
-            </tr>
-            <tr v-if="!docSearchHits.length && docSearchLoading">
-              <td colspan="7" class="empty">搜索中…</td>
-            </tr>
-            <tr v-else-if="!docSearchHits.length && docSearched">
-              <td colspan="7" class="empty">没找到含「{{ docSearchKw }}」的文档</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="tbl-wrap">
+  <table class="ds-tbl srch-tbl">
+            <thead>
+              <tr>
+                <th>文档名</th><th style="width:140px">所属数据集</th><th>大小</th><th>分段</th>
+                <th>解析</th><th>上传者</th><th style="width:200px">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="hit in docSearchHits" :key="hit.dataset_id + '/' + hit.id">
+                <td class="nm">
+                  <span class="doc-ic">{{ docIcon(hit.type) }}</span>
+                  <span class="doc-name" :title="hit.location" @click="openDocDetail(hit)" style="cursor:pointer">{{ hit.name }}</span>
+                </td>
+                <td class="ds-desc" :title="hit.dataset_id">{{ hit.dataset_name || '—' }}</td>
+                <td class="mono">{{ fmtSize(hit.size) }}</td>
+                <td class="mono">{{ hit.chunk_count }}</td>
+                <td>
+                  <span class="run-badge" :class="runStatusClass(hit.run)" :title="hit.progress_msg">{{ runStatusLabel(hit.run) }}</span>
+                  <span v-if="hit.run === 'RUNNING'" class="doc-prog"
+                        :title="`解析中 ${Math.round((hit.progress || 0) * 100)}%`">
+                    <i :style="{ width: `${Math.round((hit.progress || 0) * 100)}%` }"></i>
+                  </span>
+                </td>
+                <td class="mono">{{ hit.uploaded_by_name || '—' }}</td>
+                <td>
+                  <button class="link-btn" @click="openChunks(dsOf(hit), hit)" title="查看分段内容">分段</button>
+                  <button class="link-btn" title="下载原始文件" @click="onDownload(dsOf(hit), hit)">下载</button>
+                  <!-- ⚠️ 更新 / 重解析 = 写操作 → tester 及以上 -->
+                  <button
+                    v-if="canWrite"
+                    class="link-btn"
+                    title="换新文件替换这一篇的内容 (旧版本会被永久删除)"
+                    @click="openUpdate(dsOf(hit), hit)">更新</button>
+                  <button
+                    v-if="canWrite"
+                    class="link-btn"
+                    title="内容不变, 重跑一遍解析"
+                    @click="doReparse(dsOf(hit), hit)">重解析</button>
+                  <!-- ⚠️ 删除文档 = 硬删 → 只给 admin (跟文档子表里那个一个口径) -->
+                  <button
+                    v-if="isAdmin"
+                    class="link-btn danger"
+                    :disabled="deletingDocKey === `${hit.dataset_id}::${hit.id}`"
+                    :title="deletingDocKey === `${hit.dataset_id}::${hit.id}` ? '删除中…' : '删除这一篇文档 (源文件和分段一起永久删除)'"
+                    @click="doDeleteDocument(dsOf(hit), hit)">
+                    {{ deletingDocKey === `${hit.dataset_id}::${hit.id}` ? '删除中…' : '🗑 删除' }}
+                  </button>
+                </td>
+              </tr>
+              <!-- ⚠️ 2026-10-29: 条件改成**只看 loading** ——
+                   以前是「没有结果 && 在加载」, 可请求期间屏幕上还挂着上一个关键词的结果,
+                   这一行永远不出现 → 用户以为没在搜. 现在请求一开始结果就清空, 这一行必定出现. -->
+              <tr v-if="docSearchLoading">
+                <td colspan="7" class="empty">搜索中…</td>
+              </tr>
+              <tr v-else-if="!docSearchHits.length && docSearched">
+                <td colspan="7" class="empty">没找到含「{{ docSearchKw }}」的文档</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div v-if="docSearchTruncated" class="empty err">
           命中 {{ docSearchTotal }} 篇，只显示前 {{ docSearchHits.length }} 篇 —— 请把关键词写得更具体些
         </div>
       </div>
 
-      <table class="ds-tbl">
-        <thead>
-          <tr>
-            <th style="width:24px"></th>
-            <th>名称</th>
-            <th>说明</th>
-            <th>状态</th>
-            <th>文档</th>
-            <th>分段</th>
-            <th>切片法</th>
-            <th>更新时间</th>
-            <th style="width:140px">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-for="d in datasets" :key="d.id">
-            <tr class="ds-row" :class="{ open: expandedId === d.id }">
-              <td class="exp-cell">
-                <!-- ⚠️ 折叠按钮要做得很**显眼** (2026-10-29) ——
-                     以前就是一个灰色的 ▸ 字, 没人知道那能点.
-                     现在做成带边框的胶囊 + 「展开/收起」文字, 一眼就知道能展开. -->
-                <button
-                  class="exp"
-                  :class="{ on: expandedId === d.id }"
-                  @click="toggleExpand(d.id)"
-                  :title="expandedId === d.id ? '收起文档列表' : '展开文档列表'">
-                  <span class="exp-ic">{{ expandedId === d.id ? '▾' : '▸' }}</span>
-                  <span class="exp-tx">{{ expandedId === d.id ? '收起' : '展开' }}</span>
-                </button>
-              </td>
-              <td class="nm">
-                <span class="ds-ic">📁</span>
-                <!-- ⚠️ 点**名字**也能展开 —— 用户看到名字就想点, 别只让用户猜那个小箭头.
-                     ⚠️ 名字后面的 id 哈希 (`ec40ed92…`) 去掉了 —— 对用户没意义, 还占地方 -->
-                <span
-                  class="ds-name"
-                  title="点击展开文档列表"
-                  @click="toggleExpand(d.id)">{{ d.name }}</span>
-              </td>
-              <td class="ds-desc" :title="d.description">{{ d.description || '—' }}</td>
-              <td>
-                <span class="run-badge" :class="d.status === '1' ? 'run-done' : 'run-fail'">{{ d.status === '1' ? '启用' : '禁用' }}</span>
-              </td>
-              <td class="mono">{{ d.document_count }}</td>
-              <td class="mono">{{ d.chunk_count }}</td>
-              <td class="mono">{{ fmtChunkMethod(d.chunk_method) }}</td>
-              <td class="mono">{{ fmtTime(d.update_time) || d.update_date || '—' }}</td>
-              <td class="ds-ops">
-                <!-- ⚠️ 行内直接上传 —— 不用先展开子表就能往这个库塞文档 -->
-                <button
-                  v-if="canWrite"
-                  class="link-btn"
-                  title="往这个数据集上传文档"
-                  @click="openUpload(d)">⬆ 上传</button>
-                <button class="ghost-btn" @click="openDetail(d)">详情</button>
-                <!-- ⚠️ 删除数据集 = 硬删, 不可逆 → 只给 admin, 且要输入库名确认 -->
-                <button
-                  v-if="isAdmin"
-                  class="link-btn danger"
-                  title="删除整个数据集 (连同里面的文档一起永久删除)"
-                  @click="doDeleteDataset(d)">🗑 删除</button>
-              </td>
+      <div class="tbl-wrap">
+  <table class="ds-tbl">
+          <thead>
+            <tr>
+              <th style="width:24px"></th>
+              <th>名称</th>
+              <th>说明</th>
+              <th>状态</th>
+              <th>文档</th>
+              <th>分段</th>
+              <th>切片法</th>
+              <th>更新时间</th>
+              <th style="width:140px">操作</th>
             </tr>
-            <!-- 展开的文档子表 -->
-            <tr v-if="expandedId === d.id" class="ds-subrow">
-              <td colspan="9" class="ds-subcell">
-                <div class="doc-panel">
-                  <div class="doc-hd">
-                    <div class="doc-t">📄 {{ d.name }} · 文档列表</div>
-                    <div class="doc-tools">
-                      <!-- ⚠️ 这里原来还有一个「⬆ 上传文档」按钮 —— **删掉了** (2026-10-29).
-                           重复: 同一行的操作列里已经有「⬆ 上传」(锁定这个库),
-                           页面顶部工具条也还有一个全局的「⬆ 上传文档」.
-                           三个入口干同一件事, 看着像出了 bug. 这里只留「↻」 -->
-                      <button class="reload sm" @click="loadDocs(d.id, true)" :disabled="docLoading(d.id)">↻</button>
+          </thead>
+          <tbody>
+            <template v-for="d in datasets" :key="d.id">
+              <tr class="ds-row" :class="{ open: expandedId === d.id }">
+                <td class="exp-cell">
+                  <!-- ⚠️ 折叠按钮要做得很**显眼** (2026-10-29) ——
+                       以前就是一个灰色的 ▸ 字, 没人知道那能点.
+                       现在做成带边框的胶囊 + 「展开/收起」文字, 一眼就知道能展开. -->
+                  <button
+                    class="exp"
+                    :class="{ on: expandedId === d.id }"
+                    @click="toggleExpand(d.id)"
+                    :title="expandedId === d.id ? '收起文档列表' : '展开文档列表'">
+                    <span class="exp-ic">{{ expandedId === d.id ? '▾' : '▸' }}</span>
+                    <span class="exp-tx">{{ expandedId === d.id ? '收起' : '展开' }}</span>
+                  </button>
+                </td>
+                <td class="nm">
+                  <span class="ds-ic">📁</span>
+                  <!-- ⚠️ 点**名字**也能展开 —— 用户看到名字就想点, 别只让用户猜那个小箭头.
+                       ⚠️ 名字后面的 id 哈希 (`ec40ed92…`) 去掉了 —— 对用户没意义, 还占地方 -->
+                  <!-- ⚠️ 2026-10-29: title 原来写死成「点击展开文档列表」——
+                       用户悬停看不到**完整库名**. 现在 title 给库名本身,
+                       "点击展开"的说明挪到左边的折叠按钮上 (那个按钮本来就有 title). -->
+                  <span
+                    class="ds-name"
+                    :title="d.name"
+                    @click="toggleExpand(d.id)">{{ d.name }}</span>
+                </td>
+                <td class="ds-desc" :title="d.description">{{ d.description || '—' }}</td>
+                <td>
+                  <span class="run-badge" :class="d.status === '1' ? 'run-done' : 'run-fail'">{{ d.status === '1' ? '启用' : '禁用' }}</span>
+                </td>
+                <td class="mono">{{ d.document_count }}</td>
+                <td class="mono">{{ d.chunk_count }}</td>
+                <td class="mono">{{ fmtChunkMethod(d.chunk_method) }}</td>
+                <td class="mono">{{ fmtTime(d.update_time) || d.update_date || '—' }}</td>
+                <td class="ds-ops">
+                  <!-- ⚠️ 行内直接上传 —— 不用先展开子表就能往这个库塞文档 -->
+                  <button
+                    v-if="canWrite"
+                    class="link-btn"
+                    title="往这个数据集上传文档"
+                    @click="openUpload(d)">⬆ 上传</button>
+                  <button class="ghost-btn" @click="openDetail(d)">详情</button>
+                  <!-- ⚠️ 删除数据集 = 硬删, 不可逆 → 只给 admin, 且要输入库名确认.
+                       ⚠️ 2026-10-29: 删除期间**置灰 + 换文案** ——
+                       以前全程零反馈 (后端删大库给了 120s 超时), 按钮还能再点 →
+                       第二次又弹确认框 → 第一个已删完 → 404 → 红条「数据集不存在」,
+                       **可删除其实成功了**. -->
+                  <button
+                    v-if="isAdmin"
+                    class="link-btn danger"
+                    :disabled="deletingDsId === d.id"
+                    :title="deletingDsId === d.id ? '删除中…' : '删除整个数据集 (连同里面的文档一起永久删除)'"
+                    @click="doDeleteDataset(d)">
+                    {{ deletingDsId === d.id ? '删除中…' : '🗑 删除' }}
+                  </button>
+                </td>
+              </tr>
+              <!-- 展开的文档子表 -->
+              <tr v-if="expandedId === d.id" class="ds-subrow">
+                <td colspan="9" class="ds-subcell">
+                  <div class="doc-panel">
+                    <div class="doc-hd">
+                      <div class="doc-t">📄 {{ d.name }} · 文档列表</div>
+                      <div class="doc-tools">
+                        <!-- ⚠️ 这里原来还有一个「⬆ 上传文档」按钮 —— **删掉了** (2026-10-29).
+                             重复: 同一行的操作列里已经有「⬆ 上传」(锁定这个库),
+                             页面顶部工具条也还有一个全局的「⬆ 上传文档」.
+                             三个入口干同一件事, 看着像出了 bug. 这里只留「↻」 -->
+                        <button class="reload sm" @click="loadDocs(d.id, true)" :disabled="docLoading(d.id)">↻</button>
+                      </div>
                     </div>
-                  </div>
-                  <table class="doc-tbl">
-                    <thead>
-                      <tr>
-                        <th>名称</th><th>大小</th><th>分段</th><th>解析</th><th>启用</th><th>更新</th><th style="width:270px">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="doc in docsOf(d.id)" :key="doc.id" :class="{ failed: doc.run === 'FAIL' }">
-                        <td class="nm">
-                          <span class="doc-ic">{{ docIcon(doc.type) }}</span>
-                          <span class="doc-name" :title="doc.location" @click="openDocDetail(doc)" style="cursor:pointer">{{ doc.name }}</span>
-                        </td>
-                        <td class="mono">{{ fmtSize(doc.size) }}</td>
-                        <td class="mono">{{ doc.chunk_count }}</td>
-                        <td>
-                          <span class="run-badge" :class="runStatusClass(doc.run)" :title="runTitle(doc)">{{ runStatusLabel(doc.run) }}</span>
-                        </td>
-                        <td>
-                          <span class="run-badge" :class="doc.status === '1' ? 'run-done' : 'run-fail'">{{ doc.status === '1' ? '启用' : '禁用' }}</span>
-                        </td>
-                        <td class="mono">{{ fmtTime(doc.update_time) || doc.update_date || '—' }}</td>
-                        <td>
-                          <button class="link-btn" @click="openChunks(d, doc)" title="查看分段内容">分段</button>
-                          <!-- ⚠️ 下载是只读操作 → 所有登录用户都能用 -->
-                          <button
-                            class="link-btn"
-                            title="下载原始文件"
-                            @click="onDownload(d, doc)">下载</button>
-                          <!-- ⚠️ 更新 / 重解析 = 写操作 → tester 及以上 (跟上传同一档) -->
-                          <button
-                            v-if="canWrite"
-                            class="link-btn"
-                            title="换新文件替换这一篇的内容 (旧版本会被永久删除)"
-                            @click="openUpdate(d, doc)">更新</button>
-                          <button
-                            v-if="canWrite"
-                            class="link-btn"
-                            title="内容不变, 重跑一遍解析 (解析失败了可以用)"
-                            @click="doReparse(d, doc)">重解析</button>
-                          <!-- ⚠️ 删除文档 = **硬删** (源文件 + 分段一起没, 没回收站)
-                               → 只给 admin, 且要输入文档名二次确认 (跟删数据集一个口径) -->
-                          <button
-                            v-if="isAdmin"
-                            class="link-btn danger"
-                            title="删除这一篇文档 (源文件和分段一起永久删除)"
-                            @click="doDeleteDocument(d, doc)">🗑 删除</button>
-                        </td>
-                      </tr>
-                      <tr v-if="docsOf(d.id).length === 0 && !docLoading">
-                        <td :colspan="7" class="empty">暂无文档</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                    <div class="tbl-wrap">
+  <table class="doc-tbl">
+                        <thead>
+                          <tr>
+                            <th>名称</th><th>大小</th><th>分段</th><th>解析</th><th>启用</th><th>更新</th><th style="width:270px">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="doc in docsOf(d.id)" :key="doc.id" :class="{ failed: doc.run === 'FAIL' }">
+                            <td class="nm">
+                              <span class="doc-ic">{{ docIcon(doc.type) }}</span>
+                              <span class="doc-name" :title="doc.location" @click="openDocDetail(doc)" style="cursor:pointer">{{ doc.name }}</span>
+                            </td>
+                            <td class="mono">{{ fmtSize(doc.size) }}</td>
+                            <td class="mono">{{ doc.chunk_count }}</td>
+                            <td>
+                              <span class="run-badge" :class="runStatusClass(doc.run)" :title="runTitle(doc)">{{ runStatusLabel(doc.run) }}</span>
+                              <!-- ⚠️ 解析进度 (2026-10-29) —— 接口一直给 progress,
+                                   页面从没用过, 用户只看到一枚静态的「解析中」,
+                                   不知道还要等多久、是不是卡住了. -->
+                              <span v-if="doc.run === 'RUNNING'" class="doc-prog"
+                                    :title="`解析中 ${Math.round((doc.progress || 0) * 100)}%`">
+                                <i :style="{ width: `${Math.round((doc.progress || 0) * 100)}%` }"></i>
+                              </span>
+                            </td>
+                            <td>
+                              <span class="run-badge" :class="doc.status === '1' ? 'run-done' : 'run-fail'">{{ doc.status === '1' ? '启用' : '禁用' }}</span>
+                            </td>
+                            <td class="mono">{{ fmtTime(doc.update_time) || doc.update_date || '—' }}</td>
+                            <td>
+                              <button class="link-btn" @click="openChunks(d, doc)" title="查看分段内容">分段</button>
+                              <!-- ⚠️ 下载是只读操作 → 所有登录用户都能用 -->
+                              <button
+                                class="link-btn"
+                                title="下载原始文件"
+                                @click="onDownload(d, doc)">下载</button>
+                              <!-- ⚠️ 更新 / 重解析 = 写操作 → tester 及以上 (跟上传同一档) -->
+                              <button
+                                v-if="canWrite"
+                                class="link-btn"
+                                title="换新文件替换这一篇的内容 (旧版本会被永久删除)"
+                                @click="openUpdate(d, doc)">更新</button>
+                              <button
+                                v-if="canWrite"
+                                class="link-btn"
+                                title="内容不变, 重跑一遍解析 (解析失败了可以用)"
+                                @click="doReparse(d, doc)">重解析</button>
+                              <!-- ⚠️ 删除文档 = **硬删** (源文件 + 分段一起没, 没回收站)
+                                   → 只给 admin, 且要输入文档名二次确认 (跟删数据集一个口径) -->
+                              <button
+                                v-if="isAdmin"
+                                class="link-btn danger"
+                                :disabled="deletingDocKey === `${d.id}::${doc.id}`"
+                                :title="deletingDocKey === `${d.id}::${doc.id}` ? '删除中…' : '删除这一篇文档 (源文件和分段一起永久删除)'"
+                                @click="doDeleteDocument(d, doc)">
+                                {{ deletingDocKey === `${d.id}::${doc.id}` ? '删除中…' : '🗑 删除' }}
+                              </button>
+                            </td>
+                          </tr>
+                          <!-- ⚠️ **加载中要有提示** (2026-10-29 整改) ——
+                               子表以前一展开就是一张空表, 一点「加载中…」都没有,
+                               RAGFlow 慢的时候用户以为"这个库没有文档". -->
+                          <tr v-if="docLoading(d.id)">
+                            <td :colspan="7" class="empty">加载中…</td>
+                          </tr>
+                          <!-- ⚠️ **加载失败要说失败** —— 以前失败时列表被清空,
+                               显示成「暂无文档」, 文档明明都还在, 用户却以为被删了. -->
+                          <tr v-else-if="docError(d.id)">
+                            <td :colspan="7" class="empty err">
+                              加载失败：{{ docError(d.id) }}
+                              <button class="link-btn" @click="loadDocs(d.id, true)">重试</button>
+                            </td>
+                          </tr>
+                          <tr v-else-if="docsOf(d.id).length === 0">
+                            <td :colspan="7" class="empty">暂无文档</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
                 </div>
               </td>
             </tr>
@@ -278,6 +327,7 @@
         </tbody>
       </table>
     </div>
+      </div>
 
     <!-- 知识检索 / 知识对话: 两个 tab 共享一张卡 -->
     <div class="card card-share">
@@ -333,30 +383,35 @@
         操作记录加载失败：{{ auditError }}
         <button class="ghost-btn" @click="loadAudits()">重试</button>
       </div>
-      <table v-else class="ds-tbl">
-        <thead>
-          <tr>
-            <th>时间</th><th>谁</th><th>动作</th><th>数据集</th><th>文档</th><th>大小</th><th>结果</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="a in audits" :key="a.id">
-            <td class="mono">{{ fmtIso(a.created_at) || '—' }}</td>
-            <td class="mono">{{ a.actor_name || '—' }}</td>
-            <td><span class="run-badge" :class="a.error ? 'run-fail' : 'run-done'">{{ auditActionLabel(a.action) }}</span></td>
-            <td>{{ a.dataset_name || a.dataset_id || '—' }}</td>
-            <td class="nm"><span class="doc-name">{{ a.doc_name || '—' }}</span></td>
-            <td class="mono">{{ a.size ? fmtSize(a.size) : '—' }}</td>
-            <td class="mono" :class="{ 'dt-err': a.error }" :title="a.error">{{ a.error ? '失败' : '成功' }}</td>
-          </tr>
-          <tr v-if="!audits.length && !auditLoading">
-            <td colspan="7" class="empty">还没有操作记录</td>
-          </tr>
-          <tr v-if="auditLoading">
-            <td colspan="7" class="empty">加载中…</td>
-          </tr>
-        </tbody>
-      </table>
+      <!-- ⚠️ `v-else` 必须在**包裹层**上, 不能留在 table 上 ——
+           前面那个兄弟节点是 `<div v-if="auditError">`, 包一层之后
+           table 的上一个兄弟变成了 wrapper, v-else 就没有配对的 v-if 了. -->
+      <div v-else class="tbl-wrap">
+        <table class="ds-tbl">
+          <thead>
+            <tr>
+              <th>时间</th><th>谁</th><th>动作</th><th>数据集</th><th>文档</th><th>大小</th><th>结果</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="a in audits" :key="a.id">
+              <td class="mono">{{ fmtIso(a.created_at) || '—' }}</td>
+              <td class="mono">{{ a.actor_name || '—' }}</td>
+              <td><span class="run-badge" :class="a.error ? 'run-fail' : 'run-done'">{{ auditActionLabel(a.action) }}</span></td>
+              <td>{{ a.dataset_name || a.dataset_id || '—' }}</td>
+              <td class="nm"><span class="doc-name">{{ a.doc_name || '—' }}</span></td>
+              <td class="mono">{{ a.size ? fmtSize(a.size) : '—' }}</td>
+              <td class="mono" :class="{ 'dt-err': a.error }" :title="a.error">{{ a.error ? '失败' : '成功' }}</td>
+            </tr>
+            <tr v-if="!audits.length && !auditLoading">
+              <td colspan="7" class="empty">还没有操作记录</td>
+            </tr>
+            <tr v-if="auditLoading">
+              <td colspan="7" class="empty">加载中…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <!-- ⚠️ 分页控件 (2026-10-29) —— 只有一页的时候不显示, 别占地方 -->
       <div v-if="auditPages > 1" class="pg-bar">
         <span class="pg-info">
@@ -633,7 +688,14 @@
             <span v-if="chunksLoading" class="chunks-load">加载中…</span>
           </div>
         </div>
-        <div v-if="chunksList.length === 0 && !chunksLoading" class="empty">该文档暂无分段</div>
+        <!-- ⚠️ **加载失败要说失败** (2026-10-29) ——
+             以前失败时抽屉里只剩「该文档暂无分段」, **加载失败被伪装成了"本来就没有分段"**.
+             用户会以为文档没切好, 其实只是没取到. -->
+        <div v-if="chunksError" class="empty err">
+          加载分段失败：{{ chunksError }}
+          <button class="link-btn" @click="retryChunks">重试</button>
+        </div>
+        <div v-else-if="chunksList.length === 0 && !chunksLoading" class="empty">该文档暂无分段</div>
         <div v-for="(c, idx) in chunksList" :key="c.id" class="chunk-card">
           <div class="chunk-hd">
             <span class="chunk-num">#{{ idx + 1 }}</span>
@@ -824,9 +886,30 @@ const totalSize = computed(() =>
 const expandedId = ref('');
 const docsByDataset = ref<Record<string, KbDocument[]>>({});
 const docLoadingByDs = ref<Record<string, boolean>>({});
+/**
+ * 文档列表**加载失败**的库 id.
+ *
+ * ⚠️ 2026-10-29: 以前手动刷新失败时把该库的文档列表**清空** (`= []`),
+ *    表格于是显示「暂无文档」—— 文档明明都还在, 用户却以为被删了.
+ *    轮询路径早就改对了 (静默失败保留旧数据), 手动刷新路径漏了.
+ *    现在保留旧数据 + 单独记一个错误, 表格里显示「加载失败 + 重试」.
+ */
+const docErrorByDs = ref<Record<string, string>>({});
 
 function docsOf(datasetId: string): KbDocument[] { return docsByDataset.value[datasetId] || []; }
 function docLoading(datasetId: string): boolean { return !!docLoadingByDs.value[datasetId]; }
+function docError(datasetId: string): string { return docErrorByDs.value[datasetId] || ''; }
+
+/**
+ * 删除进行中的 id —— 用来置灰按钮 + 换文案.
+ *
+ * ⚠️ 2026-10-29: 以前删库/删文档全程零反馈 —— 后端删大库给了 120s 超时,
+ *    这几秒里页面一点变化都没有, 按钮还能再点 → 第二次又弹一个确认框 →
+ *    第一个已经删完, 第二个请求 404 → 红色 toast「数据集不存在」,
+ *    **可删除其实成功了**. 现在请求期间按钮置灰并显示「删除中…」.
+ */
+const deletingDsId = ref('');
+const deletingDocKey = ref('');   // `${datasetId}::${docId}`
 
 async function toggleExpand(datasetId: string) {
   if (expandedId.value === datasetId) { expandedId.value = ''; return; }
@@ -849,19 +932,24 @@ async function loadDocs(datasetId: string, force = false, silent = false) {
     // RAGFlow 单页上限 100, 分页拿全量用于准确汇总 totalSize
     const all: KbDocument[] = [];
     const PAGE = 100;
-    const first = await listDocuments(datasetId, { page: 1, page_size: PAGE });
+    const first = await listDocuments(datasetId, { page: 1, page_size: PAGE }, { silent: true });
     all.push(...first.docs);
     const total = first.total || first.docs.length;
     for (let page = 2; all.length < total; page++) {
-      const r = await listDocuments(datasetId, { page, page_size: PAGE });
+      const r = await listDocuments(datasetId, { page, page_size: PAGE }, { silent: true });
       if (!r.docs.length) break;
       all.push(...r.docs);
     }
     docsByDataset.value[datasetId] = all;
+    delete docErrorByDs.value[datasetId];   // 这次成功了 —— 撤掉上次的错误
   } catch (e: any) {
     if (!silent) {
-      ElMessage.error('加载文档失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
-      docsByDataset.value[datasetId] = [];
+      // ⚠️ **不要把列表清空** (2026-10-29 整改) ——
+      //    以前这里 `docsByDataset[datasetId] = []`, 表格于是显示「暂无文档」,
+      //    文档明明都还在, 用户却以为被删了 (网络抖一下的事).
+      //    保留旧数据 + 单独记错误, 表格里显示「加载失败 + 重试」.
+      docErrorByDs.value[datasetId] =
+        httpErrorText(errorStatus(e), errorDetail(e), '加载失败');
     }
   } finally {
     docLoadingByDs.value[datasetId] = false;
@@ -938,6 +1026,14 @@ const chunksTitle = ref('');
 const chunksList = ref<KbDocChunk[]>([]);
 const chunksTotal = ref(0);
 const chunksLoading = ref(false);
+/**
+ * 分段加载失败的原因 (2026-10-29) ——
+ * ⚠️ 以前失败时只弹一个 toast, 抽屉里只剩「该文档暂无分段」,
+ *    **加载失败被伪装成了"本来就没有分段"**. 用户会以为文档没切好.
+ */
+const chunksError = ref('');
+/** 当前打开的分段抽屉对应的文档 —— 失败后「重试」要靠它再拉一次 */
+const chunksCtx = ref<{ dsId: string; docId: string; docName: string } | null>(null);
 
 // run badge tooltip: 失败时显示 progress_msg, DONE 时显示 process_begin_at + duration
 function runTitle(doc: KbDocument): string {
@@ -1047,7 +1143,7 @@ async function doUpload() {
   uploadError.value = '';
   uploadResult.value = null;
   try {
-    const r = await uploadKbDocuments(ds.id, uploadFiles.value);
+    const r = await uploadKbDocuments(ds.id, uploadFiles.value, { silent: true });
     uploadResult.value = {
       uploaded: r.uploaded,
       ingest_started: r.ingest_started,
@@ -1061,6 +1157,9 @@ async function doUpload() {
     delete docsByDataset.value[ds.id];
     await loadDocs(ds.id);
     markDocsWatch();          // ⚠️ 解析是异步的 —— 接着轮询, 让「解析中」自己变成「已完成」
+    // ⚠️ 数据集快照也得刷 —— 「文档 / 分段」两列和概览卡统计都来自它.
+    //    不刷的话, 刚传完的库还显示「文档 0」, 删库确认框就会照着 0 说话 (硬删!).
+    await reloadDatasets();
     await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页, 别停在旧页码看不见
   } catch (e: any) {
     uploadError.value = httpErrorText(errorStatus(e), errorDetail(e), '上传失败');
@@ -1300,7 +1399,7 @@ async function doUpdate() {
   updateError.value = '';
   updateResult.value = null;
   try {
-    const r = await updateKbDocument(ds.id, doc.id, f);
+    const r = await updateKbDocument(ds.id, doc.id, f, { silent: true });
     updateResult.value = {
       name: r.updated?.name || f.name,
       warning: r.warning || '',
@@ -1311,6 +1410,9 @@ async function doUpdate() {
     delete docsByDataset.value[ds.id];
     await loadDocs(ds.id);
     markDocsWatch();          // ⚠️ 解析是异步的 —— 接着轮询, 让「解析中」自己变成「已完成」
+    // ⚠️ 数据集快照也得刷 —— 「文档 / 分段」两列和概览卡统计都来自它.
+    //    不刷的话, 刚传完的库还显示「文档 0」, 删库确认框就会照着 0 说话 (硬删!).
+    await reloadDatasets();
     await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页, 别停在旧页码看不见
     if (r.warning) {
       // ⚠️ 有 warning 说明文档换了但**没参与检索** —— 别弹"成功"把用户骗了,
@@ -1348,11 +1450,12 @@ async function doReparse(d: DsRef, doc: KbDocument) {
     return; // 用户取消 —— 不是错误
   }
   try {
-    await reparseKbDocument(d.id, doc.id);
+    await reparseKbDocument(d.id, doc.id, { silent: true });
     ElMessage.success(`「${doc.name}」已重新提交解析`);
     delete docsByDataset.value[d.id];
     await loadDocs(d.id);
     markDocsWatch();          // ⚠️ 重解析也是异步的 —— 状态要自己跟上
+    await reloadDatasets();   // ⚠️ 分段数会变 —— 数据集快照跟着刷
     await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页, 别停在旧页码看不见
   } catch (e: any) {
     ElMessage.error('重新解析失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
@@ -1395,35 +1498,57 @@ function onDocSearchInput() {
   docSearchTimer = setTimeout(() => { void doDocSearch(); }, 400);
 }
 
+/**
+ * 跨库搜索 —— 请求序号.
+ *
+ * ⚠️ 2026-10-29: 跨库搜索要**逐个库**查 (后端并发发 N 个请求), 耗时可观.
+ *    以前慢的旧请求后返回会**覆盖**新关键词的结果 —— 用户搜「2024」,
+ *    屏幕上却是「手册」那批, 标题还写着「搜索「2024」找到 3 篇」.
+ *    只认最后一次请求的结果.
+ */
+let docSearchSeq = 0;
+
 async function doDocSearch() {
   const kw = docSearchKw.value.trim();
   if (!kw) { clearDocSearch(); return; }
+  const seq = ++docSearchSeq;
   docSearchLoading.value = true;
   docSearchError.value = '';
+  // ⚠️ **发起即清空** —— 以前保留上一个关键词的结果, 请求期间屏幕上还是旧数据,
+  //    标题却已经变成新关键词 → 用户以为搜错了. 清空后走「搜索中…」那一行.
+  docSearchHits.value = [];
+  docSearchTotal.value = 0;
+  docSearchTruncated.value = false;
+  docSearched.value = true;
   try {
-    const r = await searchKbDocuments(kw);
+    const r = await searchKbDocuments(kw, '', { silent: true });
+    // ⚠️ 迟到的旧请求 —— 丢掉, 别覆盖新结果
+    if (seq !== docSearchSeq) return;
     docSearchHits.value = r.items || [];
     docSearchTotal.value = r.total || 0;
     docSearchTruncated.value = !!r.truncated;
-    docSearched.value = true;
   } catch (e: any) {
+    if (seq !== docSearchSeq) return;
     docSearchError.value = httpErrorText(errorStatus(e), errorDetail(e), '搜索失败');
     docSearchHits.value = [];
     docSearchTotal.value = 0;
     docSearchTruncated.value = false;
   } finally {
-    docSearchLoading.value = false;
+    if (seq === docSearchSeq) docSearchLoading.value = false;
   }
 }
 
 function clearDocSearch() {
   if (docSearchTimer) { clearTimeout(docSearchTimer); docSearchTimer = null; }
+  // ⚠️ 序号也要推进 —— 否则在途的旧请求回来还会把结果写回来
+  docSearchSeq++;
   docSearchKw.value = '';
   docSearchHits.value = [];
   docSearchError.value = '';
   docSearched.value = false;
   docSearchTotal.value = 0;
   docSearchTruncated.value = false;
+  docSearchLoading.value = false;
 }
 
 // ⚠️ 离开页面要把定时器清掉 —— 不然它在后台照样触发, 白发一轮请求
@@ -1444,9 +1569,12 @@ const auditTotal = ref(0);
 const auditPages = ref(1);
 
 function auditActionLabel(a: string): string {
+  // ⚠️ 2026-10-29: **delete 和 delete_doc 要分开** ——
+  //    delete = 删除数据集 (硬删整个库), delete_doc = 删除数据集里的某篇文档.
+  //    以前两者都显示「删除」, admin 在操作记录里分不清删的是库还是文档.
   return ({
-    upload: '上传', delete: '删除', ingest: '解析', create: '新建',
-    update: '更新', reparse: '重解析',
+    upload: '上传', delete: '删除数据集', delete_doc: '删除文档',
+    ingest: '解析', create: '新建', update: '更新', reparse: '重解析',
   } as Record<string, string>)[a] || a;
 }
 
@@ -1461,11 +1589,26 @@ function auditActionLabel(a: string): string {
  * ⚠️ ElMessageBox 是**纯文本**, 不渲染 Markdown —— 别写 `**强调**`.
  */
 async function doDeleteDataset(d: KbDataset) {
-  const docs = d.document_count || 0;
-  const chunks = d.chunk_count || 0;
-  const scope = docs
-    ? `会连同 ${docs} 篇文档、${chunks} 个分段一起永久删除，无法恢复`
-    : '这个库目前是空的，删除后无法恢复';
+  // ⚠️ **绝对不能用列表快照里的 document_count** (2026-10-29 整改) ——
+  //    那是**上一次 loadAll() 时**的旧值. 上传文档后 doUpload 只刷了文档列表,
+  //    没刷数据集列表 → 计数停留在上传前.
+  //    结果就是: 库里明明有 3 篇文档, 确认框却写「这个库目前是空的」,
+  //    admin 以为只是删个空壳, 结果 3 篇文档连同源文件、分段一起没了 ——
+  //    **RAGFlow 是硬删, 没有回收站, 这一步不可逆.**
+  //    所以这里**现查一次真实篇数**; 查不到就退化成不带数字的措辞
+  //    (绝不能瞎报 0 —— 报 0 等于骗用户).
+  let realDocs = -1;
+  try {
+    const r = await listDocuments(d.id, { page: 1, page_size: 1 }, { silent: true });
+    realDocs = Number(r.total ?? r.docs?.length ?? 0);
+  } catch {
+    realDocs = -1;   // 查不到 —— 别猜
+  }
+  const scope = realDocs > 0
+    ? `会连同该库里的 ${realDocs} 篇文档、它们的分段和源文件一起永久删除，无法恢复`
+    : realDocs === 0
+      ? '该库目前确实是空的（已核实），删除后无法恢复'
+      : '该库下的全部文档、分段和源文件会被永久删除，无法恢复';
   try {
     await ElMessageBox.prompt(
       `即将删除「${d.name}」—— ${scope}。\n请输入数据集名称「${d.name}」以确认：`,
@@ -1483,17 +1626,21 @@ async function doDeleteDataset(d: KbDataset) {
     // 用户取消 —— 不是错误
     return;
   }
+  deletingDsId.value = d.id;
   try {
-    const r = await deleteKbDataset(d.id);
+    const r = await deleteKbDataset(d.id, { silent: true });
     ElMessage.success(`数据集「${r.deleted?.name || d.name}」已删除`);
     // 本地缓存也要清 —— 库没了, 文档列表也没了
     delete docsByDataset.value[d.id];
     delete docLoadingByDs.value[d.id];
+    delete docErrorByDs.value[d.id];
     if (expandedId.value === d.id) expandedId.value = '';
     await loadAll();
     await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页, 别停在旧页码看不见
   } catch (e: any) {
     ElMessage.error('删除失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  } finally {
+    deletingDsId.value = '';
   }
 }
 
@@ -1527,8 +1674,10 @@ async function doDeleteDocument(d: DsRef, doc: KbDocument) {
     // 用户取消 —— 不是错误
     return;
   }
+  const docKey = `${d.id}::${doc.id}`;
+  deletingDocKey.value = docKey;
   try {
-    await deleteKbDocuments(d.id, [doc.id]);
+    await deleteKbDocuments(d.id, [doc.id], false, { silent: true });
     ElMessage.success(`文档「${doc.name}」已删除`);
     // ⚠️ 本地缓存要立刻清 —— 不然列表里还挂着那一篇 (下一次轮询才会消失)
     const list = docsByDataset.value[d.id];
@@ -1539,6 +1688,8 @@ async function doDeleteDocument(d: DsRef, doc: KbDocument) {
     await loadAudits(1);   // ⚠️ 新记录在最前面 —— 跳回第 1 页
   } catch (e: any) {
     ElMessage.error('删除失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  } finally {
+    deletingDocKey.value = '';
   }
 }
 
@@ -1593,13 +1744,40 @@ async function openChunks(d: DsRef, doc: KbDocument) {
   chunksOpen.value = true;
   chunksList.value = [];
   chunksLoading.value = true;
+  // ⚠️ **总数也要重置** (2026-10-29 整改) ——
+  //    以前只清了列表, 标题上「共 37 个分段」还挂着**上一篇**的数字,
+  //    用户点开新文档却看到旧文档的分段数.
+  chunksTotal.value = 0;
+  chunksError.value = '';
+  chunksCtx.value = { dsId: d.id, docId: doc.id, docName: doc.name };
   try {
     // RAGFlow 限制 page_size <= 100, 后端 / API 层都会兜底; 这里用 100
     const r = await listDocChunks(d.id, doc.id, { page_size: 100 });
     chunksList.value = r.chunks;
     chunksTotal.value = r.total;
   } catch (e: any) {
-    ElMessage.error('加载分段失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
+    // ⚠️ **别用「该文档暂无分段」冒充失败** —— 加载失败要说失败,
+    //    否则用户以为这篇文档本来就没分段 (其实是没取到).
+    chunksError.value = httpErrorText(errorStatus(e), errorDetail(e), '加载分段失败');
+    ElMessage.error('加载分段失败: ' + chunksError.value);
+  } finally {
+    chunksLoading.value = false;
+  }
+}
+
+/** 分段加载失败后「重试」—— 拿上下文再拉一次 */
+async function retryChunks() {
+  const c = chunksCtx.value;
+  if (!c) return;
+  chunksError.value = '';
+  chunksLoading.value = true;
+  chunksList.value = [];
+  try {
+    const r = await listDocChunks(c.dsId, c.docId, { page_size: 100 });
+    chunksList.value = r.chunks;
+    chunksTotal.value = r.total;
+  } catch (e: any) {
+    chunksError.value = httpErrorText(errorStatus(e), errorDetail(e), '加载分段失败');
   } finally {
     chunksLoading.value = false;
   }
@@ -1609,23 +1787,55 @@ async function openChunks(d: DsRef, doc: KbDocument) {
 async function loadAll() {
   loading.value = true;
   dsError.value = '';
+  // ⚠️ **健康检查跟列表加载要分开 try** (2026-10-29 整改) ——
+  //    以前两个请求串在同一个 try 里, health 一抛错 (网关 5xx / 代理层异常),
+  //    `datasets` 就留在空数组, 页面上写「数据集加载失败」——
+  //    **可 `/kb/datasets` 压根没被请求过**. 用户以为知识库挂了, 其实只是探针抖了.
   try {
-    const h = await kbHealth();
+    const h = await kbHealth({ silent: true });
     rfStatus.value = h.status as any;
     rfMsg.value = h.message || h.status;
-    const r = await listDatasets();
+  } catch (e: any) {
+    // ⚠️ 探针失败只把徽标置灰, **不能**因此不加载列表
+    rfStatus.value = 'warn';
+    rfMsg.value = '健康检查失败（列表仍会加载）';
+  }
+  try {
+    const r = await listDatasets({ silent: true });
     datasets.value = r.items;
     // 清掉已展开 dataset 不存在的 docs
     const keep = new Set(r.items.map(x => x.id));
     for (const id of Object.keys(docsByDataset.value)) {
-      if (!keep.has(id)) { delete docsByDataset.value[id]; delete docLoadingByDs.value[id]; }
+      if (!keep.has(id)) {
+        delete docsByDataset.value[id];
+        delete docLoadingByDs.value[id];
+        delete docErrorByDs.value[id];
+      }
     }
   } catch (e: any) {
-    rfStatus.value = 'off'; rfMsg.value = '加载失败';
+    rfStatus.value = rfStatus.value === 'ok' ? 'ok' : 'off';
     // ⚠️ 失败 ≠ 空列表 —— 表格里要单独说 (别再显示「暂无数据集」)
     dsError.value = httpErrorText(errorStatus(e), errorDetail(e), '数据集加载失败');
     ElMessage.error('知识库加载失败: ' + dsError.value);
   } finally { loading.value = false; }
+}
+
+/**
+ * 只刷**数据集列表** (不重探健康).
+ *
+ * ⚠️ 上传/更新/重解析之后必须调它 (2026-10-29 整改) ——
+ *    表格里的「文档 / 分段」两列和概览卡的统计都来自这份快照.
+ *    以前上传完只刷了**文档列表**, 数据集快照还是上传前的 ——
+ *    于是「文档 0」的库其实有 3 篇, 删库确认框就照着 0 说话 (硬删, 不可逆!).
+ *    这里刷的是纯列表接口, 代价小.
+ */
+async function reloadDatasets() {
+  try {
+    const r = await listDatasets({ silent: true });
+    datasets.value = r.items;
+  } catch {
+    // 静默 —— 计数只是暂时不准, 不该因此打断用户手上的事
+  }
 }
 
 async function onReload() {
@@ -1725,6 +1935,18 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
   cursor: pointer;
 }
 
+/* ⚠️ **表格横向滚动容器** (2026-10-29 补) ——
+   数据集表有 9 列 (含 140px 的「操作」列), 文档子表 7 列 (含 270px 操作列).
+   没有包裹层的话, 窄屏下表格的 min-content 宽度会**穿透卡片边框**,
+   还会让 `.tm-main` 冒出横向滚动条 (整页被拖走).
+   ⚠️ min-width 不能省 —— 只加 overflow 的话, 窄屏下表格还是被压成一团. */
+.tbl-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tbl-wrap > .ds-tbl { min-width: 760px; }
+.tbl-wrap > .doc-tbl { min-width: 700px; }
+
 .ds-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ds-tbl th { text-align: left; padding: 10px 12px; color: var(--ink-500); font-weight: 500; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); }
 .ds-tbl td { padding: 10px 12px; color: var(--ink-700); border-bottom: 1px solid var(--border); vertical-align: middle; }
@@ -1749,8 +1971,24 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .nm { display: flex; align-items: center; gap: 6px; color: var(--ink-900); font-weight: 500; }
 .ds-ic { font-size: 16px; }
 /* ⚠️ 名字也能点开 —— 给个手型 + 悬停变色, 让用户知道这是个可点的入口 */
-.ds-name { cursor: pointer; border-bottom: 1px dashed transparent; }
+/* ⚠️ 2026-10-29: 库名要**能截断** —— `td.nm` 是 display:flex, 不限宽的话
+   一长串英文库名会把这一列撑开, 其它列全被压扁, 表格横向溢出卡片.
+   跟 `.doc-name` 一个口径 (max-width 280 + 省略号). */
+.ds-name {
+  cursor: pointer; border-bottom: 1px dashed transparent;
+  max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .ds-name:hover { color: var(--primary); border-bottom-color: var(--primary); }
+/* ⚠️ 解析进度条 (2026-10-29) —— 接口给了 progress 字段但页面从没用过,
+   用户只看到一枚静态的「解析中」, 不知道还要等多久、是不是卡住了. */
+.doc-prog {
+  display: block; width: 70px; height: 3px; margin-top: 3px;
+  border-radius: 2px; background: var(--border-strong); overflow: hidden;
+}
+.doc-prog > i {
+  display: block; height: 100%; border-radius: 2px;
+  background: var(--primary); transition: width .4s ease;
+}
 .emb { color: var(--ink-500); font-size: 11.5px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-desc { color: var(--ink-700); font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

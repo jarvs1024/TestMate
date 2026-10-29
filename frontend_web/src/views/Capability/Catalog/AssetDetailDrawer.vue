@@ -188,8 +188,11 @@
                    class="ad-btn" type="warning" plain @click="doApplyUnpublish">
           {{ reviewOn ? '申请下架' : '下架' }}
         </el-button>
+        <!-- ⚠️ 2026-10-30: 这个按钮以前**没有** loading 绑定 ——
+             点了看不出点没点上, 网络稍慢就连点两次 → 弹两条一模一样的「已重新上架」.
+             同文件其它异步按钮都有 :loading="busy", 这里补上 (最小改动). -->
         <el-button v-if="canEdit && item.publish_status === 'unpublished'"
-                   class="ad-btn" type="primary" plain @click="doRepublish">
+                   class="ad-btn" type="primary" plain :loading="busy" @click="doRepublish">
           重新上架
         </el-button>
         <!-- ⚠️ 作者删自己**没上架过**的资产 (待审核 / 被驳回):

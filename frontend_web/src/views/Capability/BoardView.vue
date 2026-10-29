@@ -40,6 +40,10 @@
         <span class="b-hint">{{ bannerOpen ? '收起' : '展开' }} {{ bannerOpen ? '' : '↓' }}</span>
       </button>
       <div v-show="bannerOpen" id="failed-mr-list" class="failed-mr-list">
+        <!-- ⚠️ 表格套一层 .tbl-wrap (2026-10-30) ——
+             以前表格直接躺在卡片里, 窄屏时列宽下限 (max-width/min-width) 撑出的
+             min-content 宽度会**穿透卡片边框**, 还会把 .tm-main 顶出横向滚动条 -->
+        <div class="tbl-wrap">
         <table class="tbl">
           <thead>
             <tr><th>MR</th><th>作者</th><th>分支</th><th class="r">上次命令</th><th class="r">错误</th><th class="r">操作</th></tr>
@@ -62,6 +66,7 @@
             <tr v-if="unackedFailedMrs.length === 0"><td colspan="6" class="empty">无</td></tr>
           </tbody>
         </table>
+        </div>
         <div class="banner-foot">
           <button class="link-btn" type="button" @click="ackAllFailed">全部已读</button>
           <button class="link-btn" type="button" @click="scrollToMrTable">查看完整 MR 列表 ↓</button>
@@ -118,8 +123,16 @@
           {{ effectiveRunCount }} 次 · 失败 {{ overview.runs?.failed ?? 0 }}
         </div>
       </div>
-      <!-- 周报卡: 取代原 Token 用量. 点击展开抽屉看完整 telemetry / merged_mrs / repo_scan + LLM 综述 -->
-      <div class="stat stat-link" :class="{ 'stat-loading': wrLoading }" @click="openWeeklyReport" :title="wrHint">
+      <!-- 周报卡: 取代原 Token 用量. 点击展开抽屉看完整 telemetry / merged_mrs / repo_scan + LLM 综述
+           ⚠️ 2026-10-30: 以前是 div @click —— tabIndex = -1, role = null,
+           键盘用户**永远打不开周报** (Tab 键到不了). 现在补 role/tabindex
+           + 回车/空格触发, 跟原生 button 行为一致. -->
+      <div class="stat stat-link" role="button" tabindex="0"
+           :class="{ 'stat-loading': wrLoading }"
+           @click="openWeeklyReport"
+           @keydown.enter.prevent="openWeeklyReport"
+           @keydown.space.prevent="openWeeklyReport"
+           :title="wrHint">
         <div class="num wr-num">
           <span v-if="wrLatest" class="wr-emoji">{{ wrLatest.report_emoji || '📊' }}</span>
           <span v-if="wrLatest" class="wr-label">{{ wrLatest.week_label }}</span>
@@ -191,7 +204,9 @@
         <span class="cnt">{{ dismissalsByRule.length }} 条 · {{ totalDismissals }} 次忽略</span>
       </div>
       <div v-if="dismissalsByRule.length === 0" class="empty">近 {{ sinceLabel }} 无人忽略建议</div>
-      <table v-else class="tbl reason-tbl">
+      <!-- ⚠️ v-else 挪到包裹层上 —— 表格得在 .tbl-wrap 里才有横向滚动 -->
+      <div v-else class="tbl-wrap">
+      <table class="tbl reason-tbl">
         <thead>
           <tr>
             <th><button class="sort-btn" @click="setDismissSort('key')">规则 <span class="sort-marker">{{ dismissSortKey === 'key' ? (dismissSortAsc ? '▲' : '▼') : '⇅' }}</span></button></th>
@@ -230,6 +245,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
       <!-- 规则柱图 (横向 bar, 纯 CSS) -->
@@ -261,7 +277,9 @@
           <span class="cnt">{{ authors.length }} 人</span>
         </div>
         <div v-if="authors.length === 0" class="empty">暂无作者数据</div>
-        <table v-else class="tbl">
+        <!-- ⚠️ v-else 挪到包裹层上 —— 表格得在 .tbl-wrap 里才有横向滚动 -->
+        <div v-else class="tbl-wrap">
+        <table class="tbl">
           <thead>
             <tr><th>作者</th><th class="r">MR</th><th class="r">建议</th><th class="r">采纳率</th><th>命令分布</th></tr>
           </thead>
@@ -279,6 +297,7 @@
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
 
@@ -300,7 +319,9 @@
       <div v-if="loading && mrs.length === 0" class="loading">加载中...</div>
       <div v-else-if="mrs.length === 0" class="empty">暂无 MR 记录</div>
       <div v-else-if="filteredMrs.length === 0" class="empty">无匹配 (当前页 {{ mrs.length }} 条被过滤)</div>
-      <table v-else class="tbl mr-tbl">
+      <!-- ⚠️ v-else 挪到包裹层上 —— 表格得在 .tbl-wrap 里才有横向滚动 -->
+      <div v-else class="tbl-wrap">
+      <table class="tbl mr-tbl">
         <thead>
           <tr>
             <th>MR</th><th>作者</th><th>源 → 目标</th><th>建议</th><th>状态</th><th>开启</th><th>最后活动</th><th class="r">操作</th>
@@ -352,6 +373,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
       <!-- MR 列表分页: 每页大小可调 (10/20/50/100), 显示范围 + 上/下/末页.
            后端 limit 上限 200, 故 pageSize 最大给 100 (超出会被后端 422). -->
       <div v-if="mrTotal > 0" class="mr-pager">
@@ -379,7 +401,9 @@
     </div>
 
     <!-- 时间线抽屉 -->
-    <el-drawer v-model="tlOpen" :title="tlTitle" size="640px" direction="rtl">
+    <!-- ⚠️ size 用 min(640px, 92vw) —— 写死 640px 时, 375px 视口下抽屉
+         left = -265px, 连标题都在屏幕外, 整个抽屉没法用 -->
+    <el-drawer v-model="tlOpen" :title="tlTitle" size="min(640px, 92vw)" direction="rtl">
       <template v-if="timeline">
         <!-- MR 健康摘要: 应用率 + 4 stat mini -->
         <div class="dt-health">
@@ -490,7 +514,8 @@
     </el-drawer>
 
     <!-- 周报抽屉: 取代原 Token 卡. 展示 telemetry / merged_mrs / repo_scan 3 section + LLM 综述 -->
-    <el-drawer v-model="wrOpen" size="720px" direction="rtl">
+    <!-- ⚠️ size 用 min(720px, 94vw) —— 同上, 写死宽度在窄屏下抽屉整个跑到屏幕外 -->
+    <el-drawer v-model="wrOpen" size="min(720px, 94vw)" direction="rtl">
       <template #header>
         <div class="wr-drawer-hd">
           <span class="wr-drawer-emoji">{{ weeklyReport?.report_emoji || '📊' }}</span>
@@ -1405,8 +1430,13 @@ const runsSubHint = computed(() => {
   padding: 1px 8px; border-radius: 4px; font-size: 10.5px; font-family: var(--font-mono);
 }
 .banner-foot { padding-top: 8px; display: flex; justify-content: flex-end; gap: 8px; }
-.ack-btn { border: 1px solid var(--border); background: transparent; color: var(--text-dim); border-radius: 4px; cursor: pointer; padding: 2px 7px; font-size: 12px; line-height: 1.2; }
-.ack-btn:hover { color: #e74c3c; border-color: #e74c3c; }
+/* ⚠️ 2026-10-30: 以前是 var(--text-dim) —— tokens.css 里**没有**这个变量,
+   var() 引用未定义变量 → 该声明在计算值阶段失效 → color 回退成 inherit,
+   暗色下继承到全亮的 --ink-900, 次要动作被渲染成最高优先级文字.
+   改用确实存在的 --ink-500. hover 的 #e74c3c 也换成 var(--err)
+   (暗色下 --err 是 #F87171, 跟硬编码色对不上). */
+.ack-btn { border: 1px solid var(--border); background: transparent; color: var(--ink-500); border-radius: 4px; cursor: pointer; padding: 2px 7px; font-size: 12px; line-height: 1.2; }
+.ack-btn:hover { color: var(--err); border-color: var(--err); }
 
 /* 概览卡片 */
 .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
@@ -1431,6 +1461,13 @@ const runsSubHint = computed(() => {
 /* 周报卡: 整张可点击, 右上角 › 暗示, hover/focus 状态明显 */
 .stat-link { cursor: pointer; transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s; }
 .stat-link:hover { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary), var(--shadow-sm); transform: translateY(-1px); }
+/* ⚠️ 2026-10-30: 以前注释写着 "hover/focus 状态明显", 实际**一条 focus 规则都没有**
+   —— 因为它压根不可聚焦. 现在它能 Tab 到了, focus 态得画出来. */
+.stat-link:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary), var(--shadow-sm);
+}
 .stat-link:active { transform: translateY(0); }
 .stat-link.stat-loading { opacity: 0.7; }
 .wr-num { display: flex; align-items: center; gap: 6px; font-size: 18px !important; }
@@ -1662,7 +1699,21 @@ const runsSubHint = computed(() => {
 .stat .sub .warn { color: var(--warn); font-weight: 600; }
 
 /* 表格 */
-.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+/* ⚠️ 2026-10-30: 表格外面套一层 .tbl-wrap ——
+   以前表格直接躺在卡片里, 列宽下限 (.mr-t max-width:380px / .mr-sug-cell min-width:120px)
+   撑出的 min-content 宽度 (实测 ~608px) 会**穿透卡片圆角边框**,
+   窄屏还会把 .tm-main 顶出一条横向滚动条 (375px 视口下溢出 552px).
+   现在超宽部分在 .tbl-wrap 里自己横滑, 不再撑破卡片. */
+.tbl-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* ⚠️ min-width 不能省 —— 只加 overflow 不加 min-width 的话,
+   窄屏下表格还是会被压成一团 (列内容互相挤在一起). */
+.tbl { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 12.5px; }
+/* ⚠️ 紧凑表 (作者分布 / 被忽略的规则) 只有 3~5 列, 沿用 720px 会让它们在窄卡片里
+   平白多出一条横向滚动条 (桌面端反而是倒退) —— 给它们自己的下限 */
+.reason-tbl, .card-author .tbl { min-width: 520px; }
 .tbl th, .tbl td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
 .tbl th { font-size: 11.5px; font-weight: 600; color: var(--ink-500); text-transform: uppercase; letter-spacing: 0.04em; }
 .tbl td.r, .tbl th.r { text-align: right; }
@@ -1768,14 +1819,20 @@ const runsSubHint = computed(() => {
 .badge.sm { padding: 0 6px; font-size: 10px; }
 .b-ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
 .b-info { background: color-mix(in srgb, var(--primary) 15%, transparent); color: var(--primary); }
-.b-info-strong { background: color-mix(in srgb, var(--primary) 22%, white); color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent); }
+/* ⚠️ 2026-10-30: 以前是 color-mix(in srgb, var(--primary) 22%, white) ——
+   white 是**硬编码不透明色**, 暗色主题下算出来是近白底 (#D4E3FD) + 蓝字,
+   对比度只有 2.86:1 (AA 要 4.5:1), 是暗色页面上最亮的一块白板.
+   改成跟 .b-info / .b-warn 一样的 transparent 混合. */
+.b-info-strong { background: color-mix(in srgb, var(--primary) 22%, transparent); color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent); }
 .b-warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
 .b-err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
 .b-progress { background: color-mix(in srgb, #F59E0B 22%, transparent); color: #B45309; border: 1px solid color-mix(in srgb, #F59E0B 35%, transparent); }
 
-/* 深色主题覆盖: 亮橙文字 + 深橙底 */
-:root[data-theme="dark"] .b-progress,
-[data-theme="dark"] .b-progress { background: color-mix(in srgb, #FBBF24 22%, transparent); color: #FBBF24; border-color: color-mix(in srgb, #FBBF24 40%, transparent); }
+/* 深色主题覆盖: 亮橙文字 + 深橙底
+   ⚠️ 用 `html.dark` (class) 而不是 `[data-theme="dark"]` (属性) ——
+      主题 store 在 auto 模式下写的是 data-theme="auto", 而 auto **是默认模式**,
+      老选择器命中不了 → 暗色下这条橙底规则不生效, "进行中"徽章退回浅色底 + 深橙字. */
+html.dark .b-progress { background: color-mix(in srgb, #FBBF24 22%, transparent); color: #FBBF24; border-color: color-mix(in srgb, #FBBF24 40%, transparent); }
 /* 淡红: closed MR 用, 比 .b-err 弱, 不刺眼 */
 .b-err-soft { background: color-mix(in srgb, var(--err) 10%, transparent); color: color-mix(in srgb, var(--err) 80%, var(--ink-700)); }
 .b-mute { background: var(--surface-sunken); color: var(--ink-500); }
@@ -1796,8 +1853,12 @@ const runsSubHint = computed(() => {
 .dt-h-seg { min-width: 0; }
 .dt-h-applied    { background: color-mix(in srgb, var(--ok)      55%, transparent); }
 .dt-h-dismissed  { background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
-/* 已关闭 (resolved, GitLab 直接解决主题但未 apply/dismiss): 偏冷色调, 跟 dismissed (灰) 区分 */
-.dt-h-resolved   { background: color-mix(in srgb, var(--info)   35%, transparent); }
+/* 已关闭 (resolved, GitLab 直接解决主题但未 apply/dismiss): 偏冷色调, 跟 dismissed (灰) 区分
+   ⚠️ 2026-10-30: 以前用 var(--info) —— 但 tokens.css 里**没有 --info** 这个 token
+      (只有 --ok/--warn/--err), color-mix() 引用未定义变量 → 整条声明失效 →
+      背景回到 transparent, "已关闭 (resolved)" 那一段在界面上**根本不存在**,
+      用户不知道有多少条已关闭建议. 改用确实存在的 --ink-500. */
+.dt-h-resolved   { background: color-mix(in srgb, var(--ink-500) 50%, transparent); }
 .dt-h-open       { background: color-mix(in srgb, var(--warn)    60%, transparent); }
 .dt-h-superseded { background: color-mix(in srgb, var(--primary) 30%, transparent); }
 .dt-h-mini { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; }
@@ -1828,7 +1889,9 @@ const runsSubHint = computed(() => {
 /* 手动采纳小标: 紧跟 [已采纳] 徽章下面, 居中. 文字用 primary 提色, 跟 [已采纳] 区分但低调 */
 .adopt-sub { font-size: 10.5px; opacity: .9; font-weight: 600; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 10px; border: 1px solid transparent; line-height: 1.4; white-space: nowrap; }
 .adopt-sub-auto   { color: color-mix(in srgb, var(--ink-700) 80%, var(--ink-500)); border-color: color-mix(in srgb, var(--ink-700) 25%, transparent); background: color-mix(in srgb, var(--ink-700) 6%, transparent); }
-.adopt-sub-manual { color: #0369a1; border-color: color-mix(in srgb, #0ea5e9 45%, transparent); background: color-mix(in srgb, #0ea5e9 12%, transparent); }
+/* ⚠️ 2026-10-30: 以前是硬编码 #0369a1 —— 暗色主题下对比度只有 2.74:1 (不达标).
+   改走 --primary token, 浅深主题都跟着走. */
+.adopt-sub-manual { color: var(--primary); border-color: color-mix(in srgb, #0ea5e9 45%, transparent); background: color-mix(in srgb, #0ea5e9 12%, transparent); }
 .sug-l .imp { color: var(--warn); font-size: 10px; letter-spacing: -1px; }
 .sug-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .sug-loc { font-size: 11px; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

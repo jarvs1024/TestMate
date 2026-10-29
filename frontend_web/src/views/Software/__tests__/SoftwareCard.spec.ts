@@ -51,7 +51,9 @@ describe('SoftwareCard 状态徽标', () => {
 describe('SoftwareCard 平台标签', () => {
   it('有平台才显示', () => {
     const w = mount(SoftwareCard, { props: { item: item({ platform: 'linux' }) } });
-    expect(badges(w)).toContain('🐧 linux');
+    // ⚠️ 2026-10-30: 可见文字走 platformLabel —— 以前显示的是后端原值 'linux',
+    //    跟上传表单里的 'Linux' 两种写法 (后端存的仍是小写原值)
+    expect(badges(w)).toContain('🐧 Linux');
   });
 
   it('没平台不显示', () => {

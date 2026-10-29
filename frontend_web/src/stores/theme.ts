@@ -37,8 +37,19 @@ export const useThemeStore = defineStore('theme', {
       applyTheme(mode);
     },
     toggle() {
-      // 在 resolved 基础上翻
-      this.set(this.resolved === 'dark' ? 'light' : 'dark');
+      // ⚠️ 以前是在 resolved 基础上翻 —— 那会把「跟随系统 (auto)」**永久吃掉**:
+      //    系统是深色 → 首屏 auto 解析成 dark → 点一下就变成 light,
+      //    并把 light 写死进 localStorage. 此后系统主题怎么改都不跟随,
+      //    而且界面上**没有任何入口能回到 auto** (UserMenu 的三态选项已删).
+      //    现在按三态循环: light → dark → auto → light, auto 永远回得来.
+      //
+      // ⚠️ 必须用 this.mode 判断当前态, **不能用 resolved** ——
+      //    resolved 只返回 light/dark, auto 会被解析掉, 判断不出"当前是不是自动".
+      const next: ThemeMode =
+        this.mode === 'light' ? 'dark'
+        : this.mode === 'dark' ? 'auto'
+        : 'light';
+      this.set(next);
     },
   },
 });
