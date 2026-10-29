@@ -66,6 +66,23 @@
         <h2><span>数据集</span></h2>
         <!-- ⚠️ 建库和上传是知识库最常用的两个动作 —— 放在标题行右侧, 一眼就能看到 -->
         <div class="ds-tools">
+          <!-- ⚠️ 搜索**就在这个卡片里** —— 不另开一个「文档搜索」box.
+               搜索框放工具栏最左边(它是"查找", 不是"操作"),
+               搜出来的结果直接落在下面那个表格区, 不用跳来跳去. -->
+          <div class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+            </svg>
+            <input
+              v-model="docSearchKw"
+              placeholder="按文件名搜索文档（不区分大小写）"
+              title="跨所有知识库搜 —— 只搜**文件名**, 不搜文档内容"
+              @input="onDocSearchInput"
+              @keyup.enter="doDocSearch" />
+          </div>
+          <button v-if="docSearchKw" class="ghost-btn srch-clear" @click="clearDocSearch">清空</button>
+          <!-- ⚠️ 这句话**一直**在 —— 不然用户搜内容搜不到, 会以为文档不存在 -->
+          <span class="ds-hint srch-hint">只搜文件名，不搜内容</span>
           <button
             v-if="canWrite"
             class="primary-btn ds-act"
@@ -79,6 +96,66 @@
           <button class="reload" @click="onReload" :disabled="loading">↻ 刷新</button>
         </div>
       </div>
+
+      <!-- 搜索结果区 —— 有搜索词才出现, 直接落在「数据集」这个卡片里 -->
+      <div v-if="docSearchError" class="empty err">
+        搜索失败：{{ docSearchError }}
+        <button class="ghost-btn" @click="doDocSearch">重试</button>
+      </div>
+      <div v-else-if="docSearchKw" class="srch-sec">
+        <div class="srch-sec-t">
+          搜索「{{ docSearchKw }}」找到 <b class="mono">{{ docSearchTotal }}</b> 篇文档
+          <span class="ds-hint">（只搜文件名，不搜文档内容）</span>
+        </div>
+        <table class="ds-tbl srch-tbl">
+          <thead>
+            <tr>
+              <th>文档名</th><th style="width:140px">所属数据集</th><th>大小</th><th>分段</th>
+              <th>解析</th><th>上传者</th><th style="width:200px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="hit in docSearchHits" :key="hit.dataset_id + '/' + hit.id">
+              <td class="nm">
+                <span class="doc-ic">{{ docIcon(hit.type) }}</span>
+                <span class="doc-name" :title="hit.location" @click="openDocDetail(hit)" style="cursor:pointer">{{ hit.name }}</span>
+              </td>
+              <td class="ds-desc" :title="hit.dataset_id">{{ hit.dataset_name || '—' }}</td>
+              <td class="mono">{{ fmtSize(hit.size) }}</td>
+              <td class="mono">{{ hit.chunk_count }}</td>
+              <td>
+                <span class="run-badge" :class="runStatusClass(hit.run)" :title="hit.progress_msg">{{ runStatusLabel(hit.run) }}</span>
+              </td>
+              <td class="mono">{{ hit.uploaded_by_name || '—' }}</td>
+              <td>
+                <button class="link-btn" @click="openChunks(dsOf(hit), hit)" title="查看分段内容">分段</button>
+                <button class="link-btn" title="下载原始文件" @click="onDownload(dsOf(hit), hit)">下载</button>
+                <!-- ⚠️ 更新 / 重解析 = 写操作 → tester 及以上 -->
+                <button
+                  v-if="canWrite"
+                  class="link-btn"
+                  title="换新文件替换这一篇的内容 (旧版本会被永久删除)"
+                  @click="openUpdate(dsOf(hit), hit)">更新</button>
+                <button
+                  v-if="canWrite"
+                  class="link-btn"
+                  title="内容不变, 重跑一遍解析"
+                  @click="doReparse(dsOf(hit), hit)">重解析</button>
+              </td>
+            </tr>
+            <tr v-if="!docSearchHits.length && docSearchLoading">
+              <td colspan="7" class="empty">搜索中…</td>
+            </tr>
+            <tr v-else-if="!docSearchHits.length && docSearched">
+              <td colspan="7" class="empty">没找到含「{{ docSearchKw }}」的文档</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="docSearchTruncated" class="empty err">
+          命中 {{ docSearchTotal }} 篇，只显示前 {{ docSearchHits.length }} 篇 —— 请把关键词写得更具体些
+        </div>
+      </div>
+
       <table class="ds-tbl">
         <thead>
           <tr>
@@ -212,89 +289,6 @@
           </tr>
         </tbody>
       </table>
-    </div>
-
-    <!-- 文档搜索 (2026-10-29) —— 按**文件名**跨所有数据集找文档 -->
-    <div class="card">
-      <div class="ds-hd">
-        <h2><span>文档搜索</span></h2>
-        <div class="ds-tools">
-          <div class="search">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
-            </svg>
-            <input
-              v-model="docSearchKw"
-              placeholder="按文件名搜索（不区分大小写）"
-              title="只搜**文件名**, 不搜文档内容"
-              @input="onDocSearchInput"
-              @keyup.enter="doDocSearch" />
-          </div>
-          <button v-if="docSearchKw" class="ghost-btn srch-clear" @click="clearDocSearch">清空</button>
-        </div>
-      </div>
-
-      <div v-if="docSearchError" class="empty err">
-        搜索失败：{{ docSearchError }}
-        <button class="ghost-btn" @click="doDocSearch">重试</button>
-      </div>
-
-      <table v-else-if="docSearchKw" class="ds-tbl srch-tbl">
-        <thead>
-          <tr>
-            <th>文档名</th><th style="width:140px">所属数据集</th><th>大小</th><th>分段</th>
-            <th>解析</th><th>上传者</th><th style="width:200px">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="hit in docSearchHits" :key="hit.dataset_id + '/' + hit.id">
-            <td class="nm">
-              <span class="doc-ic">{{ docIcon(hit.type) }}</span>
-              <span class="doc-name" :title="hit.location" @click="openDocDetail(hit)" style="cursor:pointer">{{ hit.name }}</span>
-            </td>
-            <td class="ds-desc" :title="hit.dataset_id">{{ hit.dataset_name || '—' }}</td>
-            <td class="mono">{{ fmtSize(hit.size) }}</td>
-            <td class="mono">{{ hit.chunk_count }}</td>
-            <td>
-              <span class="run-badge" :class="runStatusClass(hit.run)" :title="hit.progress_msg">{{ runStatusLabel(hit.run) }}</span>
-            </td>
-            <td class="mono">{{ hit.uploaded_by_name || '—' }}</td>
-            <td>
-              <button class="link-btn" @click="openChunks(dsOf(hit), hit)" title="查看分段内容">分段</button>
-              <button class="link-btn" title="下载原始文件" @click="onDownload(dsOf(hit), hit)">下载</button>
-              <!-- ⚠️ 更新 / 重解析 = 写操作 → tester 及以上 -->
-              <button
-                v-if="canWrite"
-                class="link-btn"
-                title="换新文件替换这一篇的内容 (旧版本会被永久删除)"
-                @click="openUpdate(dsOf(hit), hit)">更新</button>
-              <button
-                v-if="canWrite"
-                class="link-btn"
-                title="内容不变, 重跑一遍解析"
-                @click="doReparse(dsOf(hit), hit)">重解析</button>
-            </td>
-          </tr>
-          <tr v-if="!docSearchHits.length && docSearchLoading">
-            <td colspan="7" class="empty">搜索中…</td>
-          </tr>
-          <tr v-else-if="!docSearchHits.length && docSearched">
-            <td colspan="7" class="empty">
-              没找到含「{{ docSearchKw }}」的文档
-              <span class="ds-hint">（只搜文件名，不搜文档内容）</span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div v-else class="empty">
-        输入文件名关键词，在 {{ datasets.length || '所有' }} 个知识库里找文档
-        <span class="ds-hint">（只搜文件名，不搜文档内容）</span>
-      </div>
-
-      <div v-if="docSearchTruncated" class="empty err">
-        命中 {{ docSearchTotal }} 篇，只显示前 {{ docSearchHits.length }} 篇 —— 请把关键词写得更具体些
-      </div>
     </div>
 
     <!-- 操作记录 (谁在什么时候动了知识库) -->
@@ -1502,7 +1496,18 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
   border: 0; outline: none; background: transparent;
   font-size: 12.5px; color: var(--ink-900); font-family: inherit; width: 230px;
 }
-/* 搜索结果下面的补充说明 —— 告诉用户「只搜文件名」 */
+/* 搜索框旁边那句「只搜文件名」 —— 一直挂着, 别让人以为能搜内容 */
+.srch-hint { white-space: nowrap; }
+/* 搜索结果区 —— 在「数据集」这个卡片里, 跟数据集表格挨着 */
+.srch-sec {
+  margin-bottom: 14px; padding-bottom: 12px;
+  border-bottom: 1px dashed var(--border);
+}
+.srch-sec-t {
+  font-size: 12px; color: var(--ink-700); margin-bottom: 8px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+/* 搜索结果里的补充说明 —— 告诉用户「只搜文件名」 */
 .ds-hint { color: var(--ink-500); font-size: 11.5px; }
 /* 行内操作列 —— 「⬆ 上传」和「详情」并排, 别让按钮糊成一坨 */
 .ds-ops { white-space: nowrap; }

@@ -111,13 +111,22 @@ beforeEach(() => {
 // ---------- ① 入口 ----------
 
 describe('文档搜索入口', () => {
-  it('「数据集」后面有独立的「文档搜索」区块', async () => {
+  it('⚠️ 搜索框在「数据集」这个卡片**里面** —— 不另开一个「文档搜索」卡片', async () => {
     const w = await mountLib();
-    const titles = w.findAll('.card .ds-hd h2').map((h: any) => h.text());
-    const iDs = titles.findIndex((t: string) => t.includes('数据集'));
-    const iSearch = titles.findIndex((t: string) => t.includes('文档搜索'));
-    expect(iDs).toBeGreaterThanOrEqual(0);
-    expect(iSearch).toBeGreaterThan(iDs);
+    const cards = w.findAll('.card');
+    const dsCard = cards.find((c: any) => {
+      const h2 = c.find('.ds-hd h2');
+      return h2.exists() && (h2.text() || '').includes('数据集');
+    });
+    expect(dsCard, '找不到「数据集」卡片').toBeTruthy();
+    // 搜索框就在这个卡片里
+    expect(dsCard!.find('.search input').exists()).toBe(true);
+    // ⚠️ 而且**没有**独立的「文档搜索」卡片
+    const searchCards = cards.filter((c: any) => {
+      const h2 = c.find('.ds-hd h2');
+      return h2.exists() && (h2.text() || '').includes('文档搜索');
+    });
+    expect(searchCards).toHaveLength(0);
   });
 
   it('搜索框一开始就在(不用点任何按钮才出现)', async () => {
@@ -125,13 +134,13 @@ describe('文档搜索入口', () => {
     expect(w.find('.search input').exists()).toBe(true);
   });
 
-  it('没输入关键词时给个提示, 说明搜的是文件名', async () => {
+  it('一直告诉用户「只搜文件名」—— 不然搜内容搜不到会以为文档不存在', async () => {
     const w = await mountLib();
     // ⚠️ 「按文件名搜索」是 **placeholder 属性**, 不在 textContent 里
     expect((w.find('.search input').element as HTMLInputElement).placeholder)
-      .toContain('按文件名搜索');
-    // 但这句是**正文**, 用户得看见
-    expect(w.text()).toContain('不搜文档内容');
+      .toContain('按文件名');
+    // 这句是**正文**, 一直挂着
+    expect(w.text()).toContain('只搜文件名，不搜内容');
   });
 });
 
