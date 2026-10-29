@@ -6,7 +6,7 @@
  *    本机是 UTC+8 → 显示出来差 8 小时.
  */
 import { describe, it, expect } from 'vitest';
-import { parseApiTime, fmtIso, fmtDate } from '@/utils/format';
+import { parseApiTime, fmtIso, fmtDate, fmtChunkMethod } from '@/utils/format';
 import { relativeTime } from '@/utils/capabilities';
 
 /** 造一个"某个固定时刻"的 Date, 跟本机时区无关 */
@@ -105,5 +105,23 @@ describe('relativeTime', () => {
   it('空值说「还没用过」', () => {
     expect(relativeTime(null)).toBe('还没用过');
     expect(relativeTime('')).toBe('还没用过');
+  });
+});
+
+describe('fmtChunkMethod', () => {
+  it('⚠️ RAGFlow 1.0 新建的数据集是 "general" —— 老库才是 "naive"', () => {
+    // 这俩是同一个东西 (通用切片), 显示上要一样, 不然新建的库看着像异类
+    expect(fmtChunkMethod('general')).toBe('通用');
+    expect(fmtChunkMethod('naive')).toBe('通用');
+  });
+
+  it('其它切片法照旧', () => {
+    expect(fmtChunkMethod('manual')).toBe('手册');
+    expect(fmtChunkMethod('qa')).toBe('问答');
+  });
+
+  it('认不出来的原样返回, 不返回空', () => {
+    expect(fmtChunkMethod('brand-new')).toBe('brand-new');
+    expect(fmtChunkMethod('')).toBe('—');
   });
 });

@@ -178,6 +178,47 @@ export async function listDocChunks(
   )) as KbDocChunksResult;
 }
 
+// ---------- 新建数据集 (2026-10-29) ----------
+
+/**
+ * RAGFlow v0.26.1 的切片方式.
+ *
+ * ⚠️ 对外字段是 `chunk_method` —— 传 `parser_id` 会被 RAGFlow 当多余字段拒掉.
+ * ⚠️ 通用切片的值是 `'naive'` (界面显示「通用」), `'general'` 是更新版本的说法.
+ */
+export type KbChunkMethod = 'naive' | 'manual';
+
+export interface KbCreateResult {
+  ok: boolean;
+  dataset: {
+    id: string;
+    name: string;
+    description: string;
+    chunk_method: string;
+    embedding_model: string;
+    permission: string;
+    document_count: number;
+    chunk_count: number;
+  };
+}
+
+/**
+ * 新建知识库数据集.
+ *
+ * ⚠️ 新建的库**立刻出现在所有人的列表里** —— 名字要说清楚这个库放什么.
+ * ⚠️ `chunkMethod`: 'naive'(通用/自动分段, 默认) | 'manual'(手动切分).
+ *    manual 的解析器只认 pdf/docx, 传 .txt/.md 进去解析不了.
+ */
+export async function createKbDataset(
+  name: string,
+  description = '',
+  chunkMethod: KbChunkMethod = 'naive',
+): Promise<KbCreateResult> {
+  return (await request.post('/kb/datasets', {
+    name, description, chunk_method: chunkMethod,
+  })) as KbCreateResult;
+}
+
 // ---------- 上传 / 下载 (2026-10-29) ----------
 
 export interface KbUploadResult {

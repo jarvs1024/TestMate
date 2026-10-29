@@ -38,6 +38,8 @@ export function docIcon(type: string): string {
 /** RAGFlow chunk_method → 中文简短标签 */
 export function fmtChunkMethod(m: string): string {
   const map: Record<string, string> = {
+    // ⚠️ RAGFlow 1.0 新建数据集用 "general" (老库是 "naive", 同一个东西)
+    general: '通用',
     naive: '通用',
     book: '书',
     email: '邮件',

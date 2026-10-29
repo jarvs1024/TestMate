@@ -41,6 +41,114 @@ async def list_datasets(page: int = 1, page_size: int = 50) -> list[dict[str, An
         return data.get("data") or []
 
 
+#: RAGFlow v0.26.1 的切片方式.
+#:
+#: ⚠️ 对外字段是 **`chunk_method`**, **不是 `parser_id`** ——
+#:    `parser_id` 只是 RAGFlow 服务内部的别名 (CreateDatasetReq 里标了
+#:    serialization_alias="parser_id"), 直接当请求字段传会被判
+#:    "Extra inputs are not permitted" 而 400.
+#: ⚠️ 通用切片的值是 **`naive`** —— "general" 是更新的说法, v0.26.1 不认.
+CHUNK_NAIVE = "naive"
+CHUNK_MANUAL = "manual"
+
+
+async def create_dataset(
+    name: str,
+    description: str = "",
+    chunk_method: str = CHUNK_NAIVE,
+    embedding_model: str = "",
+    permission: str = "me",
+) -> dict[str, Any]:
+    """新建一个数据集 (代理 RAGFlow POST /datasets).
+
+    ⚠️ 三个坑 (都是真机跑出来才发现的, 单测的假 httpx 测不出来):
+      ① 对外字段叫 **`chunk_method`**, 值用 `naive` / `manual`;
+         传 `parser_id` + `parse_type` 会被 RAGFlow 当成多余字段拒掉.
+      ② 响应的 `data` 是**一个对象**, 不是数组 —— 列表接口才是数组.
+         写成 `data[0]` 会直接 IndexError.
+      ③ `description` **可以直接在 create 时传** (旧版文档说不行, v0.26.1 可以),
+         所以不用建完再补一次 —— 少一次请求就少一次失败机会.
+
+    ⚠️ RAGFlow 的数据集名**大小写不敏感且唯一** —— 重名会自动加数字后缀
+       (`项目管理` → `项目管理(1)`), 所以这里先查重名, 撞了就直接报错,
+       不让用户以为建出来的是个新库.
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        raise RuntimeError("RAGFlow 未配置")
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("数据集名称不能为空")
+    if len(name) > 128:
+        raise ValueError("数据集名称最长 128 个字符")
+
+    # 重名检查 —— RAGFlow 会自动加后缀, 与其建出个 `xx(1)` 不如当场报错
+    for d in await list_datasets(page=1, page_size=100):
+        if (d.get("name") or "").strip().lower() == name.lower():
+            raise ValueError(f"已经有一个叫「{name}」的数据集了")
+
+    body: dict[str, Any] = {
+        "name": name,
+        "chunk_method": chunk_method,
+        "permission": permission,
+    }
+    if description:
+        body["description"] = description
+    if embedding_model:
+        body["embedding_model"] = embedding_model
+    url = f"{base}/datasets"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(url, headers=await _headers(), json=body)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow create_dataset: {data.get('message') or data}")
+        created = data.get("data") or {}
+
+    # ⚠️ create 的 data 是**对象**; 万一哪天变回数组也要扛得住
+    if isinstance(created, list):
+        created = created[0] if created else {}
+    if not isinstance(created, dict):
+        created = {}
+    return created
+
+
+async def update_dataset(
+    dataset_id: str,
+    name: str | None = None,
+    description: str | None = None,
+    chunk_method: str | None = None,
+) -> dict[str, Any]:
+    """改数据集 (代理 RAGFlow PUT /datasets/{id}).
+
+    ⚠️ 改 `chunk_method` 只影响**之后**的解析, 不会重跑已有文档.
+
+    ⚠️ 实测过: 只传 `description` 不会把库名冲成空串
+       (UpdateDatasetReq 虽然继承自 CreateDatasetReq 且 name 默认 "",
+        但服务端只把**实际传的字段**带进更新).
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        raise RuntimeError("RAGFlow 未配置")
+    body: dict[str, Any] = {}
+    if name is not None:
+        body["name"] = name
+    if description is not None:
+        body["description"] = description
+    if chunk_method is not None:
+        body["chunk_method"] = chunk_method
+    if not body:
+        return {}
+    url = f"{base}/datasets/{quote(dataset_id, safe='')}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.put(url, headers=await _headers(), json=body)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow update_dataset: {data.get('message') or data}")
+        return data.get("data") or {}
+
+
 async def list_documents(
     dataset_id: str,
     page: int = 1,

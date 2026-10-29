@@ -28,6 +28,7 @@ from app.core.ragflow_client import (
     list_documents, ingest_documents, delete_documents,
     list_doc_chunks,
     upload_documents, download_document,
+    create_dataset,
 )
 from app.models.user import User
 from app.models.user import UserRole
@@ -100,6 +101,78 @@ async def _read_upload_limited(upload: UploadFile, max_bytes: int, label: str) -
                 detail=f"「{label}」超过单文件上限 ({max_bytes // 1024 // 1024} MB)",
             )
         chunks.append(chunk)
+
+
+class CreateDatasetIn(BaseModel):
+    """新建数据集的入参."""
+
+    name: str = Field(..., min_length=1, max_length=128, description="数据集名称")
+    description: str = Field("", max_length=500, description="说明 (一句话讲清这个库放什么)")
+    #: RAGFlow v0.26.1 的 chunk_method: naive(通用/自动分段) | manual(手动切分)
+    chunk_method: str = Field("naive", description="切片方式")
+    embedding_model: str = Field("", description="嵌入模型 (空=跟现有数据集一致)")
+
+
+@router.post("/datasets")
+async def create_kb_dataset(
+    payload: CreateDatasetIn,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """新建一个知识库数据集 (代理 RAGFlow POST /datasets).
+
+    权限: **tester 及以上** (跟上传文档同一档, viewer 是只读角色).
+
+    ⚠️ 新建的库会**立刻出现在所有人的列表里** —— 所以名字要能讲清楚这个库放什么.
+    ⚠️ 重名直接报错: RAGFlow 自己会加数字后缀(`项目管理` → `项目管理(1)`),
+       用户以为建了个新库, 结果是两个几乎一样的库.
+    """
+    if not _can_write(user):
+        raise HTTPException(status_code=403, detail="只读账号不能创建数据集")
+
+    chunk_method = (payload.chunk_method or "naive").strip().lower()
+    if chunk_method not in ("naive", "manual"):
+        raise HTTPException(status_code=422, detail="切片方式只能是 naive 或 manual")
+
+    # 嵌入模型: 用户没指定就**跟现有数据集保持一致** ——
+    # RAGFlow 租户默认值未必是这台机器上真装着的那个, 跟现有的走最稳
+    emb = (payload.embedding_model or "").strip()
+    if not emb:
+        try:
+            for d in await list_datasets(page=1, page_size=50):
+                if d.get("embedding_model"):
+                    emb = str(d["embedding_model"])
+                    break
+        except Exception as e:  # noqa: BLE001
+            logger.debug("取现有数据集的 embedding_model 失败: %s", e)
+
+    try:
+        ds = await create_dataset(
+            name=payload.name,
+            description=(payload.description or "").strip(),
+            chunk_method=chunk_method,
+            embedding_model=emb,
+        )
+    except ValueError as e:
+        # 重名 / 名称不合法 —— 是用户能自己改的, 不是服务器故障
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.exception("create_dataset failed")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    ds = ds or {}
+    return {
+        "ok": True,
+        "dataset": {
+            "id": ds.get("id"),
+            "name": ds.get("name") or payload.name,
+            "description": ds.get("description") or (payload.description or "").strip(),
+            "chunk_method": ds.get("chunk_method") or chunk_method,
+            "embedding_model": ds.get("embedding_model") or emb,
+            "permission": ds.get("permission", "me"),
+            "document_count": ds.get("document_count", 0),
+            "chunk_count": ds.get("chunk_count", 0),
+        },
+    }
 
 
 @router.get("/datasets")

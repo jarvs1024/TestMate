@@ -63,7 +63,21 @@
     <!-- 数据集列表 (P1 加列 + 行可展开看文档) -->
     <div class="card">
       <div class="ds-hd">
-        <h2><span>数据集</span> <button class="reload" @click="onReload" :disabled="loading">↻ 刷新</button></h2>
+        <h2><span>数据集</span></h2>
+        <!-- ⚠️ 建库和上传是知识库最常用的两个动作 —— 放在标题行右侧, 一眼就能看到 -->
+        <div class="ds-tools">
+          <button
+            v-if="canWrite"
+            class="primary-btn ds-act"
+            title="新建一个数据集 (比如 项目管理 / 协议管理 那种分类)"
+            @click="openCreate">+ 新建数据集</button>
+          <button
+            v-if="canWrite"
+            class="ghost-btn ds-act"
+            title="上传文档到某个数据集 (单文件 ≤20MB, 单次 ≤5 个)"
+            @click="openUploadTop">⬆ 上传文档</button>
+          <button class="reload" @click="onReload" :disabled="loading">↻ 刷新</button>
+        </div>
       </div>
       <table class="ds-tbl">
         <thead>
@@ -76,7 +90,7 @@
             <th>分段</th>
             <th>切片法</th>
             <th>更新时间</th>
-            <th style="width:80px">操作</th>
+            <th style="width:140px">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -100,7 +114,13 @@
               <td class="mono">{{ d.chunk_count }}</td>
               <td class="mono">{{ fmtChunkMethod(d.chunk_method) }}</td>
               <td class="mono">{{ fmtTime(d.update_time) || d.update_date || '—' }}</td>
-              <td>
+              <td class="ds-ops">
+                <!-- ⚠️ 行内直接上传 —— 不用先展开子表就能往这个库塞文档 -->
+                <button
+                  v-if="canWrite"
+                  class="link-btn"
+                  title="往这个数据集上传文档"
+                  @click="openUpload(d)">⬆ 上传</button>
                 <button class="ghost-btn" @click="openDetail(d)">详情</button>
               </td>
             </tr>
@@ -237,11 +257,82 @@
       </template>
     </el-drawer>
 
+    <!-- 新建数据集抽屉 (2026-10-29) -->
+    <el-drawer v-model="createOpen" title="新建数据集" size="520px" direction="rtl">
+      <div class="cd-panel">
+        <div class="cd-field">
+          <label class="cd-lbl">数据集名称 <span class="cd-req">*</span></label>
+          <input
+            v-model="createForm.name"
+            class="cd-input"
+            maxlength="128"
+            placeholder="例如：项目管理 / 协议管理 / 售后培训资料" />
+          <div v-if="createNameHint" class="cd-hint" :class="{ err: createNameConflict }">{{ createNameHint }}</div>
+        </div>
+
+        <div class="cd-field">
+          <label class="cd-lbl">说明（选填）</label>
+          <input
+            v-model="createForm.description"
+            class="cd-input"
+            maxlength="500"
+            placeholder="一句话讲清这个库放什么，方便别人找" />
+          <div class="cd-hint">新建后会立刻出现在所有人的知识库列表里 —— 名字要说清楚</div>
+        </div>
+
+        <div class="cd-field">
+          <label class="cd-lbl">切片方式</label>
+          <div class="cd-choices">
+            <label class="cd-choice" :class="{ on: createForm.chunkMethod === 'naive' }">
+              <input type="radio" value="naive" v-model="createForm.chunkMethod" />
+              <span class="cd-ct">通用</span>
+              <span class="cd-cd">自动分段，txt / md / docx / pdf 都能用</span>
+            </label>
+            <label class="cd-choice" :class="{ on: createForm.chunkMethod === 'manual' }">
+              <input type="radio" value="manual" v-model="createForm.chunkMethod" />
+              <span class="cd-ct">手动</span>
+              <span class="cd-cd">只认 pdf / docx，分段要自己再调</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="cd-field">
+          <label class="cd-lbl">先放几个文档进去（选填）</label>
+          <input
+            ref="createFileInput"
+            type="file"
+            multiple
+            class="up-input"
+            :accept="UPLOAD_ACCEPT"
+            @change="onPickCreateFiles" />
+          <ul v-if="createFiles.length" class="up-files">
+            <li v-for="(f, i) in createFiles" :key="f.name + i">
+              <span class="up-fn">{{ f.name }}</span>
+              <span class="up-fs mono">{{ fmtSize(f.size) }}</span>
+              <button class="up-rm" @click="removeCreateFile(i)">✕</button>
+            </li>
+          </ul>
+          <div v-else class="up-empty">不选也行 —— 建完再上传一样可以</div>
+        </div>
+
+        <div v-if="createError" class="up-err">{{ createError }}</div>
+        <div class="up-foot">
+          <button class="ghost-btn" @click="createOpen = false">取消</button>
+          <button class="primary-btn" :disabled="!canSubmitCreate || creating" @click="doCreate">
+            {{ creating ? '创建中…' : (createFiles.length ? '创建并上传' : '创建数据集') }}
+          </button>
+        </div>
+      </div>
+    </el-drawer>
+
     <!-- 上传文档抽屉 (2026-10-29) -->
     <el-drawer v-model="uploadOpen" title="上传文档到知识库" size="520px" direction="rtl">
       <div class="up-panel">
-        <div class="up-tip">
-          目标数据集：<b>{{ uploadDs?.name || '—' }}</b>
+        <div class="cd-field">
+          <label class="cd-lbl">目标数据集</label>
+          <el-select v-model="uploadDsId" class="cd-select" placeholder="选择要传进哪个库">
+            <el-option v-for="d in datasets" :key="d.id" :label="d.name" :value="d.id" />
+          </el-select>
         </div>
         <div class="up-rules">
           · 单个文件 ≤ <b>20MB</b>, 单次最多 <b>5</b> 个<br />
@@ -347,6 +438,7 @@ import {
   listDocuments, listDocChunks,
   type KbDocChunk,
   uploadKbDocuments, downloadKbDocument, listKbAudits, type KbAuditItem,
+  createKbDataset, type KbChunkMethod,
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
 import { useUserStore } from '@/stores/user';
@@ -539,15 +631,37 @@ const MAX_FILES = 5;
 const UPLOAD_ACCEPT = '.txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.json,.html,.htm';
 
 const uploadOpen = ref(false);
-const uploadDs = ref<KbDataset | null>(null);
+/**
+ * 目标数据集 —— 存 **id** 而不是对象.
+ *
+ * ⚠️ 顶部工具条的「⬆ 上传文档」进来时还不知道传哪个库, 得让人自己选;
+ *    所以这里用 id 存, 由 :dataset 列表反查对象 (库被删了也不会拿到过期对象).
+ */
+const uploadDsId = ref('');
+const uploadDs = computed(() => datasets.value.find(d => d.id === uploadDsId.value) || null);
 const uploadFiles = ref<File[]>([]);
 const uploading = ref(false);
 const uploadError = ref('');
 const uploadResult = ref<{ uploaded: number; ingest_started: boolean; warning?: string } | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 
+/** 从某个数据集那一行点「⬆ 上传」进来 —— 直接锁定目标库. */
 function openUpload(d: KbDataset) {
-  uploadDs.value = d;
+  uploadDsId.value = d.id;
+  uploadFiles.value = [];
+  uploadError.value = '';
+  uploadResult.value = null;
+  uploadOpen.value = true;
+}
+
+/** 从标题行点「⬆ 上传文档」进来 —— 默认选第一个, 用户可改. */
+function openUploadTop() {
+  if (!datasets.value.length) {
+    ElMessage.warning('还没有数据集 —— 先新建一个');
+    openCreate();
+    return;
+  }
+  uploadDsId.value = uploadDsId.value || datasets.value[0].id;
   uploadFiles.value = [];
   uploadError.value = '';
   uploadResult.value = null;
@@ -581,11 +695,12 @@ function removeFile(i: number) {
 }
 
 async function doUpload() {
-  if (!uploadDs.value || !uploadFiles.value.length) return;
+  const ds = uploadDs.value;
+  if (!ds) { uploadError.value = '先选一个目标数据集'; return; }
+  if (!uploadFiles.value.length) { uploadError.value = '还没选文件'; return; }
   uploading.value = true;
   uploadError.value = '';
   uploadResult.value = null;
-  const ds = uploadDs.value;
   try {
     const r = await uploadKbDocuments(ds.id, uploadFiles.value);
     uploadResult.value = {
@@ -614,6 +729,117 @@ async function onDownload(d: KbDataset, doc: KbDocument) {
     await downloadKbDocument(d.id, doc.id, doc.name);
   } catch (e: any) {
     ElMessage.error('下载失败: ' + (e?.message || '未知错误'));
+  }
+}
+
+// === 新建数据集 (2026-10-29) ===
+const createOpen = ref(false);
+const creating = ref(false);
+const createError = ref('');
+const createFiles = ref<File[]>([]);
+const createFileInput = ref<HTMLInputElement | null>(null);
+const createForm = ref<{ name: string; description: string; chunkMethod: KbChunkMethod }>({
+  name: '', description: '', chunkMethod: 'naive',
+});
+
+/**
+ * ⚠️ 重名在前端先拦一道.
+ *
+ * RAGFlow 的数据集名**大小写不敏感且唯一**, 重名了它会自己加数字后缀
+ * (`项目管理` → `项目管理(1)`) —— 用户以为建了个新库, 结果多出两个几乎一样的库.
+ * 所以这里先查一遍, 撞了就直接不让提交.
+ */
+const createNameConflict = computed(() => {
+  const n = createForm.value.name.trim().toLowerCase();
+  if (!n) return false;
+  return datasets.value.some(d => (d.name || '').trim().toLowerCase() === n);
+});
+
+const createNameHint = computed(() => {
+  const n = createForm.value.name.trim();
+  if (!n) return '';
+  if (createNameConflict.value) return `已经有一个叫「${n}」的数据集了，换个名字`;
+  return `将新建「${n}」`;
+});
+
+const canSubmitCreate = computed(() => {
+  const n = createForm.value.name.trim();
+  return !!n && !createNameConflict.value && !creating.value;
+});
+
+function openCreate() {
+  createForm.value = { name: '', description: '', chunkMethod: 'naive' };
+  createFiles.value = [];
+  createError.value = '';
+  createOpen.value = true;
+}
+
+function onPickCreateFiles(e: Event) {
+  const el = e.target as HTMLInputElement;
+  const picked = Array.from(el.files || []);
+  createError.value = '';
+  const kept: File[] = [];
+  for (const f of picked) {
+    if (f.size > MAX_FILE_MB * 1024 * 1024) {
+      createError.value = `「${f.name}」超过单文件上限 (${MAX_FILE_MB}MB)`;
+      continue;
+    }
+    if (kept.length + createFiles.value.length >= MAX_FILES) {
+      createError.value = `单次最多上传 ${MAX_FILES} 个文件`;
+      break;
+    }
+    kept.push(f);
+  }
+  createFiles.value = [...createFiles.value, ...kept];
+  // 清掉 input 的值 —— 否则选同一个文件两次不会触发 change
+  el.value = '';
+}
+
+function removeCreateFile(i: number) {
+  createFiles.value = createFiles.value.filter((_, idx) => idx !== i);
+  createError.value = '';
+}
+
+/**
+ * 建库 (+ 可选: 顺手把文件传进去).
+ *
+ * ⚠️ 建完再传是**两步** —— 中间失败的话库还在、文件没进去,
+ *    所以上传失败要单独说清楚, 不能只报"成功".
+ */
+async function doCreate() {
+  if (!canSubmitCreate.value) return;
+  creating.value = true;
+  createError.value = '';
+  const form = { ...createForm.value };
+  const files = [...createFiles.value];
+  try {
+    const r = await createKbDataset(form.name.trim(), form.description.trim(), form.chunkMethod);
+    const ds = r.dataset;
+    let upStatus: 'none' | 'ok' | 'warn' | 'fail' = 'none';
+    let upMsg = '';
+    if (files.length && ds?.id) {
+      try {
+        const u = await uploadKbDocuments(ds.id, files);
+        if (u.warning) { upStatus = 'warn'; upMsg = u.warning; }
+        else { upStatus = 'ok'; upMsg = `已上传 ${u.uploaded} 个文档，解析已启动`; }
+      } catch (ue: any) {
+        upStatus = 'fail';
+        upMsg = `上传失败：${httpErrorText(errorStatus(ue), errorDetail(ue))}`;
+      }
+    }
+    createOpen.value = false;
+    await loadAll();
+    // 自动展开新库 —— 建完得让人**马上看见**自己建了什么
+    if (ds?.id) { expandedId.value = ds.id; await loadDocs(ds.id); }
+    const head = `数据集「${ds?.name || form.name}」已创建`;
+    if (upStatus === 'ok') ElMessage.success(`${head}，${upMsg}`);
+    else if (upStatus === 'warn') ElMessage.warning(`${head}，但 ${upMsg}`);
+    else if (upStatus === 'fail') ElMessage.error(`${head}，但 ${upMsg}`);
+    else ElMessage.success(head);
+  } catch (e: any) {
+    createError.value = httpErrorText(errorStatus(e), errorDetail(e), '创建失败');
+  } finally {
+    creating.value = false;
   }
 }
 
@@ -860,5 +1086,43 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .kw-tag { font-size: 10px; padding: 2px 7px; border-radius: var(--radius-pill); background: rgba(59, 130, 246, 0.1); color: var(--primary); font-weight: 500; }
 .kw-tag-tag { background: rgba(13, 148, 136, 0.12); color: var(--primary-2, var(--primary)); }
 .chunk-body { font-size: 12.5px; color: var(--ink-700); line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
+
+/* ---------- 数据集管理: 建库 / 上传 (2026-10-29) ---------- */
+/* 标题行右侧的主操作条 —— 建库和上传是知识库最高频的两个动作, 摆这儿一眼就能看见 */
+.ds-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ds-act { padding: 5px 13px; font-size: 12.5px; }
+/* 行内操作列 —— 「⬆ 上传」和「详情」并排, 别让按钮糊成一坨 */
+.ds-ops { white-space: nowrap; }
+.ds-ops .link-btn, .ds-ops .ghost-btn { margin-right: 4px; }
+.ds-ops .ghost-btn { margin-right: 0; }
+
+/* 新建数据集抽屉 */
+.cd-panel { display: flex; flex-direction: column; gap: 16px; }
+.cd-field { display: flex; flex-direction: column; gap: 6px; }
+.cd-lbl { font-size: 12px; font-weight: 600; color: var(--ink-700); }
+.cd-req { color: var(--err); }
+.cd-input {
+  width: 100%; box-sizing: border-box; font-size: 13px; font-family: inherit;
+  color: var(--ink-900); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 7px; padding: 7px 10px; outline: none;
+}
+.cd-input:focus { border-color: var(--primary); }
+.cd-hint { font-size: 11.5px; color: var(--ink-500); }
+.cd-hint.err { color: var(--err); }
+.cd-select { width: 100%; }
+
+/* 切片方式 —— 卡片式单选 (比原生 radio 好懂) */
+.cd-choices { display: flex; flex-direction: column; gap: 8px; }
+.cd-choice {
+  display: grid; grid-template-columns: 16px 1fr; grid-template-rows: auto auto;
+  column-gap: 9px; row-gap: 2px; align-items: center;
+  border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.cd-choice:hover { border-color: var(--primary); }
+.cd-choice.on { border-color: var(--primary); background: var(--primary-soft); }
+.cd-choice input { grid-row: 1 / 3; margin: 0; accent-color: var(--primary); }
+.cd-ct { font-size: 13px; font-weight: 600; color: var(--ink-900); }
+.cd-cd { font-size: 11.5px; color: var(--ink-500); }
 
 </style>
