@@ -80,6 +80,21 @@ def test_every_category_has_a_desc():
         assert c.get("desc"), f"{c['name']} 缺说明"
 
 
+def test_category_desc_is_short_enough_to_read_in_a_dropdown():
+    """desc 必须**短** (2026-10-29 整改).
+
+    ⚠️ desc 显示在「分类」下拉框的**选项行里**, 跟分类名并排.
+       原来那种"对功能、性能、可靠性的全方位兜底 —— 定位问题、判定结果、给出判据"
+       的长句会被**硬截断**成「…」, 用户根本读不到 —— 等于白写.
+       长解释应该放到表单下面的说明文字里, 下拉框里只留一句短的.
+    """
+    for c in mc.table():
+        d = c.get("desc") or ""
+        assert len(d) <= 24, f"{c['name']} 的 desc 太长({len(d)}字): {d}"
+        # 破折号是长文案的标志 —— 一旦出现基本就说明又写长了
+        assert "——" not in d, f"{c['name']} 的 desc 里还有长破折号: {d}"
+
+
 @pytest.mark.parametrize("name", [n for _, n in EXPECTED])
 def test_normalize_keeps_known_categories(name):
     assert mc.normalize(name) == name

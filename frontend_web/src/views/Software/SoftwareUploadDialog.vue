@@ -63,8 +63,14 @@
                  用户根本分不清谁是谁. 已用过的图标直接标出来并禁掉. -->
             <el-select v-model="form.icon" filterable style="width:100%"
                        @change="iconTouched = true">
+              <!-- ⚠️ `label` 只放图标本身 (就一个 emoji) —— 它是**选中后输入框里
+                   显示的那行字**, 之前塞了「(已被「XXX」用了)」进去, 必被截断.
+                   占用人信息挪到 slot 里, 只在下拉列表那一行显示. -->
               <el-option v-for="ic in ICONS" :key="ic" :value="ic"
-                         :label="iconLabel(ic)" :disabled="isIconUsed(ic)" />
+                         :label="ic" :disabled="isIconUsed(ic)">
+                <span>{{ ic }}</span>
+                <span v-if="iconOwner(ic)" class="opt-desc">已被「{{ iconOwner(ic) }}」用了</span>
+              </el-option>
             </el-select>
             <p class="hint">图标别跟别人重复 —— 用过的图标会标成「已用」, 换别的吧.</p>
           </el-form-item>
@@ -102,7 +108,12 @@
             <!-- ⚠️ 必须给中文 placeholder —— Element Plus 默认是英文 "Select",
                  整个界面都是中文, 夹一个英文下拉框很扎眼 -->
             <el-select v-model="form.platform" style="width:100%" placeholder="不限">
-              <el-option v-for="p in PLATFORMS" :key="p.value" :value="p.value" :label="p.label" />
+              <!-- ⚠️ `label` 是选中后输入框里显示的字 —— 必须短;
+                   长的解释放 slot 里(只在下拉列表那一行显示) -->
+              <el-option v-for="p in PLATFORMS" :key="p.value" :value="p.value" :label="p.label">
+                <span>{{ p.label }}</span>
+                <span v-if="p.desc" class="opt-desc">{{ p.desc }}</span>
+              </el-option>
             </el-select>
           </el-form-item>
         </div>
@@ -324,10 +335,9 @@ function isIconUsed(ic: string): boolean {
   return !!config.value?.used_icons?.[ic];
 }
 
-/** 下拉里显示的名字 —— 已用的直接标出来 */
-function iconLabel(ic: string): string {
-  const owner = config.value?.used_icons?.[ic];
-  return owner ? `${ic} (已被「${owner}」用了)` : ic;
+/** 谁占了这个图标? (没人占就是空串) —— 显示在下拉选项的补充说明里 */
+function iconOwner(ic: string): string {
+  return config.value?.used_icons?.[ic] || '';
 }
 
 /** 挑一个还没人用的图标 */
@@ -618,6 +628,19 @@ async function submit() {
 .pick-hint { font-size: 12px; color: var(--ink-500); }
 .pick-err { margin: 0; font-size: 11.5px; color: var(--err); }
 .hint { margin: 0; font-size: 11px; color: var(--ink-500); line-height: 1.6; }
+
+/* 下拉选项里的补充说明 (选项右侧灰字) ——
+   ⚠️ 2026-10-29: 别用 float: right + max-width + ellipsis —— 那样会把说明
+      **硬截断**成「…」, 用户根本读不到. 去掉 float, 让文字自然排下去.
+   ⚠️ inline-block 是必须的 —— Element 的下拉项自带 nowrap + overflow:hidden,
+      截断发生在选项行这一层; 说明只是 inline 元素的话, 省略号会落在整行尾巴上
+      (把主标题切掉). 改成 inline-block + 自己的 max-width 后, 省略号只落在说明上. */
+.opt-desc {
+  display: inline-block; vertical-align: bottom;
+  color: var(--ink-500); font-size: 11px;
+  margin-left: 12px; max-width: 260px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* 自动生成的 code —— 只读, 看着就知道不用自己填 */
 .ro-input :deep(.el-input__inner) {

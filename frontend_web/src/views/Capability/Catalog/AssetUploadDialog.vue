@@ -188,7 +188,8 @@
                          @change="onCategoryChange">
                 <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
                   <span>{{ c.name }}</span>
-                  <span class="cat-desc">{{ c.desc }}</span>
+                  <!-- ⚠️ title 兜底 —— 下拉框挤窄时还能 hover 看全文 -->
+                  <span class="cat-desc" :title="c.desc">{{ c.desc }}</span>
                 </el-option>
               </el-select>
               <!-- ⚠️ 分类是**按协作角色**分的, 不是按流程阶段 ——
@@ -199,9 +200,16 @@
             </el-form-item>
             <el-form-item label="适用项目">
               <el-select v-model="form.project" class="sel-project" style="width:100%">
-                <el-option value="" label="通用 —— 所有项目都能用" />
-                <el-option v-for="p in projectOptions" :key="p" :value="p"
-                           :label="`${p} 项目 —— 只有 ${p} 项目用得上`" />
+                <!-- ⚠️ `label` 是选中后输入框里显示的字 —— 必须短;
+                     长的解释放 slot 里(只在下拉列表那一行显示) -->
+                <el-option value="" label="通用">
+                  <span>通用</span>
+                  <span class="cat-desc">所有项目都能用</span>
+                </el-option>
+                <el-option v-for="p in projectOptions" :key="p" :value="p" :label="`${p} 项目`">
+                  <span>{{ p }} 项目</span>
+                  <span class="cat-desc">只有 {{ p }} 项目用得上</span>
+                </el-option>
               </el-select>
               <p class="hint">通用的所有人都能用; 项目特有的会在卡片上标出来</p>
             </el-form-item>
@@ -613,10 +621,22 @@ function close() {
 .sec-hint { font-size: 11px; font-weight: 500; color: var(--ink-500); }
 .adv-body { padding-bottom: 4px; }
 
-/* 分类下拉里的说明文字 (选项右侧灰字) */
+/* 分类下拉里的说明文字 (选项右侧灰字)
+   ⚠️ 2026-10-29: 原来这里用 `float: right` + `max-width: 320px` + ellipsis ——
+      ① float 在 Element 的选项结构里根本不生效, 位置是乱的;
+      ② max-width + ellipsis 把说明**硬截断**成「…」, 用户根本读不到.
+      现在: 去掉 float 和 max-width, 让文字自然排下去 (文案也同步改短了),
+      真被挤窄了还有 title 兜底能看到全文.
+
+   ⚠️ `display: inline-block` 是必须的 —— Element 的下拉项本身带
+      `white-space:nowrap; overflow:hidden; text-overflow:ellipsis`,
+      截断发生在**选项行**这一层. 如果说明只是 inline 元素, 省略号会落在
+      整行的尾巴上 (把分类名切掉); 改成 inline-block + 自己的 max-width 之后,
+      省略号只落在**说明**上, 分类名永远完整. */
 .cat-desc {
-  float: right; color: var(--ink-500); font-size: 11px;
-  margin-left: 16px; max-width: 320px; overflow: hidden;
+  display: inline-block; vertical-align: bottom;
+  color: var(--ink-500); font-size: 11px;
+  margin-left: 12px; max-width: 260px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
 

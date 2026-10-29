@@ -40,6 +40,47 @@ html, html[data-theme] {
   --el-fill-color: var(--surface-sunken);
   --el-fill-color-blank: var(--surface);
   --el-border-radius-base: 8px;
+
+  /* ⚠️ **Element Plus 的「填充色」一整套** (2026-10-29 补) ——
+     以前只覆盖了 fill-color 和 fill-color-blank 两个, 剩下的
+     (light / lighter / darker / extra-light / dark) 还是 Element 默认的**浅色**,
+     暗色主题下就露白底了.
+
+     ⚠️ **最典型的就是「选择框」**: Element 的下拉选项悬停态用的是
+        **`.is-hovering` 类** (不是 `:hover` 伪类!), 背景取 `--el-fill-color-light`
+        (#f5f7fa 近白) —— 暗色下就是「白底 + 浅色字」, 什么都看不清.
+        以前 main.css 里只写了 `:hover`, **`.is-hovering` 从来没被覆盖过**.
+
+     ⚠️ 这套变量全部映射到项目自己的 token, 所以亮/暗两套主题自动各走各的,
+        不用再单独写一遍暗色规则. */
+  --el-fill-color-light: var(--surface-sunken);
+  --el-fill-color-lighter: var(--surface-soft);
+  --el-fill-color-extra-light: var(--surface-soft);
+  --el-fill-color-dark: var(--surface-sunken);
+  --el-fill-color-darker: var(--surface-sunken);
+  --el-disabled-bg-color: var(--surface-sunken);
+  --el-disabled-text-color: var(--ink-500);
+  --el-text-color-disabled: var(--ink-500);
+  --el-border-color-extra-light: var(--border);
+  --el-border-color-dark: var(--border-strong);
+  --el-border-color-darker: var(--border-strong);
+  --el-bg-color: var(--surface);
+  --el-bg-color-page: var(--bg-base);
+  --el-bg-color-overlay: var(--surface);
+  --el-mask-color: rgba(0, 0, 0, 0.55);
+  --el-mask-color-extra-light: rgba(0, 0, 0, 0.35);
+  /* 下拉菜单项的悬停底色 —— Element 默认 #ecf5ff (浅蓝), 暗色下同样是白底 */
+  --el-dropdown-menuItem-hover-fill: var(--surface-sunken);
+  --el-dropdown-menuItem-hover-color: var(--primary);
+
+  /* ⚠️ **el-checkbox 不用额外变量** —— 核实过 Element 的真实定义:
+     --el-checkbox-bg-color            → var(--el-fill-color-blank)   ← 上面已映射
+     --el-checkbox-input-border        → var(--el-border)             ← --el-border-color 已映射
+     --el-checkbox-checked-bg-color    → var(--el-color-primary)     ← 上面已映射
+     --el-checkbox-checked-icon-color  → var(--el-color-white)       (蓝底白勾, 不用改)
+     --el-checkbox-text-color          → var(--el-text-color-regular)← 上面已映射
+     所以复选框**自动**跟主题走, 一行额外变量都不用加.
+     (之前误写过 --el-checkbox-unchecked-bg-color 这种 Element 里根本不存在的名字, 已删) */
 }
 
 .card {
@@ -240,15 +281,58 @@ select.tm-input:focus {
 .el-select-dropdown__item {
   color: var(--ink-700) !important;
 }
+/* ⚠️ **`.is-hovering` 才是 Element 的悬停态** (2026-10-29 补) ——
+   Element Plus 的下拉项**不用 `:hover` 伪类**, 而是用 JS 加的 `.is-hovering` 类.
+   以前只覆盖了 `:hover`, 所以 `.is-hovering` 那条
+   `background-color: var(--el-fill-color-light)` (#f5f7fa 近白) 一直在生效 ——
+   暗色主题下就是「白底 + 浅色字」, 选项整个看不清 (用户报的就是这个).
+   ⚠️ `.is-hovering` 和 `:hover` **都要写** —— 前者是键盘/脚本态, 后者是鼠标态. */
 .el-popper .el-dropdown-menu__item:not(.is-disabled):hover,
-.el-select-dropdown__item:hover {
+.el-popper .el-dropdown-menu__item:not(.is-disabled).is-hovering,
+.el-select-dropdown__item:hover,
+.el-select-dropdown__item.is-hovering {
   background: var(--surface-sunken) !important;
   color: var(--primary) !important;
+}
+/* ⚠️ 选中的那一项 —— Element 只给了 font-weight, 底色要自己定,
+   不然深色主题下"选中了"跟"没选中"看不出区别 */
+.el-select-dropdown__item.is-selected {
+  background: var(--primary-soft) !important;
+  color: var(--primary) !important;
+  font-weight: 700;
+}
+/* ⚠️ 下拉面板里的**滚动条**也跟主题 ——
+   ⚠️ 要改的是 `.el-scrollbar__thumb`(真正看得见的那根), 不是 `.el-scrollbar__bar`
+      (那只是透明的轨道容器, 改了没有任何视觉效果).
+   ⚠️ 选择器也得对 —— Element 2.x 里**没有** `.el-select-dropdown__scrollbar` 这个类,
+      滚动条挂在 `.el-select-dropdown__wrap` 里面. */
+.el-select-dropdown__wrap .el-scrollbar__thumb {
+  background-color: var(--ink-500) !important;
+  opacity: 0.55;
+}
+.el-select-dropdown__wrap .el-scrollbar__thumb:hover {
+  opacity: 0.9;
 }
 .el-popper .el-dropdown-menu__item.is-disabled {
   color: var(--ink-500) !important;
   cursor: default;
 }
+/* ⚠️ **el-alert 的底色** (2026-10-29 补) ——
+   Element 的 `.el-alert` 基础底色是 `var(--el-color-white)` (纯白),
+   暗色主题下就是一块白板.
+
+   ⚠️ **必须排除 `.is-light`** —— el-alert 的 `effect` 默认值就是 `light`,
+      所以实际渲染出来的是 `.el-alert.el-alert--warning.is-light`,
+      它自己的底色是 `var(--el-alert-bg-color)` = `var(--el-color-warning-light-9)`
+      (暗色下已经被上面改成了半透明主色, 是对的).
+      这里要是无脑 `!important` 盖上去, **类型色就没了** —— 一条黄色告警
+      会变成跟普通卡片一样的灰底, 反而更看不懂.
+      所以只兜底 `.is-light` / `.is-dark` 之外的「裸 alert」. */
+.el-alert:not(.is-light):not(.is-dark) {
+  background-color: var(--surface-sunken) !important;
+}
+/* 复选框的底/边框 —— 走 Element 变量(--el-checkbox-bg-color /
+   --el-checkbox-input-border) 就自动跟主题了, 这里不用再手写 !important 覆盖 */
 /* 弹层内的小箭头同色 */
 .el-popper .el-popper__arrow::before,
 .el-dropdown-menu .el-popper__arrow::before {
@@ -297,6 +381,26 @@ select:focus {
   background-image:
     linear-gradient(45deg, transparent 50%, var(--primary) 50%),
     linear-gradient(135deg, var(--primary) 50%, transparent 50%) !important;
+}
+/* ⚠️ **原生 `<select>` 的下拉列表项** (2026-10-29 补) ——
+   `select` 本身的底色我们用 `background-color` 改了, 但**展开后的那一列选项**
+   是 `<option>` 元素 —— 它的底色**不会**继承 select 的 background-color,
+   浏览器按自己的默认来 (Windows/Firefox 是白底), 暗色主题下就是一块白板.
+
+   ⚠️ 这里必须用**不透明**的 --bg-base (不能用 --surface, 那是半透明的毛玻璃,
+      半透明底色透出后面的文字会更乱).
+   macOS 上主要靠 tokens.css 里的 `color-scheme: dark` 让系统弹层自动变暗,
+   这条规则是给其它浏览器/平台兜底的. */
+select option {
+  background-color: var(--bg-base);
+  color: var(--ink-900);
+}
+select option:checked {
+  background-color: var(--primary-soft);
+  color: var(--ink-900);
+}
+select option:disabled {
+  color: var(--ink-500);
 }
 .el-select__wrapper.is-focused {
   /* 单层 ring */
@@ -369,6 +473,40 @@ textarea::-moz-selection {
    element-plus 内置 dark 模式已经做了 .el-drawer/.el-message-box 等的深色色,
    但默认是白底, 在我们 html[data-theme="dark"] 下不会自动切换.
    这里强制让 el-drawer / el-message-box / el-popper 跟我们主题 token 走. */
+
+/* ⚠️ **状态色的「浅底」系列** (2026-10-29 补) ——
+   Element 的 `--el-color-*-light-9` 是给 alert / tag / button 这类东西当**底色**用的.
+   默认值全是**浅色** (#fdf6ec / #fef0f0 / …) —— 暗色主题下 alert 就是一块米白底,
+   跟整个界面完全脱节.
+   ⚠️ 这里用**半透明的主色**当底 —— 比 Element 官方的实色暗灰好看, 也跟项目的
+      primary-soft 风格一致. 亮色主题保持 Element 默认 (那本来就是对的). */
+html[data-theme="dark"] {
+  --el-color-success-light-9: rgba(52, 211, 153, 0.14);
+  --el-color-warning-light-9: rgba(251, 191, 36, 0.14);
+  --el-color-danger-light-9:  rgba(248, 113, 113, 0.14);
+  --el-color-error-light-9:   rgba(248, 113, 113, 0.14);
+  --el-color-info-light-9:    rgba(148, 163, 184, 0.14);
+  --el-color-success-light-8: rgba(52, 211, 153, 0.20);
+  --el-color-warning-light-8: rgba(251, 191, 36, 0.20);
+  --el-color-danger-light-8:  rgba(248, 113, 113, 0.20);
+  --el-color-error-light-8:   rgba(248, 113, 113, 0.20);
+  --el-color-info-light-8:    rgba(148, 163, 184, 0.20);
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="auto"] {
+    --el-color-success-light-9: rgba(52, 211, 153, 0.14);
+    --el-color-warning-light-9: rgba(251, 191, 36, 0.14);
+    --el-color-danger-light-9:  rgba(248, 113, 113, 0.14);
+    --el-color-error-light-9:   rgba(248, 113, 113, 0.14);
+    --el-color-info-light-9:    rgba(148, 163, 184, 0.14);
+    --el-color-success-light-8: rgba(52, 211, 153, 0.20);
+    --el-color-warning-light-8: rgba(251, 191, 36, 0.20);
+    --el-color-danger-light-8:  rgba(248, 113, 113, 0.20);
+    --el-color-error-light-8:   rgba(248, 113, 113, 0.20);
+    --el-color-info-light-8:    rgba(148, 163, 184, 0.20);
+  }
+}
+
 html[data-theme="dark"] .el-drawer,
 html[data-theme="dark"] .el-drawer__header,
 html[data-theme="dark"] .el-drawer__body,

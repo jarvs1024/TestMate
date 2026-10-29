@@ -19,10 +19,12 @@ export const RESERVED_CODES = ['dl', 'config', 'categories', 'path-check'];
 
 /** 适用平台的候选项 (只是标签, 不做平台校验) */
 export const PLATFORMS = [
-  { value: '', label: '通用 —— 哪个平台都能用' },
-  { value: 'windows', label: 'Windows' },
-  { value: 'linux', label: 'Linux' },
-  { value: 'macos', label: 'macOS' },
+  // ⚠️ 2026-10-29: `label` 是**选中后输入框里显示**的那行字 —— 必须短,
+  //    长了会被输入框截断成「通用 —— 哪个…」。长解释放 `desc`, 只在下拉列表里显示.
+  { value: '', label: '通用', desc: '哪个平台都能用' },
+  { value: 'windows', label: 'Windows', desc: '只在 Windows 上用' },
+  { value: 'linux', label: 'Linux', desc: '只在 Linux 上用' },
+  { value: 'macos', label: 'macOS', desc: '只在 macOS 上用' },
 ];
 
 /** 图标候选 —— 软件库跟资产市场的图标池分开 (两边的东西长得不一样) */
