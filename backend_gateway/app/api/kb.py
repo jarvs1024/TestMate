@@ -9,6 +9,8 @@
 - POST /api/v1/kb/datasets/{id}/documents            上传文档 (tester 及以上)
 - GET  /api/v1/kb/datasets/{id}/documents/{doc}/download  下载文档 (所有登录用户)
 - GET  /api/v1/kb/audits                             操作审计 (admin only)
+- PUT  /api/v1/kb/datasets/{id}/documents/{doc}      更新文档内容 (tester 及以上)
+- POST /api/v1/kb/datasets/{id}/documents/{doc}/reparse  重新解析 (tester 及以上)
 
 ⚠️ **删除仍然只有 admin 能做** —— 用户上传的内容进的是**共享**知识库,
    要能删就意味着能把别人的东西删掉, 那不能给普通用户.
@@ -29,6 +31,7 @@ from app.core.ragflow_client import (
     list_doc_chunks,
     upload_documents, download_document,
     create_dataset, delete_dataset,
+    update_document, parse_documents,
 )
 from app.models.user import User
 from app.models.user import UserRole
@@ -712,6 +715,330 @@ async def upload_docs(
             for d in created
         ],
     }
+
+
+# ============ 文档更新 / 重新解析 (2026-10-29) ============
+#
+# ⚠️ **RAGFlow 的文档是不可变的** —— 它压根没有"替换文件内容"的接口.
+#    `PATCH /datasets/{id}/documents/{doc}` 只能改这四样:
+#      name / parser_config / chunk_method / enabled   (+ meta_fields)
+#    **换不了内容** (2026-10-29 从容器源码 api/apps/restful_apis/document_api.py 确认).
+#
+# 所以「更新文档」在网关这边是**四步拼出来的**:
+#    ① 传新文件    → RAGFlow 新建一条文档记录 (同名会自动加 "(1)" 后缀)
+#    ② 删旧文档    → 硬删 (旧版的分段 / MinIO 源文件一起没了)
+#    ③ PATCH 新文档 → 把名字改回目标名
+#    ④ 迁移归属 + 启动解析
+#
+# ⚠️ **先传后删** —— 中途任何一步失败, 旧文档都还在, 用户的数据不会丢.
+#    (反过来先删后传, 传失败就两头空了)
+# ⚠️ **旧版直接删除, 不留历史** (2026-10-29 用户拍板) —— 审计表里会留一条
+#    update 记录, 但**旧文件本身找不回来**.
+
+#: RAGFlow 的文档名长度上限 —— 是 **255 字节**, 不是 255 个字符
+#: (api/constants.py: FILE_NAME_LEN_LIMIT = 255; 改名时它会按 utf-8 字节数校验)
+RAGFLOW_DOC_NAME_BYTES = 255
+
+
+def _fit_kb_name_bytes(name: str, limit: int = RAGFLOW_DOC_NAME_BYTES) -> str:
+    """按 **UTF-8 字节数** 裁文件名 (RAGFlow 的上限是字节, 不是字符).
+
+    ⚠️ 中文一个字 3 字节 —— 按字符裁会超, 改名时 RAGFlow 会拒.
+    ⚠️ **扩展名必须留着** —— RAGFlow 不允许改扩展名 ("The extension of file can't be changed"),
+       裁到一半把扩展名裁没了, 改名的请求就废了.
+    ⚠️ 不能把一个多字节字符劈两半 —— 那样文件名会变成乱码.
+    """
+    raw = (name or "").encode("utf-8")
+    if len(raw) <= limit:
+        return name
+    stem, ext = os.path.splitext(name)
+    ext_b = ext.encode("utf-8")
+    keep = max(1, limit - len(ext_b))
+    stem_b = stem.encode("utf-8")[:keep].decode("utf-8", errors="ignore")
+    return (stem_b + ext) or name[:limit]
+
+
+async def _find_document(dataset_id: str, document_id: str) -> dict:
+    """在某数据集里找到指定文档, 返回 RAGFlow 的**原始 doc dict** (找不到返回 {}).
+
+    ⚠️ **不能用 `GET /datasets/{id}/documents/{doc}`** —— 那个接口返回的是
+       **文件字节流** (不是 JSON), 拿不到 name / chunk_method / parser_config.
+    ⚠️ page_size 上限 100 —— 传 200 RAGFlow 会返回 code=101 + 空 data
+       (看着像"库里一篇文档都没有", 其实是参数非法).
+    """
+    page = 1
+    while page <= 50:          # 最多翻 50 页 = 5000 篇, 够了
+        data = await list_documents(dataset_id=dataset_id, page=page, page_size=100)
+        docs = data.get("docs") or []
+        for d in docs:
+            if str(d.get("id") or "") == document_id:
+                return d
+        if len(docs) < 100:
+            return {}
+        page += 1
+    return {}
+
+
+async def _safe_delete_documents(dataset_id: str, doc_ids: list[str]) -> None:
+    """删文档 —— **失败只记日志, 不抛异常** (用于失败回滚)."""
+    if not doc_ids:
+        return
+    try:
+        await delete_documents(dataset_id, doc_ids=doc_ids)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("回滚删除文档失败 (%s): %s", ", ".join(doc_ids), e)
+
+
+async def _move_document_owner(
+    old_id: str,
+    new_id: str,
+    dataset_id: str,
+    doc_name: str,
+    size: int,
+    user: User,
+) -> None:
+    """更新后把归属记录**挪到新文档 id** 上.
+
+    ⚠️ **RAGFlow 里"更新" = 删旧建新** —— 文档 id 会变, 归属表的主键就是
+       document_id, 不跟着挪的话新文档会显示「上传者 —」(用户会觉得"我刚传的
+       怎么没人").
+
+    ⚠️ 语义跟 :func:`_save_document_owner` 保持一致 —— 「**当前这一版**是谁传的」,
+       所以上传者记成**这次更新的人**; 最初是谁传的在审计表里有完整历史.
+    ⚠️ 写失败不能挡住业务 (跟其它归属操作一个待遇).
+    """
+    if not new_id:
+        return
+    try:
+        from sqlalchemy import delete as sa_delete
+
+        from app.db.session import AsyncSessionLocal
+        from app.models.kb import KbDocumentMeta
+
+        async with AsyncSessionLocal() as s:
+            # ⚠️ 旧行必须删 —— 主键就是 document_id, 留着会跟新行撞
+            await s.execute(
+                sa_delete(KbDocumentMeta).where(
+                    KbDocumentMeta.document_id.in_([x for x in (old_id, new_id) if x])
+                )
+            )
+            s.add(KbDocumentMeta(
+                document_id=new_id,
+                dataset_id=dataset_id,
+                doc_name=doc_name,
+                size=int(size or 0),
+                uploaded_by=user.id,
+                uploaded_by_name=user.username or "",
+            ))
+            await s.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("迁移文档归属失败 (已忽略): %s", e)
+
+
+@router.put("/datasets/{dataset_id}/documents/{document_id}")
+async def update_kb_document(
+    dataset_id: str,
+    document_id: str,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """**替换**一篇文档的内容 (换新文件), 旧版直接删除.
+
+    权限: **tester 及以上** (跟上传同一档; 删除仍然只有 admin).
+
+    ⚠️ **RAGFlow 没有"换内容"的接口** —— 文档在 RAGFlow 里是不可变的,
+       这里是网关自己拼的四步 (见上面的注释): 传新文件 → 删旧文档 →
+       改回目标名 → 迁移归属 + 启动解析.
+
+    ⚠️ **旧版被永久删除** (2026-10-29 用户拍板) —— 审计表里留一条 update 记录,
+       但旧文件本身找不回来.
+
+    ⚠️ **文档 id 会变** —— RAGFlow 里新文档是另一条记录, 所以返回的是
+       **新的 doc id**, 前端别拿旧的 id 继续操作.
+    """
+    if not _can_write(user):
+        raise HTTPException(status_code=403, detail="只读账号不能更新文档")
+
+    raw_name = (file.filename or "").strip()
+    if not raw_name:
+        raise HTTPException(status_code=422, detail="没有选择文件")
+    target_name = _fit_kb_name_bytes(_sanitize_kb_filename(raw_name, "document"))
+    payload = await _read_upload_limited(file, MAX_UPLOAD_BYTES, target_name)
+    if not payload:
+        raise HTTPException(status_code=422, detail="文件是空的")
+
+    # 旧文档 (拿它的名字 / 切片方式, 用来对齐)
+    try:
+        old = await _find_document(dataset_id, document_id)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("更新文档: 查旧文档失败")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+    if not old:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    old_name = str(old.get("name") or "")
+    old_chunk_method = str(old.get("chunk_method") or "")
+    ds_name, ds_chunk_method = await _dataset_info(dataset_id)
+
+    # ⚠️ **扩展名不能变** —— RAGFlow 的改名会拒 ("The extension of file can't be changed").
+    #    用户传了别的类型的文件 → 那不是"更新内容", 是"加一篇", 直接拦掉,
+    #    别做出一个半成品.
+    old_ext = os.path.splitext(old_name.lower())[1]
+    new_ext = os.path.splitext(target_name.lower())[1]
+    if new_ext != old_ext:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"新文件类型 ({new_ext or '无扩展名'}) 跟原文档 ({old_ext or '无扩展名'}) 不一致 —— "
+                f"更新只能换内容, 换文件类型请直接上传新文档"
+            ),
+        )
+
+    # ① 传新文件 —— 先传后删, 中途失败旧文档还在
+    try:
+        created = await upload_documents(
+            dataset_id,
+            [(target_name, payload, file.content_type or "application/octet-stream")],
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("更新文档: 上传新文件失败")
+        await _audit(
+            action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            document_id=document_id, doc_name=old_name, error=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    new_doc = (created or [{}])[0] or {}
+    new_id = str(new_doc.get("id") or "")
+    if not new_id:
+        await _audit(
+            action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            document_id=document_id, doc_name=old_name, error="ragflow 没返回新文档 id",
+        )
+        raise HTTPException(status_code=502, detail="ragflow 没有返回新文档 id")
+
+    # ② 删旧文档 (硬删) —— 旧版的分段 / MinIO 源文件一起没了
+    try:
+        await delete_documents(dataset_id, doc_ids=[document_id])
+    except Exception as e:  # noqa: BLE001
+        logger.exception("更新文档: 删旧文档失败")
+        # ⚠️ 回滚 —— 旧文档没删掉, 新文档就成了多余副本, 得清掉, 否则库里多一份垃圾
+        await _safe_delete_documents(dataset_id, [new_id])
+        await _audit(
+            action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            document_id=document_id, doc_name=old_name, error=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=f"删除旧版本失败: {e}")
+
+    # ③ PATCH 改回目标名 —— RAGFlow 同名上传会自动加 "(1)" 后缀, 这里改回去
+    warnings: list[str] = []
+    current_name = str(new_doc.get("name") or target_name)
+    if current_name != target_name:
+        try:
+            await update_document(dataset_id, new_id, name=target_name)
+        except Exception as e:  # noqa: BLE001 — 内容已经换掉了, 改名失败不该让整件事失败
+            logger.warning("更新文档: 改名失败 (新文档仍叫 %s): %s", current_name, e)
+            warnings.append(f"内容已更新, 但改名失败 —— 文档现在叫「{current_name}」(原因: {e})")
+            target_name = current_name
+
+    # ⚠️ **切片方式不搬旧的** —— 新文档天然继承**数据集**的切片方式.
+    #    实机核对过: 文档级 parser_config 跟数据集级**完全一致**, 搬过去没有意义;
+    #    而 RAGFlow 的 ParserConfig 是 extra=forbid 的严格模型, 搬旧值反而容易
+    #    因为版本字段变动而整个 PATCH 失败.
+    #    旧文档要是被手动改过切片方式, 这里会**对齐回数据集的**, 得跟用户说清楚.
+    if old_chunk_method and ds_chunk_method and old_chunk_method != ds_chunk_method:
+        warnings.append(
+            f"切片方式已跟数据集保持一致 ({ds_chunk_method}) —— 原来这篇是 {old_chunk_method}"
+        )
+
+    # ④ 迁移归属 + 启动解析
+    await _move_document_owner(document_id, new_id, dataset_id, target_name, len(payload), user)
+
+    ingest_ok = False
+    if ds_chunk_method == MANUAL_CHUNK_METHOD and not target_name.lower().endswith(MANUAL_AUTO_PARSE_EXTS):
+        # ⚠️ 跟上传同一套规矩 —— 手动分块的解析器只认 pdf/docx,
+        #    硬发解析必然 FAIL, 用户还以为是自己传坏了.
+        warnings.append(
+            f"「{ds_name or dataset_id}」是「手动分块」数据集, RAGFlow 只支持 pdf/docx 自动解析 —— "
+            f"文档已更新, 但需要管理员手动切分后才能被检索."
+        )
+    else:
+        try:
+            ingest_ok = await ingest_documents([new_id], run="1")
+        except Exception as e:  # noqa: BLE001 — 解析失败不该让更新失败 (文件已经换好了)
+            logger.warning("更新后启动解析失败 (文档已更新, 需手动重跑): %s", e)
+            warnings.append(f"解析启动失败 —— 请稍后用「重新解析」重跑 (原因: {e})")
+
+    # 审计里写清「谁把什么换成了什么」—— 旧文档 id 已经不存在了, 名字是唯一的线索
+    audit_name = target_name
+    if old_name and old_name != target_name:
+        audit_name = f"{old_name} → {target_name}"
+    await _audit(
+        action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+        document_id=new_id, doc_name=audit_name[:255], size=len(payload),
+    )
+
+    return {
+        "ok": True,
+        "updated": {
+            "id": new_id,
+            "name": target_name,
+            "size": len(payload),
+        },
+        "replaced": {
+            "id": document_id,
+            "name": old_name,
+        },
+        "ingest_started": ingest_ok,
+        "warning": " ".join(warnings),
+    }
+
+
+@router.post("/datasets/{dataset_id}/documents/{document_id}/reparse")
+async def reparse_kb_document(
+    dataset_id: str,
+    document_id: str,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """**重新解析**一篇文档 (内容不变, 重跑一遍切片 / 向量化).
+
+    权限: **tester 及以上** —— 跟"更新"同一档. 重解析**不动数据** (只是重跑),
+       比"删除"轻得多, 不该只给 admin.
+
+    ⚠️ 跟 ingest 的"启动/取消"**不是一回事**:
+       · ingest (run=1/2) 是**队列开关** —— 启动 / 取消还没跑的解析任务;
+       · 这里的 parse   是**强制重跑** —— 清掉已有分段再解析一遍.
+       解析失败了、或者想按新的切片参数重来 → 用这个.
+    """
+    if not _can_write(user):
+        raise HTTPException(status_code=403, detail="只读账号不能重新解析")
+
+    try:
+        doc = await _find_document(dataset_id, document_id)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("重新解析: 查文档失败")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    ds_name, _ = await _dataset_info(dataset_id)
+    doc_name = str(doc.get("name") or "")
+
+    try:
+        await parse_documents(dataset_id, [document_id])
+    except Exception as e:  # noqa: BLE001
+        logger.exception("reparse_document failed")
+        await _audit(
+            action="reparse", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            document_id=document_id, doc_name=doc_name, error=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    await _audit(
+        action="reparse", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+        document_id=document_id, doc_name=doc_name,
+    )
+    return {"ok": True, "document_id": document_id, "name": doc_name}
 
 
 def _ascii_fallback_name(filename: str, fallback: str) -> str:

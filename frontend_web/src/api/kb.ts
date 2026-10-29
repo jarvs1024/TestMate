@@ -334,6 +334,58 @@ export async function downloadKbDocument(
   URL.revokeObjectURL(url);
 }
 
+// ---------- 更新文档 / 重新解析 (2026-10-29) ----------
+
+export interface KbUpdateResult {
+  ok: boolean;
+  /** ⚠️ **新的文档 id** —— RAGFlow 里"更新"是删旧建新, id 变了 */
+  updated: { id: string; name: string; size: number };
+  /** 被换掉的那一篇 (已经没了) */
+  replaced: { id: string; name: string };
+  /** 是否已经发起解析 (异步的, 状态要看文档列表轮询) */
+  ingest_started: boolean;
+  /** ⚠️ 有话要说 (比如手动分块的数据集解析不了) */
+  warning?: string;
+}
+
+/**
+ * **替换**一篇文档的内容 (换新文件), 旧版直接删除.
+ *
+ * ⚠️ 旧版本是**永久删除**的 —— 审计表里会留一条 update 记录, 但旧文件本身找不回来.
+ * ⚠️ 返回的 `updated.id` 是**新的**文档 id —— 拿到之后别再用旧的 id 操作.
+ * ⚠️ 只能换内容, **不能换文件类型** (扩展名必须一致) —— 后端会 422.
+ */
+export async function updateKbDocument(
+  datasetId: string,
+  documentId: string,
+  file: File,
+): Promise<KbUpdateResult> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return (await request.put(
+    `/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}`,
+    fd,
+    // ⚠️ 别手动设 Content-Type —— axios 不会替你补 boundary
+    // ⚠️ 超时放宽: 20MB 文件传完还要等 RAGFlow 收 + 删旧 + 改名
+    { timeout: 180000 },
+  )) as KbUpdateResult;
+}
+
+/**
+ * **重新解析**一篇文档 (内容不变, 重跑一遍切片 / 向量化).
+ *
+ * ⚠️ 跟"启动/取消解析"(ingest) 不是一回事 ——
+ *    ingest 是队列开关, 这个是**强制重跑** (清掉已有分段再解析一遍).
+ */
+export async function reparseKbDocument(
+  datasetId: string,
+  documentId: string,
+): Promise<{ ok: boolean; document_id: string; name: string }> {
+  return (await request.post(
+    `/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}/reparse`,
+  )) as { ok: boolean; document_id: string; name: string };
+}
+
 export interface KbAuditItem {
   id: number;
   dataset_id: string;

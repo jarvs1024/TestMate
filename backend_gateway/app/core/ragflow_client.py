@@ -348,6 +348,75 @@ async def download_document(dataset_id: str, document_id: str) -> tuple[bytes, s
         return r.content, name, ctype
 
 
+async def update_document(
+    dataset_id: str,
+    document_id: str,
+    name: str | None = None,
+    parser_config: dict[str, Any] | None = None,
+    chunk_method: str | None = None,
+    enabled: int | None = None,
+) -> dict[str, Any]:
+    """改文档的**配置** (代理 RAGFlow PATCH /datasets/{id}/documents/{doc}).
+
+    ⚠️ **换不了文件内容** —— RAGFlow 的文档是**不可变**的, 压根没有"替换内容"的接口.
+       能改的只有这些:
+         · `name`          —— 文档名 (只改名字, **不动已有分段**)
+         · `parser_config` —— 切片参数 (`ext` 子字典会被合并进去)
+         · `chunk_method`  —— 切片法
+         · `enabled`       —— 启用/禁用
+
+    ⚠️ 改 `chunk_method` 会让 RAGFlow **重置文档并重新解析**
+       (清掉它在 doc store 里的分段) —— 所以「更新内容」的流程里
+       **故意不传 chunk_method**, 只搬 `parser_config`,
+       解析由我们自己用 ingest 启动 (可控, 失败也能重试).
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        raise RuntimeError("RAGFlow 未配置")
+    body: dict[str, Any] = {}
+    if name is not None:
+        body["name"] = name
+    if parser_config is not None:
+        body["parser_config"] = parser_config
+    if chunk_method is not None:
+        body["chunk_method"] = chunk_method
+    if enabled is not None:
+        body["enabled"] = enabled
+    if not body:
+        return {}
+    url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/{quote(document_id, safe='')}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.patch(url, headers=await _headers(), json=body)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow update_document: {data.get('message') or data}")
+        return data.get("data") or {}
+
+
+async def parse_documents(dataset_id: str, document_ids: list[str]) -> bool:
+    """**重新解析**已存在的文档 (代理 RAGFlow POST /datasets/{id}/documents/parse).
+
+    ⚠️ 这是「重新跑一遍解析」, **不换文件内容** ——
+       用来在改了切片参数 / 解析失败了之后重跑.
+    ⚠️ 跟 `ingest_documents` 的区别: ingest 是「启动/取消」队列,
+       parse 是「强制重新解析」(会清掉旧分段重来).
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        return False
+    if not document_ids:
+        return False
+    url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/parse"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(url, headers=await _headers(), json={"document_ids": document_ids})
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow parse_documents: {data.get('message') or data}")
+        return True
+
+
 async def delete_documents(dataset_id: str, doc_ids: list[str] | None = None, delete_all: bool = False) -> bool:
     """删除 documents (代理 RAGFlow DELETE /datasets/{id}/documents)."""
     base, key = await _config()

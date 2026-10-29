@@ -149,7 +149,7 @@
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th>名称</th><th>大小</th><th>分段</th><th>解析</th><th>启用</th><th>更新</th><th style="width:120px">操作</th>
+                        <th>名称</th><th>大小</th><th>分段</th><th>解析</th><th>启用</th><th>更新</th><th style="width:220px">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -174,6 +174,17 @@
                             class="link-btn"
                             title="下载原始文件"
                             @click="onDownload(d, doc)">下载</button>
+                          <!-- ⚠️ 更新 / 重解析 = 写操作 → tester 及以上 (跟上传同一档) -->
+                          <button
+                            v-if="canWrite"
+                            class="link-btn"
+                            title="换新文件替换这一篇的内容 (旧版本会被永久删除)"
+                            @click="openUpdate(d, doc)">更新</button>
+                          <button
+                            v-if="canWrite"
+                            class="link-btn"
+                            title="内容不变, 重跑一遍解析 (解析失败了可以用)"
+                            @click="doReparse(d, doc)">重解析</button>
                         </td>
                       </tr>
                       <tr v-if="docsOf(d.id).length === 0 && !docLoading">
@@ -385,6 +396,46 @@
       </div>
     </el-drawer>
 
+    <!-- 更新文档抽屉 (2026-10-29) -->
+    <el-drawer v-model="updateOpen" title="更新文档内容" size="520px" direction="rtl">
+      <div class="up-panel up-panel-update" v-if="updateDoc">
+        <div class="up-rules">
+          · 当前文档：<b>{{ updateDoc.name }}</b>（{{ fmtSize(updateDoc.size) }} / {{ updateDoc.chunk_count }} 个分段）<br />
+          · 换新文件后，<b>旧版本会被永久删除</b>（操作记录里会留一条，但旧文件找不回来）<br />
+          · 新文档名 = 你选的文件名；内容换完会自动重新解析<br />
+          · 只能换<b>内容</b>，不能换文件类型（扩展名必须跟原来一致）
+        </div>
+        <input
+          ref="updateFileInput"
+          type="file"
+          class="up-input up-input-update"
+          :accept="UPLOAD_ACCEPT"
+          @change="onPickUpdateFile" />
+        <ul v-if="updateFile" class="up-files">
+          <li>
+            <span class="up-fn">{{ updateFile.name }}</span>
+            <span class="up-fs mono">{{ fmtSize(updateFile.size) }}</span>
+            <button class="up-rm" @click="updateFile = null">✕</button>
+          </li>
+        </ul>
+        <div v-else class="up-empty">还没选文件</div>
+        <div v-if="updateError" class="up-err">{{ updateError }}</div>
+        <div class="up-foot">
+          <button class="ghost-btn" @click="updateOpen = false">取消</button>
+          <button class="primary-btn" :disabled="!updateFile || updating" @click="doUpdate">
+            {{ updating ? '更新中…' : '替换并重新解析' }}
+          </button>
+        </div>
+        <div v-if="updateResult" class="up-result">
+          已替换为 <b>{{ updateResult.name }}</b>，
+          <template v-if="updateResult.ingest_started">解析已启动（异步，稍后刷新看状态）</template>
+          <template v-else>但解析启动失败 —— 请让管理员重跑解析</template>
+        </div>
+        <!-- ⚠️ 文档换了但**没参与检索** —— 这话必须说清楚, 不能让用户以为白传了 -->
+        <div v-if="updateResult?.warning" class="up-err">{{ updateResult.warning }}</div>
+      </div>
+    </el-drawer>
+
     <!-- 文档分段预览抽屉 -->
     <el-drawer v-model="chunksOpen" :title="chunksTitle" size="640px" direction="rtl">
       <div class="chunks-panel">
@@ -452,6 +503,7 @@ import {
   type KbDocChunk,
   uploadKbDocuments, downloadKbDocument, listKbAudits, type KbAuditItem,
   createKbDataset, type KbChunkMethod, deleteKbDataset,
+  updateKbDocument, reparseKbDocument,
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
 import { useUserStore } from '@/stores/user';
@@ -865,13 +917,122 @@ async function doCreate() {
   }
 }
 
+// === 更新文档 / 重新解析 (2026-10-29) ===
+//
+// ⚠️ **RAGFlow 的文档是不可变的** —— 它没有"替换内容"的接口.
+//    所以后端是「传新文件 → 删旧文档 → 改回目标名 → 迁移归属 + 重新解析」四步.
+//    前端要记住两件事:
+//      ① 更新完**文档 id 变了** —— 必须重新拉列表, 别拿旧 id 继续操作;
+//      ② 旧版本是**永久删除**的 —— 得让用户看清楚再点.
+const updateOpen = ref(false);
+const updateDs = ref<KbDataset | null>(null);
+const updateDoc = ref<KbDocument | null>(null);
+const updateFile = ref<File | null>(null);
+const updating = ref(false);
+const updateError = ref('');
+const updateResult = ref<{ name: string; warning?: string; ingest_started?: boolean } | null>(null);
+const updateFileInput = ref<HTMLInputElement | null>(null);
+
+function openUpdate(d: KbDataset, doc: KbDocument) {
+  updateDs.value = d;
+  updateDoc.value = doc;
+  updateFile.value = null;
+  updateError.value = '';
+  updateResult.value = null;
+  updateOpen.value = true;
+}
+
+function onPickUpdateFile(e: Event) {
+  const el = e.target as HTMLInputElement;
+  const f = (el.files || [])[0];
+  // ⚠️ 清掉 input 的值 —— 否则选同一个文件两次不会触发 change
+  el.value = '';
+  if (!f) return;
+  updateError.value = '';
+  if (f.size > MAX_FILE_MB * 1024 * 1024) {
+    updateError.value = `「${f.name}」超过单文件上限 (${MAX_FILE_MB}MB)`;
+    return;
+  }
+  updateFile.value = f;
+}
+
+async function doUpdate() {
+  const ds = updateDs.value;
+  const doc = updateDoc.value;
+  const f = updateFile.value;
+  if (!ds || !doc) return;
+  if (!f) { updateError.value = '还没选文件'; return; }
+  updating.value = true;
+  updateError.value = '';
+  updateResult.value = null;
+  try {
+    const r = await updateKbDocument(ds.id, doc.id, f);
+    updateResult.value = {
+      name: r.updated?.name || f.name,
+      warning: r.warning || '',
+      ingest_started: r.ingest_started,
+    };
+    updateFile.value = null;
+    // ⚠️ 文档 id 变了 —— 必须丢掉缓存重新拉, 不然前端拿着旧 id 继续操作会 404
+    delete docsByDataset.value[ds.id];
+    await loadDocs(ds.id);
+    await loadAudits();
+    if (r.warning) {
+      // ⚠️ 有 warning 说明文档换了但**没参与检索** —— 别弹"成功"把用户骗了,
+      //    抽屉也别关, 让他把这段话看完
+      ElMessage.warning(r.warning);
+    } else if (!r.ingest_started) {
+      // ⚠️ 解析没起来 —— 文档换了但**参与不了检索**, 得说清楚
+      ElMessage.warning(`「${doc.name}」已替换, 但解析启动失败 —— 请让管理员重跑解析`);
+      updateOpen.value = false;
+    } else {
+      ElMessage.success(`「${doc.name}」已替换为「${r.updated?.name || f.name}」，解析已启动`);
+      updateOpen.value = false;
+    }
+  } catch (e: any) {
+    updateError.value = httpErrorText(errorStatus(e), errorDetail(e), '更新失败');
+  } finally {
+    updating.value = false;
+  }
+}
+
+/** 重新解析 (内容不变, 重跑一遍切片/向量化). */
+async function doReparse(d: KbDataset, doc: KbDocument) {
+  const chunks = doc.chunk_count || 0;
+  try {
+    await ElMessageBox.confirm(
+      `重新解析「${doc.name}」？会清掉现有的 ${chunks} 个分段，再重新跑一遍。`,
+      '重新解析',
+      {
+        type: 'warning',
+        confirmButtonText: '重新解析',
+        cancelButtonText: '取消',
+      },
+    );
+  } catch {
+    return; // 用户取消 —— 不是错误
+  }
+  try {
+    await reparseKbDocument(d.id, doc.id);
+    ElMessage.success(`「${doc.name}」已重新提交解析`);
+    delete docsByDataset.value[d.id];
+    await loadDocs(d.id);
+    await loadAudits();
+  } catch (e: any) {
+    ElMessage.error('重新解析失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  }
+}
+
 // === 操作记录 (审计) ===
 const audits = ref<KbAuditItem[]>([]);
 const auditLoading = ref(false);
 const auditError = ref('');
 
 function auditActionLabel(a: string): string {
-  return ({ upload: '上传', delete: '删除', ingest: '解析', create: '新建' } as Record<string, string>)[a] || a;
+  return ({
+    upload: '上传', delete: '删除', ingest: '解析', create: '新建',
+    update: '更新', reparse: '重解析',
+  } as Record<string, string>)[a] || a;
 }
 
 /**
