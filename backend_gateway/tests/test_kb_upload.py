@@ -49,7 +49,7 @@ class FakeRagflow:
         return True
 
     async def list_datasets(self, page=1, page_size=50):
-        return [{"id": "ds-1", "name": "协议文档"}]
+        return [{"id": "ds-1", "name": "协议文档", "chunk_method": "naive"}]
 
     async def download_document(self, dataset_id, document_id):
         return b"hello from ragflow", "note.txt", "text/plain; charset=utf-8"
@@ -175,6 +175,34 @@ async def test_upload_sanitizes_file_name(client, publisher_user, fake_rf):
     assert "/" not in name and ".." not in name, name
 
 
+async def test_upload_keeps_spaces_and_parens(client, publisher_user, fake_rf):
+    """⚠️ 空格/括号/中文**必须留着** —— 用户是按原名找文件的.
+
+    软件包那套 `sanitize_filename` 会把它们换成下划线, 那是"文件名会落成
+    目录名"的场景的要求; 知识库的文件名只是 RAGFlow 里的 location, 不用那么严.
+    """
+    raw = "Management Component Transport Protocol (MCTP) Base Specification(1).pdf"
+    r = await client.post(
+        f"{API}/kb/datasets/ds-1/documents",
+        files=[("file", (raw, io.BytesIO(b"x"), "application/pdf"))],
+        headers={"Authorization": f"Bearer {publisher_user['token']}"},
+    )
+    assert r.status_code == 200, r.text
+    _ds, files = fake_rf.uploads[0]
+    assert files[0][0] == raw, files[0][0]
+
+    # 中文名也一样留着
+    cn = "知识库上传验收说明.txt"
+    r2 = await client.post(
+        f"{API}/kb/datasets/ds-1/documents",
+        files=[("file", (cn, io.BytesIO(b"x"), "text/plain"))],
+        headers={"Authorization": f"Bearer {publisher_user['token']}"},
+    )
+    assert r2.status_code == 200, r2.text
+    _ds2, files2 = fake_rf.uploads[1]
+    assert files2[0][0] == cn, files2[0][0]
+
+
 # ---------- ④ 下载: 所有登录用户都能 ----------
 
 async def test_viewer_can_download(client, stranger_user, fake_rf):
@@ -203,6 +231,75 @@ async def test_download_returns_raw_bytes_not_json(client, admin_user, fake_rf):
     assert r.status_code == 200, r.text
     assert r.content == b"hello from ragflow"
     assert "application/json" not in r.headers.get("content-type", "")
+
+
+async def test_download_with_chinese_filename_does_not_500(client, admin_user, fake_rf, monkeypatch):
+    """⚠️ 中文文件名不能让下载整个 500.
+
+    HTTP 头是 latin-1 的 —— starlette 编码头值时用 latin-1, 中文直接
+    UnicodeEncodeError. 规矩: `filename="..."` 只放 ASCII 兜底名,
+    真名走 RFC 5987 的 `filename*=UTF-8''`.
+    """
+    import app.api.kb as kb_mod
+
+    async def _cn(dataset_id, document_id):
+        return b"content", "知识库上传验证.txt", "text/plain; charset=utf-8"
+
+    monkeypatch.setattr(kb_mod, "download_document", _cn)
+
+    r = await client.get(
+        f"{API}/kb/datasets/ds-1/documents/doc-1/download",
+        headers={"Authorization": f"Bearer {admin_user['token']}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.content == b"content"
+    cd = r.headers["content-disposition"]
+    # 头值必须是 latin-1 能编出来的 (不然线上就是 500)
+    cd.encode("latin-1")
+    assert "filename*=UTF-8''" in cd, cd
+    assert "%E7%9F%A5%E8%AF%86" in cd, cd
+    # 兜底名必须是纯 ASCII 且带扩展名
+    assert 'filename="document-' in cd, cd
+    assert ".txt" in cd, cd
+
+
+async def test_manual_dataset_skips_ingest_and_warns(client, publisher_user, fake_rf, monkeypatch):
+    """⚠️ "手动分块"的数据集 (RAGFlow manual.py 只支持 pdf/docx) 不能硬发解析.
+
+    硬发 → 文档直接标 FAIL, 用户还以为是自己传坏了.
+    """
+    import app.api.kb as kb_mod
+
+    async def _manual(page=1, page_size=50):
+        return [{"id": "ds-1", "name": "协议文档", "chunk_method": "manual"}]
+
+    monkeypatch.setattr(kb_mod, "list_datasets", _manual)
+
+    r = await client.post(
+        f"{API}/kb/datasets/ds-1/documents",
+        files=_files("a.txt"),
+        headers={"Authorization": f"Bearer {publisher_user['token']}"},
+    )
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["uploaded"] == 1
+    assert j["ingest_started"] is False
+    assert j["warning"], "必须把话说明白 —— 文档进了库但不参与检索"
+    assert "手动分块" in j["warning"], j["warning"]
+    # ⚠️ 警告是**直接显示给用户**的文案 —— 不能带 markdown 星号
+    assert "**" not in j["warning"], j["warning"]
+    # ⚠️ 压根不该发起解析 (发了必然 FAIL)
+    assert fake_rf.ingests == [], fake_rf.ingests
+    # ⚠️ 审计的「结果」列按 error 字段判 —— 上传**成功**就不能显示成「失败」
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.kb import KbAudit
+
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(select(KbAudit))).scalars().all()
+    assert rows, "上传要留痕"
+    assert rows[-1].error == "", f"上传成功了, error 不该有值: {rows[-1].error!r}"
 
 
 # ---------- ⑤ 删除仍然只有 admin ----------

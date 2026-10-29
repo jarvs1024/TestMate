@@ -186,6 +186,8 @@ export interface KbUploadResult {
   uploaded: number;
   /** 是否已经发起解析 (解析是异步的, 状态要等轮询) */
   ingest_started: boolean;
+  /** ⚠️ 有话要说 (比如数据集是"手动分块", 解析不了) */
+  warning?: string;
   docs: Array<{
     id: string;
     name: string;

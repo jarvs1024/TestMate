@@ -14,6 +14,10 @@
    要能删就意味着能把别人的东西删掉, 那不能给普通用户.
 """
 import logging
+import os
+import re
+from urllib.parse import quote as _quote
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -47,6 +51,34 @@ def _can_write(user: User) -> bool:
     """
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
     return role in (UserRole.admin.value, UserRole.tester.value)
+
+
+#: 知识库文档名的清洗规则 —— **故意比软件包那套宽得多**
+#: ⚠️ 知识库的文件名只是 RAGFlow 里的 location/name, **不落我们的磁盘目录**,
+#:    所以空格/括号/中文都得留着 —— 用户是按原名找文件的,
+#:    静默改成 "xxx_yyy_.pdf" 用户根本认不出那是自己的文件.
+#:    (软件包那套 `sanitize_filename` 是给"文件名会变目录名"的场景用的, 不能套用)
+#:    只挡两样: 路径分隔符 (路径穿越) + 控制字符 (HTTP 头注入).
+_KB_UNSAFE_CHARS = re.compile(r"[\x00-\x1f\x7f/\\]")
+
+#: 知识库文档名长度上限 (跟软件包那套一致)
+MAX_KB_FILE_NAME_LEN = 200
+
+
+def _sanitize_kb_filename(raw: str, fallback: str) -> str:
+    """洗知识库文档名 —— 保留空格/括号/中文, 只挡路径穿越和控制字符.
+
+    ⚠️ 别用 :func:`app.core.software_store.sanitize_filename` —— 那个会把
+       空格/括号换成下划线, 那是"文件名会落成目录名"场景的要求.
+    """
+    name = (raw or "").strip().replace("\x00", "")
+    name = name.replace("\\", "/")
+    name = name.split("/")[-1]          # 只取 basename (防 ../../etc/passwd)
+    name = _KB_UNSAFE_CHARS.sub("_", name)
+    name = name.strip().strip(".")      # 前导/结尾的点 (挡 ".." 和隐藏文件)
+    if not name:
+        name = fallback
+    return name[:MAX_KB_FILE_NAME_LEN]
 
 
 async def _read_upload_limited(upload: UploadFile, max_bytes: int, label: str) -> bytes:
@@ -255,15 +287,25 @@ async def _audit(
         logger.warning("写知识库审计失败 (已忽略): %s", e)
 
 
-async def _dataset_name(dataset_id: str) -> str:
-    """取数据集名称 (给审计用) —— 取不到就空着, 不能因此失败."""
+async def _dataset_info(dataset_id: str) -> tuple[str, str]:
+    """取数据集的 (名称, 分块方式) —— 给审计和提示用.
+
+    ⚠️ 取不到就返回空串, **不能因此失败** —— 上传本身跟这个没关系.
+    """
     try:
         for d in await list_datasets(page=1, page_size=100):
             if d.get("id") == dataset_id:
-                return str(d.get("name") or "")
+                return str(d.get("name") or ""), str(d.get("chunk_method") or "")
     except Exception as e:  # noqa: BLE001
-        logger.debug("取数据集名称失败: %s", e)
-    return ""
+        logger.debug("取数据集信息失败: %s", e)
+    return "", ""
+
+
+#: RAGFlow 里 "手动分块" 的数据集 —— 它的解析器 (rag/app/manual.py) **只支持
+#: pdf / docx**, 传 .txt/.md 会直接 NotImplementedError, 文档卡在 FAIL.
+#: 所以这种数据集我们不自动发起解析, 直接把话说明白.
+MANUAL_CHUNK_METHOD = "manual"
+MANUAL_AUTO_PARSE_EXTS = (".pdf", ".docx")
 
 
 @router.post("/datasets/{dataset_id}/documents")
@@ -295,14 +337,12 @@ async def upload_docs(
         )
 
     # 文件名要洗过 —— 文件名会变成 RAGFlow 里的 location, 路径穿越的斜杠不能带过去
-    from app.core.software_store import sanitize_filename
-
     prepared: list[tuple[str, bytes, str]] = []
     for f in files:
         raw_name = (f.filename or "").strip()
         if not raw_name:
             continue
-        name = sanitize_filename(raw_name, f"doc-{len(prepared) + 1}")
+        name = _sanitize_kb_filename(raw_name, f"doc-{len(prepared) + 1}")
         data = await _read_upload_limited(f, MAX_UPLOAD_BYTES, name)
         if not data:
             continue
@@ -310,7 +350,7 @@ async def upload_docs(
     if not prepared:
         raise HTTPException(status_code=422, detail="没有可上传的文件 (空文件)")
 
-    ds_name = await _dataset_name(dataset_id)
+    ds_name, chunk_method = await _dataset_info(dataset_id)
     try:
         created = await upload_documents(dataset_id, prepared)
     except Exception as e:  # noqa: BLE001
@@ -326,7 +366,18 @@ async def upload_docs(
     # ⚠️ 自动启动解析 —— 否则文档永远停在 UNSTART, 检索不到
     ids = [str(d.get("id")) for d in created if d.get("id")]
     ingest_ok = False
-    if ids:
+    warning = ""
+    if chunk_method == MANUAL_CHUNK_METHOD and not all(
+        n.lower().endswith(MANUAL_AUTO_PARSE_EXTS) for n, _, _ in prepared
+    ):
+        # ⚠️ 手动分块的数据集只认 pdf/docx —— 硬发解析必然 FAIL,
+        #    文档会被标成 FAIL, 用户还以为是自己传坏了. 不如直接说清楚.
+        warning = (
+            f"「{ds_name or dataset_id}」是「手动分块」数据集, RAGFlow 只支持 "
+            f"pdf/docx 自动解析 —— 文档已上传, 但需要管理员手动切分后才能被检索."
+        )
+        logger.info("数据集 %s 是 manual 分块, 跳过自动解析: %s", dataset_id, warning)
+    elif ids:
         try:
             ingest_ok = await ingest_documents(ids, run="1")
         except Exception as e:  # noqa: BLE001 — 解析失败不该让上传失败 (文件已经在库里了)
@@ -337,12 +388,16 @@ async def upload_docs(
             action="upload", user=user, dataset_id=dataset_id, dataset_name=ds_name,
             document_id=str(d.get("id") or ""), doc_name=str(d.get("name") or ""),
             size=int(d.get("size") or 0),
+            # ⚠️ error 只放**真的失败** —— manual 数据集那条是"没解析"不是"没上传",
+            #    塞进来前端会显示成「失败」(用户以为白传了).
+            #    "没参与检索"这件事在上传时已经明确提示过了, 文档状态也在列表里看得到.
         )
 
     return {
         "ok": True,
         "uploaded": len(created),
         "ingest_started": ingest_ok,
+        "warning": warning,
         "docs": [
             {
                 "id": d.get("id"),
@@ -354,6 +409,38 @@ async def upload_docs(
             for d in created
         ],
     }
+
+
+def _ascii_fallback_name(filename: str, fallback: str) -> str:
+    """给 Content-Disposition 的 ``filename=`` 准备一个**纯 ASCII**的兜底名.
+
+    ⚠️ HTTP 头是 latin-1 的 —— starlette 编码头值时用的是 latin-1,
+       中文直接抛 UnicodeEncodeError (整个下载 500).
+    ⚠️ 空格可以留 (外面有引号) —— 但引号和反斜杠必须换掉, 它们会**截断头**.
+    """
+    stem, ext = os.path.splitext(filename)
+    ascii_stem = stem.encode("ascii", "ignore").decode("ascii")
+    ascii_stem = re.sub(r'["\\]', "_", ascii_stem).strip()
+    if not ascii_stem:
+        ascii_stem = fallback
+    # 扩展名也要是纯 ASCII, 否则照样编不了
+    ascii_ext = ext if ext.encode("ascii", "ignore").decode("ascii") == ext else ""
+    return f"{ascii_stem}{ascii_ext}"
+
+
+def _content_disposition(filename: str, fallback: str) -> str:
+    """拼 Content-Disposition —— **必须 latin-1 安全**.
+
+    ⚠️ 中文文件名**不能**直接放进 `filename="..."` —— 头是 latin-1 的,
+       放进去整个响应 500. 规矩:
+         · `filename="xxx"`   → 纯 ASCII 兜底名 (老浏览器 / 老客户端认这个)
+         · `filename*=UTF-8''xxx` → RFC 5987, 真名 (浏览器优先用这个)
+    """
+    ascii_name = _ascii_fallback_name(filename, fallback)
+    return (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{_quote(filename, safe='')}"
+    )
 
 
 @router.get("/datasets/{dataset_id}/documents/{document_id}/download")
@@ -376,16 +463,8 @@ async def download_doc(
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
     # 文件名兜底 —— RAGFlow 的 content-disposition 偶尔没有文件名
-    from app.core.software_store import sanitize_filename
-
-    safe = sanitize_filename(filename, f"document-{document_id[:8]}")
-    # ⚠️ 中文文件名要用 RFC 5987 的 filename* 写, 否则老浏览器会拿到乱码
-    from urllib.parse import quote as _q
-
-    disposition = (
-        f"attachment; filename=\"{safe}\"; "
-        f"filename*=UTF-8''{_q(safe, safe='')}"
-    )
+    safe = _sanitize_kb_filename(filename, f"document-{document_id[:8]}")
+    disposition = _content_disposition(safe, f"document-{document_id[:8]}")
     return Response(
         content=content,
         media_type=ctype or "application/octet-stream",

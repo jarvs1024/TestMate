@@ -246,7 +246,7 @@
         <div class="up-rules">
           · 单个文件 ≤ <b>20MB</b>, 单次最多 <b>5</b> 个<br />
           · 上传后会自动启动解析，解析完成即可被检索到<br />
-          · 内容进入**共享**知识库，所有登录用户都能看到；删除只有管理员能做
+          · 内容进入<b>共享</b>知识库，所有登录用户都能看到；删除只有管理员能做
         </div>
         <input
           ref="fileInput"
@@ -276,8 +276,10 @@
         <div v-if="uploadResult" class="up-result">
           已上传 <b>{{ uploadResult.uploaded }}</b> 个文档
           <template v-if="uploadResult.ingest_started">，解析已启动（异步，稍后刷新看状态）</template>
-          <template v-else>，但解析启动失败 —— 请让管理员重跑解析</template>
+          <template v-else-if="!uploadResult.warning">，但解析启动失败 —— 请让管理员重跑解析</template>
         </div>
+        <!-- ⚠️ 文档进了库但**没参与检索** —— 这话必须说清楚, 不能让用户以为白传了 -->
+        <div v-if="uploadResult?.warning" class="up-err">{{ uploadResult.warning }}</div>
       </div>
     </el-drawer>
 
@@ -541,7 +543,7 @@ const uploadDs = ref<KbDataset | null>(null);
 const uploadFiles = ref<File[]>([]);
 const uploading = ref(false);
 const uploadError = ref('');
-const uploadResult = ref<{ uploaded: number; ingest_started: boolean } | null>(null);
+const uploadResult = ref<{ uploaded: number; ingest_started: boolean; warning?: string } | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 
 function openUpload(d: KbDataset) {
@@ -586,9 +588,15 @@ async function doUpload() {
   const ds = uploadDs.value;
   try {
     const r = await uploadKbDocuments(ds.id, uploadFiles.value);
-    uploadResult.value = { uploaded: r.uploaded, ingest_started: r.ingest_started };
+    uploadResult.value = {
+      uploaded: r.uploaded,
+      ingest_started: r.ingest_started,
+      warning: r.warning || '',
+    };
     uploadFiles.value = [];
-    ElMessage.success(`已上传 ${r.uploaded} 个文档, 解析已启动`);
+    // ⚠️ 有 warning 说明文档进了库但**没参与检索** —— 别弹"成功"把用户骗了
+    if (r.warning) ElMessage.warning(r.warning);
+    else ElMessage.success(`已上传 ${r.uploaded} 个文档, 解析已启动`);
     // 刷新文档列表 —— 新文档要能马上看见
     delete docsByDataset.value[ds.id];
     await loadDocs(ds.id);
