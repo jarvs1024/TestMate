@@ -52,6 +52,7 @@ export function fmtChunkMethod(m: string): string {
     qa: '问答',
     table: '表格',
     tag: '标签',
+    resume: '简历',
   };
   return map[m] || m || '—';
 }

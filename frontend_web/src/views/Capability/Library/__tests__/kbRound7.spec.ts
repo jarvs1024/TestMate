@@ -259,8 +259,7 @@ describe('新建数据集的解析方式与语言', () => {
     expect(h.createKbDataset).toHaveBeenCalledWith('英文库', '', 'naive', 'English');
   });
 
-  it('⚠️ 后端回 warning (比如语言没设上) → 如实告诉用户', async () => {
-    h.createKbDataset.mockResolvedValue({
+  it('⚠️ 后端回 warning (比如语言没设上) → 如实告诉用户', async () => {    h.createKbDataset.mockResolvedValue({
       ok: true,
       dataset: {
         id: 'ds-new', name: '新建的库', description: '', chunk_method: 'naive',
@@ -277,6 +276,28 @@ describe('新建数据集的解析方式与语言', () => {
     await flushPromises();
     expect(h.msg.warning).toHaveBeenCalled();
     expect(String((h.msg.warning.mock.calls[0] as any)[0])).toContain('语言没能设成');
+  });
+
+  // ---------- ⑤ 文案: 别让用户懵 (2026-10-29 第七轮补) ----------
+
+  it('⚠️ 语言的说明要说「按实际要存的文档内容选」—— 别写「默认…」', async () => {
+    const w = await mountLib();
+    const panel = await openCreate(w);
+    const lang = panel.findAll('.cd-field').find((f: any) => f.text().includes('文档语言'))!;
+    const text = lang.text();
+    expect(text).toContain('中文');
+    expect(text).toContain('英文');
+    // ⚠️ 说明里**不该**出现「默认」两个字 —— 用户要的是"按内容选", 不是"默认就完事"
+    expect(text).not.toContain('默认');
+    // ⚠️ 也不该再提 RAGFlow 的内部默认值 (那是实现细节, 用户不关心)
+    expect(text).not.toContain('RAGFlow');
+  });
+
+  it('⚠️ 解析方式要引导用户「不确定就用通用」', async () => {
+    const w = await mountLib();
+    const panel = await openCreate(w);
+    expect(panel.text()).toContain('不确定就用');
+    expect(panel.text()).toContain('通用');
   });
 });
 

@@ -439,23 +439,25 @@
               <span class="cd-ct">通用</span>
               <span class="cd-cd">自动分段，txt / md / docx / pdf 都能用</span>
             </label>
-            <label class="cd-choice" :class="{ on: createForm.chunkMethod === 'manual' }">
-              <input type="radio" value="manual" v-model="createForm.chunkMethod" @change="onQuickChunk" />
-              <span class="cd-ct">手动</span>
-              <span class="cd-cd">只认 pdf / docx，分段要自己再调</span>
-            </label>
+            <!-- ⚠️ 「手动」**删掉了** (2026-10-29 第七轮补) ——
+                 手动切分意味着文档进来后**分段要自己再调**,
+                 而 TestMate 里**没有调分段的功能** —— 建出来的库用户改不了, 是死路.
+                 RAGFlow 那边还认 manual (协议文档那个库就是), 但不给用户选. -->
           </div>
-          <!-- ⚠️ RAGFlow 还有 11 种解析器 (2026-10-29) —— 上面两个是最常用的,
+          <!-- ⚠️ RAGFlow 还有 11 种解析器 (2026-10-29) —— 上面那个是最常用的,
                剩下的放这个下拉里, 免得把抽屉撑成一长串卡片.
                ⚠️ 值是 RAGFlow 的**内部名** (naive/qa/table/...) ——
                「通用」在 RAGFlow 里叫 naive, 叫 general 是**更新版本**的说法, 这版不认. -->
           <div class="cd-more">
             <select v-model="createForm.parserExtra" class="cd-select2" @change="onExtraParser">
-              <option value="">更多解析方式…（不选就用上面的）</option>
+              <option value="">更多解析方式…（不确定就用「通用」）</option>
               <option v-for="p in EXTRA_PARSERS" :key="p.v" :value="p.v">{{ p.label }} — {{ p.desc }}</option>
             </select>
             <div class="cd-hint" v-if="createForm.parserExtra">
-              选中「{{ extraParserLabel }}」—— 这个解析器有自己的一套分段规则, 建完建议先传一份试一下
+              已选「{{ extraParserLabel }}」—— {{ extraParserDesc }}
+            </div>
+            <div class="cd-hint" v-else>
+              不确定用哪种就用「通用」—— 什么文档都能处理，各家解析器只对特定格式更准
             </div>
           </div>
         </div>
@@ -468,12 +470,12 @@
             <label class="cd-choice" :class="{ on: createForm.language === 'Chinese' }">
               <input type="radio" value="Chinese" v-model="createForm.language" />
               <span class="cd-ct">中文</span>
-              <span class="cd-cd">默认。RAGFlow 建库默认是英文，中文库要在这里改</span>
+              <span class="cd-cd">要存的文档主要是中文的，选这个</span>
             </label>
             <label class="cd-choice" :class="{ on: createForm.language === 'English' }">
               <input type="radio" value="English" v-model="createForm.language" />
               <span class="cd-ct">英文</span>
-              <span class="cd-cd">英文文档 / 中英混合</span>
+              <span class="cd-cd">要存的文档主要是英文的，选这个</span>
             </label>
           </div>
         </div>
@@ -1084,24 +1086,30 @@ const createFiles = ref<File[]>([]);
 const createFileInput = ref<HTMLInputElement | null>(null);
 
 /**
- * RAGFlow v0.26.1 的**其余**解析器 (「通用」「手动」在上面做成大卡片了).
+ * RAGFlow v0.26.1 的**其余**解析器 (「通用」在上面做成大卡片了).
  *
  * ⚠️ 值是 RAGFlow 的**内部名** —— 「通用」在 RAGFlow 里叫 `naive`,
  *    叫 `general` 是**更新版本**的说法, 这版不认 (真机实测 code 101).
  * ⚠️ 合法集合跟 RAGFlow 的校验器对齐 —— 不在集合里的值, 库根本建不出来.
+ * ⚠️ **不含 `manual`** —— 手动切分意味着文档进来后分段要自己再调,
+ *    而 TestMate 里**没有调分段的功能** —— 建出来的库用户改不了, 是死路.
+ *    (协议文档那个老库是 manual, 不受影响; 只是不再给新库提供这个选项)
+ *
+ * ⚠️ 每条的 `desc` 写的是**「适合存什么文档」** —— 别写成解析器内部行为。
+ *    用户是按"我要存的东西"来选的, 不是按"解析器怎么工作"来选的。
  */
 const EXTRA_PARSERS: { v: KbChunkMethod; label: string; desc: string }[] = [
-  { v: 'qa', label: '问答', desc: '按问答对切, 适合 FAQ / 售后话术' },
-  { v: 'table', label: '表格', desc: '按表格切, 适合台账 / 清单' },
-  { v: 'paper', label: '论文', desc: '按论文结构切, 适合研究报告' },
-  { v: 'book', label: '书籍', desc: '按章节切, 适合手册 / 教材' },
-  { v: 'laws', label: '法规', desc: '按条款切, 适合制度 / 协议' },
-  { v: 'presentation', label: 'PPT', desc: '按页切, 适合幻灯片' },
-  { v: 'picture', label: '图片', desc: '按图片说明切' },
-  { v: 'one', label: '单段', desc: '整个文件当一段' },
-  { v: 'email', label: '邮件', desc: '按邮件切' },
-  { v: 'tag', label: '标签', desc: '按标签切' },
-  { v: 'resume', label: '简历', desc: '按简历字段切' },
+  { v: 'qa', label: '问答', desc: '适合 FAQ、售后话术、题库' },
+  { v: 'table', label: '表格', desc: '适合台账、清单、参数表' },
+  { v: 'paper', label: '论文', desc: '适合研究报告、学术论文' },
+  { v: 'book', label: '书籍', desc: '适合手册、教材、有章节的长文档' },
+  { v: 'laws', label: '法规', desc: '适合制度、协议、条款类文件' },
+  { v: 'presentation', label: 'PPT', desc: '适合幻灯片、演示文稿' },
+  { v: 'picture', label: '图片', desc: '适合以图片为主的资料' },
+  { v: 'one', label: '单段', desc: '适合短文件，整个当一段' },
+  { v: 'email', label: '邮件', desc: '适合邮件归档' },
+  { v: 'tag', label: '标签', desc: '适合标签式碎片内容' },
+  { v: 'resume', label: '简历', desc: '适合简历库' },
 ];
 
 const createForm = ref<{
@@ -1115,6 +1123,10 @@ const createForm = ref<{
 
 const extraParserLabel = computed(
   () => EXTRA_PARSERS.find((p) => p.v === createForm.value.parserExtra)?.label || '',
+);
+
+const extraParserDesc = computed(
+  () => EXTRA_PARSERS.find((p) => p.v === createForm.value.parserExtra)?.desc || '',
 );
 
 /** 点了上面的大卡片 (通用/手动) → 把「更多解析方式」清掉, 免得两个选择打架 */

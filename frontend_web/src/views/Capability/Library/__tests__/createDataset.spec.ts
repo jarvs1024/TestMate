@@ -180,16 +180,27 @@ describe('新建数据集', () => {
     const inputs = panel.findAll('input.cd-input');
     await inputs[0].setValue('协议管理');
     await inputs[1].setValue('协议规范类文档');
-    // 选「手动」切片
-    const manual = panel.findAll('input[type="radio"]').find((r: any) => r.element.value === 'manual');
-    await manual.setValue();
+    // 选「问答」切片 (2026-10-29 第七轮: 「手动」卡片已删, 走「更多解析方式」下拉)
+    const sel = panel.find('.cd-select2');
+    await sel.setValue('qa');
+    await sel.trigger('change');
     await flushPromises();
 
     const submit = panel.findAll('.up-foot button').find((b: any) => b.text().includes('创建'));
     await submit.trigger('click');
     await flushPromises();
 
-    expect(h.createKbDataset).toHaveBeenCalledWith('协议管理', '协议规范类文档', 'manual', 'Chinese');
+    expect(h.createKbDataset).toHaveBeenCalledWith('协议管理', '协议规范类文档', 'qa', 'Chinese');
+  });
+
+  it('⚠️ 「手动」选项**没有**了 —— 分段得自己调, 而前端调不了 (2026-10-29)', async () => {
+    const w = await mountLib();
+    const panel = await openCreate(w);
+    const manual = panel.findAll('input[type="radio"]').find((r: any) => r.element.value === 'manual');
+    expect(manual, '「手动」切片应该已经去掉了').toBeFalsy();
+    // ⚠️ 下拉里也不能有 manual —— 同样是死路
+    const values = panel.find('.cd-select2').findAll('option').map((o: any) => o.element.value);
+    expect(values).not.toContain('manual');
   });
 
   it('默认是「通用」切片 (RAGFlow 的值是 naive, 不是 general)', async () => {
