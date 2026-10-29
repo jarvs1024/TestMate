@@ -178,3 +178,104 @@ export async function listDocChunks(
   )) as KbDocChunksResult;
 }
 
+// ---------- 上传 / 下载 (2026-10-29) ----------
+
+export interface KbUploadResult {
+  ok: boolean;
+  /** 实际入库的文档数 */
+  uploaded: number;
+  /** 是否已经发起解析 (解析是异步的, 状态要等轮询) */
+  ingest_started: boolean;
+  docs: Array<{
+    id: string;
+    name: string;
+    size: number;
+    location: string;
+    run: string;
+  }>;
+}
+
+/**
+ * 上传文档到数据集 (multipart/form-data, 字段名 `file`).
+ *
+ * ⚠️ 后端限: 单文件 20MB / 单次最多 5 个 —— 超了后端会 413 / 422.
+ * ⚠️ 上传后会自动发起解析, 但解析是异步的 —— 状态要看文档列表轮询.
+ */
+export async function uploadKbDocuments(
+  datasetId: string,
+  files: File[],
+): Promise<KbUploadResult> {
+  const fd = new FormData();
+  for (const f of files) fd.append('file', f);
+  return (await request.post(
+    `/kb/datasets/${encodeURIComponent(datasetId)}/documents`,
+    fd,
+    // ⚠️ **别手动设 Content-Type** —— axios 不会替你补 boundary,
+    //    写成 'multipart/form-data' (没有 boundary) 后端直接解析失败.
+    //    交给浏览器自己设就行.
+    // ⚠️ 超时放宽: 5 个 20MB 的文件传完还要等 RAGFlow 收, 30 秒不够.
+    { timeout: 180000 },
+  )) as KbUploadResult;
+}
+
+/**
+ * 下载文档原始文件.
+ *
+ * ⚠️ 这条走的是**浏览器直接下载** —— 不能走 axios (二进制流过 JSON 解析会坏掉).
+ *    所以用 fetch + blob, 手动触发 a[download].
+ */
+export async function downloadKbDocument(
+  datasetId: string,
+  documentId: string,
+  docName: string,
+): Promise<void> {
+  const token = localStorage.getItem('testmate:token') || '';
+  const r = await fetch(
+    `/api/v1/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}/download`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try {
+      const j = await r.json();
+      detail = j?.detail || detail;
+    } catch { /* 不是 JSON 就用状态码 */ }
+    throw new Error(detail);
+  }
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = docName || 'document';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // ⚠️ 必须 revoke —— 不 revoke 的话 blob 会一直占着内存
+  URL.revokeObjectURL(url);
+}
+
+export interface KbAuditItem {
+  id: number;
+  dataset_id: string;
+  dataset_name: string;
+  document_id: string;
+  doc_name: string;
+  action: string;
+  actor_name: string;
+  error: string;
+  size: number;
+  created_at: string;
+}
+
+/**
+ * 知识库操作审计 —— 谁在什么时候传了什么.
+ *
+ * ⚠️ 内容存在 RAGFlow 里, RAGFlow 自己记不了 TestMate 的账号
+ *    (所有人共用一把 API key) —— "谁传的"只能靠这张表.
+ */
+export async function listKbAudits(limit = 50): Promise<{ items: KbAuditItem[]; total: number }> {
+  return (await request.get('/kb/audits', { params: { limit } })) as {
+    items: KbAuditItem[]; total: number;
+  };
+}
+

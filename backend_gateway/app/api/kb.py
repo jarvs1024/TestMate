@@ -4,9 +4,18 @@
 - GET  /api/v1/kb/datasets        列出 RAGFlow datasets
 - POST /api/v1/kb/search          检索 (代理 RAGFlow /retrieval)
 - GET  /api/v1/kb/health          健康检查
+
+2026-10-29 新增 (普通用户也能往知识库加内容了):
+- POST /api/v1/kb/datasets/{id}/documents            上传文档 (tester 及以上)
+- GET  /api/v1/kb/datasets/{id}/documents/{doc}/download  下载文档 (所有登录用户)
+- GET  /api/v1/kb/audits                             操作审计 (所有登录用户)
+
+⚠️ **删除仍然只有 admin 能做** —— 用户上传的内容进的是**共享**知识库,
+   要能删就意味着能把别人的东西删掉, 那不能给普通用户.
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_user
@@ -14,12 +23,51 @@ from app.core.ragflow_client import (
     list_datasets, retrieval, probe,
     list_documents, ingest_documents, delete_documents,
     list_doc_chunks,
+    upload_documents, download_document,
 )
 from app.models.user import User
 from app.models.user import UserRole
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# ---------- 上传限制 (2026-10-29 用户拍板) ----------
+# ⚠️ 网关侧要挡, RAGFlow 自己不限制 —— 不挡的话一个人传个 10G 文件就能把
+#    服务端内存和磁盘撑爆 (本项目其它上传入口都是这么挡的).
+MAX_UPLOAD_FILE_MB = 20          # 单文件 20MB
+MAX_UPLOAD_FILES = 5             # 单次最多 5 个
+MAX_UPLOAD_BYTES = MAX_UPLOAD_FILE_MB * 1024 * 1024
+
+
+def _can_write(user: User) -> bool:
+    """能不能**写**知识库 (上传文档).
+
+    ⚠️ admin / tester 可以, **viewer 不行** —— viewer 的语义是"只读".
+       删除更严 (只有 admin), 见下面的 delete_docs.
+    """
+    role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    return role in (UserRole.admin.value, UserRole.tester.value)
+
+
+async def _read_upload_limited(upload: UploadFile, max_bytes: int, label: str) -> bytes:
+    """分块读上传内容, 边读边限量 (超限立即 413).
+
+    ⚠️ 别用 `await upload.read()` 全量进内存再校验 —— 那样一个超大文件
+       就能把服务端内存打爆. 读多少收多少.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(1024 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"「{label}」超过单文件上限 ({max_bytes // 1024 // 1024} MB)",
+            )
+        chunks.append(chunk)
 
 
 @router.get("/datasets")
@@ -168,6 +216,227 @@ async def get_doc_chunks(
         logger.exception("list_doc_chunks failed")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
+
+
+async def _audit(
+    *,
+    action: str,
+    user: User,
+    dataset_id: str = "",
+    dataset_name: str = "",
+    document_id: str = "",
+    doc_name: str = "",
+    size: int = 0,
+    error: str = "",
+) -> None:
+    """写一条知识库操作审计.
+
+    ⚠️ **审计写不进去也不能让主流程失败** —— 审计是旁路, 不是主路.
+       (RAGFlow 已经收下文件了, 却因为审计表写不进而报错, 那是"文件传了但显示失败")
+    """
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.models.kb import KbAudit
+
+        async with AsyncSessionLocal() as s:
+            s.add(KbAudit(
+                dataset_id=dataset_id or "",
+                dataset_name=dataset_name or "",
+                document_id=document_id or "",
+                doc_name=doc_name or "",
+                action=action,
+                actor_id=user.id,
+                actor_name=user.username or "",
+                error=error or "",
+                size=int(size or 0),
+            ))
+            await s.commit()
+    except Exception as e:  # noqa: BLE001 — 审计失败不能挡住业务
+        logger.warning("写知识库审计失败 (已忽略): %s", e)
+
+
+async def _dataset_name(dataset_id: str) -> str:
+    """取数据集名称 (给审计用) —— 取不到就空着, 不能因此失败."""
+    try:
+        for d in await list_datasets(page=1, page_size=100):
+            if d.get("id") == dataset_id:
+                return str(d.get("name") or "")
+    except Exception as e:  # noqa: BLE001
+        logger.debug("取数据集名称失败: %s", e)
+    return ""
+
+
+@router.post("/datasets/{dataset_id}/documents")
+async def upload_docs(
+    dataset_id: str,
+    file: list[UploadFile] = File(...),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """上传文档到指定数据集 (multipart/form-data, 字段名 `file`).
+
+    权限: **tester 及以上** (viewer 是只读角色).
+
+    ⚠️ 参数名**必须**叫 `file` —— FastAPI 是拿参数名去表单里取值的
+       (`form.getlist(参数名)`), 字段名对不上就变成"没传文件" 422.
+       多个文件就传多个同名的 `file` 字段 (和 RAGFlow 的接口一致).
+
+    ⚠️ 上传完文档状态是 UNSTART —— **不启动解析它就不参与检索**, 等于白传.
+       所以上传成功后会自动跟一次 ingest (解析是异步的, 这里只负责发起).
+    """
+    files = file
+    if not _can_write(user):
+        raise HTTPException(status_code=403, detail="只读账号不能上传文档")
+    if not files:
+        raise HTTPException(status_code=422, detail="没有选择文件")
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"单次最多上传 {MAX_UPLOAD_FILES} 个文件 (这次 {len(files)} 个)",
+        )
+
+    # 文件名要洗过 —— 文件名会变成 RAGFlow 里的 location, 路径穿越的斜杠不能带过去
+    from app.core.software_store import sanitize_filename
+
+    prepared: list[tuple[str, bytes, str]] = []
+    for f in files:
+        raw_name = (f.filename or "").strip()
+        if not raw_name:
+            continue
+        name = sanitize_filename(raw_name, f"doc-{len(prepared) + 1}")
+        data = await _read_upload_limited(f, MAX_UPLOAD_BYTES, name)
+        if not data:
+            continue
+        prepared.append((name, data, f.content_type or "application/octet-stream"))
+    if not prepared:
+        raise HTTPException(status_code=422, detail="没有可上传的文件 (空文件)")
+
+    ds_name = await _dataset_name(dataset_id)
+    try:
+        created = await upload_documents(dataset_id, prepared)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("upload_documents failed")
+        await _audit(
+            action="upload", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            doc_name=", ".join(n for n, _, _ in prepared),
+            size=sum(len(d) for _, d, _ in prepared),
+            error=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    # ⚠️ 自动启动解析 —— 否则文档永远停在 UNSTART, 检索不到
+    ids = [str(d.get("id")) for d in created if d.get("id")]
+    ingest_ok = False
+    if ids:
+        try:
+            ingest_ok = await ingest_documents(ids, run="1")
+        except Exception as e:  # noqa: BLE001 — 解析失败不该让上传失败 (文件已经在库里了)
+            logger.warning("上传后启动解析失败 (文档已入库, 需手动重跑): %s", e)
+
+    for d in created:
+        await _audit(
+            action="upload", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            document_id=str(d.get("id") or ""), doc_name=str(d.get("name") or ""),
+            size=int(d.get("size") or 0),
+        )
+
+    return {
+        "ok": True,
+        "uploaded": len(created),
+        "ingest_started": ingest_ok,
+        "docs": [
+            {
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "size": d.get("size", 0),
+                "location": d.get("location", ""),
+                "run": d.get("run", "UNSTART"),
+            }
+            for d in created
+        ],
+    }
+
+
+@router.get("/datasets/{dataset_id}/documents/{document_id}/download")
+async def download_doc(
+    dataset_id: str,
+    document_id: str,
+    _user: User = Depends(get_current_user),
+) -> Response:
+    """下载文档的**原始文件**.
+
+    权限: 所有登录用户 —— 知识库本来就是共享的, 下载是只读操作.
+
+    ⚠️ RAGFlow 这个接口返回的是**文件字节流**(不是 JSON), 所以这里必须
+       原样透传, 不能包成 {"data": ...}.
+    """
+    try:
+        content, filename, ctype = await download_document(dataset_id, document_id)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("download_document failed")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    # 文件名兜底 —— RAGFlow 的 content-disposition 偶尔没有文件名
+    from app.core.software_store import sanitize_filename
+
+    safe = sanitize_filename(filename, f"document-{document_id[:8]}")
+    # ⚠️ 中文文件名要用 RFC 5987 的 filename* 写, 否则老浏览器会拿到乱码
+    from urllib.parse import quote as _q
+
+    disposition = (
+        f"attachment; filename=\"{safe}\"; "
+        f"filename*=UTF-8''{_q(safe, safe='')}"
+    )
+    return Response(
+        content=content,
+        media_type=ctype or "application/octet-stream",
+        headers={"Content-Disposition": disposition},
+    )
+
+
+@router.get("/audits")
+async def get_audits(
+    limit: int = 50,
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """知识库操作审计 (谁在什么时候传了什么).
+
+    ⚠️ 内容存在 RAGFlow 里, RAGFlow 自己记不了 TestMate 的账号
+       (所有人共用一把 API key) —— "谁传的"只能靠这张表.
+    """
+    from sqlalchemy import desc, select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.kb import KbAudit
+
+    limit = max(1, min(int(limit or 50), 200))
+    try:
+        async with AsyncSessionLocal() as s:
+            rows = (
+                await s.execute(
+                    select(KbAudit).order_by(desc(KbAudit.id)).limit(limit)
+                )
+            ).scalars().all()
+        return {
+            "items": [
+                {
+                    "id": r.id,
+                    "dataset_id": r.dataset_id,
+                    "dataset_name": r.dataset_name,
+                    "document_id": r.document_id,
+                    "doc_name": r.doc_name,
+                    "action": r.action,
+                    "actor_name": r.actor_name,
+                    "error": r.error,
+                    "size": r.size,
+                    "created_at": r.created_at.isoformat() + "Z" if r.created_at else "",
+                }
+                for r in rows
+            ],
+            "total": len(rows),
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.exception("list kb audits failed")
+        raise HTTPException(status_code=500, detail=f"读取审计失败: {e}")
 
 
 class IngestIn(BaseModel):

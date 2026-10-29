@@ -1,12 +1,13 @@
 """RAGFlow API 客户端 — 配置从 DB 读, 兜底用 .env."""
 from __future__ import annotations
 import logging
+import re
 from typing import Any
 
 import httpx
 
 from app.core.settings_store import get, _rewrite_loopback
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,97 @@ async def ingest_documents(doc_ids: list[str], run: str = "1", delete: bool = Fa
         if data.get("code", 0) != 0:
             raise RuntimeError(f"ragflow ingest_documents: {data.get('message') or data}")
         return bool(data.get("data"))
+
+
+# ---------- 上传 / 下载文档 (2026-10-29) ----------
+#
+# RAGFlow HTTP API 原文 (docs/references/http_api_reference.md):
+#   POST /api/v1/datasets/{dataset_id}/documents
+#     · type=local (默认): multipart/form-data, 字段名 **`file`** (可多个同名 field)
+#     · 返回 {code:0, data:[{id, name, location, run:"UNSTART", size, ...}]}
+#   GET  /api/v1/datasets/{dataset_id}/documents/{document_id}
+#     · **直接返回文件字节流** (不是 JSON!) —— 带 content-disposition 头
+#
+# ⚠️ 上传完 run 是 UNSTART —— **不启动解析它就不参与检索**, 等于白传.
+#    所以上传后要跟上一次 ingest (run="1").
+
+async def upload_documents(
+    dataset_id: str,
+    files: list[tuple[str, bytes, str]],
+) -> list[dict[str, Any]]:
+    """上传文档到 dataset (multipart/form-data).
+
+    files: [(文件名, 内容, content-type), ...] —— 每个都会作为**同名 `file` 字段**发出去.
+
+    ⚠️ headers 里**不能**带 Content-Type —— httpx 要自己算 multipart 的 boundary,
+       写死了 boundary 就对不上了 (RAGFlow 会报 "No file part!").
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        return []
+    if not files:
+        return []
+    url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents"
+    multipart = [("file", (name, data, ctype or "application/octet-stream")) for name, data, ctype in files]
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        r = await client.post(url, headers={"Authorization": f"Bearer {key}"}, files=multipart)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow upload_documents: {data.get('message') or data}")
+        return data.get("data") or []
+
+
+def _filename_from_disposition(value: str) -> str:
+    """从 content-disposition 里取文件名.
+
+    支持两种写法:
+      · ``attachment; filename=xxx.pdf``          (RAGFlow 现在的写法)
+      · ``attachment; filename*=UTF-8''xxx.pdf``  (RFC 5987, 中文名会用这个)
+    """
+    if not value:
+        return ""
+    # RFC 5987 优先 (filename*=UTF-8''...)
+    m = re.search(r"filename\*\s*=\s*([^']*)'([^']*)'([^;]+)", value, re.I)
+    if m:
+        try:
+            return unquote(m.group(3).strip().strip('"'))
+        except Exception:  # noqa: BLE001 — 解不出来就用原始的
+            return m.group(3).strip().strip('"')
+    m = re.search(r'filename\s*=\s*"([^"]*)"', value, re.I)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"filename\s*=\s*([^;]+)", value, re.I)
+    if m:
+        return m.group(1).strip().strip('"')
+    return ""
+
+
+async def download_document(dataset_id: str, document_id: str) -> tuple[bytes, str, str]:
+    """下载文档的**原始文件**.
+
+    返回 (内容, 文件名, content-type).
+
+    ⚠️ RAGFlow 失败时返回的是 **JSON** (`{"code":102,"message":"You do not own..."}`),
+       不是文件 —— 必须先看 content-type 再决定是不是当文件返回,
+       否则用户会下载到一个叫「xxx.pdf」的 JSON 错误, 打开全是乱码.
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        raise RuntimeError("RAGFlow 未配置")
+    url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/{quote(document_id, safe='')}"
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.get(url, headers={"Authorization": f"Bearer {key}"})
+        r.raise_for_status()
+        ctype = (r.headers.get("content-type") or "application/octet-stream").lower()
+        if "json" in ctype:
+            try:
+                err = r.json()
+            except Exception:  # noqa: BLE001 — 不是 JSON 就当纯文本错误
+                raise RuntimeError(f"ragflow download_document: {r.text[:200]}")
+            raise RuntimeError(f"ragflow download_document: {err.get('message') or err}")
+        name = _filename_from_disposition(r.headers.get("content-disposition") or "")
+        return r.content, name, ctype
 
 
 async def delete_documents(dataset_id: str, doc_ids: list[str] | None = None, delete_all: bool = False) -> bool:

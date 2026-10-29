@@ -18,3 +18,6 @@ from app.models.software import (  # noqa: F401
     SoftwareItem,
     SoftwareVersion,
 )
+# 知识库 (RAGFlow) 的操作审计 —— 内容存在 RAGFlow 里, 不留痕就不知道谁传的.
+# ⚠️ 同上: 必须在这里导出, 否则建表时漏掉这张表.
+from app.models.kb import KbAudit  # noqa: F401

@@ -111,13 +111,19 @@
                   <div class="doc-hd">
                     <div class="doc-t">📄 {{ d.name }} · 文档列表</div>
                     <div class="doc-tools">
+                      <!-- ⚠️ 只有 tester 及以上能上传 (viewer 是只读角色) -->
+                      <button
+                        v-if="canWrite"
+                        class="reload sm upload-btn"
+                        title="往这个数据集上传文档 (单文件 ≤20MB, 单次 ≤5 个)"
+                        @click="openUpload(d)">⬆ 上传文档</button>
                       <button class="reload sm" @click="loadDocs(d.id)" :disabled="docLoading(d.id)">↻</button>
                     </div>
                   </div>
                   <table class="doc-tbl">
                     <thead>
                       <tr>
-                        <th>名称</th><th>大小</th><th>分段</th><th>解析</th><th>启用</th><th>更新</th><th style="width:80px">操作</th>
+                        <th>名称</th><th>大小</th><th>分段</th><th>解析</th><th>启用</th><th>更新</th><th style="width:120px">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -137,6 +143,11 @@
                         <td class="mono">{{ fmtTime(doc.update_time) || doc.update_date || '—' }}</td>
                         <td>
                           <button class="link-btn" @click="openChunks(d, doc)" title="查看分段内容">分段</button>
+                          <!-- ⚠️ 下载是只读操作 → 所有登录用户都能用 -->
+                          <button
+                            class="link-btn"
+                            title="下载原始文件"
+                            @click="onDownload(d, doc)">下载</button>
                         </td>
                       </tr>
                       <tr v-if="docsOf(d.id).length === 0 && !docLoading">
@@ -166,6 +177,41 @@
       </table>
     </div>
 
+    <!-- 操作记录 (谁在什么时候动了知识库) -->
+    <div class="card">
+      <div class="ds-hd">
+        <h2><span>操作记录</span> <button class="reload" @click="loadAudits" :disabled="auditLoading">↻ 刷新</button></h2>
+      </div>
+      <div v-if="auditError" class="empty err">
+        操作记录加载失败：{{ auditError }}
+        <button class="ghost-btn" @click="loadAudits">重试</button>
+      </div>
+      <table v-else class="ds-tbl">
+        <thead>
+          <tr>
+            <th>时间</th><th>谁</th><th>动作</th><th>数据集</th><th>文档</th><th>大小</th><th>结果</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="a in audits" :key="a.id">
+            <td class="mono">{{ fmtIso(a.created_at) || '—' }}</td>
+            <td class="mono">{{ a.actor_name || '—' }}</td>
+            <td><span class="run-badge" :class="a.error ? 'run-fail' : 'run-done'">{{ auditActionLabel(a.action) }}</span></td>
+            <td>{{ a.dataset_name || a.dataset_id || '—' }}</td>
+            <td class="nm"><span class="doc-name">{{ a.doc_name || '—' }}</span></td>
+            <td class="mono">{{ a.size ? fmtSize(a.size) : '—' }}</td>
+            <td class="mono" :class="{ 'dt-err': a.error }" :title="a.error">{{ a.error ? '失败' : '成功' }}</td>
+          </tr>
+          <tr v-if="!audits.length && !auditLoading">
+            <td colspan="7" class="empty">还没有操作记录</td>
+          </tr>
+          <tr v-if="auditLoading">
+            <td colspan="7" class="empty">加载中…</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- 数据集详情抽屉 (P1) -->
     <el-drawer v-model="detailOpen" :title="detailDs?.name || '数据集详情'" size="520px" direction="rtl">
       <template v-if="detailDs">
@@ -189,6 +235,50 @@
           <pre class="dt-pre mono">{{ JSON.stringify(detailDs.parser_config, null, 2) }}</pre>
         </div>
       </template>
+    </el-drawer>
+
+    <!-- 上传文档抽屉 (2026-10-29) -->
+    <el-drawer v-model="uploadOpen" title="上传文档到知识库" size="520px" direction="rtl">
+      <div class="up-panel">
+        <div class="up-tip">
+          目标数据集：<b>{{ uploadDs?.name || '—' }}</b>
+        </div>
+        <div class="up-rules">
+          · 单个文件 ≤ <b>20MB</b>, 单次最多 <b>5</b> 个<br />
+          · 上传后会自动启动解析，解析完成即可被检索到<br />
+          · 内容进入**共享**知识库，所有登录用户都能看到；删除只有管理员能做
+        </div>
+        <input
+          ref="fileInput"
+          type="file"
+          multiple
+          class="up-input"
+          :accept="UPLOAD_ACCEPT"
+          @change="onPickFiles" />
+        <ul v-if="uploadFiles.length" class="up-files">
+          <li v-for="(f, i) in uploadFiles" :key="f.name + i">
+            <span class="up-fn">{{ f.name }}</span>
+            <span class="up-fs mono">{{ fmtSize(f.size) }}</span>
+            <button class="up-rm" @click="removeFile(i)">✕</button>
+          </li>
+        </ul>
+        <div v-else class="up-empty">还没选文件</div>
+        <div v-if="uploadError" class="up-err">{{ uploadError }}</div>
+        <div class="up-foot">
+          <button class="ghost-btn" @click="uploadOpen = false">取消</button>
+          <button
+            class="primary-btn"
+            :disabled="!uploadFiles.length || uploading"
+            @click="doUpload">
+            {{ uploading ? '上传中…' : '上传并解析' }}
+          </button>
+        </div>
+        <div v-if="uploadResult" class="up-result">
+          已上传 <b>{{ uploadResult.uploaded }}</b> 个文档
+          <template v-if="uploadResult.ingest_started">，解析已启动（异步，稍后刷新看状态）</template>
+          <template v-else>，但解析启动失败 —— 请让管理员重跑解析</template>
+        </div>
+      </div>
     </el-drawer>
 
     <!-- 文档分段预览抽屉 -->
@@ -254,14 +344,28 @@ import {
   listDatasets, kbHealth, type KbDataset, type KbDocument,
   listDocuments, listDocChunks,
   type KbDocChunk,
+  uploadKbDocuments, downloadKbDocument, listKbAudits, type KbAuditItem,
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
+import { useUserStore } from '@/stores/user';
 import CapabilityShell from '@/components/CapabilityShell.vue';
 import {
-  fmtSize, fmtTime, fmtChunkMethod, docIcon,
+  fmtSize, fmtTime, fmtIso, fmtChunkMethod, docIcon,
   runStatusClass, runStatusLabel, fmtDuration, sourceLabel,
 } from '@/utils/format';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
+
+const userStore = useUserStore();
+/**
+ * 能不能**写**知识库 (上传文档).
+ *
+ * ⚠️ viewer 是**只读**角色 —— 能看、能下载, 但不能往共享知识库里塞东西.
+ *    后端也这么判 (kb.py 的 _can_write), 前端只是提前把入口藏掉.
+ */
+const canWrite = computed(() => {
+  const r = userStore.user?.role;
+  return r === 'admin' || r === 'tester';
+});
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
@@ -426,6 +530,107 @@ function openDocDetail(doc: KbDocument) {
   docDetailOpen.value = true;
 }
 
+// === 上传文档 (2026-10-29) ===
+/** ⚠️ 后端限: 单文件 20MB / 单次 5 个 —— 前端先挡一道, 别让用户白等上传完才报错 */
+const MAX_FILE_MB = 20;
+const MAX_FILES = 5;
+const UPLOAD_ACCEPT = '.txt,.md,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.json,.html,.htm';
+
+const uploadOpen = ref(false);
+const uploadDs = ref<KbDataset | null>(null);
+const uploadFiles = ref<File[]>([]);
+const uploading = ref(false);
+const uploadError = ref('');
+const uploadResult = ref<{ uploaded: number; ingest_started: boolean } | null>(null);
+const fileInput = ref<HTMLInputElement | null>(null);
+
+function openUpload(d: KbDataset) {
+  uploadDs.value = d;
+  uploadFiles.value = [];
+  uploadError.value = '';
+  uploadResult.value = null;
+  uploadOpen.value = true;
+}
+
+function onPickFiles(e: Event) {
+  const el = e.target as HTMLInputElement;
+  const picked = Array.from(el.files || []);
+  uploadError.value = '';
+  const kept: File[] = [];
+  for (const f of picked) {
+    if (f.size > MAX_FILE_MB * 1024 * 1024) {
+      uploadError.value = `「${f.name}」超过单文件上限 (${MAX_FILE_MB}MB)`;
+      continue;
+    }
+    if (kept.length + uploadFiles.value.length >= MAX_FILES) {
+      uploadError.value = `单次最多上传 ${MAX_FILES} 个文件`;
+      break;
+    }
+    kept.push(f);
+  }
+  uploadFiles.value = [...uploadFiles.value, ...kept];
+  // ⚠️ 清掉 input 的值 —— 否则选同一个文件两次不会触发 change
+  el.value = '';
+}
+
+function removeFile(i: number) {
+  uploadFiles.value = uploadFiles.value.filter((_, idx) => idx !== i);
+  uploadError.value = '';
+}
+
+async function doUpload() {
+  if (!uploadDs.value || !uploadFiles.value.length) return;
+  uploading.value = true;
+  uploadError.value = '';
+  uploadResult.value = null;
+  const ds = uploadDs.value;
+  try {
+    const r = await uploadKbDocuments(ds.id, uploadFiles.value);
+    uploadResult.value = { uploaded: r.uploaded, ingest_started: r.ingest_started };
+    uploadFiles.value = [];
+    ElMessage.success(`已上传 ${r.uploaded} 个文档, 解析已启动`);
+    // 刷新文档列表 —— 新文档要能马上看见
+    delete docsByDataset.value[ds.id];
+    await loadDocs(ds.id);
+    await loadAudits();
+  } catch (e: any) {
+    uploadError.value = httpErrorText(errorStatus(e), errorDetail(e), '上传失败');
+  } finally {
+    uploading.value = false;
+  }
+}
+
+/** 下载文档原始文件 (只读操作 → 所有登录用户都能用). */
+async function onDownload(d: KbDataset, doc: KbDocument) {
+  try {
+    await downloadKbDocument(d.id, doc.id, doc.name);
+  } catch (e: any) {
+    ElMessage.error('下载失败: ' + (e?.message || '未知错误'));
+  }
+}
+
+// === 操作记录 (审计) ===
+const audits = ref<KbAuditItem[]>([]);
+const auditLoading = ref(false);
+const auditError = ref('');
+
+function auditActionLabel(a: string): string {
+  return ({ upload: '上传', delete: '删除', ingest: '解析' } as Record<string, string>)[a] || a;
+}
+
+async function loadAudits() {
+  auditLoading.value = true;
+  auditError.value = '';
+  try {
+    const r = await listKbAudits(50);
+    audits.value = r.items || [];
+  } catch (e: any) {
+    auditError.value = httpErrorText(errorStatus(e), errorDetail(e), '读取失败');
+  } finally {
+    auditLoading.value = false;
+  }
+}
+
 async function openChunks(d: KbDataset, doc: KbDocument) {
   chunksTitle.value = `📑 ${doc.name} · 分段预览`;
   chunksOpen.value = true;
@@ -478,7 +683,7 @@ async function warmupAllDocs() {
 }
 
 onMounted(async () => {
-  await Promise.allSettled([loadAll(), loadShareConfig()]);
+  await Promise.allSettled([loadAll(), loadShareConfig(), loadAudits()]);
   // 不阻塞 UI: 后台预热文档列表, 概览总大小 / 分段数 / 文档数随后到位
   warmupAllDocs();
   if (activeTab.value === 'search' && searchEmbedUrl.value) await reResolve('search');
@@ -610,6 +815,28 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 }
 .link-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 .link-btn:last-child { margin-right: 0; }
+
+/* 上传文档 (2026-10-29) */
+.upload-btn { border-color: var(--primary); color: var(--primary); }
+.upload-btn:hover { background: var(--primary-soft); }
+.up-panel { display: flex; flex-direction: column; gap: 12px; }
+.up-tip { font-size: 13px; color: var(--ink-700); }
+.up-tip b { color: var(--ink-900); }
+.up-rules { font-size: 12px; color: var(--ink-500); line-height: 1.9; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.up-rules b { color: var(--ink-900); }
+.up-input { font-size: 12px; color: var(--ink-700); }
+.up-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.up-files li { display: flex; align-items: center; gap: 8px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; font-size: 12px; }
+.up-fn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-900); }
+.up-fs { color: var(--ink-500); font-size: 11px; }
+.up-rm { background: transparent; border: 0; color: var(--ink-500); cursor: pointer; font-size: 12px; padding: 0 2px; }
+.up-rm:hover { color: var(--err); }
+.up-empty { font-size: 12px; color: var(--ink-500); padding: 12px 0; }
+.up-err { font-size: 12px; color: var(--err); }
+.up-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.primary-btn { background: var(--primary); border: 1px solid var(--primary); color: #fff; padding: 6px 16px; border-radius: 7px; font-size: 12.5px; font-weight: 600; font-family: inherit; cursor: pointer; }
+.primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.up-result { font-size: 12px; color: var(--ink-700); background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; }
 
 /* chunks 抽屉 */
 .chunks-panel { display: flex; flex-direction: column; gap: 12px; }
