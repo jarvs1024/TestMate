@@ -28,7 +28,7 @@ from app.core.ragflow_client import (
     list_documents, ingest_documents, delete_documents,
     list_doc_chunks,
     upload_documents, download_document,
-    create_dataset,
+    create_dataset, delete_dataset,
 )
 from app.models.user import User
 from app.models.user import UserRole
@@ -160,7 +160,7 @@ async def create_kb_dataset(
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
     ds = ds or {}
-    return {
+    result = {
         "ok": True,
         "dataset": {
             "id": ds.get("id"),
@@ -171,6 +171,77 @@ async def create_kb_dataset(
             "permission": ds.get("permission", "me"),
             "document_count": ds.get("document_count", 0),
             "chunk_count": ds.get("chunk_count", 0),
+        },
+    }
+    # 归属: 记下「这个库是谁建的」—— RAGFlow 那边记不了 TestMate 的账号
+    await _save_dataset_owner(ds, user)
+    await _audit(
+        action="create", user=user,
+        dataset_id=str(ds.get("id") or ""),
+        dataset_name=str(ds.get("name") or payload.name),
+    )
+    return result
+
+
+@router.delete("/datasets/{dataset_id}")
+async def delete_kb_dataset(
+    dataset_id: str,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """删除整个数据集. **admin only**.
+
+    权限跟「删除文档」同一档 —— 都是**不可逆**的破坏性操作, 只给 admin.
+
+    ⚠️ **硬删, 不可逆** —— 库里的所有文档、它们的分段、MinIO 里的源文件
+       一起没了, **没有回收站**. RAGFlow 是逐个文档走 `remove_document`,
+       删掉一个 1000 段的库要跑一会儿.
+    ⚠️ RAGFlow 那边清 ES / 对象存储是**后台任务** —— 接口已经返回 200,
+       列表里可能还短暂看得到那个库. 所以前端删完要**刷新**列表,
+       别以为没删掉就再点一次 (那会真删第二遍).
+    """
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="admin only")
+
+    # 先把库名和内容规模捞出来 —— 审计要用, 前端确认文案也要
+    ds_name, doc_count, chunk_count = "", 0, 0
+    try:
+        # ⚠️ page_size 只能是 100 以内 —— 传 200 RAGFlow 会返回 code=101 + 空 data
+        for d in await list_datasets(page=1, page_size=100):
+            if str(d.get("id") or "") == dataset_id:
+                ds_name = str(d.get("name") or "")
+                doc_count = int(d.get("document_count") or 0)
+                chunk_count = int(d.get("chunk_count") or 0)
+                break
+    except Exception as e:  # noqa: BLE001
+        # ⚠️ 这里不能当成"数据集不存在"(404) —— 那是**误导**:
+        #    实际是 RAGFlow 挂了, 说的是"找不到"但真实原因是"连不上".
+        logger.warning("删库前取数据集信息失败: %s", e)
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    if not ds_name:
+        # 库里根本没有这个 id —— 别去调 RAGFlow 删一个不存在的东西
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    try:
+        await delete_dataset(dataset_id)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("delete_dataset failed")
+        await _audit(
+            action="delete", user=user, dataset_id=dataset_id,
+            dataset_name=ds_name, error=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    # 本地的归属记录也清掉 —— 库都没了, 归属也就没了
+    await _drop_dataset_ownership(dataset_id)
+    await _audit(action="delete", user=user, dataset_id=dataset_id, dataset_name=ds_name)
+    return {
+        "ok": True,
+        "deleted": {
+            "dataset_id": dataset_id,
+            "name": ds_name,
+            "documents": doc_count,
+            "chunks": chunk_count,
         },
     }
 
@@ -206,6 +277,13 @@ async def get_datasets(_user: User = Depends(get_current_user)) -> dict:
             }
             for d in items
         ]
+        # 归属: 补上「谁建的」—— RAGFlow 那边记不了 TestMate 的账号
+        owners = await _owners_for_datasets([str(x.get("id") or "") for x in cleaned])
+        for item in cleaned:
+            o = owners.get(str(item.get("id") or ""), {})
+            item["created_by"] = o.get("created_by")
+            item["created_by_name"] = o.get("created_by_name", "")
+            item["created_at"] = o.get("created_at")
         return {"items": cleaned, "total": len(cleaned)}
     except Exception as e:
         logger.exception("list_datasets failed")
@@ -261,6 +339,13 @@ async def get_documents(
             }
             for d in docs
         ]
+        # 归属: 补上「谁传的」—— RAGFlow 那边记不了 TestMate 的账号
+        owners = await _owners_for_documents([str(x.get("id") or "") for x in cleaned])
+        for item in cleaned:
+            o = owners.get(str(item.get("id") or ""), {})
+            item["uploaded_by"] = o.get("uploaded_by")
+            item["uploaded_by_name"] = o.get("uploaded_by_name", "")
+            item["uploaded_at"] = o.get("uploaded_at")
         # ⚠️ total 必须是**全量**文档数, 不是本页条数!
         #    RAGFlow 的 data.total 就是全量; 以前这里返回 len(cleaned) (本页数),
         #    前端那圈翻页循环 `for (page=2; all.length < total)` 于是永远不执行
@@ -374,6 +459,149 @@ async def _dataset_info(dataset_id: str) -> tuple[str, str]:
     return "", ""
 
 
+# ============ 归属 (谁建的库 / 谁传的文档) ============
+#
+# ⚠️ **RAGFlow 记不了 TestMate 的账号** —— 它的 `created_by` 指的是 RAGFlow 用户,
+#    而 TestMate 的所有登录用户共用**同一把 API key**.
+#    所以「这个库是谁建的」「这篇是谁传的」只能存在 TestMate 自己的库里.
+#
+# ⚠️ 这些是**旁路** —— 写失败不能挡住业务 (跟审计一个待遇).
+
+
+async def _save_dataset_owner(ds: dict, user: User) -> None:
+    """记下「这个数据集是谁建的」."""
+    ds_id = str(ds.get("id") or "")
+    if not ds_id:
+        return
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.models.kb import KbDatasetMeta
+
+        async with AsyncSessionLocal() as s:
+            row = await s.get(KbDatasetMeta, ds_id)
+            if row is None:
+                row = KbDatasetMeta(dataset_id=ds_id)
+                s.add(row)
+            row.name = str(ds.get("name") or "")
+            row.description = str(ds.get("description") or "")
+            row.chunk_method = str(ds.get("chunk_method") or "")
+            row.embedding_model = str(ds.get("embedding_model") or "")
+            row.created_by = user.id
+            row.created_by_name = user.username or ""
+            await s.commit()
+    except Exception as e:  # noqa: BLE001 — 归属写失败不能挡住业务
+        logger.warning("写数据集归属失败 (已忽略): %s", e)
+
+
+async def _save_document_owner(doc: dict, dataset_id: str, user: User) -> None:
+    """记下「这篇文档是谁传的」.
+
+    ⚠️ 语义是「**当前这一版**是谁传的」—— 重新上传过就更新成最后那个人.
+    """
+    doc_id = str(doc.get("id") or "")
+    if not doc_id:
+        return
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.models.kb import KbDocumentMeta
+
+        async with AsyncSessionLocal() as s:
+            row = await s.get(KbDocumentMeta, doc_id)
+            if row is None:
+                row = KbDocumentMeta(document_id=doc_id)
+                s.add(row)
+            row.dataset_id = dataset_id
+            row.doc_name = str(doc.get("name") or "")
+            row.size = int(doc.get("size") or 0)
+            row.uploaded_by = user.id
+            row.uploaded_by_name = user.username or ""
+            await s.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("写文档归属失败 (已忽略): %s", e)
+
+
+async def _owners_for_datasets(ids: list[str]) -> dict[str, dict]:
+    """批量取数据集归属 —— 详情里显示「谁建的」.
+
+    ⚠️ 取不到就返回空 dict, **不能因此失败** —— 归属只是展示用的附加信息.
+    ⚠️ 历史数据集 (建库功能上线前手工建的) 在表里没有记录 → 详情显示「—」.
+    """
+    if not ids:
+        return {}
+    try:
+        from sqlalchemy import select
+
+        from app.db.session import AsyncSessionLocal
+        from app.models.kb import KbDatasetMeta
+
+        async with AsyncSessionLocal() as s:
+            rows = (await s.execute(
+                select(KbDatasetMeta).where(KbDatasetMeta.dataset_id.in_(ids))
+            )).scalars().all()
+            return {
+                r.dataset_id: {
+                    "created_by": r.created_by,
+                    "created_by_name": r.created_by_name or "",
+                    # ⚠️ 库里存的是 naive UTC, 这里**手动加 Z** ——
+                    #    这个接口返回的是 plain dict, 走不到 schemas/base.py 的
+                    #    UTCModel 序列化器, 不加 Z 前端会按本地时区解析, 差 8 小时.
+                    "created_at": (r.created_at.isoformat() + "Z") if r.created_at else "",
+                }
+                for r in rows
+            }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("读数据集归属失败 (已忽略): %s", e)
+        return {}
+
+
+async def _owners_for_documents(ids: list[str]) -> dict[str, dict]:
+    """批量取文档归属 —— 详情里显示「谁传的」."""
+    if not ids:
+        return {}
+    try:
+        from sqlalchemy import select
+
+        from app.db.session import AsyncSessionLocal
+        from app.models.kb import KbDocumentMeta
+
+        async with AsyncSessionLocal() as s:
+            rows = (await s.execute(
+                select(KbDocumentMeta).where(KbDocumentMeta.document_id.in_(ids))
+            )).scalars().all()
+            return {
+                r.document_id: {
+                    "uploaded_by": r.uploaded_by,
+                    "uploaded_by_name": r.uploaded_by_name or "",
+                    # ⚠️ 同上 —— plain dict 走不到 UTCModel, 手动加 Z
+                    "uploaded_at": (r.uploaded_at.isoformat() + "Z") if r.uploaded_at else "",
+                }
+                for r in rows
+            }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("读文档归属失败 (已忽略): %s", e)
+        return {}
+
+
+async def _drop_dataset_ownership(dataset_id: str) -> None:
+    """删数据集时清掉本地归属记录 (RAGFlow 那边的库已经没了, 这边也该没)."""
+    try:
+        from sqlalchemy import delete as sa_delete
+
+        from app.db.session import AsyncSessionLocal
+        from app.models.kb import KbDatasetMeta, KbDocumentMeta
+
+        async with AsyncSessionLocal() as s:
+            await s.execute(
+                sa_delete(KbDocumentMeta).where(KbDocumentMeta.dataset_id == dataset_id)
+            )
+            await s.execute(
+                sa_delete(KbDatasetMeta).where(KbDatasetMeta.dataset_id == dataset_id)
+            )
+            await s.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("清理数据集归属失败 (已忽略): %s", e)
+
+
 #: RAGFlow 里 "手动分块" 的数据集 —— 它的解析器 (rag/app/manual.py) **只支持
 #: pdf / docx**, 传 .txt/.md 会直接 NotImplementedError, 文档卡在 FAIL.
 #: 所以这种数据集我们不自动发起解析, 直接把话说明白.
@@ -465,6 +693,8 @@ async def upload_docs(
             #    塞进来前端会显示成「失败」(用户以为白传了).
             #    "没参与检索"这件事在上传时已经明确提示过了, 文档状态也在列表里看得到.
         )
+        # 归属: 记下「这篇是谁传的」—— RAGFlow 那边记不了 TestMate 的账号
+        await _save_document_owner(d, dataset_id, user)
 
     return {
         "ok": True,

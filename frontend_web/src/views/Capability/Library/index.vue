@@ -122,6 +122,12 @@
                   title="往这个数据集上传文档"
                   @click="openUpload(d)">⬆ 上传</button>
                 <button class="ghost-btn" @click="openDetail(d)">详情</button>
+                <!-- ⚠️ 删除数据集 = 硬删, 不可逆 → 只给 admin, 且要输入库名确认 -->
+                <button
+                  v-if="isAdmin"
+                  class="link-btn danger"
+                  title="删除整个数据集 (连同里面的文档一起永久删除)"
+                  @click="doDeleteDataset(d)">🗑 删除</button>
               </td>
             </tr>
             <!-- 展开的文档子表 -->
@@ -238,6 +244,8 @@
         <div class="dt">
           <div class="dt-row"><span class="dt-k">ID</span><span class="dt-v mono">{{ detailDs.id }}</span></div>
           <div class="dt-row"><span class="dt-k">名称</span><span class="dt-v">{{ detailDs.name }}</span></div>
+          <div class="dt-row"><span class="dt-k">创建者</span><span class="dt-v">{{ detailDs.created_by_name || '—' }}</span></div>
+          <div class="dt-row"><span class="dt-k">创建时间</span><span class="dt-v mono">{{ fmtIso(detailDs.created_at) }}</span></div>
           <div class="dt-row"><span class="dt-k">嵌入模型</span><span class="dt-v mono">{{ detailDs.embedding_model || '—' }}</span></div>
           <div class="dt-row"><span class="dt-k">权限</span><span class="dt-v"><span class="perm" :class="`perm-${detailDs.permission}`">{{ detailDs.permission === 'team' ? '团队' : '私有' }}</span></span></div>
           <div class="dt-row"><span class="dt-k">语言</span><span class="dt-v">{{ detailDs.language || '—' }}</span></div>
@@ -406,6 +414,8 @@
         <div class="dt">
           <div class="dt-row"><span class="dt-k">ID</span><span class="dt-v mono">{{ docDetail.id }}</span></div>
           <div class="dt-row"><span class="dt-k">名称</span><span class="dt-v">{{ docDetail.name }}</span></div>
+          <div class="dt-row"><span class="dt-k">上传者</span><span class="dt-v">{{ docDetail.uploaded_by_name || '—' }}</span></div>
+          <div class="dt-row"><span class="dt-k">上传时间</span><span class="dt-v mono">{{ fmtIso(docDetail.uploaded_at) }}</span></div>
           <div class="dt-row"><span class="dt-k">路径</span><span class="dt-v mono">{{ docDetail.location || '—' }}</span></div>
           <div class="dt-row"><span class="dt-k">类型</span><span class="dt-v">{{ (docDetail.type || '').toUpperCase() || '—' }}</span></div>
           <div class="dt-row"><span class="dt-k">大小</span><span class="dt-v mono">{{ fmtSize(docDetail.size) }}</span></div>
@@ -431,14 +441,14 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { buildEmbedUrl as apiBuildEmbedUrl, getSchema } from '@/api/settings';
 import {
   listDatasets, kbHealth, type KbDataset, type KbDocument,
   listDocuments, listDocChunks,
   type KbDocChunk,
   uploadKbDocuments, downloadKbDocument, listKbAudits, type KbAuditItem,
-  createKbDataset, type KbChunkMethod,
+  createKbDataset, type KbChunkMethod, deleteKbDataset,
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
 import { useUserStore } from '@/stores/user';
@@ -460,6 +470,15 @@ const canWrite = computed(() => {
   const r = userStore.user?.role;
   return r === 'admin' || r === 'tester';
 });
+
+/**
+ * 删除数据集 —— **只有 admin**.
+ *
+ * ⚠️ 跟"上传"不是一个档: 上传是往里加东西(加错了还能删文档),
+ *    删数据集是**硬删** —— 库里的文档、分段、源文件一起没了, RAGFlow 不提供撤销.
+ *    所以门槛更高, 而且前端还要**输入库名**二次确认.
+ */
+const isAdmin = computed(() => userStore.user?.role === 'admin');
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
@@ -849,7 +868,54 @@ const auditLoading = ref(false);
 const auditError = ref('');
 
 function auditActionLabel(a: string): string {
-  return ({ upload: '上传', delete: '删除', ingest: '解析' } as Record<string, string>)[a] || a;
+  return ({ upload: '上传', delete: '删除', ingest: '解析', create: '新建' } as Record<string, string>)[a] || a;
+}
+
+/**
+ * 删除数据集 —— **必须输入库名**才能删.
+ *
+ * ⚠️ RAGFlow 的删除是**硬删**: 库里的每个文档都会走 `remove_document`,
+ *    连同 MinIO 里的源文件、ES 里的分段一起没了, **没有回收站**.
+ *    所以光点一下「确定」不够 —— 得把库名敲出来, 逼用户确认自己删的是哪个库.
+ *    (这项目刚出过误删 5 篇协议 PDF 的事故 —— 见交接文档 §㉕⑧)
+ *
+ * ⚠️ ElMessageBox 是**纯文本**, 不渲染 Markdown —— 别写 `**强调**`.
+ */
+async function doDeleteDataset(d: KbDataset) {
+  const docs = d.document_count || 0;
+  const chunks = d.chunk_count || 0;
+  const scope = docs
+    ? `会连同 ${docs} 篇文档、${chunks} 个分段一起永久删除，无法恢复`
+    : '这个库目前是空的，删除后无法恢复';
+  try {
+    await ElMessageBox.prompt(
+      `即将删除「${d.name}」—— ${scope}。\n请输入数据集名称「${d.name}」以确认：`,
+      '删除数据集',
+      {
+        type: 'warning',
+        confirmButtonText: '永久删除',
+        cancelButtonText: '取消',
+        inputPlaceholder: d.name,
+        inputValidator: (v: string) =>
+          (v || '').trim() === d.name ? true : '名称对不上 —— 请原样输入上面的数据集名称',
+      },
+    );
+  } catch {
+    // 用户取消 —— 不是错误
+    return;
+  }
+  try {
+    const r = await deleteKbDataset(d.id);
+    ElMessage.success(`数据集「${r.deleted?.name || d.name}」已删除`);
+    // 本地缓存也要清 —— 库没了, 文档列表也没了
+    delete docsByDataset.value[d.id];
+    delete docLoadingByDs.value[d.id];
+    if (expandedId.value === d.id) expandedId.value = '';
+    await loadAll();
+    await loadAudits();
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  }
 }
 
 async function loadAudits() {
@@ -1095,6 +1161,9 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .ds-ops { white-space: nowrap; }
 .ds-ops .link-btn, .ds-ops .ghost-btn { margin-right: 4px; }
 .ds-ops .ghost-btn { margin-right: 0; }
+/* 删除数据集 —— 红色, 一眼能跟"上传"分开 */
+.link-btn.danger { color: var(--err); }
+.link-btn.danger:hover { border-color: var(--err); color: var(--err); background: rgba(239, 68, 68, 0.08); }
 
 /* 新建数据集抽屉 */
 .cd-panel { display: flex; flex-direction: column; gap: 16px; }

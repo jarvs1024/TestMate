@@ -28,6 +28,13 @@ async def _headers() -> dict[str, str]:
 
 
 async def list_datasets(page: int = 1, page_size: int = 50) -> list[dict[str, Any]]:
+    # ⚠️ **page_size 上限是 100** —— 传更大的 RAGFlow 会返回 `code=101`(错误)
+    #    + **空的 data**, 看起来就像"一个库都没有" (真机踩过: 传 200 导致
+    #    "数据集不存在"的假象). 这里直接夹住, 别让调用方踩.
+    if page_size > 100:
+        page_size = 100
+    if page_size < 1:
+        page_size = 1
     base, key = await _config()
     if not base or "xxxxx" in key or "mock" in key:
         return []
@@ -147,6 +154,33 @@ async def update_dataset(
         if data.get("code", 0) != 0:
             raise RuntimeError(f"ragflow update_dataset: {data.get('message') or data}")
         return data.get("data") or {}
+
+
+async def delete_dataset(dataset_id: str) -> bool:
+    """删掉一个数据集 (连同里面的文档 / 分段 / 源文件).
+
+    ⚠️ **路由是 `DELETE /datasets` + body `{"ids": [...]}`** ——
+       RAGFlow **没有** `DELETE /datasets/{id}` 这条路由 (写了会 404).
+    ⚠️ 这是**硬删**, 不可逆: 库里的每个文档都会走 `remove_document`,
+       连带 MinIO 里的源文件和 ES 里的分段一起清掉, 没有回收站.
+    ⚠️ RAGFlow 侧清 ES/对象存储是**后台任务** —— 接口已经返回 200 了,
+       但列表里可能还短暂看得到那个库. 所以调用方删完要**刷新**列表,
+       别以为没删掉就再点一次 (那会真删第二遍).
+    """
+    base, key = await _config()
+    if not base or "xxxxx" in key or "mock" in key:
+        raise RuntimeError("RAGFlow 未配置")
+    url = f"{base}/datasets"
+    # 删一个大库要清不少文件, 给足超时
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.request(
+            "DELETE", url, headers=await _headers(), json={"ids": [dataset_id]},
+        )
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code", 0) != 0:
+            raise RuntimeError(f"ragflow delete_dataset: {data.get('message') or data}")
+        return True
 
 
 async def list_documents(

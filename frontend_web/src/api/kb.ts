@@ -22,6 +22,17 @@ export interface KbDataset {
   create_time: number;         // epoch ms
   update_time: number;
   parser_config: Record<string, any>;
+  /**
+   * 归属: 这个库是谁建的.
+   *
+   * ⚠️ RAGFlow 那边记不了 —— 它的 `created_by` 指的是 RAGFlow 用户,
+   *    而 TestMate 的所有登录用户共用同一把 API key.
+   * ⚠️ 2026-10-29 建库功能上线**之前**手工建的库没有记录 → 空串 (显示「—」).
+   */
+  created_by_name?: string;
+  created_by?: number | null;
+  /** ISO 串, 带 Z (UTC) */
+  created_at?: string;
 }
 
 export interface KbChunk {
@@ -81,6 +92,16 @@ export interface KbDocument {
   update_date: string;
   create_time: number;
   update_time: number;
+  /**
+   * 归属: 这篇是谁传的 (最后一次上传的人).
+   *
+   * ⚠️ 同 KbDataset.created_by_name —— RAGFlow 记不了 TestMate 的账号.
+   * ⚠️ 上传功能上线之前传的文件没有记录 → 空串 (显示「—」).
+   */
+  uploaded_by_name?: string;
+  uploaded_by?: number | null;
+  /** ISO 串, 带 Z (UTC) */
+  uploaded_at?: string;
 }
 
 
@@ -161,6 +182,22 @@ export async function deleteKbDocuments(
   return (await request.delete(`/kb/datasets/${encodeURIComponent(datasetId)}/documents`, {
     data: { ids: docIds, delete_all: deleteAll },
   })) as { ok: boolean };
+}
+
+/**
+ * 删除**整个**数据集 (admin only).
+ *
+ * ⚠️ **硬删, 不可逆** —— 库里的所有文档、分段、源文件一起没了, 没有回收站.
+ * ⚠️ 前端要**先让用户输入库名确认**再调这个 —— RAGFlow 那边不提供任何撤销.
+ */
+export async function deleteKbDataset(datasetId: string): Promise<{
+  ok: boolean;
+  deleted: { dataset_id: string; name: string; documents: number; chunks: number };
+}> {
+  return (await request.delete(`/kb/datasets/${encodeURIComponent(datasetId)}`)) as {
+    ok: boolean;
+    deleted: { dataset_id: string; name: string; documents: number; chunks: number };
+  };
 }
 
 // 列出某文档的 chunks
