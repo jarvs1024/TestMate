@@ -190,7 +190,8 @@
     <AssetDetailDrawer
       v-model="drawerOpen" :item="current" :can-edit="canEdit"
       :review-enabled="reviewEnabled"
-      @edit="openUpdate" @deleted="current = null" @changed="onAssetChanged" />
+      @edit="openUpdate" @edit-meta="openEditMeta"
+      @deleted="current = null" @changed="onAssetChanged" />
 
     <AssetUploadDialog
       v-model="uploadOpen" :mode="uploadMode" :asset="current" :initial-kind="uploadKind"
@@ -362,7 +363,7 @@ const drawerOpen = ref(false);
 const auditOpen = ref(false);
 const current = ref<AssetItem | null>(null);
 const uploadOpen = ref(false);
-const uploadMode = ref<'create' | 'update'>('create');
+const uploadMode = ref<'create' | 'update' | 'edit'>('create');
 /** 上传入口选定的形态 (空 = 没选, 抽屉里再选) */
 const uploadKind = ref<MarketKind | ''>('');
 /** 上传入口的形态菜单是否展开 */
@@ -820,6 +821,19 @@ function openUpdate(item: AssetItem) {
   uploadOpen.value = true;
 }
 
+/**
+ * 「编辑信息」—— **只改元信息**, 不碰安装包、不碰版本号 (2026-10-30).
+ *
+ * ⚠️ 跟 openUpdate (发新版本) 分开: 那条路必须重新上传安装包,
+ *    用户只想改一句话, 不该被逼着重传一遍包.
+ */
+function openEditMeta(item: AssetItem) {
+  current.value = item;
+  uploadMode.value = 'edit';
+  uploadKind.value = '';      // 编辑: 类型不可改
+  uploadOpen.value = true;
+}
+
 /** 点菜单外面 → 关掉形态菜单 */
 function onDocClick(e: MouseEvent) {
   if (!pickOpen.value) return;
@@ -986,7 +1000,9 @@ onUnmounted(() => {
 }
 .search input {
   border: 0; outline: none; background: transparent;
-  font-size: 13px; color: var(--ink-900); font-family: inherit; width: 190px;
+  font-size: 13px; color: var(--ink-900); font-family: inherit;
+  /* 固定 190px 窄屏会撑破工具条 → 改成可伸缩 */
+  flex: 1; min-width: 120px; width: auto;
 }
 
 /* ===== 我提交但未过审的提示条 ===== */
@@ -1016,8 +1032,8 @@ onUnmounted(() => {
   position: sticky; top: 0; z-index: 4;
 }
 .ma-right {
-  display: flex; align-items: center; gap: 8px;
-  margin-left: auto; flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-left: auto; min-width: 0;
 }
 
 
@@ -1048,11 +1064,12 @@ onUnmounted(() => {
 
 /* ===== 网格 =====
    ⚠️ 目录页 **4 列** —— 跟首页能力墙 (3 列大卡片) 拉开密度差:
-   首页是"白底浮动大卡片", 这里是"扁平紧凑列表卡", 一眼能分清两个页面. */
-.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
-@media (max-width: 1400px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+   首页是"白底浮动大卡片", 这里是"扁平紧凑列表卡", 一眼能分清两个页面.
+   ⚠️ 2026-10-30 列数改成**按容器宽度自适应** (auto-fill + minmax) ——
+   原来用 @media (max-width:1400px) 按**视口**断列数, 但侧栏固定占位
+   (220/190/160px), 视口 1280 时主区只剩 ~980px 却仍排 3 列 → 卡片被挤扁.
+   跟首页 / 软件库统一写法. */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
 
 /* ⚠️ 重新加载时的遮罩 (2026-10-30): 旧列表**留在原地**, 只降透明度 + 禁点.
    以前 loading 时整块网格被 v-else 换掉 → 页面高度塌缩 → 浏览器把滚动位置

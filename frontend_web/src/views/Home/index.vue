@@ -408,6 +408,8 @@ onMounted(async () => {
 /* ===== 工具条 ===== */
 .home-toolbar {
   display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  /* 窄屏时右侧整块换行, 不横向溢出 */
+  flex-wrap: wrap;
   background: var(--surface-soft); backdrop-filter: blur(8px);
   border: 1px solid var(--border); border-radius: var(--radius-card);
   padding: 12px 16px; box-shadow: var(--shadow-sm);
@@ -442,12 +444,13 @@ onMounted(async () => {
 }
 .filter.active .count { background: var(--primary-grad); color: #fff; }
 
-.right { display: flex; align-items: center; gap: 10px; }
+.right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .status-sel {
   font-size: 12.5px; font-family: inherit;
   padding: 6px 9px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--surface);
   color: var(--ink-700); cursor: pointer;
+  flex-shrink: 0;
 }
 .search {
   display: flex; align-items: center; gap: 6px;
@@ -457,17 +460,22 @@ onMounted(async () => {
 }
 .search input {
   border: 0; outline: none; background: transparent;
-  font-size: 13px; color: var(--ink-900); font-family: inherit; width: 190px;
+  font-size: 13px; color: var(--ink-900); font-family: inherit;
+  /* 固定 190px 会在窄屏把工具条撑破 → 改成可伸缩 */
+  flex: 1; min-width: 120px; width: auto;
 }
 
 /* ===== 网格 ===== */
+/* ⚠️ 2026-10-30 改成**按容器宽度自适应** ——
+   原来用 @media (max-width:1100px) 按**视口**断列数, 但侧栏是固定占位的
+   (220 / 190 / 160px), 视口 1280 时主区只剩 ~980px, 首页仍排 3 列 →
+   每列只有 316px, 内容被挤扁 (用户图1 报的"小屏显示异常").
+   跟软件库 (`views/Software/index.vue`) 的写法统一, 一劳永逸. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
 }
-@media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px)  { .grid { grid-template-columns: 1fr; } }
 
 .state {
   background: var(--surface-soft); backdrop-filter: blur(8px);

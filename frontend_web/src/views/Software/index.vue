@@ -108,7 +108,10 @@
     <!-- ===== 详情抽屉 ===== -->
     <SoftwareDetailDrawer
       v-model="drawerOpen" :code="currentCode" :refresh-key="detailRefreshKey"
-      @changed="load" @new-version="openVersion" />
+      :can-edit="canEdit" @changed="load" @new-version="openVersion" @edit="openEdit" />
+
+    <!-- ===== 编辑软件信息 (2026-10-30) ===== -->
+    <SoftwareEditDialog v-model="editOpen" :item="currentItem" @done="onEditDone" />
 
     <!-- ===== 上传 / 发版本 ===== -->
     <SoftwareUploadDialog
@@ -133,6 +136,7 @@
 import { computed, onMounted, ref } from 'vue';
 import SoftwareCard from './SoftwareCard.vue';
 import SoftwareDetailDrawer from './SoftwareDetailDrawer.vue';
+import SoftwareEditDialog from './SoftwareEditDialog.vue';
 import SoftwareUploadDialog from './SoftwareUploadDialog.vue';
 import CapabilityShell from '@/components/CapabilityShell.vue';
 import { useUserStore } from '@/stores/user';
@@ -141,6 +145,7 @@ import {
   type SoftwareConfig, type SoftwareDetail, type SoftwareItem, type SoftwareSort,
 } from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
+import { isAuthor } from '@/utils/author';
 import { formatSize } from './softwareForm';
 
 const userStore = useUserStore();
@@ -172,8 +177,12 @@ const currentCode = ref<string | null>(null);
 /** 详情抽屉的刷新计数 —— 发完新版本/删完之后 +1, 让抽屉重读一次 */
 const detailRefreshKey = ref(0);
 const currentItem = ref<SoftwareDetail | null>(null);
+/** 当前打开的**列表项** —— 用来算「能不能编辑」 (详情是抽屉异步读的) */
+const currentListItem = ref<SoftwareItem | null>(null);
 const uploadOpen = ref(false);
 const uploadMode = ref<'create' | 'version'>('create');
+/** 编辑软件信息的抽屉 (2026-10-30) */
+const editOpen = ref(false);
 
 const lastRefreshAt = ref<Date | null>(null);
 const lastRefreshText = computed(() => {
@@ -281,7 +290,56 @@ function onSearch() {
 
 async function openDetail(item: SoftwareItem) {
   currentCode.value = item.code;
+  // ⚠️ 列表项里就有 can_edit / author —— 详情抽屉是异步读的,
+  //    「能不能编辑」得先有个准, 不然按钮要等详情回来才出现.
+  currentListItem.value = item;
   drawerOpen.value = true;
+}
+
+/**
+ * 当前用户能不能**编辑**这个软件的说明信息 (2026-10-30).
+ *
+ * ⚠️ 口径: **上传者本人 或 管理员** —— 跟「发布新版本」「下架」一致.
+ * · 后端已经判过一遍 (`can_edit` = _assert_can_modify), 以它为准;
+ * · 再本地兜一次 (万一后端字段没带上) —— isAuthor 短名/全邮箱都认.
+ * ⚠️ 前端这个只是**按钮显不显示**, 真正的闸门在后端 (_assert_can_modify).
+ *
+ * ⚠️ 判的是**列表里点开的那个条目** (currentListItem) —— 详情抽屉打开时
+ *    currentItem 可能还是上一次的 (详情是抽屉自己异步读的), 用列表项才准.
+ */
+const canEdit = computed(() => {
+  const it = currentListItem.value || currentItem.value;
+  if (!it) return false;
+  if (it.can_edit) return true;
+  if (userStore.user?.role === 'admin') return true;
+  return isAuthor(it.author, userStore.user?.username);
+});
+
+/**
+ * 打开「编辑软件信息」抽屉.
+ *
+ * ⚠️ 跟 openVersion 一样 —— **先把详情抽屉关掉**再开编辑抽屉,
+ *    否则两个抽屉叠在一起 (el-drawer 的 z-index 是"打开时递增"分配的).
+ */
+async function openEdit(item: SoftwareDetail) {
+  currentItem.value = item;
+  drawerOpen.value = false;
+  await new Promise((r) => setTimeout(r, 320));
+  editOpen.value = true;
+}
+
+/** 编辑保存完 → 刷列表 + 刷详情 */
+async function onEditDone() {
+  await load();
+  detailRefreshKey.value += 1;
+  if (currentCode.value) {
+    try {
+      currentItem.value = await getSoftware(currentCode.value);
+      drawerOpen.value = true;
+    } catch {
+      /* 读不到就算了 */
+    }
+  }
 }
 
 /**

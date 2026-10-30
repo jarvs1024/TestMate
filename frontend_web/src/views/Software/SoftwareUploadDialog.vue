@@ -87,19 +87,14 @@
           </el-form-item>
         </div>
 
-        <!-- 标识: **自动生成**, 不用用户填 (2026-10-28) —— 由软件包文件名派生 -->
-        <el-form-item label="软件标识 (自动生成)">
-          <!-- ⚠️ readonly: code 会变成服务端目录名, 用户手填容易带中文/撞名.
-               由文件名派生 + 后端撞名自动加序号, 比让人自己想一个省事得多. -->
-          <el-input :model-value="form.code" readonly placeholder="选好软件包后自动生成"
-                    class="ro-input">
-            <template #suffix>
-              <span class="auto-tag">自动</span>
-            </template>
-          </el-input>
-          <p class="hint">
-            由软件包文件名自动生成 (去扩展名、转小写), 不用手填. 跟别人重名会自动加序号.
-          </p>
+        <!-- 标识: **不再给人看** —— 用户看到的是软件名 (2026-10-30).
+             code 是服务端目录名, 由软件包文件名自动派生 (后端也会再派生一次),
+             不用用户填, 也不必让人操心.
+             ⚠️ 以前这里是个 readonly el-input, 底色写死 --ink-200 (#E2E8F0 蓝灰),
+                在纯白面板上特别扎眼 (用户图2 报的"整体页面背景和其他不太一样").
+                现在改成**纯文本只读行** —— 没有输入框, 也就没有那块突兀的灰底. -->
+        <el-form-item label="软件名称">
+          <div class="ro-text">{{ form.name || '（上面填的软件名）' }}</div>
           <p v-if="codeError" class="pick-err">{{ codeError }}</p>
         </el-form-item>
 
@@ -179,6 +174,43 @@
       <!-- ⚠️ 跟上面的「② 基本信息」是 v-if / v-else **互斥**的 —— 两种模式都占第 2 号 -->
       <section v-else class="up-sec">
         <div class="sec-h"><span class="sec-no">2</span>版本信息</div>
+
+        <!-- ⚠️ 2026-10-30: **新增 / 覆盖 二选一** (用户要的能力) ——
+             以前只有「新增一条」这一条路, 想换掉某个已有版本只能先把它下架.
+             现在两条路都留着, 但由用户选:
+               · 「新增一个版本」 → 版本列表多一条 (N → N+1)
+               · 「覆盖已有版本」 → 原地改掉选中的那一条 (版本总条数不变) -->
+        <div class="ver-mode" role="radiogroup" aria-label="版本处理方式">
+          <button type="button" class="vm-btn" :class="{ active: versionMode === 'new' }"
+                  role="radio" :aria-checked="versionMode === 'new'"
+                  @click="setVersionMode('new')">
+            <span class="vm-ic">➕</span>新增一个版本
+          </button>
+          <button type="button" class="vm-btn" :class="{ active: versionMode === 'replace' }"
+                  role="radio" :aria-checked="versionMode === 'replace'"
+                  :disabled="!versionOptions.length"
+                  @click="setVersionMode('replace')">
+            <span class="vm-ic">♻️</span>覆盖已有版本
+          </button>
+        </div>
+
+        <!-- 覆盖模式: 选一个要改掉的版本 -->
+        <el-form-item v-if="versionMode === 'replace'" label="要覆盖的版本" required>
+          <el-select v-model="versionForm.replace_version" style="width:100%"
+                     placeholder="选一个已有版本" @change="onPickReplaceTarget">
+            <el-option v-for="v in versionOptions" :key="v.version" :value="v.version"
+                       :label="v.version + (v.variant ? ` (${v.variant})` : '')">
+              <span class="mono">{{ v.version }}</span>
+              <span v-if="v.variant" class="opt-desc">{{ v.variant }}</span>
+              <span v-if="v.status !== 'ready'" class="opt-desc">{{ statusLabel(v.status) }}</span>
+            </el-option>
+          </el-select>
+          <p class="hint">
+            选中的那一版会被**原地换掉** —— 版本号、说明、安装包全换成这次填的,
+            版本总条数不变. 别的版本不受影响.
+          </p>
+        </el-form-item>
+
         <el-form-item label="版本变体">
           <!-- ⚠️ 变体标签 (选填) —— 两个版本并存时靠它区分谁是谁 -->
           <el-input v-model="versionForm.variant" maxlength="32" placeholder="如 Windows版 / LTS版" />
@@ -244,7 +276,10 @@
         <div class="foot-btns">
           <button class="mini-btn" :disabled="uploading" @click="emit('update:modelValue', false)">取消</button>
           <button class="mini-btn primary" :disabled="uploading || missing.length > 0" @click="submit">
-            {{ uploading ? '上传中…' : (mode === 'version' ? '发布新版本' : '上架软件') }}
+            {{ uploading ? '上传中…'
+              : (mode === 'version'
+                  ? (versionMode === 'replace' ? '覆盖这一版' : '发布新版本')
+                  : '上架软件') }}
           </button>
         </div>
       </div>
@@ -294,7 +329,9 @@ function emptyForm() {
 
 const form = ref(emptyForm());
 // ⚠️ is_default 默认 **true** —— 新版本默认接管推荐位 (2026-10-28)
-const versionForm = ref({ version: '', variant: '', is_default: true });
+const versionForm = ref({ version: '', variant: '', is_default: true, replace_version: '' });
+// ⚠️ 2026-10-30: 版本处理方式 —— 'new' = 新增一条, 'replace' = 原地覆盖某一条
+const versionMode = ref<'new' | 'replace'>('new');
 const featuresText = ref('');
 const tagsText = ref('');
 const releaseNotes = ref('');
@@ -405,6 +442,9 @@ function resetDraft() {
   versionForm.value.version = '';
   versionForm.value.variant = '';
   versionForm.value.is_default = true;
+  versionForm.value.replace_version = '';
+  // 版本处理方式回到「新增」 —— 上次覆盖过, 这次不一定还要覆盖
+  versionMode.value = 'new';
   // 下次打开时图标由 loadConfig 重新挑一个空闲的
   iconTouched.value = false;
 }
@@ -425,6 +465,9 @@ watch(() => props.modelValue, (open) => {
     //    发新版 = 让大家下新的. 想让老版本继续当默认 (比如 LTS 版还在给老环境用),
     //    就把勾去掉 —— 这就是下面那个复选框的用处.
     versionForm.value.is_default = true;
+    // 版本处理方式默认「新增」 —— 想覆盖的话用户自己切
+    versionMode.value = 'new';
+    versionForm.value.replace_version = '';
   }
 });
 
@@ -439,8 +482,47 @@ function bumpVersion(v: string): string {
 const currentVersion = computed(() => props.item?.version || '');
 const suggestedVersion = computed(() => bumpVersion(currentVersion.value) || '1.0.0');
 const existingVersions = computed(() => (props.item?.versions || []).map((v) => v.version));
+/** 可供「覆盖」的版本 —— 排除正在传/传失败的那种? 不排除, 一并给出 (用户可能就是要重传) */
+const versionOptions = computed(() => props.item?.versions || []);
+/** 版本状态的中文说法 (下拉里的补充说明) */
+function statusLabel(s: string): string {
+  if (s === 'ready') return '可下载';
+  if (s === 'awaiting_file') return '待传文件';
+  if (s === 'uploading') return '上传中';
+  if (s === 'failed') return '上传失败';
+  return s;
+}
 /** 用户填的版本号跟已发过的撞了 —— 当场提示, 别等后端 409 */
-const versionDup = computed(() => existingVersions.value.includes(versionForm.value.version.trim()));
+const versionDup = computed(() => {
+  const v = versionForm.value.version.trim();
+  if (!v) return false;
+  // ⚠️ 覆盖模式下, **正在改的那一条**不算撞号 —— 同名覆盖 (1.0.0 → 1.0.0) 是合法的.
+  //    撞的是别的版本 → 还是得拦 (否则页面上会出现两个同号版本).
+  if (versionMode.value === 'replace' && v === versionForm.value.replace_version) return false;
+  return existingVersions.value.includes(v);
+});
+
+/** 切「新增 / 覆盖」 */
+function setVersionMode(m: 'new' | 'replace') {
+  versionMode.value = m;
+  if (m === 'replace') {
+    // 默认选第一个可覆盖的版本 —— 少一次点击
+    if (!versionForm.value.replace_version && versionOptions.value.length) {
+      onPickReplaceTarget(versionOptions.value[0].version);
+    }
+  } else {
+    versionForm.value.replace_version = '';
+  }
+}
+
+/** 选了要覆盖的版本 → 版本号/变体预填 (版本号**可以再改**) */
+function onPickReplaceTarget(v: string) {
+  versionForm.value.replace_version = v;
+  const hit = versionOptions.value.find((x) => x.version === v);
+  if (!hit) return;
+  versionForm.value.version = hit.version;
+  versionForm.value.variant = hit.variant || '';
+}
 
 function onPick(e: Event) {
   const f = (e.target as HTMLInputElement).files?.[0] || null;
@@ -489,12 +571,19 @@ function clearFile() {
 
 const missing = computed<string[]>(() => {
   const out: string[] = [];
-  if (!file.value) out.push('软件包');
+  // ⚠️ 2026-10-30: 原来这里还有一条「软件标识」—— 但 code 是**从文件名派生的**,
+  //    没选文件就必然没有 code, 两条一起报等于把同一件事说两遍,
+  //    而且用户界面上根本看不到 code 了, 报它只会让人一头雾水.
+  //    现在只报「请先选择软件包」—— code 会跟着文件名自动出来.
+  if (!file.value) out.push('请先选择软件包');
   if (mode.value === 'version') {
     if (!versionForm.value.version.trim()) out.push('版本号');
+    // ⚠️ 覆盖模式必须先选一个要改掉的版本
+    if (versionMode.value === 'replace' && !versionForm.value.replace_version) {
+      out.push('要覆盖的版本');
+    }
   } else {
     if (!form.value.name.trim()) out.push('软件名');
-    if (!form.value.code.trim()) out.push('软件标识');
     if (!form.value.version.trim()) out.push('版本号');
     if (!form.value.summary.trim()) out.push('一句话简介');
   }
@@ -592,6 +681,11 @@ async function submit() {
         variant: versionForm.value.variant.trim(),
         // 是否接管推荐下载位
         is_default: versionForm.value.is_default,
+        // ⚠️ 覆盖模式: 告诉后端「把这一行原地换成我」——
+        //    不传 = 照旧新增一条 (版本 N → N+1)
+        replace_version: versionMode.value === 'replace'
+          ? versionForm.value.replace_version.trim()
+          : '',
       });
       version = created.version;
       // ⚠️ 发新版本: 建的是**版本记录** (不是软件条目) —— 失败提示要照这个说
@@ -606,7 +700,13 @@ async function submit() {
       uploadedBytes.value = Math.round((p / 100) * (file.value?.size || 0));
     });
 
-    ElMessage.success(mode.value === 'create' ? '软件已上传' : `新版本 ${version} 已发布`);
+    ElMessage.success(
+      mode.value === 'create'
+        ? '软件已上传'
+        : (versionMode.value === 'replace'
+            ? `版本 ${versionForm.value.replace_version} 已覆盖为 ${version}`
+            : `新版本 ${version} 已发布`),
+    );
     emit('done');
     emit('update:modelValue', false);
   } catch (e: any) {
@@ -639,6 +739,12 @@ function submitErrorText(
   const reason = errText(e, '上传失败');
   if (!entryCreated) return reason;
   if (mode.value === 'version') {
+    // ⚠️ 覆盖模式: 老文件**已经被换掉**了 (后端覆盖时删了旧目录),
+    //    所以失败提示要说明"这一版现在没有文件" —— 用户才知道要去重新传.
+    if (versionMode.value === 'replace') {
+      return `版本 ${versionForm.value.replace_version} 已经覆盖成 ${version}, 但新文件没传上去（${reason}）`
+        + ' —— 原来的安装包已被替换掉, 这一版现在显示为「上传失败」. 重新传一次即可.';
+    }
     return `新版本 ${version} 的记录已建好, 但文件没传上去（${reason}）`
       + ' —— 这一版会显示为「上传失败」. 可以重新上传, 或者把这一版下架.';
   }
@@ -724,15 +830,35 @@ function submitErrorText(
   text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* 自动生成的 code —— 只读, 看着就知道不用自己填 */
-.ro-input :deep(.el-input__inner) {
-  color: var(--ink-700);
-  background: var(--ink-200);
-  cursor: default;
+/* ===== 版本「新增 / 覆盖」二选一 (2026-10-30) =====
+   两个平铺按钮 (不是 radio) —— 一眼能看出当前走的是哪条路. */
+.ver-mode {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 4px;
 }
-.auto-tag {
-  font-size: 10.5px; line-height: 1; padding: 2px 6px; border-radius: 8px;
-  color: var(--primary); background: rgba(64, 158, 255, 0.12);
+.vm-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: var(--radius-btn);
+  border: 1px solid var(--border); background: var(--fill-blank);
+  color: var(--ink-700); font-size: 13px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s ease;
+}
+.vm-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.vm-btn.active {
+  border-color: var(--primary); background: var(--primary-grad-soft);
+  color: var(--primary); font-weight: 600;
+}
+.vm-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.vm-ic { font-size: 13px; }
+
+/* 只读展示行 (软件名称) —— **没有输入框**, 所以也就没有那块突兀的灰底.
+   样式跟旁边的输入框对齐 (同样的高度/字号), 看着才像同一个表单. */
+.ro-text {
+  min-height: 32px; display: flex; align-items: center;
+  padding: 0 11px; border-radius: var(--radius-btn);
+  font-size: 14px; color: var(--ink-900);
+  background: var(--fill-blank);
+  border: 1px solid var(--border);
 }
 
 /* 提示行里的小链接按钮 (如「用建议值」) */

@@ -232,6 +232,9 @@ async function apiPost<T>(url: string, body?: unknown): Promise<T> {
 async function apiPut<T>(url: string, body?: unknown): Promise<T> {
   return (await request.put(url, body)) as unknown as T;
 }
+async function apiPatch<T>(url: string, body?: unknown): Promise<T> {
+  return (await request.patch(url, body)) as unknown as T;
+}
 async function apiDelete<T>(url: string, params?: Record<string, unknown>): Promise<T> {
   return (await request.delete(url, { params })) as unknown as T;
 }
@@ -473,6 +476,36 @@ export async function uploadAsset(form: UploadForm): Promise<AssetJob> {
 
 export async function updateAsset(code: string, form: UploadForm): Promise<AssetJob> {
   return apiPut<AssetJob>(`/assets/${encodeURIComponent(code)}`, toFormData(form, false));
+}
+
+/**
+ * **只改元信息** —— 不碰安装包, 不发新版本 (2026-10-30).
+ *
+ * ⚠️ 跟 `updateAsset` (发新版本) 的区别: 那条路**必须传安装包**, 版本号也会变;
+ *    这条路只改名字/简介/说明/标签这些 —— 用户只想改句话, 不该被逼着上传一遍包.
+ *
+ * ⚠️ 字段跟后端 `AssetMetaUpdateIn` 一一对应; **不含 version / 文件相关字段**.
+ */
+export interface AssetMetaForm {
+  name?: string;
+  icon?: string;
+  summary?: string;
+  description?: string;
+  use_when?: string;
+  not_for?: string;
+  category?: string;
+  project?: string;
+  tags?: string[];
+  keywords?: string[];
+  permissions?: MarketPermissions;
+  install_steps?: string[];
+  bindings?: Record<string, unknown>;
+  /** 连接器 (mcp) 的 MCP 配置 —— 只有连接器才有 */
+  mcp_config?: Record<string, unknown> | null;
+}
+
+export async function updateAssetMeta(code: string, form: AssetMetaForm): Promise<AssetJob> {
+  return apiPatch<AssetJob>(`/assets/${encodeURIComponent(code)}`, form);
 }
 
 /**

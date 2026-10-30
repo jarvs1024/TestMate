@@ -187,6 +187,12 @@ class SoftwareVersionCreateIn(BaseModel):
     is_default: bool = True
     file_name: str = Field(default="", max_length=255)
     file_size: int = Field(default=0, ge=0)
+    # ⚠️ 2026-10-30: **覆盖已有版本** (用户要的能力) ——
+    #    填了 = 把 `replace_version` 那一行**原地改成**本次的版本 (版本号/说明/文件全换),
+    #    版本总条数不变 (还是 N 条), 只是目标那条的内容被换掉了;
+    #    不填 (默认) = 照旧**新增一条**, 版本变成 N+1.
+    #    ⚠️ 不删行 —— 删了行但文件没传成功 → 版本凭空消失, 用户看不出来.
+    replace_version: str = Field(default="", max_length=32)
 
 
 class SoftwareVersionUpdateIn(BaseModel):

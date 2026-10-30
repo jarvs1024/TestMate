@@ -78,9 +78,12 @@ html[data-theme="light"] {
 
      ✅ 这里给「相对于面板的深浅」的**实色**版, 在浮层内部把 --surface 家族
         整体换掉 —— **不用改任何组件代码**, 组件里写 `var(--surface)` 自动就对了. */
-  --panel-surface:        #F1F5F9;   /* 块底 (最常用的那层) */
-  --panel-surface-soft:   #F8FAFC;   /* 更浅一层 */
-  --panel-surface-sunken: #E2E8F0;   /* 凹陷 / 徽标 (要能一眼分辨) */
+  --panel-surface:        #F3F6FA;   /* 块底 (最常用的那层) */
+  --panel-surface-soft:   #FAFBFD;   /* 更浅一层 */
+  /* ⚠️ 2026-10-30 调浅 —— 原来是 #E2E8F0, 跟 --ink-200 同值 (蓝灰),
+     在**纯白面板**上看着"脏且深" (用户图4 报的"灰色深了点").
+     改成近白灰 #EDF1F7, 层次还在但不再扎眼. */
+  --panel-surface-sunken: #EDF1F7;   /* 凹陷 / 徽标 (要能一眼分辨) */
 
   /* 状态 */
   --ok:    #10B981;

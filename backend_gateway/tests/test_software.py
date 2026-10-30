@@ -1118,3 +1118,169 @@ async def test_storage_probe_reports_unwritable_root(client, sw_auth, sw_root, t
     body = r.json()
     assert body["ok"] is False
     assert "目录" in body["message"]
+
+
+# ---------- 覆盖已有版本 (2026-10-30 · 第十一轮 · 问题3) ----------
+#
+# 用户的要求: "多版本功能也是需要……下次我又想只覆盖版本1或者版本2".
+# → 发新版本时可选「新增一条」或「覆盖已有某一条」.
+#
+# ⚠️ 定稿语义: 覆盖 = **复用目标版本行** (不删行), 只重置字段 + 删旧文件目录.
+#    删行的话, "文件没传成功" 就变成"版本凭空消失", 用户根本看不出来少了什么.
+
+
+async def _create_two_versions(client, auth, root):
+    """造一个有两个版本 (都传了文件) 的软件."""
+    await _create(client, auth)
+    await _upload(client, auth, "demo-sw", b"v1", filename="v1.bin")
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "release_notes": "第二个版本",
+              "file_name": "v2.bin", "file_size": 2, "is_default": False},
+        headers=auth,
+    )
+    assert r.status_code == 201, r.text
+    await _upload(client, auth, "demo-sw", b"v2", filename="v2.bin")
+    return root
+
+
+async def test_replace_version_reuses_row_and_keeps_count(client, sw_auth, sw_root):
+    """覆盖 1.0.0 → 3.0.0: 版本**总条数不变** (还是两条), 目标那条被换掉."""
+    await _create_two_versions(client, sw_auth, sw_root)
+
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "3.0.0", "release_notes": "覆盖后的说明",
+              "file_name": "v3.bin", "file_size": 2,
+              "replace_version": "1.0.0"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 201, r.text
+
+    detail = await client.get("/api/v1/software/demo-sw", headers=sw_auth)
+    versions = {v["version"]: v for v in detail.json()["versions"]}
+    # ⚠️ 总条数不变 —— 覆盖不是新增
+    assert len(versions) == 2, versions
+    assert set(versions) == {"2.0.0", "3.0.0"}, versions
+    assert "1.0.0" not in versions, "被覆盖的版本号应该消失 (行被复用了)"
+    # 目标那条的内容换成了新的
+    assert versions["3.0.0"]["release_notes"] == "覆盖后的说明"
+    assert versions["3.0.0"]["status"] == "awaiting_file", "新文件还没传"
+    # 其它版本不受影响
+    assert versions["2.0.0"]["status"] == "ready"
+    assert versions["2.0.0"]["release_notes"] == "第二个版本"
+
+
+async def test_replace_version_deletes_old_file_dir(client, sw_auth, sw_root):
+    """覆盖时旧版本的文件目录要清掉 (不然仓库里躺着两份包)."""
+    await _create_two_versions(client, sw_auth, sw_root)
+    assert (sw_root / "demo-sw" / "1.0.0").is_dir()
+
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "3.0.0", "file_name": "v3.bin", "file_size": 2,
+              "replace_version": "1.0.0"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 201, r.text
+    # 旧目录没了
+    assert not (sw_root / "demo-sw" / "1.0.0").exists()
+    # 别的版本的文件还在
+    assert (sw_root / "demo-sw" / "2.0.0" / "v2.bin").is_file()
+
+
+async def test_replace_version_same_number_is_allowed(client, sw_auth, sw_root):
+    """同名覆盖 (1.0.0 → 1.0.0) 是合法的 —— 不算撞号."""
+    await _create(client, sw_auth)
+    await _upload(client, sw_auth, "demo-sw", b"v1", filename="v1.bin")
+
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "1.0.0", "release_notes": "重传的包",
+              "file_name": "v1b.bin", "file_size": 3,
+              "replace_version": "1.0.0"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 201, r.text
+    detail = await client.get("/api/v1/software/demo-sw", headers=sw_auth)
+    versions = detail.json()["versions"]
+    assert len(versions) == 1
+    assert versions[0]["version"] == "1.0.0"
+    assert versions[0]["release_notes"] == "重传的包"
+    assert versions[0]["status"] == "awaiting_file"
+
+
+async def test_replace_version_onto_other_version_conflicts(client, sw_auth, sw_root):
+    """覆盖成**别人已有的**版本号 → 409 (不能出现两个同号版本)."""
+    await _create_two_versions(client, sw_auth, sw_root)
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "file_name": "x.bin",
+              "replace_version": "1.0.0"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 409, r.text
+
+
+async def test_replace_version_keeps_default_unique(client, sw_auth, sw_root):
+    """覆盖后**推荐版本仍然只有一个**."""
+    await _create_two_versions(client, sw_auth, sw_root)
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "3.0.0", "file_name": "v3.bin", "file_size": 2,
+              "is_default": True, "replace_version": "1.0.0"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 201, r.text
+    detail = await client.get("/api/v1/software/demo-sw", headers=sw_auth)
+    defaults = [v["version"] for v in detail.json()["versions"] if v["is_default"]]
+    assert defaults == ["3.0.0"], defaults
+
+
+async def test_replace_version_missing_target_404(client, sw_auth, sw_root):
+    """要覆盖的版本不存在 → 404."""
+    await _create(client, sw_auth)
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "file_name": "x.bin", "replace_version": "9.9.9"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 404, r.text
+
+
+async def test_replace_version_denied_for_others(client, sw_auth, sw_root, publisher_user):
+    """覆盖别人上传的软件 → 403."""
+    await _create(client, sw_auth)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "2.0.0", "file_name": "x.bin", "replace_version": "1.0.0"},
+        headers=pauth,
+    )
+    assert r.status_code == 403, r.text
+
+
+async def test_replace_version_by_author_allowed(client, sw_root, publisher_user):
+    """作者本人可以覆盖自己的版本."""
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.publisher_usernames", publisher_user["username"])
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    r = await client.post(
+        "/api/v1/software",
+        json={"code": "own-sw", "name": "我的软件", "version": "1.0.0",
+              "summary": "x", "icon": "📦", "file_name": "a.bin"},
+        headers=pauth,
+    )
+    assert r.status_code == 201, r.text
+    await _upload(client, pauth, "own-sw", b"v1", filename="a.bin")
+
+    r2 = await client.post(
+        "/api/v1/software/own-sw/versions",
+        json={"version": "2.0.0", "file_name": "b.bin", "file_size": 2,
+              "replace_version": "1.0.0"},
+        headers=pauth,
+    )
+    assert r2.status_code == 201, r2.text
+    detail = await client.get("/api/v1/software/own-sw", headers=pauth)
+    assert len(detail.json()["versions"]) == 1

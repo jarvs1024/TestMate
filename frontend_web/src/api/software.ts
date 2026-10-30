@@ -197,6 +197,14 @@ export async function createSoftwareVersion(code: string, payload: {
   variant?: string;
   /** 是否把这个版本设成推荐下载的那个 (默认 true) */
   is_default?: boolean;
+  /**
+   * **覆盖已有的某一条** (2026-10-30) —— 填了就把那一行原地改成本次的内容,
+   * 版本总条数不变; 不填 = 照旧新增一条.
+   *
+   * ⚠️ 后端是**复用版本行**而不是删掉再建 —— 删行的话,
+   *    "文件没传成功" 就变成"版本凭空消失", 用户根本看不出来少了什么.
+   */
+  replace_version?: string;
 }): Promise<{ ok: boolean; code: string; version: string; upload_path: string }> {
   return apiPost(`/software/${encodeURIComponent(code)}/versions`, payload);
 }

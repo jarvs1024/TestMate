@@ -32,6 +32,7 @@ from sqlalchemy import cast, func, or_, select, update, Text
 
 from app.api.auth import get_current_user, get_optional_user
 from app.core import market_policy, software_store
+from app.core.asset_locks import code_lock
 from app.core.identity import author_forms
 from app.core.security import create_download_ticket as sign_download_ticket
 from app.core.security import decode_download_ticket
@@ -804,7 +805,23 @@ async def create_version(
 
     ⚠️ 当前版本指针会切到新版本 —— 但**文件没传完之前它是不能下的**:
        详情页按版本状态区分, 只有 ready 的版本能下载.
+
+    ⚠️ 2026-10-30 加 `replace_version` —— **覆盖**已有版本 (不再只能新增):
+       · 不填 = 照旧新增一条 (版本 N → N+1);
+       · 填了 = 把那一行**原地改成**本次的版本 (版本号/说明/文件全换), 版本总条数不变.
+       ⚠️ 覆盖**不删行**, 只重置字段 + 删旧文件目录 —— 删行的话,
+          "文件没传成功" 就变成"版本凭空消失", 用户根本看不出来少了什么.
     """
+    # ⚠️ 2026-10-30: 同一 code 的写操作**串行** ——
+    #    覆盖版本要删文件 + 改版本行, 两个并发上传会互相把对方的版本行改掉/删掉.
+    #    跟 DELETE /{code}/versions/{version} 用同一把锁 (asset_locks.code_lock).
+    async with code_lock(code):
+        return await _create_version_locked(code, payload, user)
+
+
+async def _create_version_locked(
+    code: str, payload: SoftwareVersionCreateIn, user: User
+) -> dict:
     async with AsyncSessionLocal() as session:
         item = (
             await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
@@ -817,6 +834,21 @@ async def create_version(
         if not version or "/" in version or "\\" in version or version in (".", ".."):
             raise HTTPException(status_code=422, detail="版本号不合法")
 
+        # ---- 覆盖模式: 先定位**要被改掉**的那一行 ----
+        replace_version = (payload.replace_version or "").strip()[:32]
+        target: SoftwareVersion | None = None
+        if replace_version:
+            target = (
+                await session.execute(
+                    select(SoftwareVersion).where(
+                        SoftwareVersion.item_id == item.id,
+                        SoftwareVersion.version == replace_version,
+                    )
+                )
+            ).scalar_one_or_none()
+            if target is None:
+                raise HTTPException(status_code=404, detail=f"版本 {replace_version} 不存在")
+
         dup = (
             await session.execute(
                 select(SoftwareVersion).where(
@@ -825,7 +857,9 @@ async def create_version(
                 )
             )
         ).scalar_one_or_none()
-        if dup is not None:
+        # ⚠️ 覆盖模式下, **正在改的那一行**不算撞号 —— 同名覆盖 (1.0.0 → 1.0.0) 是合法的.
+        #    但撞的是**别的**行 → 还是 409 (否则会出现两个同名版本).
+        if dup is not None and (target is None or dup.id != target.id):
             raise HTTPException(status_code=409, detail=f"版本 {version} 已经存在了")
 
         # ⚠️ 发新版本的文件名同样要过规范校验 (2026-10-28) —— 跟新建一个口径
@@ -838,27 +872,56 @@ async def create_version(
         else:
             file_name = f"{code}-{version}.bin"
 
-        ver = SoftwareVersion(
-            item_id=item.id,
-            version=version,
-            release_notes=payload.release_notes,
-            # 变体标签 (选填) —— 如「LTS版」; 不填就留空, 版本号本身够用
-            variant=payload.variant.strip()[:32],
-            is_default=bool(payload.is_default),
-            file_name=file_name,
-            declared_size=int(payload.file_size or 0),
-            status="awaiting_file",
-            author=user.username,
-        )
-        session.add(ver)
-        # ⚠️ 必须**先 flush** —— ver.id 要拿到才能在 WHERE 里排除自己.
-        #    (flush 前 ver.id 是 None, 拼出来的 `id != NULL` 在 SQL 里恒不成立,
-        #    而 SQLAlchemy 的 synchronize_session='evaluate' 又会在 Python 侧
-        #    按同样的条件改内存对象 —— 两边不一致, 推荐标记会错乱.)
-        await session.flush()
+        if target is not None:
+            # ===== 覆盖: **复用目标版本行** =====
+            # ⚠️ 不删行 (删了行 + 文件没传成功 = 版本凭空消失) —— 只重置字段,
+            #    让它回到 "awaiting_file", 等 PUT /{code}/file 把新文件传上来.
+            old_version = target.version
+            target.version = version
+            target.release_notes = payload.release_notes
+            target.variant = payload.variant.strip()[:32]
+            target.is_default = bool(payload.is_default)
+            target.file_name = file_name
+            target.declared_size = int(payload.file_size or 0)
+            target.status = "awaiting_file"
+            target.last_error = ""
+            # ⚠️ 旧文件的路径/校验和一起清掉 —— 不然行上留着旧包的路径,
+            #    而旧目录已经被删了, 一看就是"文件在, 就是下不动".
+            target.file_path = ""
+            target.sha256 = ""
+            target.file_size = 0
+            target.author = user.username
+            target.created_at = datetime.utcnow()
+            target.updated_at = datetime.utcnow()
+            ver = target
+            await session.flush()
+            # ⚠️ 旧文件目录要删 —— 否则:
+            #    ① 版本号改了 → <root>/<code>/<旧版本号>/ 变成没人引用的孤儿目录;
+            #    ② 版本号没改、文件名也变了 → 目录里躺着两个包, 下到的可能是旧的.
+            await _purge_version_files(code, old_version)
+        else:
+            ver = SoftwareVersion(
+                item_id=item.id,
+                version=version,
+                release_notes=payload.release_notes,
+                # 变体标签 (选填) —— 如「LTS版」; 不填就留空, 版本号本身够用
+                variant=payload.variant.strip()[:32],
+                is_default=bool(payload.is_default),
+                file_name=file_name,
+                declared_size=int(payload.file_size or 0),
+                status="awaiting_file",
+                author=user.username,
+            )
+            session.add(ver)
+            # ⚠️ 必须**先 flush** —— ver.id 要拿到才能在 WHERE 里排除自己.
+            #    (flush 前 ver.id 是 None, 拼出来的 `id != NULL` 在 SQL 里恒不成立,
+            #    而 SQLAlchemy 的 synchronize_session='evaluate' 又会在 Python 侧
+            #    按同样的条件改内存对象 —— 两边不一致, 推荐标记会错乱.)
+            await session.flush()
         # ⚠️ 一个条目**最多一个**推荐版本 (2026-10-28) ——
         #    新版本设成推荐时, 把旧的推荐标记摘掉, 否则两个都是 is_default,
         #    "该下哪个" 就有歧义了.
+        #    ⚠️ 覆盖模式下也要跑 —— 否则覆盖完可能两个都是推荐.
         if payload.is_default:
             await session.execute(
                 update(SoftwareVersion)
@@ -878,10 +941,18 @@ async def create_version(
         await _audit(
             session,
             code=code,
-            action="new_version",
+            action="replace_version" if target is not None else "new_version",
             actor=user,
-            comment=f"发布新版本 {version}",
-            detail={"version": version, "release_notes": payload.release_notes},
+            comment=(
+                f"覆盖版本 {replace_version} 为 {version}"
+                if target is not None
+                else f"发布新版本 {version}"
+            ),
+            detail={
+                "version": version,
+                "replaced_version": replace_version or None,
+                "release_notes": payload.release_notes,
+            },
         )
         await session.commit()
 
@@ -891,6 +962,21 @@ async def create_version(
         "version": version,
         "upload_path": f"/api/v1/software/{quote(code)}/file",
     }
+
+
+async def _purge_version_files(code: str, version: str) -> int:
+    """删掉某个版本的**旧文件目录** (覆盖版本时用).
+
+    ⚠️ 只删 ``<root>/<code>/<version>/`` 这一层, **绝不删父目录** ——
+       父目录 ``<root>/<code>/`` 里还有别的版本.
+    """
+    if not version:
+        return 0
+    roots = await _roots()
+    deleted = software_store.remove_version_dir_anywhere(roots, code, version)
+    for r in roots:
+        software_store.remove_item_dir_if_empty(r, code)
+    return deleted
 
 
 @router.patch("/{code}/versions/{version}", response_model=SoftwareVersionOut)
@@ -993,7 +1079,15 @@ async def delete_version(
        而且版本删光后要把**空壳目录** ``<root>/<code>/`` 一并删掉 ——
        以前只删了 ``<root>/<code>/<version>/``, 上面那层空目录留着,
        用户看着像"没删干净" (这正是用户报的: 目录还在).
+
+    ⚠️ 2026-10-30: 加**同一把 code 锁** —— 下架版本跟"覆盖版本"(POST /versions)
+       都会改版本行 + 删文件, 两个并发操作会互相把对方的版本行搞没.
     """
+    async with code_lock(code):
+        return await _delete_version_locked(code, version, user)
+
+
+async def _delete_version_locked(code: str, version: str, user: User) -> SoftwareDeleteOut:
     roots = await _roots()
     async with AsyncSessionLocal() as session:
         item = (

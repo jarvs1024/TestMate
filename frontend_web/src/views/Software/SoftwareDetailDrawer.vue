@@ -46,6 +46,11 @@
                   @click="doDownload(item.download_version)">
             ⬇ 下载{{ item.download_version ? ` ${defaultLabel}` : '' }}
           </button>
+          <!-- ⚠️ 2026-10-30: 「编辑」—— 改软件的说明信息 (名字/简介/功能清单…).
+               跟「发布新版本」分开: 改说明不用传安装包, 版本也不动. -->
+          <button v-if="canEdit" class="mini-btn" @click="emit('edit', item)">
+            ✎ 编辑
+          </button>
           <button v-if="item.can_edit" class="mini-btn" @click="emit('new-version', item)">
             ↑ 发布新版本
           </button>
@@ -199,11 +204,20 @@ const props = defineProps<{
    *    在抽屉里发完新版本, 抽屉里的版本历史还是旧的 —— 用户会以为"新版本没传上去".
    */
   refreshKey?: number;
+  /**
+   * 当前用户能不能**编辑这个软件的说明信息** (2026-10-30 新增).
+   *
+   * ⚠️ 口径跟「发布新版本」一致 —— **上传者本人 或 管理员**.
+   *    父组件算好后传进来; 不传 = 不显示「编辑」按钮 (保守默认).
+   */
+  canEdit?: boolean;
 }>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void;
   (e: 'changed'): void;
   (e: 'new-version', item: SoftwareDetail): void;
+  /** 打开「编辑软件信息」抽屉 (2026-10-30) */
+  (e: 'edit', item: SoftwareDetail): void;
 }>();
 
 const item = ref<SoftwareDetail | null>(null);

@@ -1,6 +1,7 @@
 <template>
   <el-drawer :model-value="modelValue" size="760px" direction="rtl"
-             :title="mode === 'update' ? `更新资产 · ${asset?.name || ''}` : '上传新资产'"
+             :title="mode === 'edit' ? `编辑资产 · ${asset?.name || ''}`
+                     : (mode === 'update' ? `更新资产 · ${asset?.name || ''}` : '上传新资产')"
              :close-on-click-modal="false" :with-header="true"
              class="up-drawer" @update:model-value="emit('update:modelValue', $event)">
     <template v-if="!job">
@@ -42,6 +43,11 @@
           <button v-if="mode === 'create'" type="button" class="tb-change"
                   @click="step = 'pick'">更换类型</button>
         </div>
+        <!-- ⚠️ 2026-10-30 「只改元信息」模式 —— 一句说明, 免得用户以为还能改包 -->
+        <div v-if="mode === 'edit'" class="edit-note">
+          ✎ 这里只改说明信息 —— 安装包和版本号不动.
+          要换安装包请用「发布新版本」.
+        </div>
         <!-- ============ ① 连接器配置 / 安装包 (放最前) ============ -->
         <!-- 连接器是**配置型**资产: 只有一段 MCP 配置, 没有安装包也没有 README -->
         <section v-if="isMcp" class="up-sec">
@@ -65,7 +71,7 @@
           </p>
 
           <!-- 资产 code: 从 MCP 配置里的连接器名**自动派生** —— 只展示, 不让填 -->
-          <div class="pkg-req">
+          <div v-if="mode !== 'edit'" class="pkg-req">
             <span class="pr-ic">🔌</span>
             <span class="pr-txt">
               <!-- ⚠️ dml- 前缀只在**新建**时要求 (团队命名约定) ——
@@ -86,7 +92,10 @@
           </div>
         </section>
 
-        <section v-else class="up-sec">
+        <!-- ⚠️ 2026-10-30 「只改元信息」: **不碰安装包** ——
+             那一段是"发新版本"才要的 (必须重新传包) ——
+             走 _stage_asset_locked 的 else 分支会 rmtree 掉 files/, 把别人的包删了. -->
+        <section v-else-if="mode !== 'edit'" class="up-sec">
           <div class="sec-h"><span class="sec-no">1</span>安装包<span class="sec-tip">必填</span></div>
           <!-- 选文件: 隐藏原生 input (系统默认按钮跟整页风格不搭), 换成统一风格的自定义按钮.
                ⚠️ 文件名只显示一次 —— 原生 input 旁边那个是重复的. -->
@@ -156,7 +165,7 @@
 
         <!-- ============ ② 基础信息 ============ -->
         <section class="up-sec">
-          <div class="sec-h"><span class="sec-no">2</span>基础信息</div>
+          <div class="sec-h"><span class="sec-no">{{ basicNo }}</span>基础信息</div>
           <!-- ① 名称 (必填) + 图标 —— 卡片上最先看到的两样 -->
           <div class="row-2">
             <el-form-item label="名称" required>
@@ -216,7 +225,9 @@
               </p>
             </el-form-item>
             <el-form-item label="适用项目">
-              <el-select v-model="form.project" class="sel-project" style="width:100%">
+              <!-- ⚠️ 必须给中文 placeholder —— Element Plus 默认是英文 "Select",
+                   整个界面都是中文, 夹一个英文下拉框很扎眼 (跟软件库那边一个毛病) -->
+              <el-select v-model="form.project" class="sel-project" style="width:100%" placeholder="通用">
                 <!-- ⚠️ `label` 是选中后输入框里显示的字 —— 必须短;
                      长的解释放 slot 里(只在下拉列表那一行显示) -->
                 <el-option value="" label="通用">
@@ -233,16 +244,43 @@
           </div>
 
           <!-- ④ 版本 (必填) —— 短字段, 别拉满整行 -->
-          <el-form-item label="版本 (semver)" required :error="versionError">
+          <!-- ⚠️ 2026-10-30 「只改元信息」: 版本号**不在这里改** ——
+               改版本 = 发新版本 (要重新传包). 这里藏掉, 免得用户改了却不生效. -->
+          <el-form-item v-if="mode !== 'edit'" label="版本 (semver)" required :error="versionError">
             <el-input v-model="form.version" placeholder="1.0.0" style="max-width: 220px" />
             <p v-if="mode === 'update'" class="hint">发新版本建议 +1 (如 1.0.0 → 1.1.0)</p>
           </el-form-item>
+
+          <!-- ⚠️ 2026-10-30 「只改元信息」: 这几项上架表单里**没有**输入框,
+               但用户想改的就是它们 (详细说明 / 适用场景 / 安装步骤) ——
+               以前只能靠"发新版本"改, 太重了. -->
+          <template v-if="mode === 'edit'">
+            <el-form-item label="详细说明">
+              <el-input v-model="form.description" type="textarea" :rows="4"
+                        placeholder="这个资产到底是什么、怎么用 —— 详情页会整段显示" />
+            </el-form-item>
+            <div class="row-2">
+              <el-form-item label="适用场景">
+                <el-input v-model="form.use_when" type="textarea" :rows="2"
+                          placeholder="什么情况下该用它" />
+              </el-form-item>
+              <el-form-item label="不适合的场景">
+                <el-input v-model="form.not_for" type="textarea" :rows="2"
+                          placeholder="什么情况下别用它" />
+              </el-form-item>
+            </div>
+            <el-form-item label="安装步骤">
+              <el-input v-model="form.installStepsText" type="textarea" :rows="3"
+                        placeholder="一行一条, 如&#10;解压到 ~/.qoder-cn/skills&#10;在 MCP 配置里加上这段" />
+              <p class="hint">一行一条 —— 详情页会列成步骤.</p>
+            </el-form-item>
+          </template>
         </section>
 
         <!-- ============ ③ 进阶信息 (默认收起) ============ -->
         <section class="up-sec">
           <button type="button" class="sec-toggle" @click="advOpen = !advOpen">
-            <span class="sec-no">3</span>进阶信息
+            <span class="sec-no">{{ advNo }}</span>进阶信息
             <span class="sec-hint">可展开 · 补充标签与搜索关键词</span>
             <span class="sec-caret">{{ advOpen ? '▾' : '▸' }}</span>
           </button>
@@ -307,7 +345,7 @@
             <el-button @click="visible = false">取消</el-button>
             <el-button type="primary" :loading="submitting" :disabled="!canSubmit"
                        @click="submit">
-              {{ mode === 'update' ? '提交新版本' : '上架' }}
+              {{ mode === 'edit' ? '保存修改' : (mode === 'update' ? '提交新版本' : '上架') }}
             </el-button>
           </div>
         </div>
@@ -334,7 +372,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
-import { getAsset, getJob, retryJob, uploadAsset, updateAsset, type AssetItem, type AssetJob, type MarketKind } from '@/api/assets';
+import { getAsset, getJob, retryJob, uploadAsset, updateAsset, updateAssetMeta, type AssetItem, type AssetJob, type MarketKind } from '@/api/assets';
 import { KIND_META } from './kindMeta';
 import { MCP_TEMPLATE } from './mcpConfig';
 import { useAssetUploadForm } from './useAssetUploadForm';
@@ -342,7 +380,13 @@ import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 const props = defineProps<{
   modelValue: boolean;
-  mode: 'create' | 'update';
+  /**
+   * create = 新建资产; update = 发新版本; edit = **只改元信息** (2026-10-30).
+   *
+   * ⚠️ edit 与 update 的区别: update 必须重新传安装包, 版本号也会变;
+   *    edit 只改说明文字 —— 安装包和版本号都不动.
+   */
+  mode: 'create' | 'update' | 'edit';
   asset?: AssetItem | null;
   /** 入口选定的形态 (市场页下拉选完传进来) —— 空就先进第 ① 步让人选 */
   initialKind?: MarketKind | '';
@@ -391,7 +435,7 @@ const {
   form, tagsText, keywordsText, mcpConfigText, step, hasSource,
   fileInput, pkgFile, preview, previewing, iconPanel,
   categories, categoriesError, categoriesLoading, projectOptions,
-  isMcp, kind, mcpHint, mcpHintState, codeFieldError,
+  isMcp, isEdit, kind, mcpHint, mcpHintState, codeFieldError,
   versionError, pkgNameError,
   previewBad, previewIssues, iconChoices, missing, canSubmit,
   formatMcp, useMcpTemplate, loadCategories,
@@ -403,6 +447,15 @@ const {
   initialKind: () => props.initialKind || '',
   open: () => props.modelValue,
 });
+
+/**
+ * 区块编号 —— 条件渲染的块不占号.
+ *
+ * ⚠️ 2026-10-30: 编辑模式**没有安装包那一段** → 「基础信息」要顶到 ①,
+ *    否则页面上会出现 "2 / 3" 这种跳号 (看着像漏了一节).
+ */
+const basicNo = computed(() => (isEdit.value && !isMcp.value ? 1 : 2));
+const advNo = computed(() => basicNo.value + 1);
 
 /**
  * 分类表里有没有「其他」—— 用来决定失败时**要不要**再注入一个兜底项.
@@ -426,6 +479,29 @@ watch(() => props.modelValue, (open) => {
 
 function splitList(s: string): string[] {
   return s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+}
+
+/** 安装步骤: 一行一条 */
+function splitLines(s: string): string[] {
+  return (s || '').split('\n').map((x) => x.trim()).filter(Boolean);
+}
+
+/**
+ * MCP 配置文本 → 对象 (解析不了就返回 null = "不改这一项").
+ *
+ * ⚠️ 解析失败**不能**把配置整个丢掉 —— 后端拿到 null 会保留老配置,
+ *    用户以为改了, 实际没改. 但也不能把半截 JSON 发过去 (后端会 422).
+ *    所以: 解析不了就发 null (保留原值), 并由上面的校验拦住不让提交.
+ */
+function parseMcpOrNull(text: string): Record<string, unknown> | null {
+  const t = (text || '').trim();
+  if (!t) return null;
+  try {
+    const v = JSON.parse(t);
+    return (v && typeof v === 'object') ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -458,6 +534,33 @@ async function submit() {
     return;
   }
   submitting.value = true;
+  // ⚠️ 2026-10-30 「只改元信息」: 走**另一条**路 (PATCH) ——
+  //    updateAsset 是"发新版本", 必须传包, 版本号也会变.
+  if (props.mode === 'edit') {
+    try {
+      const created = await updateAssetMeta(form.code.trim(), {
+        name: form.name.trim(),
+        summary: form.summary.trim(),
+        description: form.description,
+        use_when: form.use_when,
+        not_for: form.not_for,
+        category: form.category,
+        project: form.project || '',
+        icon: form.icon || '🧩',
+        tags: splitList(tagsText.value),
+        keywords: splitList(keywordsText.value),
+        install_steps: splitLines(form.installStepsText),
+        // 连接器: 只传 MCP 配置 (非连接器传 null = 不改)
+        mcp_config: isMcp.value ? parseMcpOrNull(mcpConfigText.value) : null,
+      });
+      job.value = created;
+      await poll(created.id);
+    } catch (e: any) {
+      ElMessage.error('保存失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
+      submitting.value = false;
+    }
+    return;
+  }
   const payload = {
     code: form.code.trim(),
     kind: form.kind,
@@ -613,6 +716,15 @@ function close() {
   margin-left: 6px;
 }
 .tb-hint { font-size: 11.5px; color: var(--ink-500); }
+/* ⚠️ 2026-10-30 「只改元信息」模式的一句说明 ——
+   免得用户以为还能改安装包 (那儿确实没有上传框了). */
+.edit-note {
+  padding: 9px 12px; margin-bottom: 14px;
+  border-radius: var(--radius-card);
+  background: rgba(59, 130, 246, 0.07);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  font-size: 12px; color: var(--ink-700); line-height: 1.6;
+}
 .tb-change {
   background: var(--surface); border: 1px solid var(--border);
   color: var(--ink-700); border-radius: var(--radius-pill);

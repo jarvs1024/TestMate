@@ -244,6 +244,36 @@ class UploadAssetIn(BaseModel):
     mcp_config: dict[str, Any] | None = None
 
 
+class AssetMetaUpdateIn(BaseModel):
+    """**只改元信息** —— 不碰安装包, 不发新版本 (2026-10-30).
+
+    ⚠️ 为什么要有这个端点: 原来的 `PUT /assets/{code}` 是"发新版本",
+       **必须传安装包** (连接器除外) —— 用户只想改个简介/标签都得上传一遍包,
+       而且传上去的就是新版本号. 现在多一条"只改说明"的路.
+
+    ⚠️ **不含 version / 文件相关字段** —— 版本号归"发新版本"管,
+       这里改了会让"这一版到底是哪个包"对不上.
+    ⚠️ 全部字段默认 None = **不改** (不是"清空") —— 传了才生效.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    icon: str | None = Field(default=None, max_length=16)
+    summary: str | None = Field(default=None, min_length=1, max_length=500)
+    description: str | None = None
+    use_when: str | None = None
+    not_for: str | None = None
+    category: str | None = Field(default=None, max_length=64)
+    # 适用项目 (空 = 通用) —— 见 UploadAssetIn.project
+    project: str | None = Field(default=None, max_length=32)
+    tags: list[str] | None = None
+    keywords: list[str] | None = None
+    permissions: dict[str, Any] | None = None
+    install_steps: list[str] | None = None
+    bindings: dict[str, Any] | None = None
+    # 连接器 (mcp) 的 MCP 配置 —— 只有连接器才有 (后端会校验)
+    mcp_config: dict[str, Any] | None = None
+
+
 class SyncStatusOut(UTCModel):
     """前端顶部状态条用."""
 

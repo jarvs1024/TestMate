@@ -25,9 +25,14 @@ import { MCP_TEMPLATE, formatMcpConfig, parseMcpConfig } from './mcpConfig';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 export interface UseAssetUploadFormOptions {
-  /** 新建还是更新版本 */
-  mode: () => 'create' | 'update';
-  /** 更新时的原资产 */
+  /**
+   * create = 新建资产; update = 发新版本; edit = **只改元信息** (2026-10-30).
+   *
+   * ⚠️ edit 与 update 的区别: update 是"发新版本" —— **必须传安装包**,
+   *    版本号也会变; edit 是"改说明" —— 不碰包, 不碰版本号.
+   */
+  mode: () => 'create' | 'update' | 'edit';
+  /** 更新/编辑时的原资产 */
   asset: () => AssetItem | null | undefined;
   /** 入口选定的形态 (空 = 让人在抽屉里选) */
   initialKind: () => MarketKind | '';
@@ -79,6 +84,13 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     // 适用项目: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有
     project: '',
     tags: [] as string[], files: [] as File[],
+    // ⚠️ 2026-10-30: 「只改元信息」模式要能编辑这几项 ——
+    //    以前上架表单里**没有**这些输入框 (2026-10-24 精简掉了),
+    //    编辑时却又想改 → 只能靠"发新版本", 那太重了.
+    description: '',
+    not_for: '',
+    // 安装步骤: 后端是**列表** (install_steps: list[str]), 表单里一行一条
+    installStepsText: '',
   });
   const tagsText = ref('');
   /** 连接器 (mcp) 的 MCP 配置 (JSON 文本) */
@@ -90,6 +102,8 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   // ---------- 派生 ----------
   /** 连接器形态: 只有一段 MCP 配置, 没有安装包也没有 README */
   const isMcp = computed(() => form.kind === 'mcp');
+  /** 「只改元信息」模式 (2026-10-30) —— 不碰安装包, 不碰版本号 */
+  const isEdit = computed(() => mode() === 'edit');
   /** 当前形态的元信息 (图标 / 需要准备什么) */
   const kind = computed(() => kindMeta(form.kind));
   /**
@@ -134,8 +148,11 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * 有没有"来源" —— code 就是从这儿派生的:
    *   技能/插件 → 选了安装包; 连接器 → 填了 MCP 配置.
    */
-  const hasSource = computed(() =>
-    isMcp.value ? !!mcpConfigText.value.trim() : !!pkgFile.value);
+  const hasSource = computed(() => {
+    // ⚠️ 编辑模式: 安装包**已经存在**了 —— 不是"缺来源", 别把它算成缺项.
+    if (isEdit.value) return true;
+    return isMcp.value ? !!mcpConfigText.value.trim() : !!pkgFile.value;
+  });
 
   /**
    * code 的格式错误.
@@ -144,7 +161,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    *    新建时报错; 更新时那是老资产的 code, 标红没有意义.
    */
   const codeError = computed(() => {
-    if (mode() === 'update') return '';
+    if (mode() === 'update' || isEdit.value) return '';
     // ⚠️ 还没选包 / 没填配置时, code 还是初始的 "dml-" —— 那不是错误,
     //    是"还没派生出来". 提前标红会让人以为填错了.
     if (!hasSource.value) return '';
@@ -193,10 +210,13 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * ⚠️ `requirePrefix` 只在**新建**时为 true —— 存量资产的 code 本身就没有
    *    dml- 前缀, 更新时强制前缀等于把那些资产锁死 (后端同理, 见 market_naming)。
    */
-  const pkgNameError = computed(() =>
-    pkgFile.value
+  const pkgNameError = computed(() => {
+    // ⚠️ 编辑模式没有安装包 —— 别拿"包名不合规"吓人
+    if (isEdit.value) return '';
+    return pkgFile.value
       ? validatePackageName(pkgFile.value.name, { requirePrefix: mode() === 'create' })
-      : '');
+      : '';
+  });
 
   /**
    * 体检结论: 包装不上.
@@ -228,12 +248,28 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   const iconChoices = computed(() => {
     const pool = ICON_POOLS[form.category] || [];
     const all = Array.from(new Set([...pool, ...GENERAL_ICONS, ...FALLBACK_ICONS]));
-    return all.filter((ic) => !usedIcons.value.has(ic));
+    return all.filter((ic) => {
+      // ⚠️ 编辑模式: 资产**自己**正在用的图标也得能选 ——
+      //    它本来就在"已占用"名单里 (usedIcons 是全部资产的图标),
+      //    被过滤掉的话用户连"不改图标"都做不到 (下拉里根本看不到当前图标).
+      if (isEdit.value && ic === asset()?.icon) return true;
+      return !usedIcons.value.has(ic);
+    });
   });
 
   /** 缺什么 —— 一次说清, 别让人点一次报一个 */
   const missing = computed(() => {
     const out: string[] = [];
+    // ⚠️ 「只改元信息」模式: **不用安装包 / 不用版本 / 不用 code** ——
+    //    那些东西都已经在仓库里了, 这条路只改说明文字.
+    if (isEdit.value) {
+      if (!form.name.trim()) out.push('名称');
+      if (!form.summary.trim()) out.push('一句话简介');
+      if (!form.category) {
+        out.push(categoriesError.value ? '分类 (列表加载失败, 可先选「其他」)' : '分类');
+      }
+      return out;
+    }
     if (isMcp.value) {
       // 连接器: 要配置, 不要包
       if (mcpConfigError.value) out.push('MCP 配置');
@@ -262,7 +298,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   });
   const canSubmit = computed(() =>
     missing.value.length === 0
-    && (isMcp.value || (!previewBad.value && !pkgNameError.value)));
+    && (isEdit.value || isMcp.value || (!previewBad.value && !pkgNameError.value)));
 
   // ---------- 加载 ----------
   async function loadCategories() {
@@ -318,10 +354,10 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
 
   /** 自动分配图标 (避开已被用掉的) */
   function autoIcon() {
-    // ⚠️ 更新版本时**保留原图标** —— 分配逻辑会跳过"已被占用"的图标,
-    //    而这个资产自己的图标正好在占用名单里 → 结果每次更新都换个图标,
+    // ⚠️ 更新版本 / 编辑信息时**保留原图标** —— 分配逻辑会跳过"已被占用"的图标,
+    //    而这个资产自己的图标正好在占用名单里 → 结果每次都换个图标,
     //    用户完全没感知, 卡片上的图标就悄悄变了.
-    if (mode() === 'update') return;
+    if (mode() === 'update' || isEdit.value) return;
     form.icon = pickIcon({
       category: form.category,
       name: form.name,
@@ -406,7 +442,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     iconTouched.value = false;
     if (fileInput.value) fileInput.value.value = '';
     const a = asset();
-    if (mode() === 'update' && a) {
+    if ((mode() === 'update' || isEdit.value) && a) {
       step.value = 'form';
       form.code = a.code; form.kind = a.kind; form.name = a.name; form.version = a.version;
       form.summary = a.summary;
@@ -419,6 +455,10 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
       form.files = [];
       tagsText.value = (a.tags || []).join(', ');
       keywordsText.value = (a.keywords || []).join(', ');
+      // ⚠️ 2026-10-30: 编辑模式要能改这几项 —— 上架表单里没有这些输入框
+      form.description = a.description || '';
+      form.not_for = a.not_for || '';
+      form.installStepsText = (a.install_steps || []).join('\n');
     } else {
       // 新建: 形态在入口就选好了 (initialKind) —— 直接进对应表单;
       // 没带形态 (别处打开) 就先走第 ① 步让人选, 别再默认「技能」。
@@ -428,6 +468,9 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
         use_when: '', category: '', icon: '🧩',
         project: '',        // 新建默认通用
         tags: [], files: [],
+        // ⚠️ 2026-10-30: 新建时这几个字段没有输入框 —— 重置干净,
+        //    别把上一个资产的说明文字带进新建表单.
+        description: '', not_for: '', installStepsText: '',
       });
       step.value = opts.initialKind() ? 'form' : 'pick';
       tagsText.value = ''; keywordsText.value = '';
@@ -479,7 +522,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     fileInput, pkgFile, preview, previewing, iconPanel, usedIcons, iconTouched,
     categories, categoriesError, categoriesLoading, projectOptions,
     // 派生
-    isMcp, kind, mcpParsed, mcpConfigError, mcpHint, mcpHintState,
+    isMcp, isEdit, kind, mcpParsed, mcpConfigError, mcpHint, mcpHintState,
     codeError, codeFieldError,
     codeSyncError, versionError, pkgNameError, pkgBaseName,
     previewBad, previewIssues, iconChoices, missing, canSubmit,

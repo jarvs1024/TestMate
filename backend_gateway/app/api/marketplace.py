@@ -68,6 +68,7 @@ from app.schemas.asset import (
     AssetJobListOut,
     AssetJobOut,
     AssetListOut,
+    AssetMetaUpdateIn,
     AssetNotificationListOut,
     MarketConfigOut,
     AssetOut,
@@ -2406,6 +2407,321 @@ async def update_asset(
         action="update", payload_in=payload, files=file_map,
         package=pkg_bytes, package_name=pkg_name, user=user,
     )
+
+
+# ============================================================================
+# 只改元信息 (2026-10-30) —— 不碰安装包, 不发新版本
+# ============================================================================
+
+# 元信息编辑**能改哪些字段** —— 与 AssetMetaUpdateIn 一一对应.
+# ⚠️ 不含 version / featured / homepage / kind / author:
+#    版本号归"发新版本"管, 作者归上传者管 (改了就是冒名).
+_META_FIELDS = (
+    "name", "icon", "summary", "description", "use_when", "not_for",
+    "category", "project", "tags", "keywords", "permissions",
+    "install_steps", "bindings", "mcp_config",
+)
+
+
+@router.patch("/{code}", response_model=AssetJobOut, status_code=202)
+async def update_asset_meta(
+    code: str,
+    payload: AssetMetaUpdateIn,
+    user: User = Depends(require_publisher),
+) -> AssetJobOut:
+    """**只改资产的元信息** (名字 / 简介 / 说明 / 标签 …) —— 不碰安装包.
+
+    ⚠️ 为什么要有这个端点 (2026-10-30):
+       原来的 `PUT /assets/{code}` 是"**发新版本**", 非连接器**必须传安装包** ——
+       用户只想改一句简介, 却得上传一遍包, 而且传上去的就是新版本号.
+       现在多一条"只改说明"的路.
+
+    ⚠️ 权限跟"发新版本"一致 —— **作者本人 或 管理员** (_assert_can_modify).
+    ⚠️ 审核口径也一致 —— 内容变了就得重新走审核 (跟"发新版本"一个口径).
+       否则就是审核绕过: 简介/说明就是市场上卡片上显示的内容.
+    """
+    await _assert_can_modify(code, user)
+
+    # ⚠️ 跟其它写操作**同一把 code 锁** —— 落盘 / 改 manifest 都得串行,
+    #    两个并发编辑会把对方的 manifest 覆盖掉.
+    async with code_lock(code):
+        return await _stage_asset_meta(code, payload, user)
+
+
+async def _stage_asset_meta(
+    code: str, payload: AssetMetaUpdateIn, user: User
+) -> AssetJobOut:
+    """元信息编辑的落盘 + 入队 (在 code 锁内).
+
+    ⚠️ **绝对不能走 _stage_asset_locked 的 else 分支** ——
+       那条路是"多文件文本上传", 第一件事就是 `shutil.rmtree(files_dir)`,
+       会把别人上传的安装包**直接删掉**. 这里另写一条路:
+         · 只读旧 manifest, 保留 files / doc_file / package_sha256 / package_name;
+         · 只重写 manifest.json + README.md;
+         · **不碰** files/ 与 package/ 目录.
+    """
+    # ---- 1. 读旧 manifest (工作区里的那份) ----
+    async with AsyncSessionLocal() as session:
+        existing = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+
+    old_base = existing.git_path or ""
+    if not old_base:
+        raise HTTPException(status_code=409, detail="这个资产在工作区里没有目录, 请先同步一次")
+
+    old_manifest_path = git_sync.WORKSPACE / old_base / "manifest.json"
+    try:
+        old_manifest = json.loads(old_manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        # ⚠️ 工作区里没有这份资产 —— 不能凭空造一个 (files/package 都不在,
+        #    造出来的 manifest 指向空目录, 仓库里就多了一份坏资产).
+        raise HTTPException(
+            status_code=409,
+            detail="工作区里找不到这个资产 (manifest.json 不在) —— 请先点「重新同步」",
+        ) from None
+    except (json.JSONDecodeError, OSError) as e:
+        raise HTTPException(
+            status_code=409, detail=f"工作区里这个资产的 manifest 读不出来 ({e}) —— 请先点「重新同步」",
+        ) from e
+
+    # ---- 2. 合并: 老的元信息 + 这次传上来的改动 ----
+    overrides = payload.model_dump(exclude_unset=True)
+    merged: dict[str, Any] = {}
+    for f in _META_FIELDS:
+        v = overrides.get(f)
+        merged[f] = old_manifest.get(f) if v is None else v
+
+    kind = str(old_manifest.get("kind") or existing.kind or "skill")
+    version = str(old_manifest.get("version") or existing.version or "0.1.0")
+
+    try:
+        manifest = build_manifest(
+            code=code,
+            kind=kind,
+            name=str(merged.get("name") or ""),
+            version=version,
+            summary=str(merged.get("summary") or ""),
+            description=str(merged.get("description") or ""),
+            use_when=str(merged.get("use_when") or ""),
+            not_for=str(merged.get("not_for") or ""),
+            category=str(merged.get("category") or ""),
+            project=str(merged.get("project") or ""),
+            tags=list(merged.get("tags") or []),
+            keywords=list(merged.get("keywords") or []),
+            icon=str(merged.get("icon") or "🧩"),
+            # ⚠️ 作者**保持原样** —— 管理员替别人改个简介, 不能把作者改成管理员.
+            author=str(old_manifest.get("author") or existing.author or ""),
+            featured=bool(old_manifest.get("featured")),
+            homepage=old_manifest.get("homepage"),
+            permissions=dict(merged.get("permissions") or {}),
+            install_steps=list(merged.get("install_steps") or []),
+            bindings=dict(merged.get("bindings") or {}),
+            mcp_config=merged.get("mcp_config") if kind == "mcp" else None,
+        )
+    except ManifestError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    # ⚠️ **文件相关的字段原样保留** —— 这一版不改包, 那些字段必须还是老的.
+    manifest["files"] = list(old_manifest.get("files") or [])
+    manifest["doc_file"] = old_manifest.get("doc_file") or ""
+    manifest["package_sha256"] = old_manifest.get("package_sha256") or ""
+    manifest["package_name"] = old_manifest.get("package_name") or ""
+
+    base = manifest["git_path"]
+    # ⚠️ 分类改了 → 仓库目录变了 → 老目录要一起清掉 (job 提交时会删掉它)
+    old_git_path = old_base if old_base != base else ""
+
+    # ---- 3. 落盘: 只写 manifest.json + README.md, **不碰 files/ package/** ----
+    try:
+        if old_git_path:
+            # 目录搬家 —— 先把整个目录挪过去 (同一个文件系统 = 原子 rename),
+            # 再在新位置改 manifest. ⚠️ 挪的是**整个目录**, files/package 一起走.
+            _move_asset_dir(old_git_path, base)
+        git_sync.write_text(
+            f"{base}/manifest.json",
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+        )
+        # ⚠️ 连接器 (mcp) 是**配置型**资产 —— 目录里只有 manifest.json, **没有 README**
+        #    (跟上传那条路保持一致, 别给它凭空造一个 README).
+        if kind == "mcp":
+            git_sync.remove_path(f"{base}/README.md")
+        elif manifest.get("description"):
+            git_sync.write_text(f"{base}/README.md", manifest["description"])
+        else:
+            # 描述被清空了 → README 也得清掉 (否则仓库里留着旧说明)
+            git_sync.remove_path(f"{base}/README.md")
+    except git_sync.SyncError as e:
+        # ⚠️ 落盘中途失败 → 工作区脏 → 反向同步的安全闸每轮都跳过 →
+        #    **整个反向同步永久卡死**. 必须清干净.
+        # ⚠️ 目录搬过家的话**先搬回去** —— 否则 clean_path 会把搬过去的
+        #    files/ package/ 当成"未跟踪残留"删掉.
+        if old_git_path:
+            _move_back(old_git_path, base)
+        _cleanup_staged_dir(old_git_path or base)
+        raise HTTPException(status_code=500, detail=f"写入本地工作区失败: {e}") from e
+    except OSError as e:
+        if old_git_path:
+            _move_back(old_git_path, base)
+        _cleanup_staged_dir(old_git_path or base)
+        raise HTTPException(status_code=500, detail=f"写入本地工作区失败: {e}") from e
+
+    # ---- 4. DB 镜像 + index.json ----
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        old_snapshot = _snapshot_asset(a)
+        a.name = manifest.get("name") or a.code
+        a.icon = manifest.get("icon") or "🧩"
+        a.kind = manifest.get("kind") or "skill"
+        a.version = manifest.get("version") or "0.1.0"
+        a.summary = manifest.get("summary") or ""
+        a.description = manifest.get("description") or ""
+        a.use_when = manifest.get("use_when") or ""
+        a.not_for = manifest.get("not_for") or ""
+        a.category = manifest.get("category") or ""
+        a.project = manifest.get("project") or ""
+        a.mcp_config = manifest.get("mcp_config") if (a.kind or "") == "mcp" else None
+        a.tags = list(manifest.get("tags") or [])
+        a.keywords = list(manifest.get("keywords") or [])
+        a.permissions = dict(manifest.get("permissions") or {})
+        a.install_steps = list(manifest.get("install_steps") or [])
+        a.bindings = dict(manifest.get("bindings") or {})
+        a.git_path = base
+        # ⚠️ 审核口径跟"发新版本"一致 —— 内容变了就得重新过审.
+        need_review = await _review_required(user)
+        if need_review:
+            a.publish_status = "pending"
+            a.review_note = ""
+        elif a.publish_status in (market_state.REJECTED, market_state.UNPUBLISHED):
+            a.publish_status = "published"
+            a.review_note = ""
+
+        # ⚠️ manifest.json 必须带上 publish_status (同步器会读它)
+        manifest["publish_status"] = a.publish_status
+        try:
+            git_sync.write_text(
+                f"{base}/manifest.json",
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+            )
+        except git_sync.SyncError as e:
+            # ⚠️ 这里写失败了 → 落盘是**半截**的 → 必须回滚 (工作区脏 = 反向同步卡死)
+            if old_git_path:
+                _move_back(old_git_path, base)
+            _cleanup_staged_dir(old_git_path or base)
+            await session.rollback()
+            raise HTTPException(status_code=500, detail=f"写入本地工作区失败: {e}") from e
+        web_base = ((await _setting("marketplace.git.web_url", "")) or "").strip().rstrip("/")
+        a.git_web_url = (
+            f"{web_base}/-/tree/{git_sync.git_branch()}/{base}" if web_base else ""
+        )
+        a.sync_status = "staged"
+        a.last_error = ""
+        await session.commit()
+        await session.refresh(a)
+
+        try:
+            await stage_index(session, asset_to_index_entry(a))
+        except git_sync.SyncError as e:
+            # ⚠️ 索引写失败 → 补偿 (工作区/DB/index.json 全部还原)
+            # ⚠️ **目录搬过家的话必须先搬回去** ——
+            #    _cleanup_staged_dir 对新目录做 `git clean -fd` 会把搬过去的
+            #    files/ package/ 当成"未跟踪的残留"**直接删掉** —— 资产内容就没了.
+            if old_git_path:
+                _move_back(old_git_path, base)
+            await _compensate_staged_asset(
+                code, old_git_path or base, old_snapshot, existed=True,
+            )
+            raise HTTPException(status_code=500, detail=f"更新 index.json 失败: {e}") from e
+
+        author = _author_of(user)
+        job = AssetJob(
+            action="update_meta",
+            status="staged",
+            code=a.code,
+            asset_name=a.name,
+            kind=a.kind,
+            payload={
+                "manifest": manifest,
+                "files": {},
+                "publish_status": a.publish_status,
+                "author": [author[0], author[1]],
+                "commit_message": f"docs(market): 修改资产信息 {a.name} {a.version}",
+                "old_git_path": old_git_path,
+            },
+            git_path=a.git_path,
+            created_by=user.id,
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        out = AssetJobOut.model_validate(job)
+
+        await _audit(
+            session, code=a.code, action="update_meta", actor=user, asset_id=a.id,
+            detail={"fields": sorted(overrides.keys())},
+        )
+        await session.commit()
+
+    # ---- 5. 入队, 后台 commit + push ----
+    enqueue(out.id)
+    await market_notify.notify_asset(
+        "review" if a.publish_status == "pending" else "update",
+        manifest,
+        actor=user.username,
+        detail=(
+            "修改了资产信息, 等管理员审核"
+            if a.publish_status == "pending" else "修改了资产信息"
+        ),
+        author=manifest.get("author", "") or user.username,
+    )
+    return out
+
+
+def _move_asset_dir(old_base: str, new_base: str) -> None:
+    """把资产目录整体搬到新位置 (分类改了 → 仓库路径变了).
+
+    ⚠️ 搬的是**整个目录** —— files/ 与 package/ 一起走, 不会丢.
+    ⚠️ 同一个文件系统里 shutil.move 就是一次 rename (原子) —— 中途失败不会留半截.
+    """
+    src = git_sync.WORKSPACE / old_base
+    dst = git_sync.WORKSPACE / new_base
+    if not src.is_dir():
+        raise HTTPException(
+            status_code=409,
+            detail="工作区里找不到这个资产的目录 —— 请先点「重新同步」",
+        )
+    if dst.exists():
+        raise HTTPException(status_code=409, detail="目标目录已经存在, 请先点「重新同步」")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+
+
+def _move_back(old_base: str, new_base: str) -> bool:
+    """把目录**搬回原来的位置** (补偿用) —— 失败只记日志, 不抛.
+
+    ⚠️ 什么时候需要: 分类改了 → 目录从 old_base 搬到 new_base; 之后如果中途出错,
+       必须把目录搬回去 —— 否则清理逻辑 (`git clean -fd`) 会把搬过去的
+       files/ package/ 当成"未跟踪残留"删掉, 资产内容就没了.
+    """
+    src = git_sync.WORKSPACE / new_base
+    dst = git_sync.WORKSPACE / old_base
+    if not src.is_dir():
+        return False
+    try:
+        if dst.exists():
+            shutil.rmtree(dst, ignore_errors=True)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return True
+    except OSError as e:  # noqa: BLE001 — 补偿失败不该盖掉原始错误
+        logger.warning("补偿: 资产目录搬回失败 old=%s new=%s err=%s", old_base, new_base, e)
+        return False
 
 
 # ---------- 同步 / 运维 ----------

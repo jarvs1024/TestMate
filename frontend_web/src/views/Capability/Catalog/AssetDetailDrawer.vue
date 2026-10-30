@@ -183,6 +183,10 @@
 
         <!-- ⚠️ 「下载」不在这里 —— 它跟"装到哪"放一起了 (见顶部安装卡).
              不做「装到本地 / 重新安装 / 卸载」那一套 —— 服务器不该替用户管磁盘. -->
+        <!-- ⚠️ 2026-10-30: 「编辑信息」—— 只改说明文字 (名字/简介/说明/标签),
+             **不碰安装包, 不发新版本**. 跟「发布新版本」分开两个按钮:
+             用户想改一句话, 不该被逼着重新上传一遍包. -->
+        <el-button v-if="canEdit" class="ad-btn" @click="emit('edit-meta', item)">编辑信息</el-button>
         <el-button v-if="canEdit" class="ad-btn" @click="emit('edit', item)">发布新版本</el-button>
         <el-button v-if="canEdit && item.publish_status === 'published'"
                    class="ad-btn" type="warning" plain @click="doApplyUnpublish">
@@ -244,7 +248,10 @@ const props = withDefaults(defineProps<{
 }>(), { reviewEnabled: undefined });
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void;
+  /** 发布新版本 (要重新传安装包) */
   (e: 'edit', item: AssetItem): void;
+  /** 只改元信息 (2026-10-30) —— 不碰安装包, 不碰版本号 */
+  (e: 'edit-meta', item: AssetItem): void;
   (e: 'changed'): void;
   /** 资产被删除了 —— 父组件不要再拿它去刷新 (会 404) */
   (e: 'deleted'): void;
