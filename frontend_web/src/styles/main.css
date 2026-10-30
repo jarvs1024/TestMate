@@ -64,9 +64,18 @@ html, html[data-theme] {
   --el-border-color-extra-light: var(--border);
   --el-border-color-dark: var(--border-strong);
   --el-border-color-darker: var(--border-strong);
-  --el-bg-color: var(--surface);
+  /* ⚠️ **浮层底色走 --surface-panel** (2026-10-30 · 第十轮) ——
+     Element Plus 里: 抽屉 / 对话框 / 确认框走 `--el-bg-color`,
+     下拉菜单 / 选择框下拉 / 气泡卡 / 通知走 `--el-bg-color-overlay`.
+     ⚠️ 这两个以前指向 `--surface` (半透明 rgba(255,255,255,.60)) ——
+        浮层是盖在**被遮暗的页面**上的, 半透明底把背后那层灰透出来 → 面板发灰发脏;
+        更糟的是抽屉的 header 和 body **各自叠一层**半透明底,
+        两层叠出来的白跟一层不一样 → 「上下背景不协调, 不是一个整体」(用户报的).
+     ✅ 统一指到 `--surface-panel` —— 亮色 = 不透明纯白, 暗色 = 半透毛玻璃;
+        header / body / 弹层箭头 全是同一个色 (内部一律 transparent, 见文件末尾). */
+  --el-bg-color: var(--surface-panel);
   --el-bg-color-page: var(--bg-base);
-  --el-bg-color-overlay: var(--surface);
+  --el-bg-color-overlay: var(--surface-panel);
   --el-mask-color: rgba(0, 0, 0, 0.55);
   --el-mask-color-extra-light: rgba(0, 0, 0, 0.35);
   /* 下拉菜单项的悬停底色 —— Element 默认 #ecf5ff (浅蓝), 暗色下同样是白底 */
@@ -267,15 +276,31 @@ select.tm-input:focus {
 /* ===== Element Plus 弹层跟主题走 (el-dropdown / el-popover / el-tooltip / el-select dropdown) =====
    Element Plus 弹层默认白底, 文字用 --el-text-color-primary.
    我们的 --el-text-color-primary 跟主题走 (light 浅字 / dark 深字), 但弹层底色没跟.
-   这里强制弹层底色跟 surface 走, 文字跟 ink 走. */
+
+   ⚠️ **底色用 --surface-panel** (亮色 = 不透明纯白, 暗色 = 半透毛玻璃) ——
+      弹层是盖在**被遮暗的页面**上的, 亮色下用半透明底会把背后那层灰透出来 → 弹层发灰发脏.
+   ⚠️ **弹层内部的填充色要换成配套的一整套** (--fill-*) ——
+      半透明的填充 (--surface-sunken) 盖在不透明弹层上 = 「白底盖白底」= 看不出来.
+      这也是为什么要有 --fill-* 这一族 token (见 tokens.css). */
 .el-popper,
 .el-dropdown-menu,
 .el-select-dropdown,
 .el-popover {
-  background: var(--surface) !important;
-  border-color: var(--border) !important;
+  background: var(--surface-panel) !important;
+  border-color: var(--border-panel) !important;
   color: var(--ink-900) !important;
   box-shadow: var(--shadow-md) !important;
+
+  /* 弹层内部的填充色 —— 必须是**不透明**的 (相对面板的深浅) */
+  --el-fill-color: var(--fill-hover);
+  --el-fill-color-blank: var(--fill-blank);
+  --el-fill-color-light: var(--fill-hover);
+  --el-fill-color-lighter: var(--fill-disabled);
+  --el-fill-color-extra-light: var(--fill-disabled);
+  --el-fill-color-dark: var(--fill-active);
+  --el-fill-color-darker: var(--fill-active);
+  --el-disabled-bg-color: var(--fill-disabled);
+  --el-dropdown-menuItem-hover-fill: var(--fill-hover);
 }
 .el-popper .el-dropdown-menu__item,
 .el-select-dropdown__item {
@@ -286,12 +311,14 @@ select.tm-input:focus {
    以前只覆盖了 `:hover`, 所以 `.is-hovering` 那条
    `background-color: var(--el-fill-color-light)` (#f5f7fa 近白) 一直在生效 ——
    暗色主题下就是「白底 + 浅色字」, 选项整个看不清 (用户报的就是这个).
-   ⚠️ `.is-hovering` 和 `:hover` **都要写** —— 前者是键盘/脚本态, 后者是鼠标态. */
+   ⚠️ `.is-hovering` 和 `:hover` **都要写** —— 前者是键盘/脚本态, 后者是鼠标态.
+   ⚠️ 底色用 `--fill-hover` —— **不能**再用半透明的 `--surface-sunken`:
+      弹层底色已经是不透明的了, 半透明填充盖上去 = 白底盖白底 = 悬停看不出来. */
 .el-popper .el-dropdown-menu__item:not(.is-disabled):hover,
 .el-popper .el-dropdown-menu__item:not(.is-disabled).is-hovering,
 .el-select-dropdown__item:hover,
 .el-select-dropdown__item.is-hovering {
-  background: var(--surface-sunken) !important;
+  background: var(--fill-hover) !important;
   color: var(--primary) !important;
 }
 /* ⚠️ 选中的那一项 —— Element 只给了 font-weight, 底色要自己定,
@@ -329,15 +356,16 @@ select.tm-input:focus {
       会变成跟普通卡片一样的灰底, 反而更看不懂.
       所以只兜底 `.is-light` / `.is-dark` 之外的「裸 alert」. */
 .el-alert:not(.is-light):not(.is-dark) {
-  background-color: var(--surface-sunken) !important;
+  background-color: var(--fill-hover) !important;
 }
 /* 复选框的底/边框 —— 走 Element 变量(--el-checkbox-bg-color /
    --el-checkbox-input-border) 就自动跟主题了, 这里不用再手写 !important 覆盖 */
-/* 弹层内的小箭头同色 */
+/* 弹层内的小箭头同色 —— ⚠️ 底色必须跟**弹层面板**一致 (--surface-panel),
+   箭头用 --surface 的话会跟面板差半层, 边缘露一圈 */
 .el-popper .el-popper__arrow::before,
 .el-dropdown-menu .el-popper__arrow::before {
-  background: var(--surface) !important;
-  border-color: var(--border) !important;
+  background: var(--surface-panel) !important;
+  border-color: var(--border-panel) !important;
 }
 
 /* ===== 原生 <select> + el-select 跟主题对齐 (边框 + focus 渐变 ring) =====
@@ -545,17 +573,88 @@ html[data-theme="dark"] {
   }
 }
 
-html[data-theme="dark"] .el-drawer,
-html[data-theme="dark"] .el-drawer__header,
-html[data-theme="dark"] .el-drawer__body,
-html[data-theme="dark"] .el-message-box,
-html[data-theme="dark"] .el-message-box__header,
-html[data-theme="dark"] .el-message-box__body,
-html[data-theme="dark"] .el-message-box__btns {
-  background-color: var(--surface) !important;
+/* ============================================================
+ * 浮层面板 (抽屉 / 对话框 / 确认框) —— 2026-10-30 · 第十轮整改
+ * ============================================================
+ *
+ * ⚠️ **用户报的问题**: "所有抽屉的地方, 上下背景不协调, 整体都不对劲,
+ *    不是一个整体了" —— 要"改回之前全白色的".
+ *
+ * ⚠️ **根因不是"半透明"本身, 是"同一个面板里叠了多层不同的底"**:
+ *    ① `.el-drawer` 画一层 (第八轮起底色变成半透明的 --surface);
+ *    ② `.el-drawer__body` 又画一层 (一条全局 !important);
+ *    ③ 暗色主题下 header / body / message-box 各自再画一层.
+ *    两层半透明叠出来的白 ≠ 一层半透明 → **header 比 body 暗** →
+ *    「上下背景不协调, 不是一个整体」.
+ *
+ * ✅ **修法 (两条, 缺一不可)**:
+ *    ① **只有容器画一次底色** —— `.el-drawer` / `.el-dialog` / `.el-message-box`;
+ *       内部 header / body / content / btns 一律 **transparent**, 透出容器底色.
+ *       这样 header 和 body 严丝合缝, 是一整块.
+ *    ② **底色用 --surface-panel** (亮色 = 不透明纯白, 暗色 = 半透毛玻璃).
+ *
+ * ⚠️ **为什么亮色必须完全不透明**: 浮层盖在 rgba(0,0,0,.55) 的遮罩上,
+ *    白底只要带一点 alpha, 背后的黑就透出来 → 纯白变成灰白, 看着发脏.
+ *    暗色下反过来 —— 半透明叠深色背景更协调, 所以暗色保留毛玻璃.
+ */
+
+/* ① 容器: 画一次底色 + 内部控件配套的填充色 */
+.el-drawer,
+.el-dialog,
+.el-message-box {
+  background-color: var(--surface-panel) !important;
   color: var(--ink-900) !important;
-  border-color: var(--border) !important;
+  border-color: var(--border-panel) !important;
+
+  /* 浮层内部的填充色 —— 跟弹层同一套 (--fill-*),
+     否则半透明的 --surface-sunken 盖在不透明面板上 = 白底盖白底 = 看不出来 */
+  --el-fill-color: var(--fill-hover);
+  --el-fill-color-blank: var(--fill-blank);
+  --el-fill-color-light: var(--fill-hover);
+  --el-fill-color-lighter: var(--fill-disabled);
+  --el-fill-color-extra-light: var(--fill-disabled);
+  --el-fill-color-dark: var(--fill-active);
+  --el-fill-color-darker: var(--fill-active);
+  --el-disabled-bg-color: var(--fill-disabled);
+  /* 浮层里的控件边框要比页面上的 --border (6%) 深一点, 不然白底上输入框看不见 */
+  --el-border-color: var(--border-panel);
+  --el-border-color-light: var(--border-panel);
+  --el-border-color-lighter: var(--border);
 }
+
+/* ② 内部: **一律透明**, 透出容器底色 —— header / body 必须是同一个色 */
+.el-drawer__header,
+.el-drawer__body,
+.el-dialog__header,
+.el-dialog__body,
+.el-dialog__footer,
+.el-message-box__header,
+.el-message-box__content,
+.el-message-box__btns {
+  background-color: transparent !important;
+}
+
+/* 浮层里的原生输入框 (项目自己的 .tm-input) —— 边框跟 EP 控件对齐.
+   ⚠️ 页面上的 --border 只有 6% 的墨色, 那是给「半透明卡片」设计的;
+      浮层现在是**纯白面板**, 6% 的边几乎看不见 → 输入框整个糊掉. */
+.el-drawer .tm-input,
+.el-dialog .tm-input,
+.el-message-box .tm-input,
+.el-drawer input.tm-input,
+.el-dialog input.tm-input,
+.el-message-box input.tm-input,
+.el-drawer textarea.tm-input,
+.el-dialog textarea.tm-input,
+.el-message-box textarea.tm-input,
+.el-drawer select.tm-input,
+.el-dialog select.tm-input,
+.el-message-box select.tm-input {
+  border-color: var(--border-panel) !important;
+}
+
+/* 暗色主题: 文字色跟着 token 走.
+   ⚠️ 底色**不再**在这里单独画 —— 容器统一用 --surface-panel (暗色 = 半透毛玻璃),
+      内部 header / body 一律透明 (见上面的通用块). */
 html[data-theme="dark"] .el-drawer__title,
 html[data-theme="dark"] .el-message-box__title,
 html[data-theme="dark"] .el-message-box__content,
@@ -563,34 +662,16 @@ html[data-theme="dark"] .el-message-box__message,
 html[data-theme="dark"] .el-message-box__message p {
   color: var(--ink-900) !important;
 }
+
+/* 遮罩: 页面被压暗, 浮层才浮得起来.
+   ⚠️ 亮色 0.55 / 暗色 0.6 / auto+系统暗色 0.7 —— 三套要**分别写**,
+      以前写成了 `html[data-theme="dark"] .el-overlay, @media (...) { ... }`,
+      那是**非法语法** (选择器列表里不能出现 @media), 整条规则被浏览器丢掉,
+      auto+暗色 的 0.7 其实一直没生效. */
+.el-overlay { background-color: rgba(0, 0, 0, 0.55) !important; }
 html[data-theme="dark"] .el-overlay {
   background-color: rgba(0, 0, 0, 0.6) !important;
 }
-@media (prefers-color-scheme: dark) {
-  html[data-theme="auto"] .el-drawer,
-  html[data-theme="auto"] .el-drawer__header,
-  html[data-theme="auto"] .el-drawer__body,
-  html[data-theme="auto"] .el-message-box,
-  html[data-theme="auto"] .el-message-box__header,
-  html[data-theme="auto"] .el-message-box__body,
-  html[data-theme="auto"] .el-message-box__btns {
-    background-color: var(--surface) !important;
-    color: var(--ink-900) !important;
-    border-color: var(--border) !important;
-  }
-  html[data-theme="auto"] .el-drawer__title,
-  html[data-theme="auto"] .el-message-box__title,
-  html[data-theme="auto"] .el-message-box__content,
-  html[data-theme="auto"] .el-message-box__message,
-  html[data-theme="auto"] .el-message-box__message p {
-    color: var(--ink-900) !important;
-  }
-}
-
-/* 统一加固 drawer: 不依赖主题, 确保 panel 不透明 + modal 足够深, 防止背后 MR 列表透出 */
-.el-drawer__body { background-color: var(--surface) !important; }
-.el-overlay { background-color: rgba(0, 0, 0, 0.55) !important; }
-html[data-theme="dark"] .el-overlay,
 @media (prefers-color-scheme: dark) {
   html[data-theme="auto"] .el-overlay {
     background-color: rgba(0, 0, 0, 0.7) !important;

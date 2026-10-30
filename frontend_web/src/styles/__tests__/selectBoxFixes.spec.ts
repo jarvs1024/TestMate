@@ -42,8 +42,13 @@ describe('main.css: Element Plus 悬停/选中态必须被覆盖', () => {
   it('`.is-hovering` 的底色必须走项目 token, 不能是 Element 默认的近白色', () => {
     const m = css.match(/\.el-select-dropdown__item\.is-hovering\s*\{([^}]*)\}/);
     expect(m).toBeTruthy();
-    expect(m![1]).toContain('var(--surface-sunken)');
+    // ⚠️ 2026-10-30 第十轮更新: 从 --surface-sunken 换成 **--fill-hover** ——
+    //    弹层底色改成不透明的 --surface-panel 之后, 半透明的填充盖上去
+    //    = 「白底盖白底」= 悬停根本看不出来. 现在用的是不透明的一整套 --fill-*.
+    expect(m![1]).toContain('var(--fill-hover)');
     expect(m![1]).not.toContain('#f5f7fa');
+    // ⚠️ 也不能再用半透明的 --surface-sunken
+    expect(m![1]).not.toContain('var(--surface-sunken)');
   });
 
   it('选中项 (.is-selected) 必须有底色 —— Element 只给了 font-weight', () => {
