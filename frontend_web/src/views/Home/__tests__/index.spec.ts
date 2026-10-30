@@ -29,6 +29,9 @@ const { listCapabilities, getOverview, syncStatus } = vi.hoisted(() => ({
     my_review_count: 3, failed_count: 0, unpublish_pending_count: 0,
     pending_count: 0, conflict_count: 0,
     awaiting_review_count: 0, my_pending_count: 0,
+    // ⚠️ 2026-10-30 (第十二轮): 「只改了信息」的待审数 ——
+    //    管理员待办拆成「新资产」/「只改了信息」两条, 靠这两个数分.
+    awaiting_meta_count: 0, my_meta_count: 0,
   } as Record<string, number>,
 }));
 
@@ -109,6 +112,8 @@ beforeEach(async () => {
     my_review_count: 3, failed_count: 0, unpublish_pending_count: 0,
     pending_count: 0, conflict_count: 0,
     awaiting_review_count: 0, my_pending_count: 0,
+    // ⚠️ 2026-10-30 (第十二轮): 也要复位 (上一个用例改过它)
+    awaiting_meta_count: 0, my_meta_count: 0,
   });
   getOverview.mockReset();
   getOverview.mockResolvedValue({
@@ -268,8 +273,11 @@ describe('首页 · 能力墙', () => {
     syncStatus.my_pending_count = 0;
     const { w } = await mountHome({ loggedIn: true });
     const strip = w.find('.todo-strip').text();
-    expect(strip).toContain('3 个资产等你审核');
+    // ⚠️ 2026-10-30 (第十二轮): 拆成「新资产」/「只改了信息」两条 ——
+    //    这里 mock 的 awaiting_meta_count = 0, 所以只有「新资产」那条
+    expect(strip).toContain('3 个新资产等你审核');
     expect(strip).toContain('别人提交的');
+    expect(strip).not.toContain('只改了信息');
     w.unmount();
   });
 
@@ -280,6 +288,20 @@ describe('首页 · 能力墙', () => {
     const item = w.findAll('.ts-item').find((t) => t.text().includes('等你审核'))!;
     await item.trigger('click');
     expect(pushSpy).toHaveBeenCalledWith({ name: 'market', query: { status: 'pending' } });
+    w.unmount();
+  });
+
+  it('⚠️ 2026-10-30 (第十二轮): 「只改了信息」的待审**单列一条**', async () => {
+    syncStatus.my_review_count = 0;
+    syncStatus.awaiting_review_count = 3;
+    syncStatus.my_pending_count = 0;
+    syncStatus.awaiting_meta_count = 2;
+    syncStatus.my_meta_count = 0;
+    const { w } = await mountHome({ loggedIn: true });
+    const strip = w.find('.todo-strip').text();
+    // 2 个只改了信息 → 单列一条; 3 - 2 = 1 个包变了的 → 另一条
+    expect(strip).toContain('2 个资产只改了信息');
+    expect(strip).toContain('1 个新资产等你审核');
     w.unmount();
   });
 
@@ -294,7 +316,7 @@ describe('首页 · 能力墙', () => {
     syncStatus.awaiting_review_count = 3;
     syncStatus.my_pending_count = 1;
     const { w } = await mountHome({ loggedIn: true });
-    expect(w.find('.todo-strip').text()).toContain('2 个资产等你审核');
+    expect(w.find('.todo-strip').text()).toContain('2 个新资产等你审核');
     w.unmount();
   });
 

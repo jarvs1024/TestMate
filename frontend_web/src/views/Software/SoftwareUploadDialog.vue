@@ -46,6 +46,10 @@
           <br>文件名只能用<b>英文字母、数字</b>和 <b>. _ -</b>, 且必须以字母或数字开头.
         </p>
         <p v-if="fileError" class="pick-err">{{ fileError }}</p>
+        <!-- ⚠️ 2026-10-30 (第十一轮): 「软件标识」那块整个删了, 但**这个错误还得说** ——
+             它告诉用户"这个软件包文件名派生的标识不能用, 换个文件名" ——
+             用户看不到 code 不影响他按提示换文件名. 挪到软件包这一段里. -->
+        <p v-if="codeError" class="pick-err">{{ codeError }}</p>
 
         <!-- 上传进度 —— 5G 的包要传好几分钟, 没有进度条用户会以为卡死了 -->
         <div v-if="uploading" class="pv-box checking">
@@ -87,16 +91,13 @@
           </el-form-item>
         </div>
 
-        <!-- 标识: **不再给人看** —— 用户看到的是软件名 (2026-10-30).
-             code 是服务端目录名, 由软件包文件名自动派生 (后端也会再派生一次),
-             不用用户填, 也不必让人操心.
-             ⚠️ 以前这里是个 readonly el-input, 底色写死 --ink-200 (#E2E8F0 蓝灰),
-                在纯白面板上特别扎眼 (用户图2 报的"整体页面背景和其他不太一样").
-                现在改成**纯文本只读行** —— 没有输入框, 也就没有那块突兀的灰底. -->
-        <el-form-item label="软件名称">
-          <div class="ro-text">{{ form.name || '（上面填的软件名）' }}</div>
-          <p v-if="codeError" class="pick-err">{{ codeError }}</p>
-        </el-form-item>
+        <!-- ⚠️ 2026-10-30 (第十一轮): 这里原来放着一个「软件标识」只读输入框
+             (底色写死 --ink-200, #E2E8F0 蓝灰, 在纯白面板上特别扎眼),
+             后来改成显示「软件名称」的只读行 —— **现在整块删掉**:
+             用户原话「软件名称去掉, 不展示这个信息, 后端维护就好了, 只要保证不冲突」.
+             · code 由软件包文件名派生 (codeFromFileName), 后端还会再派生一次,
+               撞名自动加序号 —— **唯一性由后端保证**, 用户不用操心, 也不用看;
+             · 「软件名」输入框在上面已经有了, 再显示一遍纯属重复. -->
 
         <div class="row-2">
           <el-form-item label="版本号" required>
@@ -850,16 +851,6 @@ function submitErrorText(
 }
 .vm-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .vm-ic { font-size: 13px; }
-
-/* 只读展示行 (软件名称) —— **没有输入框**, 所以也就没有那块突兀的灰底.
-   样式跟旁边的输入框对齐 (同样的高度/字号), 看着才像同一个表单. */
-.ro-text {
-  min-height: 32px; display: flex; align-items: center;
-  padding: 0 11px; border-radius: var(--radius-btn);
-  font-size: 14px; color: var(--ink-900);
-  background: var(--fill-blank);
-  border: 1px solid var(--border);
-}
 
 /* 提示行里的小链接按钮 (如「用建议值」) */
 .mini-link {

@@ -74,6 +74,18 @@ class Asset(Base):
     )
     # 最近一次审核意见 (驳回理由 / 审核备注) —— 审核动作也记在 asset_audits 里
     review_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # ⚠️ 2026-10-30 (第十二轮): **在等什么审核** ——
+    #    publish_status 只有一个 pending, 审核台分不出"上架新东西"和"只改了个简介":
+    #      new    新资产待审 (第一次上架)
+    #      update 新版本待审 (包变了)
+    #      meta   **只改了信息**待审 (包没变)
+    #    三者审核通过后的**通知**口径不同:
+    #      · new/update → 市场群发"上架/更新" (包真的变了)
+    #      · meta       → **不通知市场群** (包没变, 发那条是假消息)
+    #    空 = 没有待审项.
+    pending_action: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="", index=True
+    )
 
     # 下载次数 —— 热门度指标 (不是"安装次数": 后端只知道用户点了下载,
     # 不知道人家到底解压没有, 那个是猜不出来的)

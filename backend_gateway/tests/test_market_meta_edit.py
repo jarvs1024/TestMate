@@ -282,3 +282,152 @@ async def test_meta_edit_rejects_empty_name(client, auth, ws, restore_git_config
         headers=pauth,
     )
     assert r.status_code == 422, r.text
+
+
+# ---------- 钉钉通知: 编辑信息 → **审核群**, 通过后**不通知市场群** ----------
+# (2026-10-30 · 第十二轮 · 问题2)
+
+
+async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_git_config,  # noqa: ARG001
+                                                     publisher_user, monkeypatch):
+    """⚠️ 用户原话「编辑信息 → 管理员审核, 通知到管理审核群; 审核通过**不通知市场群**」.
+
+    三步各盯一条:
+      ① 提交编辑 → 通知发的是 **review** 事件 (→审核群), 不是 publish/update;
+      ② 审核通过 → **一条都不发** (包没变, 市场群那条是假消息);
+      ③ 对照: 新资产上架 → 审核通过 → **要发** publish (包真的变了).
+    """
+    from app.api import marketplace as mk_api
+
+    sent: list[tuple[str, dict]] = []
+
+    async def fake_notify(event, asset=None, **kw):
+        # ⚠️ notify_asset(event, manifest, ...) —— 第二个是**位置参数** (资产 manifest)
+        sent.append((event, kw))
+        return True
+
+    monkeypatch.setattr(mk_api.market_notify, "notify_asset", fake_notify)
+
+    # ⚠️ 审核要**开着**, 否则压根不进审核流程 (也就没有审核通知)
+    await set_setting("marketplace.review.enabled", "true")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="meta-notify")
+
+    # 上架本身要发 review 通知 (新资产) —— 先记下, 后面用差值断言
+    sent.clear()
+
+    # ---- ① 提交「只改信息」→ 通知审核群 ----
+    r = await client.patch(
+        f"{API}/meta-notify",
+        json={"summary": "改过的简介"},
+        headers=pauth,
+    )
+    assert r.status_code == 202, r.text
+    assert [e for e, _ in sent] == ["review"], sent
+    # 标题要能看出是"改信息", 不是"上新东西"
+    _, kw = sent[0]
+    assert "信息" in (kw.get("title_override") or ""), kw.get("title_override")
+
+    # ---- ② 审核通过 → **不通知市场群** ----
+    sent.clear()
+    r = await client.post(
+        f"{API}/meta-notify/review",
+        data={"decision": "approve", "comment": "改得对"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+    assert sent == [], f"只改了信息, 审核通过**不该**通知市场群 (包没变): {sent}"
+
+
+async def test_new_asset_approve_still_notifies_market(client, auth, ws, restore_git_config,  # noqa: ARG001
+                                                       publisher_user, monkeypatch):
+    """对照: **新资产**审核通过 → 市场群**照样**要发 publish (包真的变了)."""
+    from app.api import marketplace as mk_api
+
+    sent: list[tuple[str, dict]] = []
+
+    async def fake_notify(event, asset=None, **kw):
+        # ⚠️ notify_asset(event, manifest, ...) —— 第二个是**位置参数** (资产 manifest)
+        sent.append((event, kw))
+        return True
+
+    monkeypatch.setattr(mk_api.market_notify, "notify_asset", fake_notify)
+
+    await set_setting("marketplace.review.enabled", "true")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="new-notify")
+
+    sent.clear()
+    r = await client.post(
+        f"{API}/new-notify/review",
+        data={"decision": "approve", "comment": "通过"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+    assert [e for e, _ in sent] == ["publish"], sent
+
+
+async def test_pending_action_recorded(client, auth, ws, restore_git_config,  # noqa: ARG001
+                                       publisher_user):
+    """⚠️ 待审的类型要被记下来 (new / update / **meta**) ——
+    审核台据此显示「📝 信息待审」, 管理员才分得出"上新包"还是"改简介"."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+    from sqlalchemy import select
+
+    await set_setting("marketplace.review.enabled", "true")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="pa-demo")
+
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(
+            select(Asset).where(Asset.code == "pa-demo"))).scalar_one_or_none()
+        assert a is not None
+        assert a.pending_action == "new", a.pending_action
+        assert a.publish_status == "pending", a.publish_status
+
+    # 只改信息 → pending_action 变成 meta
+    r = await client.patch(
+        f"{API}/pa-demo",
+        json={"summary": "只改简介"},
+        headers=pauth,
+    )
+    assert r.status_code == 202, r.text
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(
+            select(Asset).where(Asset.code == "pa-demo"))).scalar_one_or_none()
+        assert a is not None
+        assert a.pending_action == "meta", a.pending_action
+
+
+async def test_reject_keeps_pending_action_for_resubmit(client, auth, ws, restore_git_config,  # noqa: ARG001
+                                                        publisher_user):
+    """驳回时要**留着** pending_action —— 否则「驳回 → 改了重新提交」这条路上,
+    重新提交就不知道是改信息还是改包了 (审核通过后要不要通知市场群就判错了)."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+    from sqlalchemy import select
+
+    await set_setting("marketplace.review.enabled", "true")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="pa-reject")
+
+    r = await client.patch(f"{API}/pa-reject", json={"summary": "改简介"}, headers=pauth)
+    assert r.status_code == 202, r.text
+
+    r = await client.post(
+        f"{API}/pa-reject/review",
+        data={"decision": "reject", "comment": "简介写得太笼统"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(
+            select(Asset).where(Asset.code == "pa-reject"))).scalar_one_or_none()
+        assert a is not None
+        assert a.publish_status == "rejected", a.publish_status
+        assert a.pending_action == "meta", a.pending_action

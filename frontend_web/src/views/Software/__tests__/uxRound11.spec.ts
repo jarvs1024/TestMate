@@ -38,9 +38,18 @@ describe('① 上架抽屉: 「软件标识」不再展示', () => {
     expect(upload).not.toMatch(/\.ro-input[\s\S]*--ink-200/);
   });
 
-  it('要显示软件名 (form.name) 作为只读展示行', () => {
-    expect(uploadTpl).toContain('label="软件名称"');
-    expect(uploadTpl).toMatch(/ro-text[^>]*>\s*\{\{\s*form\.name/);
+  it('⚠️ 2026-10-30 (第十二轮): **连只读展示软件名的那行也删了**', () => {
+    // 用户原话「这里软件名称去掉, 不展示这个信息, 后端维护就好了, 只要保证不冲突」.
+    // · code 由文件名派生, 后端保证唯一 (撞名自动加序号) —— 用户不用看;
+    // · 「软件名」输入框在上面已经有了, 再显示一遍纯属重复.
+    expect(uploadTpl).not.toContain('label="软件名称"');
+    expect(upload).not.toContain('ro-text');
+  });
+
+  it('但「文件名派生的标识不合法」这个错误还得说 —— 挪到软件包那一段', () => {
+    expect(upload).toContain('codeError');
+    // 错误提示在**软件包**这一段 (不是在一个已删掉的 form-item 里)
+    expect(uploadTpl).toMatch(/class="pick-err"[^>]*>\{\{\s*codeError\s*\}\}/);
   });
 
   it('缺项提示里不再报「软件标识」—— 改成「请先选择软件包」', () => {

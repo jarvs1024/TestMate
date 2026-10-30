@@ -1,7 +1,7 @@
 <template>
-  <div class="home">
+  <div class="home" :style="{ '--strip-h': stripH + 'px' }">
     <!-- ===== 待办带: 首页真正的职责是"告诉我今天该看什么" ===== -->
-    <div v-if="todos.length" class="todo-strip">
+    <div v-if="todos.length" class="todo-strip" ref="stripEl">
       <span class="ts-label">待办</span>
       <button v-for="t in todos" :key="t.key" type="button" class="ts-item" :class="`tone-${t.tone}`" @click="go(t.to)">
         <span class="ts-ic">{{ t.icon }}</span>
@@ -9,7 +9,7 @@
         <span class="ts-go">→</span>
       </button>
     </div>
-    <div v-else-if="!loggedIn" class="todo-strip anon">
+    <div v-else-if="!loggedIn" class="todo-strip anon" ref="stripEl">
       <span class="ts-ic">🔒</span>
       <span class="ts-text">登录后可见你的待办 (资产审核 / 同步失败 / 知识库状态)</span>
     </div>
@@ -69,7 +69,7 @@
  *   ② 顶部多一条**待办带** —— 首页先回答"今天该看什么", 再回答"有什么";
  *   ③ 规划中的能力沉底, 不占首屏黄金位.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import CapabilityCard from './CapabilityCard.vue';
 import { useCapabilityStore } from '@/stores/capabilities';
@@ -111,6 +111,61 @@ const keyword = ref('');
 
 const loading = computed(() => store.loading && !store.loaded);
 const loggedIn = computed(() => userStore.isLoggedIn);
+
+/**
+ * 待办带的高度 (px) —— 用来给工具条让位.
+ *
+ * ⚠️ 2026-10-30 (第十二轮): **sticky 的 top 是相对滚动容器**算的, 不是相对视口!
+ *   滚动容器是 `.tm-main` (MainLayout 里 `height:100vh; overflow:hidden`, 主区自己滚),
+ *   它的顶边在**视口 y=70** (上面是 70px 高的 AppHeader).
+ *   所以 `.home-toolbar { position: sticky; top: 52px }` 的真实含义是
+ *   "离 **.tm-main 顶边** 52px" —— 也就是视口 y=122.
+ *
+ *   而工具条的**静态位置**只有 y=78 (容器 padding 8px), 远在 122 之上 →
+ *   sticky 规则会把它**往下顶** 44px, 结果工具条直接**压在第一排卡片标题上**
+ *   (用户图: "这里显示重叠在一起了" —— 工具条的下边框横穿「代码检视」的标题,
+ *   卡片图标也被切掉一半).
+ *
+ * ✅ 修法: 工具条的 sticky 偏移 = **待办带的实际高度** (没有待办带就是 0):
+ *      · 没有待办带 → top: 0 → 工具条停在它自己的静态位置, 一点不压网格;
+ *      · 有待办带   → top: 待办带高度 → 滚动时它正好排在待办带**下面**, 两者不叠.
+ *   高度用 ResizeObserver 实测 (待办条会换行, 写死 52 迟早再压一次).
+ */
+const stripEl = ref<HTMLElement | null>(null);
+const stripH = ref(0);
+let stripRO: ResizeObserver | null = null;
+
+function measureStrip() {
+  stripH.value = stripEl.value?.offsetHeight ?? 0;
+}
+
+/** 重新挂观察 —— 待办带是 v-if 的, 出现/消失时元素是**换**的, 得重新 observe */
+function observeStrip() {
+  stripRO?.disconnect();
+  stripRO = null;
+  if (stripEl.value && typeof ResizeObserver !== 'undefined') {
+    stripRO = new ResizeObserver(measureStrip);
+    stripRO.observe(stripEl.value);
+  }
+  measureStrip();
+}
+
+// ⚠️ stripEl 是 v-if 的模板 ref —— 待办带出现/消失时它会**换**一个元素,
+//    所以得盯着它重新挂观察 (否则换完就量不到高度了).
+watch(stripEl, () => nextTick(observeStrip));
+
+onMounted(async () => {
+  observeStrip();
+  await store.load();
+  // 待办 / meta 都不阻塞卡片渲染 —— 卡片先出来, 数字后到
+  await Promise.allSettled([loadTodos(), loadMetas()]);
+  measureStrip();   // 待办加载完高度可能变了 (待办条出现/消失)
+});
+
+onBeforeUnmount(() => {
+  stripRO?.disconnect();
+  stripRO = null;
+});
 
 /** 角色筛选条 —— 顺序跟 CAPABILITY_KINDS 一致 */
 const kindFilters = computed(() => [
@@ -240,13 +295,30 @@ async function loadTodos() {
       //    ⚠️ 非管理员拿不到这个数 (后端把系统级计数归零), 所以只会给管理员显示.
       const othersAwaiting = (s.awaiting_review_count || 0) - (s.my_pending_count || 0);
       if (othersAwaiting > 0) {
-        list.push({
-          key: 'asset-awaiting-review',
-          icon: '📋',
-          text: `${othersAwaiting} 个资产等你审核 (别人提交的)`,
-          tone: 'warn',
-          to: { name: 'market', query: { status: 'pending' } },
-        });
+        // ⚠️ 2026-10-30 (第十二轮): 拆成两条 ——
+        //    「上架新包」和「只改了信息」在审核台里长得一模一样, 管理员分不出来.
+        //    而这两件事的紧急程度不一样: 新包是用户等着用的, 改简介顺手批就行.
+        const othersMeta = Math.max(
+          0, (s.awaiting_meta_count || 0) - (s.my_meta_count || 0));
+        const othersNew = Math.max(0, othersAwaiting - othersMeta);
+        if (othersNew > 0) {
+          list.push({
+            key: 'asset-awaiting-review',
+            icon: '📦',
+            text: `${othersNew} 个新资产等你审核 (别人提交的)`,
+            tone: 'warn',
+            to: { name: 'market', query: { status: 'pending' } },
+          });
+        }
+        if (othersMeta > 0) {
+          list.push({
+            key: 'asset-awaiting-meta',
+            icon: '📝',
+            text: `${othersMeta} 个资产只改了信息, 等你审核 (包没变)`,
+            tone: 'info',
+            to: { name: 'market', query: { status: 'pending' } },
+          });
+        }
       }
       if (s.failed_count > 0) {
         list.push({
@@ -366,13 +438,7 @@ function onOpen(c: Capability) {
   router.push({ name });
 }
 
-onMounted(async () => {
-  await store.load();
-  // 待办 / meta 都不阻塞卡片渲染 —— 卡片先出来, 数字后到
-  await Promise.allSettled([loadTodos(), loadMetas()]);
-});
 </script>
-
 <style scoped>
 .home { display: flex; flex-direction: column; gap: 16px; }
 
@@ -413,7 +479,12 @@ onMounted(async () => {
   background: var(--surface-soft); backdrop-filter: blur(8px);
   border: 1px solid var(--border); border-radius: var(--radius-card);
   padding: 12px 16px; box-shadow: var(--shadow-sm);
-  position: sticky; top: 52px; z-index: 3;
+  /* ⚠️ 2026-10-30 (第十二轮): 偏移量 = **待办带的实测高度** (没有待办带就是 0).
+     以前写死 `top: 52px` —— 但 sticky 的 top 是相对**滚动容器** (.tm-main,
+     顶边在视口 y=70) 算的, 不是相对视口 → 工具条被往下顶 44px,
+     **直接压在第一排卡片标题上** (用户图: "这里显示重叠在一起了").
+     现在 --strip-h 由 ResizeObserver 实测 (脚本里 measureStrip) 喂进来. */
+  position: sticky; top: var(--strip-h, 0px); z-index: 3;
 }
 .filters { display: flex; gap: 6px; flex-wrap: wrap; }
 .filter {

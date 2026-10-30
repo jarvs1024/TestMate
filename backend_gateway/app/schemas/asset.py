@@ -42,6 +42,9 @@ class AssetOut(UTCModel):
     last_error: str = ""
     # 生命周期: published / pending / rejected / unpublished
     publish_status: str = "published"
+    # ⚠️ 2026-10-30 (第十二轮): 在等什么审核 —— new(新资产) / update(新版本) / meta(只改了信息).
+    #    前端据此显示「📝 编辑信息待审」标记, 管理员才知道这是改简介还是上新包.
+    pending_action: str = ""
     # 最近一次审核意见 (驳回理由 / 审核备注)
     review_note: str = ""
     # 当前用户能不能审这个资产 (管理员或被授权的审核人) —— 前端据此显示审核按钮
@@ -166,6 +169,19 @@ class AssetNotificationListOut(BaseModel):
     total: int
 
 
+class NotifyPreviewOut(BaseModel):
+    """通知消息的**预览** (2026-10-30) —— 只渲染, **不发送**.
+
+    ⚠️ 让管理员能看见消息长什么样, 而不用往**公司真实群**里发测试消息.
+    """
+
+    event: str
+    label: str
+    title: str
+    text: str
+    lines: list[str]
+
+
 class AssetJobOut(UTCModel):
     id: int
     action: str
@@ -284,11 +300,15 @@ class SyncStatusOut(UTCModel):
     unpublished_count: int = 0
     # 上架审核: 待审核 / 已驳回 的资产数 (管理员审核台的徽标)
     awaiting_review_count: int = 0
+    # ⚠️ 2026-10-30 (第十二轮): 其中「**只改了信息**」的那部分 (包没变, 不急)
+    awaiting_meta_count: int = 0
     rejected_count: int = 0
     # 我自己提交但还没通过审核的资产数 (待审核 + 已驳回)
     my_review_count: int = 0
     # 我自己提交的、还在等审核的资产数
     my_pending_count: int = 0
+    # ⚠️ 2026-10-30 (第十二轮): 我自己提交的、**只改了信息**在等审核的数 (包没变)
+    my_meta_count: int = 0
     # 下架审核: 申请下架、等人确认的资产数 (确认后资产会被彻底删除)
     unpublish_pending_count: int = 0
     # 我自己申请下架、还在等管理员确认的资产数

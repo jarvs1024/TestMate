@@ -17,7 +17,13 @@
         <!-- 适用项目: 项目特有的才标 (通用的不占地方) -->
         <span v-if="item.project" class="ac-badge proj"
               :title="`只对 ${item.project} 项目有意义`">📁 {{ item.project }} 项目</span>
-        <span v-if="item.publish_status === 'pending'" class="ac-badge pending"
+        <!-- ⚠️ 2026-10-30 (第十二轮): 待审的**类型**要说清楚 ——
+             「上架新包」和「只改了信息」在审核台里长得一模一样, 管理员分不出来.
+             只改了信息的 (pending_action === 'meta') 换个措辞, 顺带标出优先级低. -->
+        <span v-if="item.publish_status === 'pending' && item.pending_action === 'meta'"
+              class="ac-badge meta"
+              title="只改了信息, 包没变 —— 管理员审核通过后不会通知市场群">📝 信息待审</span>
+        <span v-else-if="item.publish_status === 'pending'" class="ac-badge pending"
               title="已提交, 等待管理员审核; 通过后才在市场里可见">📋 待审核</span>
         <span v-else-if="item.publish_status === 'rejected'" class="ac-badge rejected"
               :title="item.review_note || '审核未通过'">❌ 已驳回</span>
@@ -118,6 +124,9 @@ function shortDate(iso: string | null): string {
 .ac-badge.staged { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
 .ac-badge.failed { background: rgba(239, 68, 68, 0.12); color: var(--err); }
 .ac-badge.pending { background: rgba(59, 130, 246, 0.14); color: var(--primary); }
+/* ⚠️ 2026-10-30 (第十二轮): 「只改了信息」的待审徽标 —— 色调**淡**一档,
+   让管理员一眼看出"这条不急 (包没变)". */
+.ac-badge.meta { background: rgba(148, 163, 184, 0.18); color: var(--ink-700); }
 .ac-badge.rejected { background: rgba(239, 68, 68, 0.12); color: var(--err); }
 .ac-badge.off { background: rgba(107, 114, 128, 0.14); color: var(--ink-600, #6b7280); }
 .ac-badge.unp { background: rgba(245, 158, 11, 0.14); color: var(--warn); }

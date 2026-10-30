@@ -33,6 +33,7 @@ from sqlalchemy import cast, func, or_, select, update, Text
 from app.api.auth import get_current_user, get_optional_user
 from app.core import market_policy, software_store
 from app.core.asset_locks import code_lock
+from app.core.dingtalk import notify_market
 from app.core.identity import author_forms
 from app.core.security import create_download_ticket as sign_download_ticket
 from app.core.security import decode_download_ticket
@@ -979,6 +980,57 @@ async def _purge_version_files(code: str, version: str) -> int:
     return deleted
 
 
+async def _notify_software_published(
+    code: str, version: str, was_published: bool, user: User
+) -> None:
+    """软件包传完 → 通知钉钉 (2026-10-30 第十一轮).
+
+    ⚠️ **上架**和**发布新版本**共用一个开关 (`dingtalk.notify_on_software`) ——
+       用户原话「上架和发布新版本共有一个配置」. 开关映射在 dingtalk._SWITCH_KEY 里.
+
+    ⚠️ 通知正文:
+        · 类型 → 「软件包」 (跟插件/技能/连接器**区分开**, 见 dingtalk._KIND_LABEL);
+        · 上架 → 带上**简介** (这软件是干嘛的);
+        · 发新版本 → 带上**更新说明** (这次改了啥) —— 软件库有这个字段;
+        · 链接 → 自动指向 /software (dingtalk._DEFAULT_LINK_PATH).
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            item = (
+                await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
+            ).scalar_one_or_none()
+            if item is None:
+                return
+            ver = (
+                await session.execute(
+                    select(SoftwareVersion).where(
+                        SoftwareVersion.item_id == item.id,
+                        SoftwareVersion.version == version,
+                    )
+                )
+            ).scalar_one_or_none()
+            name = item.name
+            summary = item.summary or ""
+            category = item.category or ""
+            author = item.author or ""
+            release_notes = (ver.release_notes if ver is not None else "") or ""
+        event = "software_update" if was_published else "software_publish"
+        await notify_market(
+            event,
+            name=name,
+            version=version,
+            actor=user.username,
+            kind="software",
+            category=category,
+            author=author,
+            code=code,
+            summary=summary,
+            release_notes=release_notes,
+        )
+    except Exception as e:  # noqa: BLE001 — 通知失败**不能**影响上传结果
+        logger.warning("软件库钉钉通知失败 code=%s err=%s", code, e)
+
+
 @router.patch("/{code}/versions/{version}", response_model=SoftwareVersionOut)
 async def update_version(
     code: str,
@@ -1301,6 +1353,14 @@ async def upload_file(
         item = (
             await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
         ).scalar_one_or_none()
+        # ⚠️ 2026-10-30 (第十一轮): 通知要分清是「**新软件上架**」还是「**发了新版本**」——
+        #    判据: 上传这个包之前, 条目**有没有已经上架过**.
+        #    · publish_status == "awaiting_file" → 头一回传包 → 首次上架;
+        #    · 已经是 "published"                    → 发新版本 / 覆盖已有版本.
+        #    ⚠️ 用 publish_status 而不是"数 ready 版本" ——
+        #       覆盖**唯一一个**版本时, 那一行会先变 awaiting_file, 再变回 ready,
+        #       数版本会误判成"首次上架".
+        was_published = bool(item and item.publish_status == "published")
         if item is not None:
             item.publish_status = "published"
             item.version = version
@@ -1319,6 +1379,11 @@ async def upload_file(
         await session.commit()
 
     await _prune_versions_for(code)
+
+    # ---- 钉钉通知 (2026-10-30 第十一轮) ----
+    # ⚠️ 通知放在**文件传完之后** —— 上架是两步 (建条目 → 传包),
+    #    只建了条目还没传包的东西别人下不了, 那时候通知等于"上架了个寂寞".
+    await _notify_software_published(code, version, was_published, user)
 
     return SoftwareUploadOut(
         ok=True,

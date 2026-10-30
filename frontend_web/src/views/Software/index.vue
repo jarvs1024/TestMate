@@ -33,8 +33,16 @@
     <!-- ⚠️ 分类取不到 → 筛选维度会凭空消失, 得说清楚是"读失败"不是"没有" -->
     <div class="mk-filters">
       <div class="cat-chips">
-        <button class="chip" :class="{ active: category === '' }" @click="category = ''; load()">
+        <button class="chip" :class="{ active: category === '' && !mineOnly }" @click="category = ''; load()">
           全部 <span class="count">{{ total }}</span>
+        </button>
+        <!-- ⚠️ 2026-10-30 (第十二轮): 「👤 我的」——
+             只看**我上架的**软件. 后端早就支持 `status=mine`
+             (作者比对走 author_forms, 短名/全邮箱都认), 这里只是把入口露出来. -->
+        <button class="chip mine-chip" :class="{ active: mineOnly }"
+                title="只看我上架的软件"
+                @click="mineOnly = !mineOnly; load()">
+          👤 我的
         </button>
         <button v-for="c in categories" :key="c.name" class="chip"
                 :class="{ active: category === c.name }"
@@ -160,6 +168,13 @@ const filterError = ref('');
 const keyword = ref('');
 const category = ref('');
 const sortBy = ref<SoftwareSort>('new');
+/**
+ * 「👤 我的」—— 只看**我上架的**软件 (2026-10-30 · 第十二轮).
+ *
+ * ⚠️ 后端早就有 `status=mine` (作者比对走 author_forms, 短名/全邮箱都认),
+ *    这里只是把入口露出来 —— 不在前端筛, 前端筛会漏 (列表有 limit).
+ */
+const mineOnly = ref(false);
 const config = ref<SoftwareConfig | null>(null);
 const configLoaded = ref(false);
 /**
@@ -216,20 +231,23 @@ const list = computed(() => items.value ?? []);
  * ⚠️ 2026-10-30: 以前不管有没有筛选, 空态都是「这里还没有软件」——
  *    搜索一个不存在的词, 用户以为整个库空了.
  */
-const hasFilter = computed(() => keyword.value.trim() !== '' || category.value !== '');
+const hasFilter = computed(() =>
+  keyword.value.trim() !== '' || category.value !== '' || mineOnly.value);
 
 /** 空态里回显的筛选条件 (关键词优先) */
 const filterDesc = computed(() => {
   const kw = keyword.value.trim();
   const cat = category.value;
-  if (kw && cat) return `${kw} · ${cat}`;
-  return kw || cat;
+  const mine = mineOnly.value ? '我的' : '';
+  const parts = [kw, cat, mine].filter(Boolean);
+  return parts.join(' · ');
 });
 
 /** 清空筛选 —— 回到"全部", 重新取一次列表 */
 async function clearFilter() {
   keyword.value = '';
   category.value = '';
+  mineOnly.value = false;
   await load();
 }
 
@@ -241,6 +259,8 @@ async function load() {
       q: keyword.value.trim(),
       category: category.value,
       sort: sortBy.value,
+      // ⚠️ 「👤 我的」走后端过滤 (短名/全邮箱都认) —— 前端筛会漏 (列表有 limit)
+      status: mineOnly.value ? 'mine' : undefined,
       // ⚠️ 2026-10-30: 以前是 200 —— 库里超过 200 条时, 后面的**永远看不到**
       //    (页脚还写「共 500 项」). 提到后端允许的上限 500 (le=500).
       //    ⚠️ 不做"加载更多"按钮 —— 那要改分页逻辑, 风险大.
@@ -423,6 +443,10 @@ onMounted(async () => {
 }
 .chip.active { border-color: var(--primary); color: var(--primary); background: rgba(59, 130, 246, .08); }
 .chip .count { font-size: 10px; color: var(--ink-500); font-family: var(--font-mono); }
+/* ⚠️ 2026-10-30 (第十二轮): 「👤 我的」chip —— 维度不是分类, 选中态跟分类 chip 一致,
+   但要有个人味 (头像图标 + 自己的底色), 用户一眼认出"这是看我自己的". */
+.mine-chip { font-weight: 600; }
+.mine-chip:not(.active) { border-color: rgba(59, 130, 246, .35); color: var(--primary); }
 .filter-err { font-size: 11.5px; color: var(--warn); }
 
 .sw-note {

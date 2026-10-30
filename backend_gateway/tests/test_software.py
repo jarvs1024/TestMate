@@ -481,6 +481,79 @@ async def test_config_hides_storage_root_from_non_admin(client, sw_root, publish
     assert body["is_admin"] is False
 
 
+# ---------- 钉钉通知 (2026-10-30 · 第十一轮 · 问题3) ----------
+
+
+async def test_software_upload_triggers_dingtalk_notification(client, sw_auth, sw_root, monkeypatch):
+    """⚠️ 用户要求「软件库的**上架**和**发布新版本**需要通知到钉钉」.
+
+    两条要点:
+      · 通知**在文件传完之后**才发 —— 上架是两步 (建条目 → 传包),
+        只建了条目还没传包, 别人下不了, 那时候通知等于"上架了个寂寞";
+      · 首次上架 → `software_publish`, 发新版本 → `software_update`.
+    """
+    from app.api import software as sw_api
+
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_notify(event, **kw):
+        calls.append((event, kw))
+        return True
+
+    monkeypatch.setattr(sw_api, "notify_market", fake_notify)
+
+    await _create(client, sw_auth)
+    assert calls == [], "只建条目(还没传包)不该通知 —— 别人根本下不了"
+
+    r = await _upload(client, sw_auth, "demo-sw", b"hello")
+    assert r.status_code == 200, r.text
+
+    assert len(calls) == 1, calls
+    event, kw = calls[0]
+    assert event == "software_publish", event
+    assert kw["kind"] == "software", "通知里要说明这是**软件包**"
+    assert kw["version"] == "1.0.0"
+    assert kw["summary"], "上架要带上简介 (这软件是干嘛的)"
+    assert kw["release_notes"], "要带上更新说明"
+    assert kw["name"] == "演示软件"
+
+
+async def test_software_new_version_notifies_update(client, sw_auth, sw_root, monkeypatch):
+    """发了新版本 → 通知**第二个**事件 (`software_update`), 且带新的更新说明."""
+    from app.api import software as sw_api
+
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_notify(event, **kw):
+        calls.append((event, kw))
+        return True
+
+    monkeypatch.setattr(sw_api, "notify_market", fake_notify)
+
+    await _create(client, sw_auth)
+    await _upload(client, sw_auth, "demo-sw", b"hello")
+    assert [e for e, _ in calls] == ["software_publish"], calls
+
+    # 发新版本 → 传文件
+    r = await client.post(
+        "/api/v1/software/demo-sw/versions",
+        json={"version": "1.1.0", "release_notes": "修了日志解析的截断问题"},
+        headers=sw_auth,
+    )
+    assert r.status_code == 201, r.text
+    # ⚠️ 建了版本行还没传包 → 还不该通知
+    assert [e for e, _ in calls] == ["software_publish"], calls
+
+    r = await _upload(client, sw_auth, "demo-sw", b"world", filename="demo.bin")
+    assert r.status_code == 200, r.text
+
+    assert [e for e, _ in calls] == ["software_publish", "software_update"], calls
+    event, kw = calls[-1]
+    assert event == "software_update"
+    assert kw["version"] == "1.1.0"
+    assert kw["release_notes"] == "修了日志解析的截断问题", "要说明这次改了啥"
+
+
 # ---------- 权限 ----------
 
 

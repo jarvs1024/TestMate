@@ -32,7 +32,11 @@ from app.api.auth import get_current_user, get_optional_user
 from app.core import git_sync, pkg
 from app.core.asset_jobs import enqueue, retry_job, start_worker
 from app.core.asset_locks import code_lock
-from app.core.dingtalk import list_notifications, notify_market
+from app.core.dingtalk import (
+    list_notifications,
+    notify_market,
+    preview_market_message,
+)
 from app.core import (
     market_notify,
     market_naming,
@@ -70,6 +74,7 @@ from app.schemas.asset import (
     AssetListOut,
     AssetMetaUpdateIn,
     AssetNotificationListOut,
+    NotifyPreviewOut,
     MarketConfigOut,
     AssetOut,
     PackagePreviewOut,
@@ -708,6 +713,11 @@ async def sync_status(
         pending = failed = unpublished = 0
         awaiting_review = rejected = my_review = my_pending = 0
         unpublish_pending = my_unpublish = 0
+        # ⚠️ 2026-10-30 (第十二轮): **只改了信息**的待审数 ——
+        #    管理员的待办要能分清"有人上架新东西"和"有人只改了简介",
+        #    这两件事的紧急程度完全不同 (改简介不急, 上新包才急).
+        awaiting_meta = 0
+        my_meta = 0
         rows = (await session.execute(select(Asset))).scalars().all()
         for a in rows:
             if a.sync_status == "staged":
@@ -718,6 +728,8 @@ async def sync_status(
                 unpublished += 1
             elif a.publish_status == "pending":
                 awaiting_review += 1
+                if (a.pending_action or "") == "meta":
+                    awaiting_meta += 1
             elif a.publish_status == "rejected":
                 rejected += 1
             elif a.publish_status == "unpublish_pending":
@@ -731,6 +743,8 @@ async def sync_status(
                 if a.publish_status == "pending":
                     my_pending += 1
                     my_review += 1      # 需要处理 = 在等审核 + 被驳回
+                    if (a.pending_action or "") == "meta":
+                        my_meta += 1
                 elif a.publish_status == "rejected":
                     my_review += 1
                 elif a.publish_status == "unpublish_pending":
@@ -740,6 +754,7 @@ async def sync_status(
     if not is_admin:
         # 系统级计数对非管理员一律归零 (前端的状态条自然就不显示了)
         pending = failed = unpublished = awaiting_review = rejected = unpublish_pending = 0
+        awaiting_meta = 0
     return SyncStatusOut(
         has_remote_updates=puller.has_remote_updates if is_admin else False,
         conflict_count=puller.conflict_count if is_admin else 0,
@@ -747,9 +762,13 @@ async def sync_status(
         failed_count=failed,
         unpublished_count=unpublished,
         awaiting_review_count=awaiting_review,
+        # ⚠️ 2026-10-30 (第十二轮): 其中「只改了信息」的那部分 (管理员专用)
+        awaiting_meta_count=awaiting_meta,
         rejected_count=rejected,
         my_review_count=my_review,
         my_pending_count=my_pending,
+        # ⚠️ 2026-10-30 (第十二轮): 我自己提交的、**只改了信息**在等审核的数
+        my_meta_count=my_meta,
         unpublish_pending_count=unpublish_pending,
         my_unpublish_count=my_unpublish,
         last_sync_at=puller.last_sync_at,
@@ -772,6 +791,100 @@ async def list_notification_receipts(
     """
     items, total = await list_notifications(limit)
     return AssetNotificationListOut(items=items, total=total)
+
+
+# ---------- 消息预览 (不发送) ----------
+
+# ⚠️ 2026-10-30 (第十一轮): 通知消息的**预览** ——
+#    用户要「消息简洁明了, 好看」, 管理员得能**看见**消息长什么样,
+#    而不是为了看一眼就往**公司真实群**里发一条测试消息.
+#    这里只拼字符串, 一行网络请求都不发.
+_PREVIEW_SCENES: list[dict[str, Any]] = [
+    {
+        "event": "publish",
+        "label": "市场 · 上架新资产 (插件)",
+        "kw": {
+            "name": "代码检视流水线", "version": "1.0.0", "actor": "zhangsan",
+            "kind": "plugin", "category": "流程规范", "code": "dml-code-review",
+            "summary": "一键串联: 取 MR diff → 送检视 → 回写评论 → 汇总结果",
+        },
+    },
+    {
+        "event": "update",
+        "label": "市场 · 发布新版本 (连接器)",
+        "kw": {
+            "name": "GitLab 连接器", "version": "0.2.0", "actor": "zhangsan",
+            "kind": "mcp", "category": "管协同", "code": "dml-gitlab",
+            "summary": "支持只读访问项目与 MR, 鉴权走个人令牌",
+        },
+    },
+    {
+        "event": "software_publish",
+        "label": "软件库 · 上架新软件",
+        "kw": {
+            "name": "E2E 演示软件", "version": "1.0.0", "actor": "zhangsan",
+            "kind": "software", "category": "工具", "code": "e2e-demo",
+            "summary": "e2e 走通用的演示软件",
+        },
+    },
+    {
+        "event": "software_update",
+        "label": "软件库 · 发布新版本",
+        "kw": {
+            "name": "E2E 演示软件", "version": "1.0.3", "actor": "zhangsan",
+            "kind": "software", "category": "工具", "code": "e2e-demo",
+            "summary": "e2e 走通用的演示软件",
+            "release_notes": "修了日志解析在超长行上的截断问题, 另外补了个 --json 输出",
+        },
+    },
+    {
+        "event": "review",
+        "label": "市场 · 上架待审核 (审核群)",
+        "kw": {
+            "name": "SSD 日志医生", "version": "1.0.0", "actor": "lisi",
+            "kind": "skill", "category": "兜住质量", "code": "dml-ssd-doctor",
+            "summary": "读取 NVMe SMART 日志, 自动定位失败扇区",
+        },
+    },
+    {
+        # ⚠️ 2026-10-30 (第十二轮): 「只改了信息」的待审通知 ——
+        #    跟「新资产待审核」长得不一样 (标题 + 说的是"改了信息"), 管理员才分得出.
+        #    ⚠️ 这条**只发审核群**, 审核通过后**不通知市场群** (包没变).
+        "event": "review",
+        "label": "审核群 · 只改了信息, 待审核 (包没变)",
+        "kw": {
+            "name": "代码检视流水线", "version": "1.2.0", "actor": "zhangsan",
+            "kind": "plugin", "category": "流程规范", "code": "dml-code-review",
+            "summary": "一键串联: 取 MR diff → 送检视 → 回写评论 → 汇总结果",
+            "detail": "修改了资产信息, 等管理员审核",
+            "title_override": "📝 资产信息修改, 待审核",
+        },
+    },
+]
+
+
+@router.get("/notifications/preview", response_model=list[NotifyPreviewOut])
+async def preview_notification_messages(
+    user: User = Depends(require_admin),
+) -> list[NotifyPreviewOut]:
+    """**预览**几种典型通知长什么样 —— **一条都不发**.
+
+    ⚠️ 管理员专用: 这些内容就是钉钉消息的正文 (含资产名/版本/操作人).
+    ⚠️ 只渲染, 不碰 webhook —— 不用担心"点一下就往公司群里发一堆测试消息".
+    """
+    out: list[NotifyPreviewOut] = []
+    for sc in _PREVIEW_SCENES:
+        r = await preview_market_message(sc["event"], **sc["kw"])
+        out.append(
+            NotifyPreviewOut(
+                event=sc["event"],
+                label=sc["label"],
+                title=r["title"],
+                text=r["text"],
+                lines=r["lines"],
+            )
+        )
+    return out
 
 
 # ---------- 当前生效配置 (只读) ----------
@@ -1191,6 +1304,14 @@ async def _set_publish_state(
             a.publish_status = publish_status
             if review_note is not None:
                 a.review_note = review_note
+            # ⚠️ 2026-10-30 (第十二轮): 记住**改之前**在等什么审核, 然后清掉标记.
+            #    审核端点要用它决定"通过之后要不要在市场群发上架通知" ——
+            #    只改了信息 (meta) 的, 包没变, 发那条是假消息.
+            #    ⚠️ **只在真的在架/已下架时清** —— 驳回 (rejected) 时要**留着**,
+            #    否则"驳回 → 改了重新提交"这条路上, 重新提交就不知道是改信息还是改包了.
+            prev_pending_action = a.pending_action or ""
+            if publish_status in (market_state.PUBLISHED, market_state.UNPUBLISHED):
+                a.pending_action = ""
             await session.commit()
 
             # 权威是单资产 manifest.json —— 生命周期状态也写进去
@@ -1246,6 +1367,9 @@ async def _set_publish_state(
         "changed": True, "job_id": job_id, "name": name, "version": version,
         # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他) / 适用项目
         "kind": kind, "category": category, "author": author, "project": project,
+        # ⚠️ 2026-10-30 (第十二轮): 改之前在等什么审核 (new/update/meta) ——
+        #    审核端点靠它区分"包变了"还是"只改了信息".
+        "pending_action": prev_pending_action,
     }
 
 
@@ -1434,10 +1558,21 @@ async def review_asset(
             comment=comment or "审核通过", user=_user, review_note=comment or "",
         )
         if out.get("changed"):
-            await market_notify.notify_asset(
-                "publish", out, actor=_user.username,
-                detail=comment or "审核通过, 已上架",
-            )
+            # ⚠️ 2026-10-30 (第十二轮): **只改了信息**的资产审核通过 →
+            #    **不通知市场群**.
+            #    用户原话「审核通过, 这个编辑信息没涉及到包变化就不用通知到市场群」.
+            #    道理也站得住: 包跟上次一模一样, 群里那条"新资产上架"是**假消息** ——
+            #    用户白点一次下载, 装到的东西完全没变.
+            #    (管理员自己刚点的通过, 他知道结果; 编辑人刷新页面能看到状态回来了.)
+            if out.get("pending_action") == "meta":
+                logger.info(
+                    "资产信息修改审核通过, 不通知市场群 (包没变): code=%s", code,
+                )
+            else:
+                await market_notify.notify_asset(
+                    "publish", out, actor=_user.username,
+                    detail=comment or "审核通过, 已上架",
+                )
         return out
 
     note = comment or "审核未通过, 请修改后重新提交"
@@ -2117,6 +2252,11 @@ async def _stage_asset_locked(
         if need_review:
             a.publish_status = "pending"
             a.review_note = ""
+            # ⚠️ 2026-10-30 (第十二轮): 记下**在等什么审核** ——
+            #    new = 第一次上架, update = 发了新版本 (包变了).
+            #    审核通过后这两种都要在市场群发通知 (包真的变了);
+            #    只改了信息的 (meta) 不发 —— 见 _stage_asset_meta.
+            a.pending_action = "new" if action == "create" else "update"
         elif existing is None:
             a.publish_status = "published"
         elif existing.publish_status in (market_state.REJECTED, market_state.UNPUBLISHED):
@@ -2205,12 +2345,15 @@ async def _stage_asset_locked(
             author=manifest.get("author", "") or user.username,
         )
     else:
+        # ⚠️ 2026-10-30 (第十一轮): 正文带上**简介** ——
+        #    用户要求「上架补充发描述, 比如是干嘛的」.
+        #    detail 是"发生了什么"的套话 (跟标题重复), summary 才是"这玩意儿干嘛的".
+        #    ⚠️ 市场**没有**「更新说明」这个字段 (manifest/Asset 都没有),
+        #    所以「发布新版本」只能带新简介 —— 标签会自动变成「更新:」.
         await market_notify.notify_asset(
             "publish" if action == "create" else "update", manifest,
             actor=user.username,
-            # ⚠️ 说明写**动作**, 不写资产简介 (简介在卡片上就有, 通知里再写一遍
-            #    看着像重复了一遍, 而且看不出"发生了什么")
-            detail="新资产已上架" if action == "create" else "发布了新版本",
+            summary=manifest.get("summary", "") or "",
         )
     return out
 
@@ -2598,6 +2741,9 @@ async def _stage_asset_meta(
         if need_review:
             a.publish_status = "pending"
             a.review_note = ""
+            # ⚠️ 2026-10-30 (第十二轮): 记下这是「**只改了信息**」的审核 ——
+            #    包没变, 审核通过后**不通知市场群** (见 review_asset 的 approve 分支).
+            a.pending_action = "meta"
         elif a.publish_status in (market_state.REJECTED, market_state.UNPUBLISHED):
             a.publish_status = "published"
             a.review_note = ""
@@ -2670,16 +2816,26 @@ async def _stage_asset_meta(
 
     # ---- 5. 入队, 后台 commit + push ----
     enqueue(out.id)
-    await market_notify.notify_asset(
-        "review" if a.publish_status == "pending" else "update",
-        manifest,
-        actor=user.username,
-        detail=(
-            "修改了资产信息, 等管理员审核"
-            if a.publish_status == "pending" else "修改了资产信息"
-        ),
-        author=manifest.get("author", "") or user.username,
-    )
+    # ⚠️ 2026-10-30 (第十二轮): **只改了信息** → 通知**审核群**, 让管理员知道有人改了.
+    #
+    #    ⚠️ 口径变更说明 (跟第十一轮相反, 是用户后来明确要求的):
+    #       第十一轮: 「编辑信息就不需要通知到钉钉」→ 当时把通知整段删了;
+    #       这一轮:   「编辑信息 → 管理员审核, 通知到管理审核群, 但审核通过**不通知市场群**」.
+    #       所以现在是**两条腿**:
+    #         · 提交时   → 审核群 (review 事件) —— 管理员得知道有活要干;
+    #         · 通过后   → **不发市场群** (包没变, 发那条是假消息).
+    #
+    #    ⚠️ 事件 key 仍然是 "review" —— 开关 (dingtalk.notify_on_review) 和
+    #       频道 (审核群) 都靠 key 查, 换 key 会关错开关、发错群.
+    #       只用 title_override 改标题文案, 让管理员一眼看出"这是改信息, 不是上新东西".
+    if need_review:
+        await market_notify.notify_asset(
+            "review", manifest,
+            actor=user.username,
+            detail="修改了资产信息, 等管理员审核",
+            author=manifest.get("author", "") or user.username,
+            title_override="📝 资产信息修改, 待审核",
+        )
     return out
 
 

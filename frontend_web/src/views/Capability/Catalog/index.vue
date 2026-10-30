@@ -97,9 +97,17 @@
 
     <!-- ===== 管理员: 别人上传的资产在等审核 =====
          ⚠️ 这一条以前**没有** —— 下架申请有管理员视角的条, 上架审核却没有:
-            管理员只能扫卡片上的「📋 待审核」徽标, 别人传了什么全靠眼睛找. -->
-    <div v-if="isAdmin && othersReviewCount > 0" class="my-review-bar admin">
-      <span>📋 有 <b>{{ othersReviewCount }}</b> 个资产在等上架审核 —— 通过后才出现在市场里</span>
+            管理员只能扫卡片上的「📋 待审核」徽标, 别人传了什么全靠眼睛找.
+         ⚠️ 2026-10-30 (第十二轮): 拆成两条 —— 「包变了」和「只改了信息」要分开,
+            紧急程度不一样, 而且只有包变了的那条审核通过后才需要通知市场群. -->
+    <div v-if="isAdmin && othersNewCount > 0" class="my-review-bar admin">
+      <span>📦 有 <b>{{ othersNewCount }}</b> 个资产在等上架审核 —— 通过后才出现在市场里</span>
+      <button class="mrb-btn" @click="toggleOnlyMine('all-pending')">
+        {{ onlyMine === 'all-pending' ? '显示全部' : '只看这些' }}
+      </button>
+    </div>
+    <div v-if="isAdmin && othersMetaCount > 0" class="my-review-bar admin meta">
+      <span>📝 有 <b>{{ othersMetaCount }}</b> 个资产只改了信息, 等你审核 (包没变, 不急)</span>
       <button class="mrb-btn" @click="toggleOnlyMine('all-pending')">
         {{ onlyMine === 'all-pending' ? '显示全部' : '只看这些' }}
       </button>
@@ -122,6 +130,17 @@
       <div class="cat-chips">
         <button class="chip" :class="{ active: category === '' }" @click="category = ''; load()">
           全部 <span class="count">{{ rawItems.length }}</span>
+        </button>
+        <!-- ⚠️ 2026-10-30 (第十二轮): 「👤 我的」——
+             只看**我上传的**资产. 后端早就支持 `status=mine`
+             (作者比对走 author_forms, 短名/全邮箱都认), 这里只是把入口露出来.
+             ⚠️ 跟下面那三条「只看这些」不一样 —— 那三条是**紧急入口**(临时过滤),
+                「我的」是**常驻维度**: 分类 / 项目 / 类型筛选**照样生效**,
+                可以在「我的」基础上再按分类筛. -->
+        <button class="chip mine-chip" :class="{ active: mineOnly }"
+                title="只看我在市场上传的资产"
+                @click="toggleMineOnly()">
+          👤 我的
         </button>
         <button class="chip" :class="{ active: category === '__featured' }" @click="category = '__featured'; load()">
           ⭐ 精选
@@ -293,6 +312,29 @@ const sortBy = ref<MarketSort>('hot');
 const onlyMine = ref<'review' | 'unpublish' | 'all-pending' | ''>('');
 
 /**
+ * 「👤 我的」—— 只看**我上传的**资产 (2026-10-30 · 第十二轮).
+ *
+ * ⚠️ 跟 `onlyMine` (那三条"只看这些"提示条) 是**两回事**:
+ *   · `onlyMine` 是**临时入口** —— 点了之后类型/分类/项目筛选全部让路,
+ *     免得"我提交的待审资产落在别的分类下, 一条都显示不出来";
+ *   · `mineOnly` 是**常驻维度** —— 分类/项目/类型筛选**照样生效**,
+ *     可以「我的 + 某个分类」这样叠着筛.
+ *   两者**互斥**: 同时开没有意义 (一条是"我的待审", 一条是"我的全部").
+ *
+ * ⚠️ 后端早就支持 `status=mine` (作者比对走 author_forms, 短名/全邮箱都认),
+ *    所以这里只是把入口露出来 —— 不用在前端筛, 前端筛会漏 (列表有 limit).
+ */
+const mineOnly = ref(false);
+
+function toggleMineOnly() {
+  mineOnly.value = !mineOnly.value;
+  // 互斥: 「我的」和那三条紧急入口不能同时开
+  if (mineOnly.value) onlyMine.value = '';
+  loadCategories();
+  load();
+}
+
+/**
  * ⚠️ 钉钉通知里的「去审核台」链接带 `?status=pending` —— 点进来直接落在待审列表上,
  *    免得收通知的人还要自己在页面里找「📋 待审核」的卡片.
  */
@@ -301,6 +343,8 @@ if (route.query.status === 'pending') onlyMine.value = 'all-pending';
 
 function toggleOnlyMine(mode: 'review' | 'unpublish' | 'all-pending') {
   onlyMine.value = onlyMine.value === mode ? '' : mode;
+  // ⚠️ 互斥: 紧急入口和「👤 我的」不能同时开 (2026-10-30)
+  if (onlyMine.value) mineOnly.value = false;
   // ⚠️ 切到「只看待审」时 chip 计数也得换成待审口径 ——
   //    chip 上的数得是"点进去能看到几张卡" (2026-10-28 整改).
   loadCategories();
@@ -325,6 +369,20 @@ const othersUnpublishCount = computed(() =>
  */
 const othersReviewCount = computed(() =>
   Math.max(0, sync.value.awaiting_review_count - sync.value.my_pending_count));
+
+/**
+ * ⚠️ 2026-10-30 (第十二轮): 别人提交、**只改了信息**在等审核的数 (管理员视角).
+ *
+ * 「上架新包」和「改个简介」在审核台里长得一模一样 (都是「📋 待审核」),
+ * 管理员只能自己点进去看 —— 现在拆成两条待办:
+ *   · 📦 N 个新资产/新版本在等审核  → 急 (包变了, 用户等着用)
+ *   · 📝 M 个只改了信息在等审核    → 不急 (包没变, 顺手批就行)
+ */
+const othersMetaCount = computed(() =>
+  Math.max(0, (sync.value.awaiting_meta_count || 0) - (sync.value.my_meta_count || 0)));
+/** 别人提交、**包变了**在等审核的数 (上架新资产 / 发了新版本) */
+const othersNewCount = computed(() =>
+  Math.max(0, othersReviewCount.value - othersMetaCount.value));
 
 /** 能不能改这个资产 (更新版本 / 下架 / 彻底删除) —— **作者本人或管理员**.
  *  ⚠️ 之前是硬编码 true —— 任何登录用户打开别人的资产都能看到并操作这些按钮,
@@ -568,6 +626,7 @@ async function fetchList(opts: { silent?: boolean } = {}) {
   try {
     // ⚠️ 「只看这些」时**只按状态过滤**, 别的筛选一律让路 ——
     //    否则我提交的待审资产因为落在别的分类/项目下, 就一条都显示不出来。
+    //    ⚠️ 但「👤 我的」**不让路** —— 它是常驻维度 (分类/项目照样能叠着筛).
     const mine = !!onlyMine.value;
     const r = await listAssets({
       // 「只看这些」时不按类型卡 —— 我提交的待审资产可能是任意类型
@@ -583,7 +642,9 @@ async function fetchList(opts: { silent?: boolean } = {}) {
       sort: sortBy.value,
       // ⚠️ `all-pending` 走**后端**过滤 (后端对管理员/审核人放行全部待审) ——
       //    前端再按"是不是我的"筛一遍的话, 别人上传的会被全部筛掉, 那就白点了。
-      status: onlyMine.value === 'all-pending' ? 'pending' : undefined,
+      // ⚠️ `mine` = 只看我上传的 (后端 author_forms 比对, 短名/全邮箱都认).
+      status: mineOnly.value ? 'mine'
+        : (onlyMine.value === 'all-pending' ? 'pending' : undefined),
       limit: 500,
     });
     if (seq !== listSeq) return;   // 已有更新的请求在飞, 丢弃本次结果
@@ -864,6 +925,7 @@ function resetFilters() {
   category.value = '';
   keyword.value = '';
   onlyMine.value = '';
+  mineOnly.value = false;   // ⚠️ 2026-10-30 (第十二轮): 「👤 我的」也要清
   sortBy.value = 'hot';
   projectFilter.value = '';
   load();
@@ -1016,6 +1078,10 @@ onUnmounted(() => {
 .my-review-bar b { color: var(--primary); }
 .my-review-bar.admin { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.3); }
 .my-review-bar.admin b { color: var(--warn); }
+/* ⚠️ 2026-10-30 (第十二轮): 「只改了信息」的待审条 —— 色调比「包变了」那条**淡**,
+   提醒管理员这条不急 (包没变, 改个简介而已), 免得跟真要上架的抢注意力. */
+.my-review-bar.admin.meta { background: rgba(148, 163, 184, 0.10); border-color: rgba(148, 163, 184, 0.30); }
+.my-review-bar.admin.meta b { color: var(--ink-700); }
 .mrb-btn {
   background: transparent; border: 1px solid var(--primary); color: var(--primary);
   padding: 3px 12px; border-radius: var(--radius-pill);
@@ -1060,6 +1126,11 @@ onUnmounted(() => {
 }
 .chip:hover { background: var(--surface-sunken); color: var(--ink-900); }
 .chip.active { background: var(--primary-grad); border-color: transparent; color: #fff; font-weight: 600; }
+/* ⚠️ 2026-10-30 (第十二轮): 「👤 我的」chip ——
+   它是**维度**不是分类, 所以选中态跟分类 chip 一样 (primary), 但要有个人味:
+   头像图标 + 一点自己的底色, 用户一眼认出"这是看我自己的". */
+.mine-chip { font-weight: 600; }
+.mine-chip:not(.active) { border-color: rgba(59, 130, 246, 0.35); color: var(--primary-2); }
 .chip.active .count { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
 /* ===== 网格 =====

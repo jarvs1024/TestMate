@@ -131,11 +131,19 @@ async def send_markdown(
 #       unpublish 彻底下架 @所有人
 #       reject   上架审核不通过 @发布者
 #       delete   管理员直接删除 @所有人
+#   软件库 (也走市场群, 同一个机器人) —— 2026-10-30 加:
+#       software_publish 新软件上架
+#       software_update  软件新版本
+#       ⚠️ 这两个**共用一个开关** (dingtalk.notify_on_software) ——
+#          用户原话「上架和发布新版本共有一个配置」.
 _EVENT_TEXT = {
     "review": "📋 新资产待审核",
     "unpublish_request": "🗑 申请下架, 待确认",
     "publish": "🎉 新资产上架",
     "update": "📦 资产版本更新",
+    # ⚠️ 2026-10-30 (第十一轮): 软件库的通知 —— 走市场群, 但文案要说清是"软件包"
+    "software_publish": "📦 新软件上架",
+    "software_update": "🆙 软件新版本",
     # ⚠️ unpublish = **彻底下架** (资产已从市场移除), 不是"有人申请下架".
     #    申请阶段走 unpublish_request 事件 (发审核群).
     "unpublish": "🗑 资产已下架",
@@ -144,8 +152,11 @@ _EVENT_TEXT = {
 }
 
 # 窗口合并时用的汇总标题 (按事件分开 —— 审核和下架是两件事, 混一起会让人看不懂)
+# ⚠️ 2026-10-30 (第十二轮): 审核汇总标题**去掉「上架」** ——
+#    审核队列里现在不只有"上新东西", 还有"只改了信息" (meta) 的,
+#    写成「等上架审核」会让管理员以为都是新包.
 _AGGREGATE_SUMMARY_TITLE = {
-    "review": "📋 另有资产在等上架审核",
+    "review": "📋 另有资产在等审核",
     "unpublish_request": "🗑 另有资产在等下架确认",
 }
 
@@ -157,6 +168,11 @@ _SWITCH_KEY = {
     "unpublish": "dingtalk.notify_on_unpublish",
     "delete": "dingtalk.notify_on_delete",
     "reject": "dingtalk.notify_on_reject",
+    # ⚠️ 2026-10-30 (第十一轮): 软件库的「上架」和「发布新版本」**共用一个开关** ——
+    #    用户原话「上架和发布新版本共有一个配置」.
+    #    所以两个 event 映射到**同一个**设置项 —— 开关打开 = 两个都发, 关掉 = 两个都不发.
+    "software_publish": "dingtalk.notify_on_software",
+    "software_update": "dingtalk.notify_on_software",
 }
 
 # ---------- 两个通知频道 (两个群) ----------
@@ -175,6 +191,12 @@ _CHANNEL_OF_EVENT = {
     "unpublish": "market",
     "reject": "market",
     "delete": "market",
+    # ⚠️ 2026-10-30 (第十一轮): 软件库**也走市场群** ——
+    #    用户原话「钉钉在设置中配置……为了测试, 可以用市场的通知中配置的钉钉信息」.
+    #    也就是说: 不新增第三个机器人, 直接复用市场那套 webhook/加签/关键词.
+    #    以后想分开群, 再加一套独立配置也不迟 —— 那时只要改这里的映射.
+    "software_publish": "market",
+    "software_update": "market",
 }
 
 _CHANNEL_KEYS = {
@@ -199,6 +221,8 @@ _KIND_LABEL = {
     "skill": "技能",
     "plugin": "插件",
     "mcp": "连接器",
+    # ⚠️ 2026-10-30 (第十一轮): 软件库的条目 —— 通知里要跟插件/技能/连接器**区分开**
+    "software": "软件包",
 }
 
 # 各事件默认 @ 谁:
@@ -212,6 +236,32 @@ _EVENT_AT = {
     "unpublish": {"at_all": True, "at_author": False},
     "reject": {"at_all": False, "at_author": True},
     "delete": {"at_all": True, "at_author": False},
+    # ⚠️ 2026-10-30 (第十一轮): 软件库**不 @所有人** ——
+    #    软件上架是低频事, @所有人太吵; 但仍然发, 让人知道有新的内部软件可用.
+    "software_publish": {"at_all": False, "at_author": False},
+    "software_update": {"at_all": False, "at_author": False},
+}
+
+# ⚠️ 2026-10-30 (第十一轮): 通知里「说明/更新」那一行的**标签** ——
+#    上架说的是"这东西是干嘛的", 更新说的是"这次改了啥" —— 标签得分开.
+_NOTE_LABEL = {
+    "publish": "说明",
+    "update": "更新",
+    "software_publish": "说明",
+    "software_update": "更新",
+}
+
+# 通知里「查看详情」链接的**相对路径** (按事件) + 链接文字.
+# ⚠️ 用户要求: 插件/技能/连接器 → /market; 软件包 → /software.
+_DEFAULT_LINK_PATH = {
+    "publish": "/market",
+    "update": "/market",
+    "software_publish": "/software",
+    "software_update": "/software",
+}
+_LINK_TEXT = {
+    "/market": "去市场看看",
+    "/software": "去软件库看看",
 }
 
 
@@ -296,6 +346,25 @@ async def _review_entry_link() -> str:
     if not base:
         return ""
     return f"{base}/market?status=pending"
+
+
+async def _notify_base_url() -> str:
+    """通知正文里「查看详情」链接的基地址 (2026-10-30 加).
+
+    ⚠️ 取值顺序:
+        ① dingtalk.notify_base_url —— 通知专用的基地址 (**优先**);
+        ② marketplace.public_base_url —— 市场的对外基地址 (回落);
+        ③ 都没有 → **不给链接** (别发一个打不开的地址).
+
+    ⚠️ 为什么不直接用 marketplace.public_base_url:
+        那个是给 **Qoder 装包**用的对外地址 (可能是公网域名/CDN),
+        而通知链接是给**同事**点的 —— 同一台机器上, 内网地址更顺手.
+        两个用途分开配, 才不会一边改坏另一边.
+    """
+    base = (await get("dingtalk.notify_base_url", "") or "").strip().rstrip("/")
+    if not base:
+        base = (await get("marketplace.public_base_url", "") or "").strip().rstrip("/")
+    return base
 
 
 async def _pending_summary_receipt(event: str, summary_title: str):
@@ -404,6 +473,111 @@ async def flush_aggregated_notifications() -> int:
     return n
 
 
+async def _render_market_body(
+    event: str,
+    *,
+    name: str,
+    version: str = "",
+    actor: str = "",
+    detail: str = "",
+    link: str = "",
+    code: str = "",
+    kind: str = "",
+    category: str = "",
+    project: str = "",
+    author: str = "",
+    title_override: str = "",
+    summary: str = "",
+    release_notes: str = "",
+) -> tuple[list[str], list[str], str]:
+    """构造通知正文 —— 返回 (行, 汇总用的属性, 标题文案).
+
+    ⚠️ **抽出来是为了两件事** (2026-10-30 第十一轮):
+        ① `notify_market` 发送时用;
+        ② `preview_market_message` **干跑预览**时用 ——
+           消息长什么样要能**单独看**, 不能为了看一眼就得真往群里发一条.
+
+    body_bits 是**汇总用的**: 审核类通知在窗口里会合并成一条汇总,
+    每个资产只占一行 (名字 + 属性), 正常消息的名字在标题行里.
+    """
+    # ⚠️ 标题可覆盖 (如「重新上架」别写成「新资产上架」), 但事件 key 不变 ——
+    #    开关映射 (dingtalk.notify_on_publish 等) 靠 key, 改了会关掉/打开错开关.
+    event_text = title_override or _EVENT_TEXT.get(event, "通知")
+    lines = [f"### {event_text} · {name}"]
+    body_bits: list[str] = []
+    # 类型要说清楚 —— 收到通知的人得知道这是个技能还是插件 (还是软件包)
+    kind_line = f"- 类型: {_KIND_LABEL.get(kind, kind)}" if kind else ""
+    if category:
+        kind_line += f" · {category}"
+    if kind_line:
+        lines.append(kind_line)
+        body_bits.append(kind_line.removeprefix("- 类型: "))
+    if project:
+        # 适用项目: 只有**项目特有**的资产才写这行 (通用的不占地方)
+        line = f"- 适用项目: {project} 项目"
+        lines.append(line)
+        body_bits.append(f"{project} 项目")
+    if version:
+        lines.append(f"- 版本: `{version}`")
+        body_bits.append(f"v{version}")
+    if actor:
+        lines.append(f"- 操作人: {actor}")
+        body_bits.append(f"操作人 {actor}")
+    # ⚠️ 2026-10-30 (第十一轮): 「这玩意儿是干嘛的 / 这次改了啥」——
+    #    有简介或更新说明时**取代** detail (detail 只是"发生了什么"的套话,
+    #    跟标题重复), 并且**标签按事件分**:
+    #      上架 → 说明: xxx  (是干嘛的)
+    #      更新 → 更新: xxx  (这次改了啥)
+    #    都没有 → 退回 detail (老逻辑: 这次操作发生了什么).
+    note = (release_notes or summary or "").strip()
+    if note:
+        label = _NOTE_LABEL.get(event, "说明")
+        lines.append(f"- {label}: {note}")
+        body_bits.append(note)
+    elif detail:
+        # ⚠️ detail 是**这次操作发生了什么** (如"审核不通过"), 不是资产的简介 ——
+        #    把简介塞进来会变成"说明: 把测试数据整理成报告", 看着像重复了一遍简介.
+        lines.append(f"- 说明: {detail}")
+        body_bits.append(detail)
+    # ---- 链接 ----
+    # ⚠️ 2026-10-30 (第十一轮): 没显式传 link 时**按事件给默认链接** ——
+    #    用户要求「最后附上链接: 插件相关的 /market, 软件库相关的 /software」.
+    #    没有对外基地址就**不给链接** (别发一个打不开的地址).
+    link_path = ""
+    if not link:
+        link_path = _DEFAULT_LINK_PATH.get(event, "")
+        if link_path:
+            base = await _notify_base_url()
+            link = f"{base}{link_path}" if base else ""
+    if link:
+        text = _LINK_TEXT.get(link_path, "查看详情")
+        lines.append(f"- [{text}]({link})")
+    elif event in _AGGREGATED_EVENTS:
+        # 审核类通知**带入口** —— 收到消息的人得知道去哪儿审,
+        # 不然又是一条"看到了但不知道该干嘛"的通知.
+        entry = await _review_entry_link()
+        if entry:
+            lines.append(f"- [去审核台]({entry})")
+    return lines, body_bits, event_text
+
+
+async def preview_market_message(event: str, **kw) -> dict[str, Any]:
+    """**干跑**: 只渲染消息, **不发送** —— 用来预览/自检消息长什么样.
+
+    ⚠️ 绝对不碰 webhook —— 这个函数只拼字符串, 一行网络请求都不发.
+       (线上要真发, 走 notify_market.)
+    """
+    lines, body_bits, event_text = await _render_market_body(event, **kw)
+    title = f"{event_text} · {kw.get('name', '')}"
+    return {
+        "event": event,
+        "title": title,
+        "text": "\n".join(lines),
+        "lines": lines,
+        "body_bits": body_bits,
+    }
+
+
 async def notify_market(
     event: str,
     *,
@@ -420,20 +594,30 @@ async def notify_market(
     at_all: bool | None = None,
     at_author: bool | None = None,
     title_override: str = "",
+    summary: str = "",
+    release_notes: str = "",
 ) -> bool:
     """发一条市场通知. 返回是否发送成功 (失败只记日志, 不抛).
 
     event: review | unpublish_request | publish | update | unpublish | reject | delete
+           | software_publish | software_update   (2026-10-30 加软件库两个)
     按事件自动选频道:
       审核群 —— 需要管理员处理的事 (上架审核 / 下架申请)
       市场群 —— 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
+      软件库那两个也走市场群 (同一个机器人)
 
-    kind / category: 通知里要说明"这是个啥" (技能? 插件? 连接器?)
+    kind / category: 通知里要说明"这是个啥" (技能? 插件? 连接器? 软件包?)
     project: 适用项目 (空 = 通用; 有值才写这一行)
     author: 发布者 —— 审核不通过时要 @他
     at_all / at_author: 覆盖事件默认的 @ 策略 (一般不用传)
     title_override: 覆盖标题文案 —— **事件 key 不变** (开关映射必须稳定),
         只是同一个事件在不同场景下标题不一样 (如「重新上架」不是「新资产上架」)
+
+    ⚠️ summary / release_notes (2026-10-30 加) —— 通知正文里那一行"这玩意儿是干嘛的":
+        · summary       = 资产/软件的**简介** (上架时最该说清楚的就是这个);
+        · release_notes = **这次更新了啥** (软件库有, 市场没有这个字段);
+        · 两者都传 → release_notes 优先 (更新事件更该说"改了啥");
+        · 都没有 → 退回 detail (老逻辑: 这次操作发生了什么).
     """
     if event not in _EVENT_TEXT:
         logger.warning("dingtalk.notify_market 未知事件: %s", event)
@@ -462,44 +646,13 @@ async def notify_market(
     do_at_all = at_rule["at_all"] if at_all is None else at_all
     do_at_author = at_rule["at_author"] if at_author is None else at_author
 
-    # ⚠️ 标题可覆盖 (如「重新上架」别写成「新资产上架」), 但事件 key 不变 ——
-    #    开关映射 (dingtalk.notify_on_publish 等) 靠 key, 改了会关掉/打开错开关.
-    event_text = title_override or _EVENT_TEXT[event]
-    lines = [f"### {event_text} · {name}"]
-    # ⚠️ 汇总用的正文**单独攒一份**: 汇总里每个资产要占**一行** (名字 + 属性),
-    #    正常消息的名字在标题行里, 拆开就看不出这行是哪个资产的了.
-    body_bits: list[str] = []
-    # 类型要说清楚 —— 收到通知的人得知道这是个技能还是插件
-    kind_line = f"- 类型: {_KIND_LABEL.get(kind, kind)}" if kind else ""
-    if category:
-        kind_line += f" · {category}"
-    if kind_line:
-        lines.append(kind_line)
-        body_bits.append(kind_line.removeprefix("- 类型: "))
-    if project:
-        # 适用项目: 只有**项目特有**的资产才写这行 (通用的不占地方)
-        line = f"- 适用项目: {project} 项目"
-        lines.append(line)
-        body_bits.append(f"{project} 项目")
-    if version:
-        lines.append(f"- 版本: `{version}`")
-        body_bits.append(f"v{version}")
-    if actor:
-        lines.append(f"- 操作人: {actor}")
-        body_bits.append(f"操作人 {actor}")
-    if detail:
-        # ⚠️ detail 是**这次操作发生了什么** (如"新资产已上架"), 不是资产的简介 ——
-        #    把简介塞进来会变成"说明: 把测试数据整理成报告", 看着像重复了一遍简介.
-        lines.append(f"- 说明: {detail}")
-        body_bits.append(detail)
-    if link:
-        lines.append(f"- [查看详情]({link})")
-    elif event in _AGGREGATED_EVENTS:
-        # 审核类通知**带入口** —— 收到消息的人得知道去哪儿审,
-        # 不然又是一条"看到了但不知道该干嘛"的通知.
-        entry = await _review_entry_link()
-        if entry:
-            lines.append(f"- [去审核台]({entry})")
+    lines, body_bits, event_text = await _render_market_body(
+        event,
+        name=name, version=version, actor=actor, detail=detail, link=link,
+        code=code, kind=kind, category=category, project=project,
+        author=author, title_override=title_override,
+        summary=summary, release_notes=release_notes,
+    )
 
     # ---------- 审核类通知: 窗口合并 ----------
     # 首条照常发 (带完整详情), 窗口内的其余攒起来, 窗口末发一条汇总.
@@ -674,7 +827,8 @@ async def send_test_market_message(channel: str = "market") -> tuple[bool, str, 
         f"### ✅ TestMate 通知配置自检（{label}）\n"
         "这是一条来自 TestMate 的**测试消息**, 看到即说明配置正确。\n"
         + (
-            "- 上架 / 更新 / 彻底下架 通知发到这个群"
+            # ⚠️ 2026-10-30 (第十一轮): 市场群现在还收**软件库**的上架/发版本
+            "- 上架 / 更新 / 彻底下架 / 软件库上架 / 软件库新版本 通知发到这个群"
             if channel == "market"
             else "- 待审核 / 驳回 / 删除 通知发到这个群"
         )

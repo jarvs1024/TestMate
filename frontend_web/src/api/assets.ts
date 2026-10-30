@@ -55,6 +55,10 @@ export interface AssetItem {
   /** 生命周期: published(在架) / pending(待审核) / rejected(已驳回) /
    *  unpublished(已下架) / unpublish_pending(申请下架, 等管理员确认) */
   publish_status: 'published' | 'pending' | 'rejected' | 'unpublished' | 'unpublish_pending' | string;
+  /** ⚠️ 2026-10-30 (第十二轮): 在等什么审核 ——
+   *  new(新资产) / update(新版本) / meta(**只改了信息**, 包没变).
+   *  审核台据此显示「📝 编辑信息待审」, 管理员才知道这是改简介还是上新包. */
+  pending_action?: string;
   /** 最近一次审核意见 (驳回理由) */
   review_note: string;
   /** 当前用户能不能审这个资产 (管理员或被授权的审核人) */
@@ -169,11 +173,15 @@ export interface SyncStatus {
   unpublished_count: number;
   /** 待审核 / 已驳回 的资产数 (审核台徽标) */
   awaiting_review_count: number;
+  /** ⚠️ 2026-10-30 (第十二轮): 其中「**只改了信息**」的那部分 (包没变, 不急) */
+  awaiting_meta_count?: number;
   rejected_count: number;
   /** 我自己提交但还没通过审核的资产数 (待审核 + 已驳回) */
   my_review_count: number;
   /** 我自己提交的、还在等审核的资产数 */
   my_pending_count: number;
+  /** ⚠️ 2026-10-30 (第十二轮): 我自己提交的、**只改了信息**在等审核的数 */
+  my_meta_count?: number;
   /** 申请下架、等管理员确认的资产数 (确认后资产会被彻底删除) */
   unpublish_pending_count: number;
   /** 我自己申请下架、还在等确认的资产数 */
@@ -329,6 +337,25 @@ export async function listAudits(code?: string): Promise<{ items: AssetAudit[]; 
 /** 钉钉通知送达回执 */
 export async function listNotifications(limit = 50): Promise<{ items: AssetNotification[]; total: number }> {
   return apiGet('/assets/notifications', { limit });
+}
+
+/**
+ * **预览**几种典型钉钉通知长什么样 —— **一条都不发** (2026-10-30).
+ *
+ * ⚠️ 为什么要有预览: 消息长什么样是**要给人看**的 (简洁明了、好看),
+ *    但为了看一眼就往**公司真实群**里发测试消息, 那是骚扰.
+ *    这里只渲染, 后端不碰 webhook.
+ */
+export interface NotifyPreview {
+  event: string;
+  label: string;
+  title: string;
+  text: string;
+  lines: string[];
+}
+
+export async function previewNotifications(): Promise<NotifyPreview[]> {
+  return apiGet<NotifyPreview[]>('/assets/notifications/preview');
 }
 
 /** 市场当前生效的配置 (只读) */

@@ -524,6 +524,29 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
+        "key": "dingtalk.notify_on_software",
+        "category": "notification",
+        "value_type": "bool",
+        "default": True,
+        "description": (
+            "**软件库上架 / 发布新版本**时通知钉钉 (两个动作**共用这一个开关**; "
+            "发到市场群用的同一个机器人 —— 跟市场通知一起配就行)"
+        ),
+        "is_secret": False,
+    },
+    {
+        "key": "dingtalk.notify_base_url",
+        "category": "notification",
+        "value_type": "url",
+        "default": "",
+        "description": (
+            "通知正文里「查看详情」链接的基地址 (如 http://testmate.internal:8081). "
+            "留空则回落到 marketplace.public_base_url; 再留空则通知里**不带链接** "
+            "(别发一个打不开的地址)"
+        ),
+        "is_secret": False,
+    },
+    {
         "key": "dingtalk.aggregate_window_seconds",
         "category": "notification",
         "value_type": "int",

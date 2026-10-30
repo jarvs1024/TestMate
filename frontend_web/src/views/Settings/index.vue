@@ -346,6 +346,7 @@
             <strong>审核群</strong>收「上架待审核」「下架申请」—— 需要管理员处理的事;
             <strong>市场群</strong>收「上架成功」「版本更新」「彻底下架」(都 @所有人)
             和「审核不通过」(只 @发布者)。
+            <strong>软件库</strong>的上架和发布新版本也发这个群, 共用「软件库上架 / 发布新版本」那一个开关。
             两个群的 webhook / 加签密钥 / 关键词各配各的 —— 测试环境可以把两边配成一样的。
             <br />下架要走审核: 申请阶段通知<b>审核群</b>, 等管理员确认、资产真的被移除才在<b>市场群</b>通知一次。
             配好 webhook 后点对应的「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
@@ -365,6 +366,12 @@
             <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-review')">
               {{ testing === 'dingtalk-review' ? '发送中…' : '📨 测试审核群' }}
             </button>
+            <!-- ⚠️ 2026-10-30 (第十一轮): 「预览」—— **只渲染, 一条都不发**.
+                 消息长什么样是要给人看的 (简洁明了、好看), 但为了看一眼就往
+                 **公司真实群**里发测试消息, 那是骚扰. -->
+            <button class="test-btn" :disabled="previewLoading" @click="togglePreview()">
+              {{ previewLoading ? '加载中…' : (previewOpen ? '👀 收起预览' : '👀 预览消息') }}
+            </button>
             <div v-if="testResults['dingtalk-market']" class="test-result" :class="`s-${testResults['dingtalk-market']?.status}`">
               <span class="dot"></span>
               <span class="msg">{{ testResults['dingtalk-market']?.message }}</span>
@@ -373,6 +380,19 @@
               <span class="dot"></span>
               <span class="msg">{{ testResults['dingtalk-review']?.message }}</span>
             </div>
+          </div>
+
+          <!-- 消息预览 (不发送) -->
+          <div v-if="previewOpen" class="notif-preview">
+            <p v-if="previewError" class="notif-empty err">
+              预览加载失败：{{ previewError }}
+              <button class="mini-link" @click="togglePreview(true)">重试</button>
+            </p>
+            <div v-for="p in previews" :key="p.event" class="pv-card">
+              <div class="pv-label">{{ p.label }}</div>
+              <pre class="pv-text">{{ p.text }}</pre>
+            </div>
+            <p class="pv-note">⚠️ 这些是渲染出来的样子 —— 预览不会往群里发任何消息.</p>
           </div>
 
           <!-- 最近通知 (送达回执) -->
@@ -425,7 +445,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { getSchema, updateSetting, testRagflow, testReviewAgent, testDingTalk, testGitLab, testSoftwareStorage, type SettingItem, type TestResult } from '@/api/settings';
-import { getMarketConfig, listNotifications, type AssetNotification } from '@/api/assets';
+import { getMarketConfig, listNotifications, previewNotifications, type AssetNotification, type NotifyPreview } from '@/api/assets';
 import { listUsers, type ManagedUser } from '@/api/users';
 import SettingRow from './components/SettingRow.vue';
 import UserManage from './components/UserManage.vue';
@@ -534,6 +554,30 @@ const notifyLog = ref<AssetNotification[]>([]);
  *    钉钉 webhook 配错时管理员会以为通知**从未发出过**. 失败 ≠ 没有记录.
  */
 const notifyError = ref('');
+
+// ===== 消息预览 (只渲染, **不发送**) =====
+// ⚠️ 2026-10-30 (第十一轮): 消息长什么样是要给人看的, 但为了看一眼就往
+//    **公司真实群**里发测试消息, 那是骚扰 —— 所以单独有个「预览」入口.
+const previewOpen = ref(false);
+const previewLoading = ref(false);
+const previewError = ref('');
+const previews = ref<NotifyPreview[]>([]);
+
+async function togglePreview(force?: boolean) {
+  const next = force === undefined ? !previewOpen.value : force;
+  previewOpen.value = next;
+  if (!next) return;
+  if (previews.value.length) return;   // 已经加载过, 别重复拉
+  previewLoading.value = true;
+  previewError.value = '';
+  try {
+    previews.value = await previewNotifications();
+  } catch (e: any) {
+    previewError.value = httpErrorText(errorStatus(e), errorDetail(e), '预览加载失败');
+  } finally {
+    previewLoading.value = false;
+  }
+}
 /**
  * 通知事件 → 中文 (回执列表用).
  *
@@ -549,6 +593,10 @@ const NOTIFY_EVENTS: Record<string, string> = {
   unpublish: '资产已下架',
   reject: '审核未通过',
   delete: '资产已删除',
+  // ⚠️ 2026-10-30 (第十一轮): 软件库的两个事件 —— 跟市场通知**区分开**
+  //    (走的是同一个机器人, 但说的是"软件包", 不是插件/技能/连接器)
+  software_publish: '新软件上架',
+  software_update: '软件新版本',
 };
 /**
  * 回执状态 → 中文.
@@ -1035,8 +1083,12 @@ onMounted(() => {
 
 .set-toc {
   position: sticky;
-  top: 16px;
-  max-height: calc(100vh - 32px);
+  /* ⚠️ 2026-10-30 (第十二轮): 偏移量改成 **0** —— sticky 的 top 是相对
+     **滚动容器** (.tm-main, 顶边在视口 y=70) 算的, 不是相对视口.
+     原来写 16px → 目录的静态位置 (78) 被往下顶到 86, 整个目录跟右边的标题对不齐.
+     改成 0 之后: 静态位置就是 78 (不被顶), 滚动时吸在 70 (主区顶边), 正好齐平. */
+  top: 0;
+  max-height: calc(100vh - 16px);
   overflow: auto;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1398,6 +1450,25 @@ onMounted(() => {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
 .notif-empty.err .mini-link { margin-left: 0; }
+
+/* ===== 消息预览 (只渲染, 不发送) ===== */
+.notif-preview {
+  margin: 10px 0 4px; display: flex; flex-direction: column; gap: 10px;
+}
+.pv-card {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-soft); padding: 9px 11px;
+}
+.pv-label {
+  font-size: 11.5px; font-weight: 700; color: var(--ink-700);
+  margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
+}
+.pv-text {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.7;
+  color: var(--ink-700);
+}
+.pv-note { margin: 0; font-size: 11px; color: var(--ink-500); }
 .notif-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 /* ⚠️ 2026-10-30 改成 grid —— 以前是 flex + wrap:
    资产 code 一长 (如 asset:knowledge-base-dataset-v2), flex 把「时间」挤到第二行,
