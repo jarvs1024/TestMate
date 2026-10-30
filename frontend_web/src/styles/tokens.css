@@ -71,6 +71,17 @@ html[data-theme="light"] {
   --fill-blank:     #FFFFFF;   /* 输入框底 = 面板色 (靠边框区分) */
   --border-panel:   rgba(15, 23, 42, 0.12);  /* 浮层里的分隔边 (页面上的 --border 太淡) */
 
+  /* ⚠️ **浮层内部: 项目自己的 --surface 家族要换成【实色】版** (2026-10-30 补) ——
+     浮层面板是**纯白**之后, 抽屉里那些用 `var(--surface)` (半透明白 .60) 的
+     卡片 / 版本行 / 标签 / 代码块, 盖在纯白面板上 → 合成后**还是纯白** →
+     底色层次全没了, 只剩一条 6% 的淡边框 (实测 19 个块白盖白).
+
+     ✅ 这里给「相对于面板的深浅」的**实色**版, 在浮层内部把 --surface 家族
+        整体换掉 —— **不用改任何组件代码**, 组件里写 `var(--surface)` 自动就对了. */
+  --panel-surface:        #F1F5F9;   /* 块底 (最常用的那层) */
+  --panel-surface-soft:   #F8FAFC;   /* 更浅一层 */
+  --panel-surface-sunken: #E2E8F0;   /* 凹陷 / 徽标 (要能一眼分辨) */
+
   /* 状态 */
   --ok:    #10B981;
   --warn:  #F59E0B;
@@ -145,6 +156,11 @@ html[data-theme="dark"] {
   --fill-blank:     rgba(15, 22, 40, 0.55);
   --border-panel:   rgba(255, 255, 255, 0.16);
 
+  /* 浮层内部的 --surface 家族 (实色版) —— 暗色下是「相对面板」的明暗 */
+  --panel-surface:        rgba(30, 41, 59, 0.85);
+  --panel-surface-soft:   rgba(30, 41, 59, 0.55);
+  --panel-surface-sunken: rgba(4, 6, 14, 0.90);
+
   --ok:    #34D399;
   --warn:  #FBBF24;
   --err:   #F87171;
@@ -191,6 +207,11 @@ html[data-theme="dark"] {
     --fill-disabled:  rgba(14, 22, 38, 0.55);
     --fill-blank:     rgba(15, 22, 40, 0.55);
     --border-panel:   rgba(255, 255, 255, 0.16);
+
+    /* 浮层内部的 --surface 家族 (实色版) */
+    --panel-surface:        rgba(30, 41, 59, 0.85);
+    --panel-surface-soft:   rgba(30, 41, 59, 0.55);
+    --panel-surface-sunken: rgba(4, 6, 14, 0.90);
     --ok:    #34D399;
     --warn:  #FBBF24;
     --err:   #F87171;

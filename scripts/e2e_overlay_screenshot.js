@@ -33,13 +33,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /**
  * ⚠️ **「改之前」的样子** —— 第八轮 (`86c1414`) 引入的那套半透明底色.
  *    跟 `main.css` 现在的规则**特异性相同**, 但因为是后注入的, 文档顺序更靠后 → 覆盖生效.
+ *
+ * ⚠️ **必须连 `--surface` 家族一起还原** ——
+ *    第十轮后半段把浮层内部的 `--surface` 家族换成了实色版 (--panel-surface),
+ *    只还原底色的话, 抽屉里的块还是实色, 「改之前」就还原得不彻底.
+ *    所以下面先读 `:root` 上这三个变量的**计算值**(自动适配亮/暗), 再写回浮层里.
  */
-const OLD_CSS = `
+const OLD_CSS_TMPL = `
 html, html[data-theme] {
   --el-bg-color: var(--surface) !important;
   --el-bg-color-overlay: var(--surface) !important;
 }
-.el-drawer, .el-dialog, .el-message-box { background-color: var(--surface) !important; }
+.el-drawer, .el-dialog, .el-message-box {
+  background-color: var(--surface) !important;
+  --surface: __SURFACE__ !important;
+  --surface-soft: __SURFACE_SOFT__ !important;
+  --surface-sunken: __SURFACE_SUNKEN__ !important;
+}
 .el-drawer__body { background-color: var(--surface) !important; }
 .el-popper, .el-dropdown-menu, .el-select-dropdown, .el-popover { background: var(--surface) !important; }
 `;
@@ -79,12 +89,20 @@ async function probePanel(page) {
 
 /** 把旧 CSS 注进去 (复现「改之前」) */
 async function injectOld(page) {
-  await page.evaluate((css) => {
+  const css = await page.evaluate((tmpl) => {
+    const root = getComputedStyle(document.documentElement);
+    const g = (n) => root.getPropertyValue(n).trim();
+    return tmpl
+      .replace('__SURFACE__', g('--surface'))
+      .replace('__SURFACE_SOFT__', g('--surface-soft'))
+      .replace('__SURFACE_SUNKEN__', g('--surface-sunken'));
+  }, OLD_CSS_TMPL);
+  await page.evaluate((c) => {
     const s = document.createElement('style');
     s.id = '__old_overlay_css__';
-    s.textContent = css;
+    s.textContent = c;
     document.head.appendChild(s);
-  }, OLD_CSS);
+  }, css);
   await sleep(350);
 }
 

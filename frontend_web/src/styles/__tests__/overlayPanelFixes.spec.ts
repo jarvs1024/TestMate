@@ -147,6 +147,43 @@ describe('main.css: 弹层 (下拉菜单/选择框/气泡卡) 也要是不透明
   });
 });
 
+describe('main.css: 浮层内部的 --surface 家族必须换成实色版', () => {
+  it('容器里要把 --surface / --surface-soft / --surface-sunken 全部换掉', () => {
+    // ⚠️ 面板变纯白之后, 抽屉里的卡片 / 版本行 / 标签 / 代码块
+    //    (组件里写 `var(--surface)` = 半透明白 .60) 盖上去 = **白盖白**
+    //    → 底色层次全没了 (实测软件抽屉 11 个、资产抽屉 8 个块糊掉).
+    const r = ruleBody(css, /\.el-drawer,\s*\.el-dialog,\s*\.el-message-box\s*\{[^}]*\}/);
+    expect(r).toContain('--surface:');
+    expect(r).toContain('var(--panel-surface)');
+    expect(r).toContain('var(--panel-surface-soft)');
+    expect(r).toContain('var(--panel-surface-sunken)');
+  });
+
+  it('弹层 (.el-popper 家族) 也一样要换 —— 下拉菜单底色也是不透明面板', () => {
+    const r = ruleBody(css, /\.el-popper,\s*\.el-dropdown-menu,\s*\.el-select-dropdown,\s*\.el-popover\s*\{[^}]*\}/);
+    expect(r).toContain('var(--panel-surface)');
+  });
+
+  it('--panel-surface* 三套主题都要有', () => {
+    for (const v of ['--panel-surface', '--panel-surface-soft', '--panel-surface-sunken']) {
+      expect(tokens, `${v} 没定义`).toMatch(new RegExp(`${v}:`));
+      const blocks = tokens.split(/\{/).filter((b) => b.includes('--surface-panel'));
+      expect(blocks.length, '主题块数量不对').toBeGreaterThanOrEqual(3);
+      for (const b of blocks) {
+        expect(b, `${v} 在某个主题块里缺失`).toContain(v);
+      }
+    }
+  });
+
+  it('亮色的 --panel-surface 必须是**实色** —— 半透明块盖在纯白面板上还是白盖白', () => {
+    const light = tokens.match(/:root,\s*html\[data-theme="light"\]\s*\{([\s\S]*?)\n\}/);
+    expect(light).toBeTruthy();
+    const m = light![1].match(/--panel-surface:\s*([^;]+);/);
+    expect(m, '亮色没定义 --panel-surface').toBeTruthy();
+    expect(m![1].trim(), `亮色 --panel-surface 不能半透明: ${m![1]}`).not.toMatch(/rgba|hsla/);
+  });
+});
+
 describe('main.css: 遮罩 —— 三套主题分别写, 别写成非法语法', () => {
   it('不能出现「选择器列表里塞 @media」这种非法写法', () => {
     // ⚠️ 以前写的是 `html[data-theme="dark"] .el-overlay, @media (...) { ... }` ——

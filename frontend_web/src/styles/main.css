@@ -291,6 +291,11 @@ select.tm-input:focus {
   color: var(--ink-900) !important;
   box-shadow: var(--shadow-md) !important;
 
+  /* ⚠️ 弹层内部也把 --surface 家族换成实色版 —— 同上, 不然白盖白 */
+  --surface:        var(--panel-surface);
+  --surface-soft:   var(--panel-surface-soft);
+  --surface-sunken: var(--panel-surface-sunken);
+
   /* 弹层内部的填充色 —— 必须是**不透明**的 (相对面板的深浅) */
   --el-fill-color: var(--fill-hover);
   --el-fill-color-blank: var(--fill-blank);
@@ -606,6 +611,15 @@ html[data-theme="dark"] {
   color: var(--ink-900) !important;
   border-color: var(--border-panel) !important;
 
+  /* ⚠️ **浮层内部: 项目自己的 --surface 家族换成【实色】版** ——
+     面板是纯白之后, 组件里写 `var(--surface)` (半透明白 .60) 的
+     卡片 / 版本行 / 标签 / 代码块 盖上去 = **白盖白** → 底色层次全没了
+     (实测软件抽屉 11 个、资产抽屉 8 个块糊掉, 只剩一条 6% 的淡边框).
+     ✅ 在这里把整个家族换掉 —— **不用改任何组件代码**. */
+  --surface:        var(--panel-surface);
+  --surface-soft:   var(--panel-surface-soft);
+  --surface-sunken: var(--panel-surface-sunken);
+
   /* 浮层内部的填充色 —— 跟弹层同一套 (--fill-*),
      否则半透明的 --surface-sunken 盖在不透明面板上 = 白底盖白底 = 看不出来 */
   --el-fill-color: var(--fill-hover);
@@ -620,6 +634,11 @@ html[data-theme="dark"] {
   --el-border-color: var(--border-panel);
   --el-border-color-light: var(--border-panel);
   --el-border-color-lighter: var(--border);
+  /* ⚠️ EP 的默认按钮是「白底 + 边框」—— 放在纯白面板上跟面板一个色,
+     跟项目自己的 .mini-btn (浅灰底) 也不像一家. 统一成浅灰底.
+     ⚠️ primary / warning / plain 那些**自带**底色的按钮不受影响 ——
+        EP 把 `--el-button-bg-color` 定义在按钮元素自己身上, 优先级更高. */
+  --el-button-bg-color: var(--fill-hover);
 }
 
 /* ② 内部: **一律透明**, 透出容器底色 —— header / body 必须是同一个色 */
