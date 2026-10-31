@@ -16,6 +16,8 @@
 > 8. **TestMate MCP 作为平台内置连接器上架**在「插件·技能·连接」市场：
 >    **不可删除、不可下架、不可编辑**，url 动态生成（见 §4.8）
 > 9. 设置页（adminOnly）保留「平台接入令牌」作为 **CI/脚本/兜底**通道，不做个人令牌页
+> 10. **授权不过期**：access token 不带 `exp`；安全靠 **grant 表**（授权记录）+ 「我的授权」页撤销
+> 11. **架构规范化**：新增 §3.6「扩展点清单」—— 每种扩展都有明确落点，且有三条不变量（鉴权/业务/审计各只有一处）
 >
 > 状态：**设计已定，待实现**。
 
@@ -260,6 +262,46 @@ ALL_MCPS  = {p.domain: build_mcp(p) for p in PROVIDERS}
 
 ---
 
+### 3.6 扩展点清单：以后怎么加东西
+
+「架构规范」不是口号，是**每种扩展都有明确的落点，且不碰其它层**。下表是承诺清单：
+
+| 想加什么 | 改哪里 | 要不要动其它层 |
+|---|---|---|
+| **新业务域**（知识库 / 软件库） | 新建 `app/mcp/<域>/`（server + tools + adapter）＋ `PROVIDERS` 加一行 | ❌ common 不动、业务代码不动 |
+| **新工具**（在已有域内） | 往该域的 `tools.py` 加一个 `ToolSpec` | ❌ 框架不动 |
+| **新 scope** | 该域的 `ToolSpec.scope` + `common/scopes.py` 的枚举 | ❌ 其它域不动 |
+| **新凭证类型**（服务账号 / 内部系统调用） | 在 `common/auth.py` 加一个 `CredentialVerifier` 实现，注册进 `VERIFIERS` | ❌ provider 与工具不动 |
+| **新 transport**（比如 stdio 薄壳） | `common/server.py` 的装配层加一个 app | ❌ 工具不动 |
+| **一个域多个 server**（如只读子集） | dispatcher 的 `{path: app}` 加一项 | ❌ 工具不动 |
+| **新内置资产**（不止 MCP 连接器） | `common/builtin_assets.py` 的清单加一项 | ❌ 其它不动 |
+| **新平台设置项** | `settings_store` 的 seed 加 `mcp.*` 一项 | ❌ 其它不动 |
+
+**分层纪律（review 时按这个查）**：
+
+```
+依赖方向（只能从上往下，不能反向）
+  transport 层  (common/server.py)      ← 知道 HTTP/Starlette，不知道业务
+      ↓
+  协议层       (common/tool.py, errors.py, auth.py)  ← 知道 MCP，不知道业务
+      ↓
+  领域层       (skill/, kb/, software/)   ← 知道业务，通过 adapter 调既有 API
+      ↓
+  既有业务层   (api/marketplace.py …)    ← 一行不改
+
+❌ 禁止：domain 层 import fastapi 的 Request/Depends/Form
+❌ 禁止：common 层 import 任何业务模块
+❌ 禁止：adapter 层绕过 domain 直接写 DB
+```
+
+**三条「不变量」**（破坏了就该重写，不是补丁）：
+
+1. **鉴权只有一处** —— 凭证解析永远在 `common/auth.py` 的 `TokenVerifier`；工具通过 `McpContext` 拿身份，**永不自己读 header**。
+2. **业务只有一处** —— 技能相关的一切都走 `app/api/marketplace.py` 的既有函数；MCP 侧**不复制业务逻辑**。
+3. **审计只有一处** —— 每次工具调用必定落一行 `mcp_tool_calls`，由 `common/tool.py` 的包装层统一写，工具实现自己不写审计。
+
+---
+
 ## 4. 鉴权：OAuth 2.1 授权流（Qoder 点「授权」）
 
 ### 4.1 为什么改成 OAuth（而不是个人令牌页）
@@ -282,9 +324,14 @@ ALL_MCPS  = {p.domain: build_mcp(p) for p in PROVIDERS}
 |---|---|---|
 | OAuth 客户端注册表 | **新表** `mcp_oauth_clients`（DCR 动态注册产生） | 长期 |
 | 授权码（authorization code） | **进程内字典** | 5 分钟、一次性 |
-| access token | **无状态 JWT**（用现有 `JWT_SECRET` 签名，payload：`sub`=user_id / `scopes` / `client_id` / `exp` / `aud`） | 默认 1 小时 |
-| refresh token | **本轮不发** | —— |
-| 平台接入令牌（兜底） | `mcp_api_tokens` 表 | 90 天 / 永不过期 |
+| **授权（grant）** | **新表** `mcp_oauth_grants` —— (user_id, client_id, scopes, revoked_at) | **长期，不过期**；可随时撤销 |
+| access token | **无状态 JWT**（`JWT_SECRET` 签名，payload：`sub`=user_id / `client_id` / `scopes` / `grant_id` / `aud`）—— **不带 `exp`** | **不过期** |
+| refresh token | **不发**（不过期就不需要刷新） | —— |
+| 平台接入令牌（兜底） | `mcp_api_tokens` 表 | 默认**不过期**，可设期限 |
+
+> ⚠️ **「不过期」与「可吊销」是一对**：无状态 JWT 本身吊销不了，
+> 所以每次调用验签后**必须再查一次 grant**（`user_id + client_id` 唯一索引，单行查询）。
+> 撤销 = 置 `revoked_at` → **下一个请求立刻失效**。这是「不过期」能成立的前提。
 
 > 授权码放内存而非 DB/Redis：SSE 已经要求后端**单进程**（`BACKEND_WORKERS=1`），
 > 进程内字典完全够用；进程重启导致授权码失效 → 用户重新点一次「同意」即可，代价可忽略。
@@ -308,9 +355,37 @@ ALL_MCPS  = {p.domain: build_mcp(p) for p in PROVIDERS}
 | # | 东西 | 位置 | 量级 |
 |---|---|---|---|
 | 1 | `OAuthAuthorizationServerProvider` 实现：客户端注册表读写、授权码生成/消费、PKCE S256 校验、**redirect_uri 白名单校验**、签发 access token | `app/mcp/common/oauth_provider.py` | ~300 行 |
-| 2 | **同意页**（前端） | `views/McpAuthorize/index.vue` | 1 个页面 |
-| 3 | `TokenVerifier`：验 access token → `Principal(user, client_id, scopes)`；同时接受静态 `tm_live_*` | `app/mcp/common/auth.py` | ~80 行 |
-| 4 | nginx 加 5 处 location（OAuth 端点在**根路径**，不在 `/api/` 下） | `frontend_web/nginx.conf` + `deploy/native/units/nginx.conf.tpl` | ~40 行 |
+| 2 | `CredentialVerifier` 协议 + 两个实现（OAuth token / 静态令牌）+ `Principal` 模型 | `app/mcp/common/auth.py` | ~120 行 |
+| 3 | **同意页**（前端） | `views/McpAuthorize/index.vue` | 1 个页面 |
+| 4 | **「我的授权」页**（前端，撤销授权） | `views/McpGrants/index.vue` | 1 个轻量页面 |
+| 5 | nginx 加 5 处 location（OAuth 端点在**根路径**，不在 `/api/` 下） | `frontend_web/nginx.conf` + `deploy/native/units/nginx.conf.tpl` | ~40 行 |
+
+#### 鉴权层的可插拔结构（扩展点，不是 if/else）
+
+```python
+# app/mcp/common/auth.py
+@dataclass(frozen=True)
+class Principal:
+    user: User            # 绑定身份 —— 权限实时取该用户当前角色
+    client_id: str        # 'oauth:<client_id>' 或 'static'
+    client_name: str
+    scopes: frozenset[str]
+    grant_id: int | None  # OAuth 才有；静态令牌为 None
+
+
+class CredentialVerifier(Protocol):
+    # 一个凭证类型的验证器 —— 加新凭证类型 = 加一个实现 + 注册一行
+    async def verify(self, credential: str) -> Principal | None: ...
+
+
+class OAuthTokenVerifier:   # 验签 + 查 grant（确认未撤销）
+class StaticTokenVerifier:  # 查 mcp_api_tokens（确认未吊销）
+
+VERIFIERS: list[CredentialVerifier] = [OAuthTokenVerifier(), StaticTokenVerifier()]
+```
+
+> 将来加「服务账号」「内部系统调用」「临时票据」等凭证，**只加一个类 + 注册一行**，
+> 工具、provider、其它层一行都不用动（§3.6 的承诺之一）。
 
 ### 4.5 同意页（取代原「个人令牌页」）
 
@@ -339,6 +414,9 @@ GET /authorize?client_id=…&redirect_uri=…&code_challenge=…&state=…&scope
 - 授权码一次性、5 分钟过期、绑定 `client_id` + `redirect_uri` + `code_challenge`
 - token 端点校验 PKCE：`code_verifier` 的 S256 必须等于登记的 `code_challenge`
 
+> **授权不过期**：同意页不显示有效期选项，签发的 access token **不带 `exp`**。
+> 代价是「授权」变成一个长期状态 → 必须给用户一个**撤销入口**（见 §4.7「我的授权」）。
+
 ### 4.6 scope：同意时授予，写进 token
 
 | scope | 覆盖的工具 | 能力 |
@@ -353,7 +431,47 @@ GET /authorize?client_id=…&redirect_uri=…&code_challenge=…&state=…&scope
 
 > 「以后都同意」（记住授权）本轮**不做**：每次授权都问一次。多一步点击，换来用户对「这个 agent 现在能干什么」有明确认知。
 
-### 4.7 配额
+### 4.7 吊销模型：授权不过期，那怎么收回？
+
+「授权不过期」是产品要求，但**长期有效的凭证必须有回收口**，否则离职/换机器/泄漏都没法补救。
+
+**授权 = 一条 grant**（用户对某个客户端的一次授权），存 `mcp_oauth_grants`：
+
+```sql
+CREATE TABLE mcp_oauth_grants (
+  id           BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id      BIGINT       NOT NULL,
+  client_id    VARCHAR(128) NOT NULL,
+  client_name  VARCHAR(128) NOT NULL DEFAULT '',   -- 同意页上显示的名字
+  scopes       JSON         NOT NULL,               -- 用户实际勾选的
+  created_at   DATETIME     NOT NULL,
+  last_used_at DATETIME     NULL,
+  revoked_at   DATETIME     NULL                  -- 撤销 = 置这个
+);
+CREATE UNIQUE INDEX uk_mcp_grant ON mcp_oauth_grants (user_id, client_id);
+```
+
+**每次工具调用的校验链**（固定两查一验）：
+
+```
+① 验签 + 解析 JWT → sub(user_id) / client_id / scopes / grant_id
+② 查 mcp_oauth_grants（user_id + client_id）→ 确认存在且 revoked_at IS NULL
+③ 校验 scope 覆盖本次工具
+```
+
+第②步是「不过期」的安全底座：**吊销后下一个请求立刻失效**。
+
+**「我的授权」页**（轻量，**不是令牌页**——它不发令牌，只管理已有的授权）：
+
+- 路由 `/mcp/grants`（所有登录用户）
+- 列出：客户端名 / 授权的 scope / 授权时间 / 最后使用时间 / [撤销]
+- [撤销] → grant 置 `revoked_at` → 该客户端的 access token 立刻失效
+- 撤销后客户端下次调用收到 401 → Qoder 重新弹「授权」→ 用户重新同意
+
+> 这个页面是「授权管理」，不是「令牌签发」——用户不需要在这里拿到任何密钥，
+> 所以与「不做个人令牌页」不冲突。恰恰相反：**没有它，「不过期」就是安全隐患**。
+
+### 4.8 配额
 
 agent 最危险的失败模式不是越权，而是**失控循环**。配额改挂在**用户 + 客户端**上（OAuth 之后没有「令牌记录」了）：
 
@@ -364,7 +482,7 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
 - **计数来源：`mcp_tool_calls` 表**（每次调用都落一行），按 `(user_id, client_id, created_at)` 索引范围计数
 - 超额那次调用**也要落审计**（`ok=false, error_code=quota_exceeded`），否则计数会漂
 
-### 4.8 内置连接器资产（平台内置，不可删除）
+### 4.9 内置连接器资产（平台内置，不可删除）
 
 **要求**：TestMate 自己的 MCP 以「连接器」身份出现在「插件·技能·连接」市场里，
 **平台内置、不能删除、不能下架、不能改坏**。
@@ -384,7 +502,7 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
 | 不进审核台 | `publish_status` 恒为 `published`，`pending_action` 恒空 |
 | 前端 | `canModify` 计算里加上 `&& !is_builtin` → 卡片不显示「更新/下架/删除」按钮，标一个「平台内置」徽标 |
 
-### 4.9 交付链路（最终形态）
+### 4.10 交付链路（最终形态）
 
 ```
 ① 市场「插件·技能·连接」→ 连接器 tab → 「TestMate 平台能力」卡片（带「平台内置」徽标）
@@ -402,11 +520,11 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
 
 **内置连接器资产里绝不放任何密钥**：它只是 `{url}`，鉴权全靠 OAuth 流程。
 
-### 4.10 兜底：平台接入令牌（设置页，adminOnly）
+### 4.11 兜底：平台接入令牌（设置页，adminOnly）
 
 设置页保留一个「🔌 MCP 接入」组（**admin 可见**，不是个人令牌页）：
 
-- 签发**平台接入令牌**（静态 `tm_live_*`）：给 CI / 脚本 / 内部系统调用
+- 签发**平台接入令牌**（静态 `tm_live_*`）：给 CI / 脚本 / 内部系统调用；**默认不过期**（可设期限）
 - 配置 `mcp.allowed_hosts`（防 DNS rebinding，见 §3.4）
 - 开关「是否允许 OAuth 自助授权」—— 关闭后只有管理员能签发令牌（内网收紧用）
 
@@ -614,6 +732,7 @@ CREATE INDEX ix_mcp_calls_user ON mcp_tool_calls (user_id, client_id, created_at
 | `0031_add_mcp_tool_calls.py` | `mcp_tool_calls` 表 + 索引（审计 + 配额计数） |
 | `0032_add_mcp_oauth_clients.py` | `mcp_oauth_clients` 表 + 索引（DCR 客户端注册表） |
 | `0033_add_asset_is_builtin.py` | `assets.is_builtin` 字段 + 索引 |
+| `0034_add_mcp_oauth_grants.py` | `mcp_oauth_grants` 表 + 唯一索引（授权：不过期，可撤销） |
 
 ORM 模型放 `app/models/mcp.py`（新文件），随 `app/models/__init__.py` 导出。
 
@@ -702,7 +821,8 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 | 文件 | 改动 | 说明 |
 |---|---|---|
 | `views/McpAuthorize/index.vue` | **新增页面** | **同意页**：显示客户端名 + scope 勾选 + [同意]/[拒绝]；未登录先跳登录页 |
-| `router/index.ts` | 加路由 | `{ path: 'mcp/authorize', meta: { requiresAuth: false } }`——未登录要能进（自己跳登录） |
+| `views/McpGrants/index.vue` | **新增页面** | **「我的授权」**：我在哪些客户端授权过 TestMate + [撤销]（**不是令牌页 —— 不发任何密钥**） |
+| `router/index.ts` | 加路由 | `mcp/authorize`（`requiresAuth: false`，未登录自己跳登录）+ `mcp/grants`（`requiresAuth: true`） |
 | `views/Capability/Catalog/AssetCard.vue` | 改 | 内置资产加「平台内置」徽标，隐藏「更新/下架/删除」按钮 |
 | `views/Capability/Catalog/index.vue` | 改 | `canModify` 计算加 `&& !is_builtin`；连接器卡片加「复制连接器配置」按钮 |
 | `views/Settings/index.vue` | 加 admin 组 | 「🔌 MCP 接入」：签发**平台接入令牌**（CI/脚本/兜底）/ 配 `mcp.allowed_hosts` / 开关 OAuth 自助授权 |
@@ -716,6 +836,8 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 | `POST /tokens` | admin | 签发（响应带一次明文） |
 | `DELETE /tokens/{id}` | admin | 吊销 |
 | `GET /connection-config` | 登录 | 返回 Qoder 格式的 mcpServers JSON（`type` + `url`），供市场卡片复制 |
+| `GET /grants` | 登录 | **我的授权**列表（自己的） |
+| `DELETE /grants/{client_id}` | 登录 | **撤销**自己的某个授权（= 该客户端的 token 立刻失效） |
 
 > 内置连接器的配置复制**不需要令牌**，所以这个端点任何登录用户都能调（市场卡片要给普通用户用）。
 
@@ -748,6 +870,7 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
     → `POST /token`（code + PKCE verifier）→ 拿到 access token → 带 token 调 `tools/call` 成功
 5c. PKCE 错误 / redirect_uri 不在白名单 → 拒绝发码
 5d. 配额用尽 → 工具**不执行**，返回 tool error `quota_exceeded`（**不是** HTTP 429）
+5f. **grant 撤销后** → 同一个 access token 再调 → **401**（证明「不过期」不等于「不可回收」）
 5e. 静态平台接入令牌仍然可用（兜底通道）
 6. **路径断言**：`POST /mcp/skill` = 200（不是 307！）；`POST /mcp/nope` = 404
 7. **transport_security 断言**：Host 不在 allowed_hosts 时 = 421（证明防护生效，不是被绕过）
@@ -767,7 +890,7 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 |---|---|---|
 | **S0** | **Qoder 真机联调**：手写一个最小 OAuth 服务器（或先只测 401+metadata 发现）确认 Qoder 会不会自动弹「授权」 | 决定 OAuth 路线是否成立（§4.9 末尾） |
 | S1 | **OAuth 骨架**：provider 实现 + 5 个端点 + access token 签发/校验 | 能用 code 换到 token |
-| S2 | **同意页**（前端）+ scope 勾选 + 登录回跳 | 浏览器里能走完「登录→同意→回客户端」 |
+| S2 | **同意页 + grant 表**（前端）+ scope 勾选 + 登录回跳 + 「我的授权」页（撤销） | 浏览器里能走完「登录→同意→回客户端」，且撤销后 token 立刻失效 |
 | S3 | **内置连接器资产**：`is_builtin` + seed + 不可删/不可下架/不可编辑 + url 动态生成 + 市场卡片「复制连接器配置」 | 市场里能看到这张卡，复制出来的配置 url 正确 |
 | S4 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计 / 配额） | 能握手、能 `tools/list`（空工具集也算通过） |
 | S5 | 技能域适配层 + 13 个工具 | §12.1 全部通过 |
@@ -785,6 +908,8 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 6. agent 能上架新技能 → 返回 job_id → `skill_job_status` 显示 succeeded → GitLab 出现对应 commit → 审核台可见
 7. agent 上架后状态为 `pending`（`pending_action=new`）→ **人工在网页审核台**点通过 → 技能出现在市场列表
 8. 配额用尽 → 工具不执行，返回 `quota_exceeded`（**不得**返回 429）
+8b. **授权不过期**：签发的 access token 里**没有 `exp`**；隔一天再调仍然可用
+8c. 在「我的授权」页撤销某客户端 → 该客户端的 token **下一个请求就 401** → Qoder 重新弹「授权」
 9. **内置资产不可删**：管理员调 `DELETE /api/v1/assets/testmate` → 409「平台内置资产不可删除」；下架/编辑同样 409
 10. 内置资产的 url 随 `marketplace.public_base_url` 改而变（不用重启、不用改仓库）
 11. **既有后端业务文件改动 < 40 行**（`app/main.py` ~25 行 + `app/models/*` 2 行 + nginx 2 处）；现有 40+ 测试全绿
