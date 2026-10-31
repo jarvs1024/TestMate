@@ -255,8 +255,12 @@ describe('市场页 · 分类 chip 计数', () => {
     expect(all.find('.count').text()).toBe('1');
     // ⚠️ 以前这里写的是 8 (后端 by_kind) → 点进去是空列表
     expect(q.find('.count').text()).toBe('1');
-    // 当前列表里没有「效率工具」→ 不显示数字
-    expect(e.find('.count').exists()).toBe(false);
+    // ⚠️ 2026-10-31 (第二十轮) 改了: 计数**下沉到后端** (cat_counts), 0 也**照样显示** ——
+    //    「这个分类确实是 0 条」跟「这个分类没统计」必须能分开看,
+    //    以前用 v-if 把 0 藏掉 → 选了分类之后别的分类的数字全消失 (用户报的)。
+    //    这条走的是老后端兜底路径 (没给 cat_counts) → 按列表聚合 → 效率工具 0 条。
+    expect(e.find('.count').exists()).toBe(true);
+    expect(e.find('.count').text()).toBe('0');
     w.unmount();
   });
 

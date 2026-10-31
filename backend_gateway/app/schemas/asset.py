@@ -66,6 +66,14 @@ class AssetListOut(BaseModel):
     #   那个长度就变成"我的"条数, 「全部 N」跟着变 → 用户完全不知道库里有多少.
     all_total: int = 0
     mine_total: int = 0
+    # ⚠️ 2026-10-31 (第二十轮): 各分类的条数 (同一作用域, 按 category 分桶).
+    #
+    #   以前分类 chip 上的数字是**前端按当前列表聚合**的 —— 一选某个分类,
+    #   列表里就只剩那一类, 别的分类全被算成 0 → 数字全消失.
+    #   现在下沉到后端: 口径跟 all_total **完全一致** (忽略 category),
+    #   选分类时数字**不动** (跟「全部 N」「👤 我的 N」一个规矩).
+    #   ⚠️ 不变量: 各分类之和 == all_total.
+    cat_counts: dict[str, int] = {}
 
 
 class AssetFileNode(BaseModel):

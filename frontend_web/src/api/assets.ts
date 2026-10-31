@@ -81,6 +81,16 @@ export interface AssetListResp {
    * ⚠️ 同样可选 —— 「👤 我的」那个 chip 的数字靠它, 拿不到时前端显示 0.
    */
   mine_total?: number;
+  /**
+   * 各分类的条数 —— 口径跟 `all_total` **完全一致** (忽略 category).
+   *
+   * ⚠️ 2026-10-31 (第二十轮) 新增: 分类 chip 上的数字以前是**前端按当前列表聚合**的 ——
+   *    选了某个分类, 列表里就只剩那一类, 别的分类全被算成 0 → 数字全消失.
+   *    现在下沉到后端, 选分类时数字不动。
+   * ⚠️ 不变量: 各分类之和 == all_total.
+   * ⚠️ 可选 —— 老后端没这个字段时前端回退到自己的聚合 (会受分类筛选影响).
+   */
+  cat_counts?: Record<string, number>;
 }
 
 export interface AssetFileNode {

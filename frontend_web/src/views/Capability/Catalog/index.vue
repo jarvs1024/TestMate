@@ -154,7 +154,7 @@
         <button v-for="c in categories" :key="c.name" class="chip"
                 :class="{ active: category === c.name && !mineOnly }" :title="c.desc"
                 @click="selectCategory(c.name)">
-          {{ c.name }}<span v-if="catCount(c)" class="count">{{ catCount(c) }}</span>
+          {{ c.name }}<span class="count">{{ catCount(c) }}</span>
         </button>
       </div>
 
@@ -645,28 +645,45 @@ async function loadKindCounts() {
 }
 
 /**
- * 分类 chip 上的计数 —— **前端按当前列表聚合** (2026-10-30 整改).
+ * 分类 chip 上的计数 —— **后端下发** (2026-10-31 第二十轮).
  *
- * ⚠️ 以前用的是后端给的 `by_kind` —— 那是"全局按形态"的口径, **不受搜索/项目筛选影响**
- *    (listCategories 只接受 status 参数, 没有 q/project 维度). 于是搜索「日志」后
- *    列表只剩 1 张卡, chip 还写着「质量保障 8」→ 点进去是空的, chip 的 8 一动不动,
- *    用户以为分类坏了.
- * ⚠️ 现在按**当前请求回来的 rawItems** 分组 —— chip 上的数字必然等于
- *    「点进去能看到几张卡」, 也跟左边的「全部 N」同一口径.
- * ⚠️ rawItems 是 `limit: 500` 的结果 —— 超过 500 的市场会漏计 (既有上限, 本次不扩).
- * ⚠️ listCategories 现在只用来拿分类的**名字和说明**, 计数一律前端算.
+ * ⚠️ 之前是**前端按当前列表聚合** (2026-10-30 的整改, 当时是对的):
+ *    那时候 chip 的数只受"搜索/项目筛选"影响, 按当前列表聚合能保证
+ *    「chip 上的数字 == 点进去能看到几张卡」.
+ * ⚠️ 但第十九轮把 chip 行改成了**互斥一维**之后, 这个聚合方式就自曝了:
+ *    选了某个分类 → 列表里只剩那一类 → 别的分类全被算成 0 →
+ *    再被模板里的 `v-if` 一藏 → **别的分类的数字全消失**
+ *    (用户报的: 选中「流程规范」之后, 「质量保障」「效率工具」都不显示数字).
+ * ⚠️ 现在下沉到后端 (`cat_counts`), 口径跟 `all_total` **完全一致**
+ *    (kind + q + project + 可见性, **忽略 category**):
+ *    · 选分类时数字**不动** —— 跟「全部 N」「👤 我的 N」一个规矩;
+ *    · 换类型 / 搜索 / 换项目筛选时会变 —— 那时"点进去能看到几张卡"确实变了;
+ *    · ⚠️ 不变量: 各分类之和 == all_total.
+ * ⚠️ 老后端没这个字段 → 回退前端聚合, 但那份数据**选了分类之后是残缺的**
+ *    (只剩那一类) → 所以另存一份"最近一次全量口径"的快照, 别让别的分类全变 0.
  */
-const catCounts = computed(() => {
+const catCountsApi = ref<Record<string, number> | undefined>(undefined);
+/** 老后端兜底快照 —— 最近一次「全量口径」时按列表聚合出来的计数 */
+const catCountsSnapshot = ref<Record<string, number>>({});
+
+/** 按列表条目聚合分类计数 (只算老后端兜底那条路用) */
+function aggregateCatCounts(items: AssetItem[]): Record<string, number> {
   const m: Record<string, number> = {};
-  for (const it of rawItems.value) {
+  for (const it of items) {
     const c = (it.category || '').trim();
     if (!c) continue;
     m[c] = (m[c] || 0) + 1;
   }
   return m;
-});
+}
+
+const catCounts = computed<Record<string, number>>(() => (
+  catCountsApi.value ?? catCountsSnapshot.value
+));
 function catCount(c: { name?: string }): number {
-  return catCounts.value[c.name || ''] || 0;
+  // ⚠️ 拿不到就是 0 —— 但**照样显示**(模板里不再用 v-if 藏掉):
+  //    「这个分类存在、当前类型下确实是 0 条」跟「这个分类没统计」必须能分开看.
+  return catCounts.value[c.name || ''] ?? 0;
 }
 
 /**
@@ -732,6 +749,13 @@ async function fetchList(opts: { silent?: boolean } = {}) {
     //    老后端没这两个字段 → undefined → 前端走兜底 (allTotal 回退 rawItems.length).
     allTotalRaw.value = r?.all_total;
     mineTotalRaw.value = r?.mine_total;
+    // ⚠️ 2026-10-31 (第二十轮): 各分类的条数 —— 后端给的**稳定**口径 (忽略 category).
+    //    老后端没这个字段 → 记一份「全量口径」的快照兜底
+    //    (选了分类之后列表只剩那一类, 那时聚合出来的数据是残缺的).
+    catCountsApi.value = r?.cat_counts;
+    if (!r?.cat_counts && !category.value && !mineOnly.value && !onlyMine.value) {
+      catCountsSnapshot.value = aggregateCatCounts(rows);
+    }
     items.value = (!mine && category.value === '__featured')
       ? rows.filter((i) => i.featured)
       : rows;

@@ -520,6 +520,26 @@ async def list_assets(
             )
         ).scalar_one()
 
+        # ⚠️ 2026-10-31 (第二十轮): cat_counts = **各分类的条数**, 口径跟 all_total **完全一致**
+        #    (kind + project + q + 默认可见性, **忽略 category**).
+        #
+        #    为什么要单独算: 分类 chip 上的数字以前是**前端按当前列表聚合**的 ——
+        #    一选某个分类, 列表里就只剩那一类, 别的分类全被算成 0, 再被 `v-if` 一藏 →
+        #    **别的分类的数字全没了** (用户报的: 选中「流程规范」之后,
+        #    「质量保障」「效率工具」都不显示数字了).
+        #    现在下沉到后端, 选分类时数字**不动** (跟「全部 N」「👤 我的 N」一个规矩).
+        #
+        #    ⚠️ 不变量: 各分类之和 == all_total (同一作用域, 只是按 category 分桶).
+        cat_rows = (
+            await session.execute(
+                select(Asset.category, func.count())
+                .select_from(Asset)
+                .where(*(kind_conds + proj_conds + default_vis + q_conds))
+                .group_by(Asset.category)
+            )
+        ).all()
+        cat_counts = {(name or ""): int(cnt) for name, cnt in cat_rows}
+
         if sort == "new":
             rows.sort(key=lambda a: a.updated_at or datetime.min, reverse=True)
         elif sort == "name":
@@ -539,7 +559,13 @@ async def list_assets(
     is_reviewer = await _is_reviewer(user)
     items = [_to_out(a, can_review=is_reviewer) for a in page]
     await _apply_git_web_url(items)
-    return AssetListOut(items=items, total=total, all_total=all_total, mine_total=mine_total)
+    return AssetListOut(
+        items=items,
+        total=total,
+        all_total=all_total,
+        mine_total=mine_total,
+        cat_counts=cat_counts,
+    )
 
 
 @router.get("/categories")
