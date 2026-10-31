@@ -1,13 +1,16 @@
-# TestMate MCP 设计（技能市场先行 · v2）
+# TestMate MCP 设计（技能市场先行 · v3）
 
 > 2026-10-31 · 让 **agent 能操作 TestMate**：上架 / 下载 / 更新技能；后续接知识库、软件库。
 > 本轮只做**技能·插件**一个域；每个域一个独立 MCP，公共部分单独放一层。
 >
-> v2 修订要点（相对 v1）：
+> 修订要点：
 > 1. `app/mcp/` 改为**按域分目录**（`common/` `skill/` `software/` `kb/`），公共部分归 `common/`
 > 2. **每个域一个独立 MCP server**，各自挂载于 `/mcp/{域}`，工具集互不污染
 > 3. **对现有业务代码零改动**——不重构 `marketplace.py`，MCP 侧用薄适配层调用现有路由函数
 > 4. 补入 **spike 实测结论**（装配路径 / 鉴权取身份 / DNS rebinding 421 / lifespan 500）
+> 5. **首期不含审核工具**（14 → 13 个）：上架后由人工在网页审核台处理，agent 不自己盖章
+> 6. **令牌模型加料**：绑定方式（必绑具体用户）/ scope 固定枚举 / 默认 90 天有效期 / 每日调用配额
+> 7. **不做 SSE 兼容层**：只按 MCP 默认协议（Streamable HTTP）实现
 >
 > 状态：**设计已定，待实现**。
 
@@ -258,11 +261,12 @@ CREATE TABLE mcp_api_tokens (
   token_prefix  VARCHAR(32)  NOT NULL,               -- 明文前 12 位，UI 展示与人工定位用
   token_hash    CHAR(64)     NOT NULL,               -- sha256(明文) 十六进制，唯一索引
   user_id       BIGINT       NOT NULL,               -- 绑定身份：权限完全等同该用户
-  scopes        JSON         NOT NULL,               -- ["market:read","market:write"]
+  scopes        JSON         NOT NULL,               -- ["market:read","market:write"] 取值来自固定枚举
+  daily_quota   INT          NOT NULL DEFAULT 200,   -- 每日调用上限; 0 = 不限
   created_by    BIGINT       NULL,
   created_at    DATETIME     NOT NULL,
   last_used_at  DATETIME     NULL,
-  expires_at    DATETIME     NULL,                   -- NULL = 不过期
+  expires_at    DATETIME     NULL,                   -- 默认创建后 90 天; NULL = 永不过期
   revoked_at    DATETIME     NULL                    -- 吊销即时生效
 );
 CREATE UNIQUE INDEX uk_mcp_tokens_hash ON mcp_api_tokens (token_hash);
@@ -274,9 +278,19 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 
 ### 4.2 签发与吊销
 
-- 设置页新增「MCP 接入令牌」组（admin 专属）：签发（名称 + 绑定用户 + scopes + 有效期）、吊销、列表（前缀 / 绑定用户 / 最后使用时间 / 状态）
-- 令牌明文格式：`tm_live_<32字节base64url>`
+设置页新增「MCP 接入令牌」组（**admin 专属**），签发表单字段与默认值：
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `name` | 必填 | 令牌名，如「张三的 Qoder 笔记本」—— 出问题时靠它定位 |
+| `user_id` | 必填 | **绑定的用户**（令牌权限实时取该用户当前角色） |
+| `scopes` | `["market:read"]` | 勾选式，**取值来自固定枚举**（见 §4.4），不接受自由字符串 |
+| `expires_at` | **创建后 90 天** | 可勾「永不过期」；过期后 agent 会收到明确报错 |
+| `daily_quota` | **200 次/天** | 0 = 不限；防跑飞 agent（详见 §4.5） |
+
+- 令牌明文格式：`tm_live_<32字节base64url>`，**签发那一刻返回一次**
 - 吊销 = 置 `revoked_at`，**即时生效**（每个请求现查库，无本地缓存 → 吊销后下一个请求必然 401）
+- 列表页展示：令牌名 / 前缀 / 绑定用户 / scopes / 配额用量 / 最后使用时间 / 有效期 / 状态
 
 ### 4.3 校验链路（spike 已验证身份可传递）
 
@@ -300,17 +314,55 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 
 | 层 | 规则 |
 |---|---|
-| 用户层 | 沿用平台现有口径：`role` + 发布者白名单（`market_policy.can_publish`）+ 资产归属（`can_modify`）+ 审核人名单 |
+| 用户层 | 沿用平台现有口径：`role` + 发布者白名单（`market_policy.can_publish`）+ 资产归属（`can_modify`） |
 | 令牌层 | `scopes` 必须包含该工具的 `scope`；`read_only` 工具额外要求 scope 带 `:read` |
 
 **令牌权限永远不超过绑定用户**：绑定 viewer 就干不了发布者的事；admin 也可以签发只读令牌给 agent 防误删。
 
-### 4.5 安全红线
+#### scope 取值（固定枚举，不接受自由字符串）
+
+| scope | 覆盖的工具 | 能力 |
+|---|---|---|
+| `market:read` | `skill_search` `skill_get` `skill_read_doc` `skill_read_file` `skill_list_files` `skill_package_info` `skill_categories` `skill_projects` `skill_job_status` | 只读 |
+| `market:write` | `skill_publish` `skill_update` `skill_submit_review` `skill_unpublish_request` | 上架 / 更新 / 提交审核 / 申请下架 |
+| `market:*` | 上面全部 | 该域全权 |
+
+**枚举是唯一真源**：工具的 `scope` 字段与这里一一对应，后端校验「工具 scope ∈ 枚举」，避免出现
+「令牌写了个 `market:write_all` 但工具要的是 `market:write`」这种静默不匹配。将来加域时，
+枚举跟着 `common/tool.py` 的 scope 常量一起扩。
+
+#### 绑定方式：必须绑一个具体用户
+
+不提供「绑角色」「绑服务账号」的令牌。理由：
+
+- **审计要追到人**：平台已有的 `asset_audits` 记的是 `actor`（用户名）。令牌绑用户 → agent 的每一次上架都记在真人名下。
+- **权限要跟着人走**：角色/白名单在设置页随时可能改，令牌绑用户意味着**实时取该用户当前权限**，
+  不会出现「昨天发的令牌今天还是旧权限」的幽灵。
+- **配额与封禁要能落到人**：出问题能定位到具体令牌 + 具体人，而不是一锅端某个角色。
+
+「机器身份」的需求用**令牌名**表达（「张三的 Qoder 笔记本」），而不是另开一种绑定类型。
+
+### 4.5 配额（防跑飞 agent）
+
+agent 最危险的失败模式不是「权限越界」，而是**失控循环**：反复 publish/search 把平台刷爆、
+把 git 工作区写满、触发一堆钉钉通知。
+
+- 每个令牌有 `daily_quota`（默认 200 次/天，0 = 不限）
+- **执行位置：工具包装层**（`common/tool.py`），不在中间件——中间件是 transport 级，
+  超额返回 HTTP 429 会被 MCP 客户端当成「可重试的临时故障」→ **重试风暴**。
+  在工具层返回 tool error `quota_exceeded`，agent 能读懂「今天超量了，别再试了」。
+- **计数来源：`mcp_tool_calls` 表**（每次调用都已落一行）。按 `(token_id, created_at)` 索引做范围计数，
+  每日上限 200 时最多扫 200 条索引项，成本可忽略——**不需要引入 Redis 计数器**。
+- 计数窗口：自然日（按服务器本地时区），跨日自动归零。
+- 超额的那次调用**也要落审计**（`ok=false, error_code=quota_exceeded`），否则计数会漂。
+
+### 4.6 安全红线
 
 - token 不进 URL、不进 query、不进 access log（只走 Authorization 头）
 - 明文一次性展示，UI 不缓存明文
-- 吊销即时生效
+- 吊销即时生效；默认 90 天过期，过期与吊销返回**不同的错误码**（`token_expired` vs `token_revoked`），便于 agent 自诊断
 - 每次 tool 调用落审计（见 §8），含 token_id，可追责到人
+- 令牌明文不进公共市场资产（自举连接器只放 url + 占位符，见 §10.4）
 
 ---
 
@@ -362,6 +414,21 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 // 失败 → MCP tool error (isError=true)
 {"error": {"code": "not_found", "message": "技能 xxx 不存在", "hint": "先用 skill_search 查一下 code"}}
 ```
+
+**MCP 错误码全集**（`common/errors.py` 负责产出）：
+
+| code | 触发场景 | 出口 |
+|---|---|---|
+| `not_found` | 资产不存在 / 对当前调用者不可见 | tool error |
+| `permission_denied` | scope 不足；或绑定用户没有该操作权限（发布者白名单、资产归属） | tool error |
+| `conflict` | 状态机不允许（如已上架再提交审核、code 已存在） | tool error |
+| `invalid_argument` | 参数不合法（分类/项目/版本号/包名与 code 不一致…） | tool error |
+| `bad_request` | 其它 400（如连接器类资产没有安装包） | tool error |
+| `upstream_failed` | GitLab / RAGFlow 等外部依赖失败 | tool error（附「查 skill_job_status」） |
+| `quota_exceeded` | 令牌当日调用数超 `daily_quota` | tool error（**不是** HTTP 429，避免客户端重试风暴） |
+| `token_expired` | 令牌已过期 | HTTP 401 |
+| `token_revoked` | 令牌已吊销 | HTTP 401 |
+| `unauthorized` | 无 token / token 不存在 / 签名不匹配 | HTTP 401 |
 
 ---
 
@@ -557,7 +624,7 @@ location /mcp {
 | 目标 | 用例要点 |
 |---|---|
 | adapter 层 | 每个适配函数：正常路径 + HTTPException 映射 + `UploadFile` 构造 + 返回值裁剪 |
-| 令牌 | 签发格式 / 校验通过 / 吊销后失败 / 过期失败 / 绑定用户被停用后失败 / scope 不足被拒 |
+| 令牌 | 签发格式 / 校验通过 / 吊销后失败(`token_revoked`) / 过期失败(`token_expired`) / 绑定用户被停用后失败 / scope 不足被拒 / 配额超限被拒(`quota_exceeded`) / 跨日配额归零 |
 | 错误映射 | 每个 HTTP 状态码 → MCP error code 的映射正确 |
 | schema | 每个工具的 `input_schema` 是合法 JSON Schema，且 name 在域内唯一 |
 | 作用域 | 只读令牌调写工具 → `permission_denied` |
@@ -574,7 +641,8 @@ location /mcp {
 2. `tools/list` → 返回 13 个工具，名称与 §5 一致
 3. `tools/call skill_search` → 能拿到结果
 4. 工具函数内能读到 `ctx.request_context.request.headers["authorization"]` 与 `.state.principal`
-5. 无 token / 坏 token → **401**；已吊销 token → **401**
+5. 无 token / 坏 token → **401**；已吊销 token → **401**；已过期 token → **401**（错误码 `token_expired`）
+5b. 令牌配额用尽 → 工具**不执行**，返回 tool error `quota_exceeded`（**不是** HTTP 429）
 6. **路径断言**：`POST /mcp/skill` = 200（不是 307！）；`POST /mcp/nope` = 404
 7. **transport_security 断言**：Host 不在 allowed_hosts 时 = 421（证明防护生效，不是被绕过）
 
@@ -591,7 +659,7 @@ location /mcp {
 
 | 阶段 | 内容 | 可独立验收 |
 |---|---|---|
-| S1 | 令牌体系（表 + 模型 + 签发/校验/吊销 API + 设置页） | 能签发、能验、能吊销 |
+| S1 | 令牌体系（表 + 模型 + 签发/校验/吊销 API + 配额 + 设置页） | 能签发、能验、能吊销、配额能拦 |
 | S2 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计） | 能握手、能 `tools/list`（空工具集也算通过） |
 | S3 | 技能域适配层 + 13 个工具 | §12.1 全部通过 |
 | S4 | 部署与分发（nginx / 锁文件 / allowed_hosts 设置 / 自举连接器 / 设置页入口） | Qoder 实连成功 |
@@ -606,7 +674,8 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 4. agent 能：搜到技能 → 读 `SKILL.md` → 取到包 URL 与 sha256 → 下载后 sha256 与 `skill_package_info` 一致
 5. agent 能上架新技能 → 返回 job_id → `skill_job_status` 显示 succeeded → GitLab 出现对应 commit → 审核台可见
 6. agent 上架后状态为 `pending`（`pending_action=new`）→ **人工在网页审核台**点通过 → 技能出现在市场列表
-7. 吊销令牌 → 下一个请求立刻 401
+7. 吊销令牌 → 下一个请求立刻 401（错误码 `token_revoked`）；过期令牌 → 401（`token_expired`）
+7b. 令牌当日调用数超 `daily_quota` → 工具不执行，返回 `quota_exceeded`（**不得**返回 429）
 8. **`git diff --stat` 证明既有后端业务文件改动 < 40 行**（`app/main.py` ~15 行 + `app/models/__init__.py` 1 行 + 2 个 nginx 各 ~12 行）；现有 40+ 测试全绿
 9. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
 
@@ -621,10 +690,11 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 | **`/mcp/skill` 路径 307 跳转 → 客户端连不上** | 高 | dispatcher 写法（不逐个 mount）；集成测试断言 200 而非 307 |
 | 适配层与路由函数签名漂移 | 中 | adapter 是唯一耦合点；单测逐个覆盖；路由签名变更时 adapter 单测会红 |
 | `_user` 这类怪参数名被后人「顺手改掉」→ adapter 崩 | 中 | adapter 内写明注释；单测覆盖该路径 |
-| Qoder 对 `stateless_http` / `json_response` 兼容性未知 | 中 | 预留 `/mcp/sse` 兜底挂载点；实现阶段先做联调 spike |
+| Qoder 对 `stateless_http` / `json_response` 兼容性未知 | 中 | 只按 MCP 默认协议实现，不加 SSE 兼容层；若实测不兼容，改客户端或改用 SDK 默认 SSE transport（SDK 自带，无需自己写） |
 | 新增 pip 依赖影响离线部署 | 低 | 镜像在有网机器构建；锁文件补全；仅 4 个新传递依赖 |
 | agent 误上架 / 误删 | 中 | 无硬删工具；审核流不变；scopes 可只读；每次调用留审计 |
 | token 泄漏 | 中 | 明文一次性展示；只存 sha256；吊销即时生效；不进 URL / 不进 access log |
+| agent 失控循环刷爆平台 | 中 | 令牌级 `daily_quota`（默认 200/天）；超限在**工具层**拦（返回 tool error，不返 429，避免客户端重试风暴） |
 
 ---
 
@@ -646,7 +716,7 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 | 事项 | 本轮取值 | 何时需要回看 |
 |---|---|---|
 | 首期是否含审核工具 | **已定：不含**（D7）——上架后人工在网页审核台处理 | 若日后要放开，再加回 `skill_review` 一个 tool spec（受平台审核人权限约束） |
-| 令牌有效期 | 默认**不过期**（`expires_at=NULL`），可签发时指定 | 内网场景可接受；对外暴露时收紧 |
-| SSE 兜底端点 | 先实现 Streamable HTTP，**预留** `/mcp/sse` 挂载点 | Qoder 实测不兼容时启用 |
-| 每 token 调用配额 | 本轮**不限**，只审计 | 观察一段时间后按 `mcp_tool_calls` 加限流 |
+| 令牌有效期 | **已定：默认 90 天**，可勾选「永不过期」 | 用户反馈经常过期影响使用时可调整默认值 |
+| 是否做 SSE 兼容层 | **不做** —— 只按 MCP 默认协议（Streamable HTTP）实现 | 若 Qoder 实测不兼容，走 SDK 自带的 SSE transport（不自己写兼容代码） |
+| 每 token 调用配额 | **已定：默认 200 次/天**，0 = 不限 | 观察 `mcp_tool_calls` 的真实用量后可调 |
 | 是否抽 domain 层 | 本轮**不抽**（§6） | 出现 §6.5 的三个信号时再下沉 |
