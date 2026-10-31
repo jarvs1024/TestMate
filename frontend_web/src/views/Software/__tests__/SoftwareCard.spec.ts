@@ -93,3 +93,41 @@ describe('SoftwareCard 基本信息', () => {
     expect(w.find('.ac-meta').text()).toContain('admin');
   });
 });
+
+/**
+ * 作者只显示**用户名** (2026-10-31 第十六轮).
+ *
+ * ⚠️ 用户原话「软件库卡片作者信息只显示用户名, 去掉 @twsc.com.cn」——
+ *    邮箱后缀每张卡都一样, 摊出来既占地方又吵.
+ * ⚠️ 但全账号不能真丢 —— 挂 title, 悬停还能看到.
+ */
+describe('SoftwareCard 作者显示', () => {
+  it('作者是邮箱 → 卡片上只显示用户名', () => {
+    const w = mount(SoftwareCard, {
+      props: { item: item({ author: 'jiakejiang@twsc.com.cn' }) },
+    });
+    const meta = w.find('.ac-meta').text();
+    expect(meta).toContain('jiakejiang');
+    expect(meta).not.toContain('@twsc.com.cn');
+    expect(meta).not.toContain('jiakejiang@twsc.com.cn');
+  });
+
+  it('作者是短名 → 原样显示', () => {
+    const w = mount(SoftwareCard, { props: { item: item({ author: 'admin' }) } });
+    expect(w.find('.ac-meta').text()).toContain('admin');
+  });
+
+  it('没有作者 → 显示「未知」', () => {
+    const w = mount(SoftwareCard, { props: { item: item({ author: '' }) } });
+    expect(w.find('.ac-meta').text()).toContain('未知');
+  });
+
+  it('全账号挂在 title 上 (悬停还能看到)', () => {
+    const w = mount(SoftwareCard, {
+      props: { item: item({ author: 'jiakejiang@twsc.com.cn' }) },
+    });
+    const spans = w.findAll('.ac-meta .meta-item');
+    const authorSpan = spans.find((s) => s.attributes('title') === 'jiakejiang@twsc.com.cn');
+    expect(authorSpan).toBeTruthy();
+  });
+});

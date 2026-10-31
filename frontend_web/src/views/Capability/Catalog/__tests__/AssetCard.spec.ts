@@ -151,3 +151,34 @@ describe('AssetCard 下载计数', () => {
     expect(w.text()).not.toContain('⬇');
   });
 });
+
+/**
+ * 作者只显示**用户名** (2026-10-31 第十六轮).
+ *
+ * ⚠️ 用户原话「技能市场的卡片也是一样, 显示用户名, 不用显示全邮箱」——
+ *    邮箱后缀每张卡都一样, 摊出来既占地方又吵.
+ */
+describe('AssetCard 作者显示', () => {
+  it('作者是邮箱 → 卡片上只显示用户名', () => {
+    const w = mount(AssetCard, {
+      props: { item: item({ author: 'jiakejiang@twsc.com.cn' }) },
+    });
+    const meta = w.find('.ac-meta').text();
+    expect(meta).toContain('jiakejiang');
+    expect(meta).not.toContain('@twsc.com.cn');
+  });
+
+  it('没有作者 → 显示「未知」', () => {
+    const w = mount(AssetCard, { props: { item: item({ author: '' }) } });
+    expect(w.find('.ac-meta').text()).toContain('未知');
+  });
+
+  it('全账号挂在 title 上 (悬停还能看到)', () => {
+    const w = mount(AssetCard, {
+      props: { item: item({ author: 'jiakejiang@twsc.com.cn' }) },
+    });
+    const spans = w.findAll('.ac-meta .meta-item');
+    const authorSpan = spans.find((s) => s.attributes('title') === 'jiakejiang@twsc.com.cn');
+    expect(authorSpan).toBeTruthy();
+  });
+});

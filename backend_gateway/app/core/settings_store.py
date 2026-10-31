@@ -548,21 +548,6 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
-        "key": "dingtalk.userid_map",
-        "category": "notification",
-        "value_type": "string",
-        "default": "",
-        "description": (
-            "**平台账号 → 钉钉 userid** 映射表 (让「@某个人」真能 @ 到). "
-            "格式: `账号=userid;账号2=userid2` (分号分隔, 逗号也行). "
-            "例: `admin=manager1234;zhangsan=lin.san` —— "
-            "账号填平台里的**登录名或邮箱**, userid 填钉钉通讯录里那个人的 userid. "
-            "⚠️ 没填的话, 通知里只会在**正文点名** (@账号名), 不会真的触发钉钉提醒 —— "
-            "因为钉钉要的是 userid, 平台只有账号名"
-        ),
-        "is_secret": False,
-    },
-    {
         "key": "dingtalk.aggregate_window_seconds",
         "category": "notification",
         "value_type": "int",
@@ -580,7 +565,11 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": True,
-        "description": "**上架审核未通过**时通知市场群, @发布者 (默认开启)",
+        "description": (
+            "**上架审核未通过**时通知市场群 (默认开启). "
+            "⚠️ 2026-10-31 (第十六轮): **不再 @发布者** —— 钉钉要的是 userid, "
+            "平台只有账号名, 「@具体的人」整套下线了; 消息正文里会写一行「发布人: xxx」"
+        ),
         "is_secret": False,
     },
     {
@@ -717,6 +706,10 @@ DEPRECATED_KEYS = (
     "dify.base_url",
     "dify.api_key",
     "dify.mock_mode",
+    # ⚠️ 2026-10-31 (第十六轮): 「@某个具体的人」整套下线 ——
+    #    这张「平台账号 → 钉钉 userid」映射表没人填, 还得每来一个新人维护一次.
+    #    用户决定暂时不 @ 具体的人 → 设置项删掉, DB 里的残留行一并清掉.
+    "dingtalk.userid_map",
 )
 
 # 默认值改版 —— DB 里还留着**旧默认值**的行, 启动时跟着改成新默认值.

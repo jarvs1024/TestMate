@@ -178,10 +178,13 @@ async function receiptCount(token) {
   });
   await sleep(900);
   if (foundNotif) {
-    await shot(page, 'settings-notify', '设置页 · 通知设置区 (动态基地址 + 账号↔userid 映射表)');
+    await shot(page, 'settings-notify', '设置页 · 通知设置区 (动态基地址)');
   }
 
-  // ---- ④ 映射表输入项在不在 ----
+  // ---- ④ 映射表输入项: 2026-10-31 (第十六轮) **整个删掉了** ----
+  // ⚠️ 用户原话「通知中设置@某个人的, 暂时不用@具体的人, 这个可以去掉了」——
+  //    那张「平台账号 → 钉钉 userid」映射表没人填, 还得每来一个新人维护一次.
+  //    所以设置项 + 后端解析全删了, 这里反过来断言**它不在了**.
   const mapRow = await page.evaluate(() => {
     const rows = [...document.querySelectorAll('#sec-notification .row')];
     const hit = rows.find((r) => {
@@ -198,9 +201,8 @@ async function receiptCount(token) {
     };
   });
   report.useridMap = mapRow;
-  check('设置页有 `dingtalk.userid_map` (账号→钉钉userid 映射表) 这一项',
-    mapRow.found, mapRow.found ? mapRow.desc : '没找到');
-  check('映射表那一项有可编辑的输入框', mapRow.found && mapRow.hasInput, '');
+  check('⚠️ 设置页**不再有** `dingtalk.userid_map` (账号→钉钉userid 映射表) —— 2026-10-31 已下线',
+    !mapRow.found, mapRow.found ? mapRow.desc : '已移除');
 
   // ---- 点「👀 预览消息」 ----
   const clicked = await page.evaluate(() => {
@@ -222,7 +224,7 @@ async function receiptCount(token) {
     report.preview = pv;
     console.log(`  预览场景 = ${JSON.stringify(pv.labels)}`);
     check('预览里有「软件库 · 下架软件」(新增的下架通知)', pv.labels.some((l) => /下架软件/.test(l)), '');
-    check('预览里有「市场 · 审核不通过 (@发布者)」(唯一 @个人 的事件)',
+    check('预览里有「市场 · 审核不通过」(告知发布人那条)',
       pv.labels.some((l) => /审核不通过/.test(l)), '');
 
     const swLabels = ['上架新软件', '发布新版本'];
@@ -233,9 +235,12 @@ async function receiptCount(token) {
       swTexts.length === 3 && swTexts.every(([, t]) => /@所有人/.test(t)),
       swTexts.map(([l, t]) => `${l}:${/@所有人/.test(t) ? '✓' : '✗'}`).join(' '));
 
+    // ⚠️ 2026-10-31 (第十六轮): 「@具体的人」下线 —— 审核不通过**不再 @发布者**,
+    //    改成正文里一行「发布人: lisi」(信息还在, 但不带 @).
     const rejectText = pv.texts[pv.labels.findIndex((l) => /审核不通过/.test(l))] || '';
-    check('审核不通过那条**只 @发布者**, 不 @所有人',
-      /@lisi/.test(rejectText) && !/@所有人/.test(rejectText), '');
+    check('审核不通过那条**不再 @ 具体的人**, 但正文里说清「发布人」',
+      !/@lisi/.test(rejectText) && /发布人: lisi/.test(rejectText) && !/@所有人/.test(rejectText),
+      rejectText.slice(0, 120));
     const reviewText = pv.texts[pv.labels.findIndex((l) => /上架待审核/.test(l))] || '';
     check('待审核那条**不 @任何人** (审核群, 窗口合并后一条汇总)',
       !/@所有人/.test(reviewText) && !/@lisi/.test(reviewText), '');

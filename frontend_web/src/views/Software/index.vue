@@ -9,8 +9,30 @@
       version="v1.0.0"
       category="sw-library" />
 
-    <!-- ===== 动作条: 分类 chip + 搜索 + 上传 ===== -->
+    <!-- ===== 动作条: 分类 Tab + 搜索 + 排序 + 上架 (2026-10-31 第十六轮: 两行融合成一行) =====
+         ⚠️ 以前是**两行**: 第一行「搜索 + 排序 + 上架」, 第二行「全部 / 我的 / 分类 chip」.
+            两行之间还夹着一条分隔, 页面顶部看着散. 用户要求融合成一行,
+            并且左边的分类 tab 跟「插件·技能·连接」那一页的 tab **同一个长相**
+            (.kind-tab / .kind-tab.active / 渐变计数徽标 —— 样式在 styles/main.css). -->
     <div class="mk-actions">
+      <div class="kind-tabs">
+        <button class="kind-tab" :class="{ active: category === '' && !mineOnly }" @click="category = ''; load()">
+          全部 <span class="count">{{ total }}</span>
+        </button>
+        <!-- ⚠️ 2026-10-30 (第十二轮): 「👤 我的」——
+             只看**我上架的**软件. 后端早就支持 `status=mine`
+             (作者比对走 author_forms, 短名/全邮箱都认), 这里只是把入口露出来. -->
+        <button class="kind-tab mine-tab" :class="{ active: mineOnly }"
+                title="只看我上架的软件"
+                @click="mineOnly = !mineOnly; load()">
+          👤 我的
+        </button>
+        <button v-for="c in categories" :key="c.name" class="kind-tab"
+                :class="{ active: category === c.name }"
+                @click="category = c.name; load()">
+          {{ c.name }}<span v-if="c.total" class="count">{{ c.total }}</span>
+        </button>
+      </div>
       <div class="ma-right">
         <div class="search">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -28,28 +50,7 @@
           ＋ 上架软件
         </button>
       </div>
-    </div>
-
-    <!-- ⚠️ 分类取不到 → 筛选维度会凭空消失, 得说清楚是"读失败"不是"没有" -->
-    <div class="mk-filters">
-      <div class="cat-chips">
-        <button class="chip" :class="{ active: category === '' && !mineOnly }" @click="category = ''; load()">
-          全部 <span class="count">{{ total }}</span>
-        </button>
-        <!-- ⚠️ 2026-10-30 (第十二轮): 「👤 我的」——
-             只看**我上架的**软件. 后端早就支持 `status=mine`
-             (作者比对走 author_forms, 短名/全邮箱都认), 这里只是把入口露出来. -->
-        <button class="chip mine-chip" :class="{ active: mineOnly }"
-                title="只看我上架的软件"
-                @click="mineOnly = !mineOnly; load()">
-          👤 我的
-        </button>
-        <button v-for="c in categories" :key="c.name" class="chip"
-                :class="{ active: category === c.name }"
-                @click="category = c.name; load()">
-          {{ c.name }}<span v-if="c.total" class="count">{{ c.total }}</span>
-        </button>
-      </div>
+      <!-- ⚠️ 分类取不到 → 筛选维度会凭空消失, 得说清楚是"读失败"不是"没有" -->
       <div v-if="filterError" class="filter-err">⚠️ {{ filterError }}</div>
     </div>
 
@@ -407,15 +408,18 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* ⚠️ 版式与「插件·技能·连接」那一页保持一致 (mk-actions / cat-chips / grid /
+/* ⚠️ 版式与「插件·技能·连接」那一页保持一致 (mk-actions / kind-tabs / grid /
    state) —— 两个页面要看起来是一套东西. */
 .software { display: flex; flex-direction: column; }
 
+/* ⚠️ 2026-10-31 (第十六轮): 顶部**合并成一行** ——
+   左边分类 tab (.kind-tab, 样式在全局 main.css), 右边搜索/排序/上架.
+   flex-wrap 留着: 分类多的时候换行, 别把搜索框挤扁. */
 .mk-actions {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
-.ma-right { display: flex; align-items: center; gap: 9px; flex: 1; flex-wrap: wrap; }
+.ma-right { display: flex; align-items: center; gap: 9px; flex: 1; flex-wrap: wrap; justify-content: flex-end; }
 
 .search {
   display: flex; align-items: center; gap: 6px;
@@ -433,21 +437,8 @@ onMounted(async () => {
   background: var(--surface); font-family: inherit; cursor: pointer;
 }
 
-.mk-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.cat-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.chip {
-  border: 1px solid var(--border); background: var(--surface);
-  border-radius: var(--radius-pill); padding: 3px 11px;
-  font-size: 11.5px; color: var(--ink-700); cursor: pointer; font-family: inherit;
-  display: inline-flex; align-items: center; gap: 5px;
-}
-.chip.active { border-color: var(--primary); color: var(--primary); background: rgba(59, 130, 246, .08); }
-.chip .count { font-size: 10px; color: var(--ink-500); font-family: var(--font-mono); }
-/* ⚠️ 2026-10-30 (第十二轮): 「👤 我的」chip —— 维度不是分类, 选中态跟分类 chip 一致,
-   但要有个人味 (头像图标 + 自己的底色), 用户一眼认出"这是看我自己的". */
-.mine-chip { font-weight: 600; }
-.mine-chip:not(.active) { border-color: rgba(59, 130, 246, .35); color: var(--primary); }
-.filter-err { font-size: 11.5px; color: var(--warn); }
+/* ⚠️ 分类读取失败 → 提示要占一整行 (它不是筛选维度之一, 是"读失败"的告警) */
+.filter-err { font-size: 11.5px; color: var(--warn); flex-basis: 100%; }
 
 .sw-note {
   padding: 8px 11px; border-radius: var(--radius-sm); font-size: 12px;

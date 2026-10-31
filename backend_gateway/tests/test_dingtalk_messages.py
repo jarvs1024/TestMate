@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from app.core import dingtalk
+from app.core import settings_store
 
 
 @pytest.fixture(autouse=True)
@@ -371,67 +372,19 @@ def test_sanitize_host_rejects_evil_host():
     assert dingtalk._sanitize_host("") == ""
 
 
-# ---------- @个人: 平台账号 → 钉钉 userid (2026-10-31 · 第十三轮) ----------
+# ---------- 「@具体的人」: 2026-10-31 (第十六轮) **整个删掉了** ----------
+#
+# 背景: 钉钉的 atUserIds 要的是**钉钉 userid**, 平台只有账号名 ——
+#       要真 @ 到人得靠一张「平台账号 → userid」映射表, 而那张表没人填,
+#       每来一个新人还要维护一次. 用户决定: **暂时不用 @ 具体的人**.
+# 现在: 设置项没了, 解析逻辑没了, atUserIds 永远是空的, 只有 @所有人 有效.
 
 
-def test_parse_userid_map():
-    """映射表解析 —— 容错: 逗号/换行/空格都吃掉, 缺 "=" 的片段跳过."""
-    m = dingtalk.parse_userid_map("admin=manager1234;zhangsan=lin.san")
-    assert m == {"admin": "manager1234", "zhangsan": "lin.san"}
-    # 逗号分隔也行
-    assert dingtalk.parse_userid_map("a=1,b=2") == {"a": "1", "b": "2"}
-    # 写错的那行不影响别的
-    assert dingtalk.parse_userid_map("坏了; a=1") == {"a": "1"}
-    assert dingtalk.parse_userid_map("") == {}
+async def test_no_individual_at_user_ids(monkeypatch):
+    """⚠️ 审核不通过**不再 @ 发布者** —— atUserIds 必须是空的.
 
-
-async def test_resolve_userid(monkeypatch):
-    """查表: 账号名 / 邮箱 都能查到 userid; 查不到返回空."""
-    monkeypatch.setattr(
-        dingtalk, "get",
-        _fake_get({"dingtalk.userid_map": "admin=manager1234;zhangsan=lin.san"}),
-    )
-    assert await dingtalk.resolve_userid("zhangsan") == "lin.san"
-    # 大小写不敏感
-    assert await dingtalk.resolve_userid("ZhangSan") == "lin.san"
-    # ⚠️ 全邮箱也认 (跟 isAuthor() 一个口径): 邮箱先整体查, 查不到再退到短名
-    assert await dingtalk.resolve_userid("zhangsan@twsc.com.cn") == "lin.san"
-    assert await dingtalk.resolve_userid("nobody") == ""
-    assert await dingtalk.resolve_userid("") == ""
-
-
-async def test_at_author_uses_real_userid(monkeypatch):
-    """⚠️ @个人 要塞**钉钉 userid** —— 塞平台账号名是 @ 不到人的."""
-    sent: list = []
-
-    async def fake_send(webhook, title, text, **kw):
-        sent.append((text, kw))
-        return {"errcode": 0, "errmsg": "ok"}
-
-    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
-    monkeypatch.setattr(
-        dingtalk, "get",
-        _fake_get({
-            "dingtalk.market_webhook": "http://x/hook",
-            "dingtalk.notify_on_reject": "true",
-            "dingtalk.userid_map": "zhangsan=lin.san",
-        }),
-    )
-    await dingtalk.notify_market(
-        "reject", name="A", version="1.0.0", kind="plugin",
-        author="zhangsan", actor="admin", detail="简介写得太笼统",
-    )
-    assert len(sent) == 1, sent
-    text, kw = sent[0]
-    assert kw.get("at_user_ids") == ["lin.san"], kw
-    assert kw.get("is_at_all") is False
-    assert "@zhangsan" in text, "正文里要点名"
-
-
-async def test_at_author_without_map_does_not_send_bogus_id(monkeypatch):
-    """⚠️ 映射表里查不到 → **不放无效 id** —— 只在正文里点名.
-
-    塞一个钉钉不认识的 id 只会变成噪音, 还让"我明明 @ 了人"变成假象.
+    正文里仍然说清「这条是驳回谁的」, 但不带 "@" ——
+    正文挂个 @xxx 却 @ 不到人, 只会让人以为提醒已经发出去了.
     """
     sent: list = []
 
@@ -454,7 +407,20 @@ async def test_at_author_without_map_does_not_send_bogus_id(monkeypatch):
     assert len(sent) == 1, sent
     text, kw = sent[0]
     assert not kw.get("at_user_ids"), kw
-    assert "@zhangsan" in text, "正文里还是要点名"
+    assert kw.get("is_at_all") is False
+    assert "@zhangsan" not in text, "不再 @ 具体的人"
+    assert "发布人: zhangsan" in text, "但要说清这条是关于谁的"
+
+
+async def test_userid_map_setting_is_gone():
+    """⚠️ 设置项 `dingtalk.userid_map` 整个删了 —— 设置页不该再有它."""
+    keys = [s["key"] for s in settings_store.SETTING_SCHEMA]
+    assert "dingtalk.userid_map" not in keys
+    # DB 里的残留行也要在启动时清掉
+    assert "dingtalk.userid_map" in settings_store.DEPRECATED_KEYS
+    # 后端也不该再有解析入口
+    assert not hasattr(dingtalk, "resolve_userid")
+    assert not hasattr(dingtalk, "parse_userid_map")
 
 
 async def test_preview_shows_at_markers(monkeypatch):
@@ -470,8 +436,9 @@ async def test_preview_shows_at_markers(monkeypatch):
     r2 = await dingtalk.preview_market_message(
         "reject", name="A", version="1.0.0", kind="plugin",
         author="zhangsan", actor="admin", detail="简介写得太笼统")
-    assert "@zhangsan" in r2["text"], r2["text"]
-    assert "@所有人" not in r2["text"], "审核不通过只 @发布者"
+    assert "@zhangsan" not in r2["text"], "不再 @ 具体的人"
+    assert "发布人: zhangsan" in r2["text"], r2["text"]
+    assert "@所有人" not in r2["text"], "审核不通过只说发布人, 不 @所有人"
     # 审核类通知不 @任何人 (窗口合并后一条汇总, @反而吵)
     r3 = await dingtalk.preview_market_message(
         "review", name="A", version="1.0.0", kind="plugin", summary="简介")

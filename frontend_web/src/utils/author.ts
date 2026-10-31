@@ -48,3 +48,24 @@ export function isAuthor(
   const lu = u.split('@', 1)[0];
   return !!la && !!lu && la === lu;
 }
+
+/**
+ * 卡片上**显示**的作者名 —— 只显示用户名, 去掉邮箱域名.
+ *
+ * ⚠️ 2026-10-31 (第十六轮): 用户要求「卡片上作者信息只显示用户名,
+ *    去掉 @twsc.com.cn」. 原因: 卡片底部的作者只是"谁上传的"这一句附注,
+ *    把整串邮箱摊出来既占地方又吵 —— 而且邮箱后缀对每个同事都一样,
+ *    看半天都分不出是谁.
+ *
+ * ⚠️ 但**别把邮箱信息彻底丢掉** —— 卡片上仍然挂 `title` (悬停能看到全账号),
+ *    真要确认是谁时还有得看.
+ *
+ * @example displayAuthor('jiakejiang@twsc.com.cn') // → 'jiakejiang'
+ * @example displayAuthor('admin')                  // → 'admin'
+ * @example displayAuthor('')                      // → '' (调用方自己兜底)
+ */
+export function displayAuthor(author: string | null | undefined): string {
+  const a = (author || '').trim();
+  if (!a) return '';
+  return a.split('@', 1)[0] || a;
+}

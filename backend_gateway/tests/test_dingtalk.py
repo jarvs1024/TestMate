@@ -607,8 +607,12 @@ async def test_title_override_changes_heading_but_not_event_key(monkeypatch):
     assert dingtalk._SWITCH_KEY["publish"] == "dingtalk.notify_on_publish"
 
 
-async def test_reject_at_author_only(monkeypatch):
-    """审核不通过 → 只 @发布者 (不是 @所有人)."""
+async def test_reject_shows_author_without_at(monkeypatch):
+    """审核不通过 → **不 @任何人**, 但正文里说清「发布人是谁」.
+
+    ⚠️ 2026-10-31 (第十六轮): 「@具体的人」整套下线 ——
+       钉钉要 userid, 平台只有账号名, 映射表没人填 (用户决定暂时不 @).
+    """
     sent: list[dict] = []
 
     async def fake_send(webhook, title, text, *, secret="", at_mobiles=None,
@@ -622,9 +626,6 @@ async def test_reject_at_author_only(monkeypatch):
         return {
             "dingtalk.notify_on_reject": "true",
             "dingtalk.market_webhook": "http://market/hook",
-            # ⚠️ 2026-10-31 (第十三轮): 钉钉要的是 **userid**, 不是平台账号名 ——
-            #    所以 atUserIds 里放的是映射表查出来的 userid.
-            "dingtalk.userid_map": "jarvs=manager1234",
         }.get(key, default)
 
     monkeypatch.setattr(dingtalk, "get", _get)
@@ -635,8 +636,9 @@ async def test_reject_at_author_only(monkeypatch):
     )
     assert ok is True
     assert sent[0]["all"] is False, "审核不通过不该 @所有人"
-    assert sent[0]["at"] == ["manager1234"], sent[0]
-    assert "@jarvs" in sent[0]["text"], sent[0]["text"]
+    assert sent[0]["at"] == [], sent[0]
+    assert "@jarvs" not in sent[0]["text"], sent[0]["text"]
+    assert "发布人: jarvs" in sent[0]["text"], sent[0]["text"]
     # ⚠️ 技能在 UI 上就叫「技能」—— 通知里曾经叫「技能包」, 两种叫法会让人以为是两种东西
     assert "类型: 技能" in sent[0]["text"], sent[0]["text"]
 

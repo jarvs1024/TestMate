@@ -1002,24 +1002,9 @@ onUnmounted(() => {
 .sb-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .sb-btn.ghost { background: transparent; }
 
-/* ===== 类型 Tab (在动作条里) ===== */
-.kind-tabs { display: flex; gap: 6px; }
-.kind-tab {
-  background: transparent; border: 1px solid transparent;
-  padding: 7px 16px; border-radius: var(--radius-pill);
-  font-size: 13.5px; color: var(--ink-700); cursor: pointer;
-  font-family: inherit; transition: all 0.15s ease;
-  display: inline-flex; align-items: center; gap: 6px;
-}
-.kind-tab:hover { background: var(--surface-sunken); color: var(--ink-900); }
-.kind-tab.active { background: var(--primary-grad-soft); font-weight: 700; box-shadow: inset 0 0 0 1px var(--border); }
-.kind-tab.active .count { background: var(--primary-grad); color: #fff; }
-.count {
-  font-size: 11px; background: var(--surface); color: var(--ink-700);
-  padding: 1px 7px; border-radius: var(--radius-pill);
-  font-family: var(--font-mono); font-weight: 600;
-}
-
+/* ⚠️ 类型 Tab (.kind-tabs / .kind-tab / .count) 2026-10-31 (第十六轮) 提到
+   styles/main.css (全局) —— 软件库那边要用同一套样式, 别再各抄一份.
+   这里只留**这个页面特有**的: 分类 chip (.chip) 用的计数徽标. */
 .toolbar-right { display: flex; align-items: center; gap: 8px; }
 /* ⚠️ .mini-btn 的样式 2026-10-28 提到 styles/main.css (全局) ——
    软件库那边照抄了 class 名却没有样式, 按钮长得跟浏览器默认一样.
@@ -1131,6 +1116,13 @@ onUnmounted(() => {
    头像图标 + 一点自己的底色, 用户一眼认出"这是看我自己的". */
 .mine-chip { font-weight: 600; }
 .mine-chip:not(.active) { border-color: rgba(59, 130, 246, 0.35); color: var(--primary-2); }
+/* ⚠️ 分类 chip 的计数徽标 —— .count 的基础样式现在在全局 (.kind-tab .count),
+   这里补一条**只管 chip 的**, 免得 chip 里的数字没样式. */
+.chip .count {
+  font-size: 11px; background: var(--surface); color: var(--ink-700);
+  padding: 1px 7px; border-radius: var(--radius-pill);
+  font-family: var(--font-mono); font-weight: 600;
+}
 .chip.active .count { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
 /* ===== 网格 =====

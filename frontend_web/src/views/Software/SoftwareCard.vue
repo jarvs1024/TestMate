@@ -45,7 +45,9 @@
     <div class="ac-foot">
       <div class="ac-meta">
         <span class="meta-item" :title="`已下载 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
-        <span class="meta-item">{{ item.author || '未知' }}</span>
+        <!-- ⚠️ 2026-10-31 (第十六轮): 作者**只显示用户名** (去掉 @twsc.com.cn) ——
+             邮箱后缀每张卡都一样, 摊出来既占地方又吵. 全账号挂 title, 悬停还能看到. -->
+        <span class="meta-item" :title="item.author || ''">{{ displayAuthor(item.author) || '未知' }}</span>
         <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
       </div>
       <div class="ac-cta">查看详情<span class="cta-arrow">›</span></div>
@@ -57,6 +59,7 @@
 import { computed } from 'vue';
 import type { SoftwareItem } from '@/api/software';
 import { fmtDate } from '@/utils/format';
+import { displayAuthor } from '@/utils/author';
 import { platformLabel } from './softwareForm';
 
 const props = defineProps<{ item: SoftwareItem }>();

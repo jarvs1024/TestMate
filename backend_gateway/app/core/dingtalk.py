@@ -105,54 +105,17 @@ def reset_base_url_cache() -> None:
     _request_base_url.set("")
 
 
-# ---------- 平台账号 → 钉钉 userid 映射 (2026-10-31 · 第十三轮) ----------
+# ---------- 「@某个具体的人」: **2026-10-31 (第十六轮) 整个去掉了** ----------
 #
-# ⚠️ 为什么需要这个表:
-#    通知里要 @ 某个**具体的人** (如「审核不通过, @发布者」), 钉钉接口的
-#    `atUserIds` 要的是**钉钉 userid**, 不是平台账号名.
-#    平台这边只知道账号名 (admin / zhangsan / xxx@twsc.com.cn),
-#    两边对不上 → 把账号名塞进 atUserIds 是**无效的**, 人根本收不到提醒.
-#    (只有账号名恰好等于钉钉 userid 的情况才会中 —— 那属于巧合.)
+# ⚠️ 为什么删掉 (用户原话「通知中设置@某个人的, 暂时不用@具体的人, 这个可以去掉了」):
+#    钉钉接口的 `atUserIds` 要的是**钉钉 userid**, 平台只有账号名 ——
+#    要真 @ 到人, 管理员得在设置里手填一张「平台账号 → 钉钉 userid」对照表.
+#    这张表**没人填**, 而且以后每来一个新人就要维护一次, 性价比太低.
+#    所以: **设置项删掉, 解析逻辑删掉, atUserIds 永远为空**.
 #
-# ⚠️ 仓库里没有"账号 ↔ 钉钉 userid"的对照表, 也不该写死在代码里 ——
-#    让管理员在设置里自己填:  dingtalk.userid_map = "admin=manager1234;zhangsan=lin.san"
-#
-# ⚠️ 填不上怎么办: **只保留正文里的 "@账号名" 文字点名**, atUserIds 里**不放无效 id**
-#    —— 塞一个钉钉不认识的 id 只会变成噪音, 还会让 at 名单看起来"我明明 @ 了人".
-_USERID_MAP_KEY = "dingtalk.userid_map"
-
-
-def parse_userid_map(raw: str) -> dict[str, str]:
-    """解析 `账号=userid;账号2=userid2` → {账号(小写): userid}.
-
-    容错: 逗号/换行/多余空格都吃掉; 缺 "=" 的片段直接跳过 (不报错, 免得一行写错
-    就让**所有**通知都发不出去).
-    """
-    out: dict[str, str] = {}
-    for chunk in (raw or "").replace("\n", ";").replace(",", ";").split(";"):
-        chunk = chunk.strip()
-        if not chunk or "=" not in chunk:
-            continue
-        acc, _, uid = chunk.partition("=")
-        acc = acc.strip().lower()
-        uid = uid.strip()
-        if acc and uid:
-            out[acc] = uid
-    return out
-
-
-async def resolve_userid(account: str) -> str:
-    """平台账号名 → 钉钉 userid. 查不到返回空串 (调用方据此决定不 @)."""
-    acc = (account or "").strip().lower()
-    if not acc:
-        return ""
-    raw = (await get(_USERID_MAP_KEY, "")) or ""
-    mapping = parse_userid_map(raw)
-    if acc in mapping:
-        return mapping[acc]
-    # ⚠️ 跟 isAuthor() 一个口径: 全邮箱 `zhangsan@twsc.com.cn` 也认短名 `zhangsan`
-    local = acc.split("@", 1)[0]
-    return mapping.get(local, "")
+# ⚠️ 还在的只有 **@所有人** —— 那是"资产变了, 大家都该知道", 不需要 userid.
+#    「审核不通过」原本 @发布者, 现在改成在**正文里写一行「发布人: xxx」** ——
+#    信息不丢, 但不再假装在 @ 谁 (正文里挂个 "@账号名" 却 @ 不到人, 更误导).
 
 # ---------- 审核类通知的窗口合并 (2026-10-28) ----------
 #
@@ -239,7 +202,7 @@ async def send_markdown(
 #       publish  上架成功 @所有人
 #       update   版本更新 @所有人
 #       unpublish 彻底下架 @所有人
-#       reject   上架审核不通过 @发布者
+#       reject   上架审核不通过 (⚠️ 不 @人, 正文里写「发布人: xxx」)
 #       delete   管理员直接删除 @所有人
 #   软件库 (也走市场群, 同一个机器人) —— 2026-10-30 加:
 #       software_publish 新软件上架
@@ -345,23 +308,25 @@ _KIND_LABEL = {
 
 # 各事件默认 @ 谁:
 #   at_all=True  → @所有人 (资产变了, 大家都该知道)
-#   at_author    → @发布者 (他的东西被拒了, 得让他知道)
+# ⚠️ 2026-10-31 (第十六轮): **不再 @ 具体的人** —— 平台只有账号名, 钉钉要 userid,
+#    映射表那套 (dingtalk.userid_map) 整个删掉了 (见上面那段说明).
+#    「审核不通过」改为在正文里写「发布人: xxx」, 不再 @.
 _EVENT_AT = {
-    "review": {"at_all": False, "at_author": False},
-    "unpublish_request": {"at_all": False, "at_author": False},
-    "publish": {"at_all": True, "at_author": False},
-    "update": {"at_all": True, "at_author": False},
-    "unpublish": {"at_all": True, "at_author": False},
-    "reject": {"at_all": False, "at_author": True},
-    "delete": {"at_all": True, "at_author": False},
+    "review": {"at_all": False, "show_author": False},
+    "unpublish_request": {"at_all": False, "show_author": False},
+    "publish": {"at_all": True, "show_author": False},
+    "update": {"at_all": True, "show_author": False},
+    "unpublish": {"at_all": True, "show_author": False},
+    "reject": {"at_all": False, "show_author": True},
+    "delete": {"at_all": True, "show_author": False},
     # ⚠️ 2026-10-31 (第十三轮): 软件库三个事件**都 @所有人** ——
     #    用户原话「软件上架要@所有人的, 下架软件也要通知@所有人」.
     #    · 上架   → 有新软件了, 大家都该知道;
     #    · 新版本 → 有新版可下, 跟资产的 update 一个口径;
     #    · 下架   → 那个软件没了, **更**要所有人知道 (别再去找它了).
-    "software_publish": {"at_all": True, "at_author": False},
-    "software_update": {"at_all": True, "at_author": False},
-    "software_unpublish": {"at_all": True, "at_author": False},
+    "software_publish": {"at_all": True, "show_author": False},
+    "software_update": {"at_all": True, "show_author": False},
+    "software_unpublish": {"at_all": True, "show_author": False},
 }
 
 # ⚠️ 2026-10-30 (第十一轮): 通知里「说明/更新」那一行的**标签** ——
@@ -630,7 +595,6 @@ async def _render_market_body(
     summary: str = "",
     release_notes: str = "",
     at_all: bool | None = None,
-    at_author: bool | None = None,
 ) -> tuple[list[str], list[str], str]:
     """构造通知正文 —— 返回 (行, 汇总用的属性, 标题文案).
 
@@ -703,24 +667,21 @@ async def _render_market_body(
         if entry:
             lines.append(f"- [去审核台]({entry})")
 
-    # ---------- @谁 (2026-10-31 第十三轮: 挪进渲染层) ----------
+    # ---------- @谁 (2026-10-31 第十六轮: 只剩 @所有人) ----------
     # ⚠️ 以前 @ 是在 `notify_market` 里发送前才拼的 → **预览里看不到**,
     #    管理员在设置页「👀 预览消息」看到的正文跟真发出去的不一样.
     #    现在统一在渲染层拼: 预览 = 真发出去的样子.
     # ⚠️ 钉钉要正文里带 "@xxx" 才渲染成提醒 (at 字段只是"谁被 @" 的名单).
-    at_rule = _EVENT_AT.get(event, {"at_all": False, "at_author": False})
+    at_rule = _EVENT_AT.get(event, {"at_all": False, "show_author": False})
     do_at_all = at_rule["at_all"] if at_all is None else at_all
-    do_at_author = at_rule["at_author"] if at_author is None else at_author
     if do_at_all:
         lines.append("@所有人")
-    if do_at_author and author:
-        # ⚠️ 账号名是**平台账号**, 不是钉钉 userid ——
-        #    真能 @ 到人得靠 `dingtalk.userid_map` (见 resolve_userid).
-        #    这里只是正文点名, 渲染层不该去查表 (预览是纯渲染).
-        if actor and actor != author:
-            lines.append(f"@{author} (提交人: {actor})")
-        else:
-            lines.append(f"@{author}")
+    if at_rule["show_author"] and author:
+        # ⚠️ 2026-10-31 (第十六轮): **不再 @ 具体的人** ——
+        #    平台只有账号名, 钉钉要 userid (映射表那套已整个删掉).
+        #    这里只**说清这条是关于谁的**, 不带 "@" —— 正文挂个 @xxx 却 @ 不到人,
+        #    只会让人以为提醒已经发出去了.
+        lines.append(f"- 发布人: {author}")
     return lines, body_bits, event_text
 
 
@@ -755,7 +716,6 @@ async def notify_market(
     author: str = "",
     project: str = "",
     at_all: bool | None = None,
-    at_author: bool | None = None,
     title_override: str = "",
     summary: str = "",
     release_notes: str = "",
@@ -771,8 +731,10 @@ async def notify_market(
 
     kind / category: 通知里要说明"这是个啥" (技能? 插件? 连接器? 软件包?)
     project: 适用项目 (空 = 通用; 有值才写这一行)
-    author: 发布者 —— 审核不通过时要 @他
-    at_all / at_author: 覆盖事件默认的 @ 策略 (一般不用传)
+    author: 发布者 —— 审核不通过时在正文里写一行「发布人: xxx」
+        (⚠️ 2026-10-31 第十六轮: **不再 @ 他** —— 钉钉要 userid, 平台只有账号名,
+         映射表那套已整个删掉; 只 @所有人)
+    at_all: 覆盖事件默认的 @所有人 策略 (一般不用传)
     title_override: 覆盖标题文案 —— **事件 key 不变** (开关映射必须稳定),
         只是同一个事件在不同场景下标题不一样 (如「重新上架」不是「新资产上架」)
 
@@ -805,9 +767,8 @@ async def notify_market(
         logger.warning("dingtalk 读取配置失败, 跳过通知: %s", e)
         return False
 
-    at_rule = _EVENT_AT.get(event, {"at_all": False, "at_author": False})
+    at_rule = _EVENT_AT.get(event, {"at_all": False, "show_author": False})
     do_at_all = at_rule["at_all"] if at_all is None else at_all
-    do_at_author = at_rule["at_author"] if at_author is None else at_author
 
     lines, body_bits, event_text = await _render_market_body(
         event,
@@ -815,7 +776,7 @@ async def notify_market(
         code=code, kind=kind, category=category, project=project,
         author=author, title_override=title_override,
         summary=summary, release_notes=release_notes,
-        at_all=at_all, at_author=at_author,
+        at_all=at_all,
     )
 
     # ---------- 审核类通知: 窗口合并 ----------
@@ -841,17 +802,10 @@ async def notify_market(
     title = f"{event_text} · {name}"
 
     # ---------- @谁: 只算「at 名单」, 正文里的 @ 已经在渲染层拼好了 ----------
-    # ⚠️ 2026-10-31 (第十三轮): @ 文本挪进 `_render_market_body` 了 (预览要能看到),
-    #    这里**只**负责算出钉钉接口要的 atUserIds / isAtAll.
+    # ⚠️ 2026-10-31 (第十六轮): **atUserIds 永远是空的** ——
+    #    钉钉要的是 userid, 平台只有账号名, 「@具体的人」这套整个去掉了 (见文件上方).
+    #    现在只有 @所有人 (isAtAll) 能真的提醒到人.
     at_user_ids: list[str] = []
-    if do_at_author and author:
-        # ⚠️ atUserIds 要的是**钉钉 userid**, 不是平台账号名.
-        #    以前直接塞账号名 → 钉钉 @ 不到人 (只有账号名恰好是 userid 才行).
-        #    现在查映射表 (dingtalk.userid_map); 查不到就**不放无效 id**,
-        #    只保留正文里的 "@账号名" 文字点名 —— 至少群里看得出在说谁.
-        uid = await resolve_userid(author)
-        if uid:
-            at_user_ids.append(uid)
 
     # ⚠️ 自定义机器人默认开启**关键词校验**: 消息里必须含指定关键词, 否则报
     #    310000 "关键词不匹配", 消息根本发不出去. 关键词配在设置里 (留空则不加).
@@ -888,6 +842,9 @@ def _parse_mentions(text: str) -> tuple[bool, list[str]]:
     """从消息正文里解析 @ 了谁 —— 重试时要用 (回执里没单独存 at 名单).
 
     正文里 @ 的人都是**独占一行**的 (我们拼消息就是这么拼的).
+
+    ⚠️ 2026-10-31 (第十六轮): 「@具体的人」整套删了 —— 现在**只有 @所有人** 有意义,
+       返回的名单 (个人) 没人再用, 调用方直接丢掉.
     """
     is_at_all = False
     users: list[str] = []
@@ -1076,15 +1033,10 @@ async def retry_failed_notifications() -> int:
             skipped += 1
             continue
         # @ 了谁要从正文里还原 (回执里没单独存 at 名单)
-        at_all, at_users = _parse_mentions(r.text)
-        # ⚠️ 正文里存的是**平台账号名**, 钉钉要的是 userid ——
-        #    查映射表换一下; 查不到的**丢掉** (塞无效 id 钉钉只会当噪音).
-        resolved: list[str] = []
-        for u in at_users:
-            uid = await resolve_userid(u)
-            if uid:
-                resolved.append(uid)
-        if await _attempt(r, webhook, secret, at_user_ids=resolved, is_at_all=at_all):
+        # ⚠️ 2026-10-31 (第十六轮): 只剩 **@所有人** 能真提醒到人 ——
+        #    「@具体的人」整套删了, 所以这里**只认 @所有人**, 个人的名单一律丢弃.
+        at_all, _at_users = _parse_mentions(r.text)
+        if await _attempt(r, webhook, secret, at_user_ids=[], is_at_all=at_all):
             n += 1
     if skipped:
         logger.info("dingtalk 跳过 %d 条待发通知 (开关关了或没配 webhook)", skipped)

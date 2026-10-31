@@ -139,6 +139,45 @@ html, html[data-theme] {
   box-shadow: 0 0 0 3px var(--primary-soft);
 }
 
+/* ------------------------------------------------------------
+ * 类型 / 分类 Tab (.kind-tabs / .kind-tab)
+ *
+ * ⚠️ 2026-10-31 (第十六轮): 提到全局 ——
+ *    「插件·技能·连接」的类型 tab 原来写在那个页面的 scoped 样式里,
+ *    「软件库」照抄了 class 名却**没有对应样式** → 两页长得完全不一样.
+ *    现在全局一份, 两页共用同一个长相 (用户要求软件库对齐市场的 tab 样式).
+ *
+ * ⚠️ 计数徽标 (.count) 的基础样式**限定在 .kind-tab 里面** ——
+ *    「插件·技能·连接」那一行的分类 chip 也用了 .count, 那是另一套样式,
+ *    别让这里的定义把它们一起改了 (撞名过一次).
+ * ------------------------------------------------------------ */
+.kind-tabs {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+.kind-tab {
+  background: transparent; border: 1px solid transparent;
+  padding: 7px 16px; border-radius: var(--radius-pill);
+  font-size: 13.5px; color: var(--ink-700); cursor: pointer;
+  font-family: inherit; transition: all 0.15s ease;
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.kind-tab:hover { background: var(--surface-sunken); color: var(--ink-900); }
+.kind-tab.active {
+  background: var(--primary-grad-soft); font-weight: 700;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.kind-tab .count {
+  font-size: 11px; background: var(--surface); color: var(--ink-700);
+  padding: 1px 7px; border-radius: var(--radius-pill);
+  font-family: var(--font-mono); font-weight: 600;
+}
+.kind-tab.active .count { background: var(--primary-grad); color: #fff; }
+/* ⚠️ 「👤 我的」是**维度**不是分类 —— 选中态跟别的 tab 一样,
+   但没选中时留一点自己的蓝边, 用户一眼认出"这是看我自己的". */
+.kind-tab.mine-tab { font-weight: 600; }
+.kind-tab.mine-tab:not(.active) { border-color: rgba(59, 130, 246, 0.35); color: var(--primary-2); }
+
 /* ============================================================
  * 全局控件样式 (C 版 · 毛玻璃 + 简约 · 单层 focus ring)
  * ============================================================ */
