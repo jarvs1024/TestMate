@@ -9,16 +9,13 @@
 > 3. **对现有业务代码零改动**——不重构 `marketplace.py`，MCP 侧用薄适配层调用现有路由函数
 > 4. 补入 **spike 实测结论**（装配路径 / 鉴权取身份 / DNS rebinding 421 / lifespan 500）
 > 5. **首期不含审核工具**（14 → 13 个）：上架后由人工在网页审核台处理，agent 不自己盖章
-> 6. **令牌模型加料**：绑定方式（必绑具体用户）/ scope 固定枚举 / 默认 90 天有效期 / 每日调用配额
-> 7. **令牌自助签发**：任何登录用户可给自己签发（设置页是 adminOnly，放那儿等于只有管理员能用 agent）；
->    scope 上限 = 用户平台能力（复用 `market_policy.can_publish`）
-> 8. **令牌页 `/mcp-tokens` + 一键复制连接器配置**：用户不用手拼 mcpServers JSON，url 自动取 `marketplace.public_base_url`
-> 9. **transport 双端点**：Streamable HTTP（`POST /mcp/skill`）+ **SSE**（`GET /mcp/skill/sse` + `POST /mcp/skill/messages/`）
->    —— Qoder CN 走 SSE 模式，SSE **必须做**（v5 写的「不做 SSE」已被 Qoder 官方文档推翻，见 §4.9）
-> 10. **鉴权用静态 Bearer 令牌**：Qoder 官方文档明确支持 MCP 服务器配 `Headers: Authorization: Bearer ...`
->    ⇒ **不需要 OAuth**；截图里的「需要授权」是 Qoder 内置市场连接器（第三方各自的 OAuth），与自定义 MCP 无关
-> 11. **Qoder 的 OAuth 2.1 授权流**（§4.8）降级为 **P3.5 可选增强**（静态令牌已够用）；SDK 有一等支持，
->    将来若要「点一下就授权」的用户体验再上
+> 6. **transport 双端点**：Streamable HTTP（`POST /mcp/skill`）+ **SSE**（`GET /mcp/skill/sse` + `POST /mcp/skill/messages/`）
+>    —— Qoder CN 走 SSE 模式，SSE **必须做**
+> 7. **鉴权走 OAuth 2.1**：Qoder 点「授权」→ 浏览器打开平台 → 登录并同意 → 自动回到 Qoder。
+>    **普通用户不需要个人令牌页**；同意页（`/mcp/authorize`）取代它
+> 8. **TestMate MCP 作为平台内置连接器上架**在「插件·技能·连接」市场：
+>    **不可删除、不可下架、不可编辑**，url 动态生成（见 §4.8）
+> 9. 设置页（adminOnly）保留「平台接入令牌」作为 **CI/脚本/兜底**通道，不做个人令牌页
 >
 > 状态：**设计已定，待实现**。
 
@@ -59,6 +56,7 @@
 - ❌ 不提供「硬删资产」工具（删除语义 = 下架审核通过，由平台既有流程承担）
 - ❌ 不绕过审核流（agent 不能自行绕过 `marketplace.review.*` 设置）
 - ❌ **不提供审核（approve/reject）工具** —— 审核由人工在网页审核台完成（D7）
+- ❌ **不做个人令牌页**（D9）—— 普通用户只走 OAuth；设置页的「平台接入令牌」是 admin 专用的 CI/兜底通道
 - ❌ 不实现知识库 / 软件库的工具（只留目录骨架与公共层的扩展位）
 - ❌ 不做 stdio transport（首批只服务 Qoder，走远程 HTTP）
 - ❌ 不做 MCP OAuth 动态注册（静态 API Token，够用且好管）
@@ -71,12 +69,14 @@
 | # | 决策点 | 结论 | 理由 |
 |---|---|---|---|
 | D1 | MCP server 跑在哪 | **挂进现有 FastAPI 后端**，端点 `/mcp/{域}`（Streamable HTTP） | 一套部署；复用 DB、权限判定、审计、资产 job 队列 |
-| D2 | agent 身份 | **新增长期 API Token**（管理员签发/吊销，绑定用户身份 + scope） | agent 配置里只放一个 token；权限可精确到用户 + scope |
+| D2 | agent 身份 | **OAuth 2.1 授权流**（Qoder 点「授权」→ 平台登录 + 同意 → 自动回客户端）；设置页另有**平台接入令牌**兜底 | 用户零操作、零密钥粘贴；权限随用户身份实时生效 |
 | D3 | 首批接入方 | **Qoder**（远程 HTTP，`{url, headers}` 连接器配置） | 团队主力 IDE；平台「连接器」资产格式天然匹配 |
 | D4 | MCP 的组织方式 | **`app/mcp/` 按域分目录；每域一个独立 MCP server；公共部分在 `common/`** | 域之间零耦合；agent 可只连需要的域，工具集不污染 |
 | D5 | 对现有代码的侵入度 | **零改动**：`marketplace.py` / `kb.py` / `software.py` 一行不动，MCP 侧用薄适配层调用 | 生产代码，3005 行重排的回归风险不可接受；MCP 是独立功能，应能独立落地 |
 | D6 | 协议实现 | **官方 `mcp` SDK**（FastMCP），`stateless_http=True` + `json_response=True` | 握手/版本协商/能力声明有 SDK 兜底；依赖与现有锁文件无冲突 |
 | D7 | 首期是否含审核工具 | **不含** —— 上架后由人工在**网页审核台**处理 | 审核是人工运营动作，agent 不该自己给自己盖章；写入面更小、更安全 |
+| D8 | TestMate MCP 的市场身份 | **平台内置连接器**：上架在「插件·技能·连接」，**不可删除 / 不可下架 / 不可编辑**，url 动态生成 | 平台自己的核心能力不该被当成普通资产随便删掉；内置资产不该走审核流 |
+| D9 | 普通用户的接入路径 | **只有 OAuth 一条**：Qoder 点「授权」→ 浏览器登录同意 | 用户不需要碰令牌；个人令牌页没有存在价值 |
 
 ---
 
@@ -90,10 +90,12 @@ backend_gateway/app/
 │   ├── common/                 #   公共部分：与具体业务域无关
 │   │   ├── __init__.py
 │   │   ├── server.py           #     MCP server 工厂 + 分域挂载（dispatcher）
-│   │   ├── auth.py             #     API Token 校验 → Principal；FastAPI 中间件
+│   │   ├── auth.py             #     TokenVerifier（OAuth access token + 静态令牌）→ Principal
+│   │   ├── oauth_provider.py   #     OAuth 授权服务器实现（~300 行，见 §4.4）
+│   │   ├── builtin_assets.py   #     内置连接器资产的 seed（照抄 seed_agents 范式）
 │   │   ├── context.py          #     McpContext（身份 + 域调用入口 + 审计）
 │   │   ├── errors.py           #     HTTPException / 业务异常 → MCP tool error
-│   │   ├── tool.py             #     ToolSpec 契约 + 注册辅助
+│   │   ├── tool.py             #     ToolSpec 契约 + 注册辅助 + 配额包装层
 │   │   └── audit.py            #     tool 调用审计落库
 │   │
 │   ├── skill/                  # ★ 技能·插件 域（本轮实现）
@@ -258,306 +260,157 @@ ALL_MCPS  = {p.domain: build_mcp(p) for p in PROVIDERS}
 
 ---
 
-## 4. 鉴权：长期 API Token
+## 4. 鉴权：OAuth 2.1 授权流（Qoder 点「授权」）
 
-### 4.1 表结构
+### 4.1 为什么改成 OAuth（而不是个人令牌页）
 
-```sql
-CREATE TABLE mcp_api_tokens (
-  id            BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  name          VARCHAR(128) NOT NULL,               -- 令牌名，如 "张三的 Qoder 笔记本"
-  token_prefix  VARCHAR(32)  NOT NULL,               -- 明文前 12 位，UI 展示与人工定位用
-  token_hash    CHAR(64)     NOT NULL,               -- sha256(明文) 十六进制，唯一索引
-  user_id       BIGINT       NOT NULL,               -- 绑定身份：权限完全等同该用户
-  scopes        JSON         NOT NULL,               -- ["market:read","market:write"] 取值来自固定枚举
-  daily_quota   INT          NOT NULL DEFAULT 200,   -- 每日调用上限; 0 = 不限
-  created_by    BIGINT       NULL,
-  created_at    DATETIME     NOT NULL,
-  last_used_at  DATETIME     NULL,
-  expires_at    DATETIME     NULL,                   -- 默认创建后 90 天; NULL = 永不过期
-  revoked_at    DATETIME     NULL                    -- 吊销即时生效
-);
-CREATE UNIQUE INDEX uk_mcp_tokens_hash ON mcp_api_tokens (token_hash);
-CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
-```
+原来的设计是「用户去令牌页签发个人令牌 → 复制明文 → 手拼 mcpServers JSON → 粘进 Qoder」。
+问题很实在：**门槛高（要复制带密钥的 JSON）、易泄漏、还得自己管过期与吊销**。
 
-**只存 sha256，不存明文**：token 是 256-bit 随机串，不存在字典攻击风险；慢哈希（bcrypt）在这里只会拖慢每个请求。
-**明文只在签发那一刻返回一次**。
+而 Qoder 对远程 MCP 原生支持标准流程：**点「授权」→ 浏览器打开平台 → 登录并同意 → 自动回到 Qoder**。
+平台内置连接器 + OAuth 才是贴合「平台内置能力」这个定位的做法。
 
-### 4.2 签发与吊销
+**结论：普通用户不需要个人令牌页**。鉴权统一走 OAuth。
 
-**谁可以签发**：**任何登录用户都能给自己签发**（自助），管理员额外可以**代发给别的用户**。
+> 保留一条**运维兜底**：设置页（本就 adminOnly）里仍可签发**平台接入令牌**（静态 Bearer），
+> 给 CI / 脚本 / 以及 OAuth 发现失败时用。`TokenVerifier` 同时认两种凭证，
+> 权限判定（scope + 用户平台能力）与审计完全共用 —— 换凭证不换能力边界。
 
-⚠️ 原设计写成「设置页 admin 专属」是错的：`/settings` 整个页面是 **adminOnly**
-（路由守卫 `adminOnly` + UserMenu 隐藏入口 + 页面内兜底，普通用户连进都进不去），
-放那儿等于**只有管理员能用 agent**，普通测试工程师想用就得找人代开 —— 瓶颈且不合理。
+### 4.2 数据模型
 
-签发方式改为两条路：
-
-| 路径 | 谁能用 | 绑定谁 | scope 上限 |
-|---|---|---|---|
-| **自助签发** | 任何登录用户 | 只能绑自己 | 该用户当前的平台能力（见 §4.4） |
-| **管理员代发** | admin | 可选任意用户 | 同上（仍是那个用户的权限） |
-
-平台开关 `mcp.tokens.self_service`（默认 **true**）：admin 关掉后，只有 admin 能签发。
-
-签发表单字段与默认值：
-
-| 字段 | 默认值 | 说明 |
+| 东西 | 存哪 | 生命周期 |
 |---|---|---|
-| `name` | 必填 | 令牌名，如「我的 Qoder 笔记本」—— 出问题时靠它定位 |
-| `user_id` | 自助=自己；代发=手选 | **绑定的用户**（令牌权限实时取该用户当前角色） |
-| `scopes` | `["market:read"]` | 勾选式，**取值来自固定枚举**（见 §4.4），不接受自由字符串；**可选项受 scope 上限约束** |
-| `expires_at` | **创建后 90 天** | 可勾「永不过期」；过期后 agent 会收到明确报错 |
-| `daily_quota` | **200 次/天** | 0 = 不限；防跑飞 agent（详见 §4.5） |
+| OAuth 客户端注册表 | **新表** `mcp_oauth_clients`（DCR 动态注册产生） | 长期 |
+| 授权码（authorization code） | **进程内字典** | 5 分钟、一次性 |
+| access token | **无状态 JWT**（用现有 `JWT_SECRET` 签名，payload：`sub`=user_id / `scopes` / `client_id` / `exp` / `aud`） | 默认 1 小时 |
+| refresh token | **本轮不发** | —— |
+| 平台接入令牌（兜底） | `mcp_api_tokens` 表 | 90 天 / 永不过期 |
 
-- 令牌明文格式：`tm_live_<32字节base64url>`，**签发那一刻返回一次**
-- 吊销 = 置 `revoked_at`，**即时生效**（每个请求现查库，无本地缓存 → 吊销后下一个请求必然 401）
-- 列表页展示：令牌名 / 前缀 / 绑定用户 / scopes / 配额用量 / 最后使用时间 / 有效期 / 状态
+> 授权码放内存而非 DB/Redis：SSE 已经要求后端**单进程**（`BACKEND_WORKERS=1`），
+> 进程内字典完全够用；进程重启导致授权码失效 → 用户重新点一次「同意」即可，代价可忽略。
 
-### 4.3 校验链路（spike 已验证身份可传递）
+### 4.3 OAuth 端点（SDK 自动生成，我们只提供 provider）
+
+| 端点 | 作用 | 来源 |
+|---|---|---|
+| `GET /.well-known/oauth-protected-resource/mcp/skill` | 受保护资源元数据（告诉客户端授权服务器在哪） | SDK |
+| `GET /.well-known/oauth-authorization-server` | 授权服务器元数据 | SDK |
+| `POST /register` | 动态客户端注册（DCR，RFC 7591） | SDK |
+| `GET|POST /authorize` | 授权入口 → 跳我们的**同意页** | SDK |
+| `POST /token` | code → access token | SDK |
+| `POST /revoke` | 吊销 | SDK（可选启用） |
+
+未认证请求 → **401 + `WWW-Authenticate: Bearer resource_metadata="…"`**（SDK 的 `BearerAuthBackend` 自动带）
+→ Qoder 据此发现授权服务器 → 弹「授权」按钮。
+
+### 4.4 我们要自己写的四块
+
+| # | 东西 | 位置 | 量级 |
+|---|---|---|---|
+| 1 | `OAuthAuthorizationServerProvider` 实现：客户端注册表读写、授权码生成/消费、PKCE S256 校验、**redirect_uri 白名单校验**、签发 access token | `app/mcp/common/oauth_provider.py` | ~300 行 |
+| 2 | **同意页**（前端） | `views/McpAuthorize/index.vue` | 1 个页面 |
+| 3 | `TokenVerifier`：验 access token → `Principal(user, client_id, scopes)`；同时接受静态 `tm_live_*` | `app/mcp/common/auth.py` | ~80 行 |
+| 4 | nginx 加 5 处 location（OAuth 端点在**根路径**，不在 `/api/` 下） | `frontend_web/nginx.conf` + `deploy/native/units/nginx.conf.tpl` | ~40 行 |
+
+### 4.5 同意页（取代原「个人令牌页」）
+
+路由 `/mcp/authorize`（**所有登录用户**可见，不是 adminOnly）。
 
 ```
-请求 → FastAPI 中间件(path startswith /mcp)
-     → 取 Authorization: Bearer <token>
-     → sha256 → 查 mcp_api_tokens（token_hash 唯一索引，单行查询）
-     → 校验: 存在 / 未吊销 / 未过期
-     → 加载绑定 user（检查 user.is_active、角色）
-     → request.state.principal = Principal(user, token, scopes)   # ← Starlette 自动建 scope["state"]
-     ▼
-工具函数 → ctx.request_context.request
-         ├─ .headers.get("authorization")     → spike 实测: ✅ 能拿到
-         └─ .state.principal                  → spike 实测: ✅ 中间件写入的身份可见
+GET /authorize?client_id=…&redirect_uri=…&code_challenge=…&state=…&scope=…
+  │
+  ├─ 未登录 → 跳 TestMate 登录页（带 redirect 回跳 /mcp/authorize?…）
+  │            （平台本来就要求「账号须管理员先建过才能登录」）
+  │
+  ├─ 已登录 → 同意页：
+  │     · 客户端名（来自 DCR 注册时填的 client_name）
+  │     · 请求的 scope，**逐条勾选**，可选项 = 该用户的平台能力上限
+  │     · [同意] / [拒绝]
+  │
+  ├─ [同意] → 后端建授权码 → 302 回 redirect_uri?code=…&state=…
+  └─ [拒绝] → 302 回 redirect_uri?error=access_denied&state=…
 ```
 
-失败一律 **HTTP 401**（transport 级），不是 tool error——这才是 MCP 客户端期待的认证失败形态，
-客户端会据此弹「请重新授权」，而不是把 401 当成工具执行结果。
+**安全要点**（都在我们这侧，SDK 不代劳）：
 
-### 4.4 权限模型（两层 AND）
+- `redirect_uri` **必须**与客户端注册时登记的值逐字比对 —— 否则就是开放重定向漏洞
+- `state` 原样回传（CSRF 防护由客户端负责，我们不能丢）
+- 同意页表单自带 CSRF token
+- 授权码一次性、5 分钟过期、绑定 `client_id` + `redirect_uri` + `code_challenge`
+- token 端点校验 PKCE：`code_verifier` 的 S256 必须等于登记的 `code_challenge`
 
-| 层 | 规则 |
-|---|---|
-| 用户层 | 沿用平台现有口径：`role` + 发布者白名单（`market_policy.can_publish`）+ 资产归属（`can_modify`） |
-| 令牌层 | `scopes` 必须包含该工具的 `scope`；`read_only` 工具额外要求 scope 带 `:read` |
-
-**令牌权限永远不超过绑定用户**：绑定 viewer 就干不了发布者的事；admin 也可以签发只读令牌给 agent 防误删。
-
-#### scope 上限 = 绑定用户的平台能力（自助签发时自动收敛）
-
-不靠"按钮能不能点"来管权限，而是**复用平台已有的能力判定**——发 scope 时按用户能力自动收敛可选项：
-
-| 用户的平台能力（既有口径） | 可选 scope |
-|---|---|
-| 非发布者（viewer / 不在发布者白名单） | 只能 `market:read` |
-| 发布者（`market_policy.can_publish` 为真，默认 tester 即可） | `market:read` + `market:write` |
-| admin | 全部 + `market:*` |
-
-这样普通测试工程师能自助拿到「能上架技能」的 agent 令牌，而 viewer 拿到的必然是只读令牌，
-**不需要管理员逐个发**。判定逻辑复用 `app/core/market_policy.py`，MCP 侧不另造一套角色体系。
-
-#### scope 取值（固定枚举，不接受自由字符串）
+### 4.6 scope：同意时授予，写进 token
 
 | scope | 覆盖的工具 | 能力 |
 |---|---|---|
-| `market:read` | `skill_search` `skill_get` `skill_read_doc` `skill_read_file` `skill_list_files` `skill_package_info` `skill_categories` `skill_projects` `skill_job_status` | 只读 |
+| `market:read` | 9 个只读工具 | 只读 |
 | `market:write` | `skill_publish` `skill_update` `skill_submit_review` `skill_unpublish_request` | 上架 / 更新 / 提交审核 / 申请下架 |
-| `market:*` | 上面全部 | 该域全权 |
 
-**枚举是唯一真源**：工具的 `scope` 字段与这里一一对应，后端校验「工具 scope ∈ 枚举」，避免出现
-「令牌写了个 `market:write_all` 但工具要的是 `market:write`」这种静默不匹配。将来加域时，
-枚举跟着 `common/tool.py` 的 scope 常量一起扩。
+**可选项上限 = 绑定用户的平台能力**（复用 `market_policy.can_publish`，与网页一致）：
+非发布者只能给 `market:read`；发布者（含默认的 tester）可给 `market:write`；admin 全部。
 
-#### 绑定方式：必须绑一个具体用户
+授予的 scope 写进 access token 的 JWT；每次工具调用从 token 里取，**不再查库**。
 
-不提供「绑角色」「绑服务账号」的令牌。理由：
+> 「以后都同意」（记住授权）本轮**不做**：每次授权都问一次。多一步点击，换来用户对「这个 agent 现在能干什么」有明确认知。
 
-- **审计要追到人**：平台已有的 `asset_audits` 记的是 `actor`（用户名）。令牌绑用户 → agent 的每一次上架都记在真人名下。
-- **权限要跟着人走**：角色/白名单在设置页随时可能改，令牌绑用户意味着**实时取该用户当前权限**，
-  不会出现「昨天发的令牌今天还是旧权限」的幽灵。
-- **配额与封禁要能落到人**：出问题能定位到具体令牌 + 具体人，而不是一锅端某个角色。
+### 4.7 配额
 
-「机器身份」的需求用**令牌名**表达（「张三的 Qoder 笔记本」），而不是另开一种绑定类型。
+agent 最危险的失败模式不是越权，而是**失控循环**。配额改挂在**用户 + 客户端**上（OAuth 之后没有「令牌记录」了）：
 
-### 4.5 配额（防跑飞 agent）
-
-agent 最危险的失败模式不是「权限越界」，而是**失控循环**：反复 publish/search 把平台刷爆、
-把 git 工作区写满、触发一堆钉钉通知。
-
-- 每个令牌有 `daily_quota`（默认 200 次/天，0 = 不限）
-- **执行位置：工具包装层**（`common/tool.py`），不在中间件——中间件是 transport 级，
+- 每个 access token 带 `quota`（默认 200 次/天），签发时按用户当天已用量算
+- **执行位置：工具包装层**（`common/tool.py`），不在中间件 —— 中间件是 transport 级，
   超额返回 HTTP 429 会被 MCP 客户端当成「可重试的临时故障」→ **重试风暴**。
   在工具层返回 tool error `quota_exceeded`，agent 能读懂「今天超量了，别再试了」。
-- **计数来源：`mcp_tool_calls` 表**（每次调用都已落一行）。按 `(token_id, created_at)` 索引做范围计数，
-  每日上限 200 时最多扫 200 条索引项，成本可忽略——**不需要引入 Redis 计数器**。
-- 计数窗口：自然日（按服务器本地时区），跨日自动归零。
-- 超额的那次调用**也要落审计**（`ok=false, error_code=quota_exceeded`），否则计数会漂。
+- **计数来源：`mcp_tool_calls` 表**（每次调用都落一行），按 `(user_id, client_id, created_at)` 索引范围计数
+- 超额那次调用**也要落审计**（`ok=false, error_code=quota_exceeded`），否则计数会漂
 
-### 4.6 安全红线
+### 4.8 内置连接器资产（平台内置，不可删除）
 
-- token 不进 URL、不进 query、不进 access log（只走 Authorization 头）
-- 明文一次性展示，UI 不缓存明文
-- 吊销即时生效；默认 90 天过期，过期与吊销返回**不同的错误码**（`token_expired` vs `token_revoked`），便于 agent 自诊断
-- 每次 tool 调用落审计（见 §8），含 token_id，可追责到人
-- 令牌明文不进公共市场资产（自举连接器只放 url + 占位符，见 §10.4）
+**要求**：TestMate 自己的 MCP 以「连接器」身份出现在「插件·技能·连接」市场里，
+**平台内置、不能删除、不能下架、不能改坏**。
 
-### 4.7 令牌怎么进到 MCP 客户端（交付链路）
+实现（照抄平台现成的 `seed_agents()` 范式）：
 
-MCP 客户端（Qoder）需要的不只是一个 token，而是**一整段配置**：
+| 事项 | 做法 |
+|---|---|
+| 资产标记 | `Asset` 表新增 `is_builtin`（Integer 0/1）+ alembic 迁移 |
+| seed | 新增 `app/mcp/common/builtin_assets.py`，启动时 upsert（幂等）；`created_by=NULL` 标记为 seed 行 |
+| 不进 GitLab | 内置资产**只存 DB**，不进市场仓库 —— 避免与「GitLab 是真身」的模型打架 |
+| 同步安全 | `market_catalog.apply_index_to_db` **只 upsert、不删库里的行**（已核实）→ 仓库同步不会把内置资产冲掉 ✓ |
+| url 动态生成 | 内置资产的 `mcp_config` 里 url 是占位符 `{{BASE}}/mcp/skill`，**读的时候**用 `marketplace.public_base_url` 替换（每套部署地址不同，不能写死进 GitLab） |
+| 不可删 | `DELETE /api/v1/assets/{code}` → 409「平台内置资产不可删除」 |
+| 不可下架 | `unpublish_asset` / `unpublish_request` → 409 同理 |
+| 不可编辑 | `update_asset` → 409（否则能把 url 改坏）；只读展示 |
+| 不进审核台 | `publish_status` 恒为 `published`，`pending_action` 恒空 |
+| 前端 | `canModify` 计算里加上 `&& !is_builtin` → 卡片不显示「更新/下架/删除」按钮，标一个「平台内置」徽标 |
 
-```json
-{
-  "mcpServers": {
-    "testmate-skill": {
-      "url": "http://10.0.0.5:8081/mcp/skill",
-      "headers": { "Authorization": "Bearer tm_live_xxxxxxxx" }
-    }
-  }
-}
-```
-
-让用户自己手拼这段 JSON 极易出错（漏引号、url 写错路径、少了 `/mcp/skill`）。所以交付链路是：
+### 4.9 交付链路（最终形态）
 
 ```
-令牌页(新建 /mcp-tokens)
-  ├─ [签发令牌]  → 明文 tm_live_xxx（只此一次，弹窗 + 一键复制）
-  ├─ [复制连接器配置 · HTTP] → {"mcpServers":{"testmate-skill":{
-  │        "type":"streamable-http","url":"http://<平台地址>/mcp/skill",
-  │        "headers":{"Authorization":"Bearer tm_live_xxx"}}}}   ← 一键复制
-  │        (对应 Qoder「传输类型」下拉选 **HTTP**)
-  ├─ [复制连接器配置 · SSE] → 同上，url 换成 .../mcp/skill/sse、type 换成 "sse"
-  │        (对应 Qoder「传输类型」下拉选 **SSE**)
-  └─ [工具清单] → 列出本域 13 个工具，让用户知道 agent 能干什么
-                          ↓ 粘贴
-                    Qoder：设置 → 连接器与 MCP → + → 粘贴 JSON 配置 → 导入
-                          ↓
-                    Qoder 连 http://<平台地址>/mcp/skill
+① 市场「插件·技能·连接」→ 连接器 tab → 「TestMate 平台能力」卡片（带「平台内置」徽标）
+      └─ [复制连接器配置] → {"mcpServers":{"testmate":{"type":"http",
+                                        "url":"http://<平台地址>/mcp/skill"}}}
+         （没有 headers —— 鉴权交给 OAuth）
+② Qoder：设置 → 连接器与 MCP → + → 粘贴 JSON 配置 → 导入
+③ Qoder 探活 POST /mcp/skill → 我们回 401 + WWW-Authenticate
+      → Qoder 发现授权服务器 → 显示「授权」按钮
+④ 点「授权」→ 浏览器打开 http://<平台地址>/authorize?…
+      → 登录 TestMate → 同意页（显示客户端名 + scope）→ [同意]
+      → 302 回 Qoder → Qoder 用 code 换 access token
+⑤ 之后所有调用带 Authorization: Bearer <access_token> → 开始用 13 个工具
 ```
 
-⚠️ **输出格式要按 Qoder 的来**：Qoder 的「粘贴 JSON 配置」样例带 `type` 字段
-（`"type": "streamable-http"` / `"sse"`），这是 Qoder 特有的。
-平台自己的 `app/core/mcp_config.py` 校验连接器配置时**只检查已知字段、忽略未知键**，
-所以 `type` 不会导致校验失败 —— 两边格式天然兼容，不用改既有校验器。
+**内置连接器资产里绝不放任何密钥**：它只是 `{url}`，鉴权全靠 OAuth 流程。
 
-**url 自动取对**：后端用既有设置项 `marketplace.public_base_url`（已是「对外可达的基地址」，
-marketplace.json 和钉钉通知链接都在用它）+ `/mcp/skill` 拼出，用户不用手填 IP。
-该设置项留空时回落到「请求来源 host」（与 `app/core/dingtalk.py` 的做法一致）。
+### 4.10 兜底：平台接入令牌（设置页，adminOnly）
 
-**为什么不让平台市场直接下发带令牌的连接器**：「连接器」资产是**公共**的（全员可见），
-把某个人的明文令牌写进去 = 全员可见的长期凭证。绝不这么做。
-市场里的 TestMate 连接器资产只放 url 与 `<你的令牌>` 占位符，令牌由每个人自己在令牌页签发。
+设置页保留一个「🔌 MCP 接入」组（**admin 可见**，不是个人令牌页）：
 
-### 4.8 Qoder 的「点授权 → 跳系统 → 网页同意」流程（OAuth 2.1，可选增强）
+- 签发**平台接入令牌**（静态 `tm_live_*`）：给 CI / 脚本 / 内部系统调用
+- 配置 `mcp.allowed_hosts`（防 DNS rebinding，见 §3.4）
+- 开关「是否允许 OAuth 自助授权」—— 关闭后只有管理员能签发令牌（内网收紧用）
 
-Qoder 里配好 MCP 后弹「需要授权」、点一下跳到网页去同意、再回到 Qoder 拿到工具权限——
-这是 **MCP 规范里的标准 OAuth 2.1 流程**（Resource Server + Authorization Server 双角色），不是 Qoder 私有机制。
-
-完整链路：
-
-```
-① Qoder 探活 POST /mcp/skill  → 我们返回 401
-   + WWW-Authenticate: Bearer resource_metadata="http://host/.well-known/oauth-protected-resource/mcp/skill"
-② Qoder 读「受保护资源元数据」→ 得知授权服务器在 http://host
-③ Qoder 读「授权服务器元数据」 http://host/.well-known/oauth-authorization-server
-   → 拿到 authorization_endpoint / token_endpoint / registration_endpoint
-④ Qoder 动态注册客户端 POST http://host/register  (RFC 7591)
-⑤ Qoder 打开浏览器 http://host/authorize?...&code_challenge=...&state=...
-   → 我们引导登录 TestMate → **同意页**（显示客户端名 + 请求的 scope）→ [同意]
-   → 生成授权码 → 302 回 Qoder 的 redirect_uri?code=...&state=...
-⑥ Qoder 用 code + PKCE 校验串换 access token  POST http://host/token
-   → 之后所有请求带 Authorization: Bearer <access_token>
-```
-
-#### SDK 已经给好了大半（已逐个核实 API）
-
-| SDK 能力 | 位置 | 我们要写什么 |
-|---|---|---|
-| `FastMCP(auth=AuthSettings(issuer_url, resource_server_url), auth_server_provider=..., token_verifier=...)` | `mcp/server/fastmcp/server.py` | 传参即可 |
-| `create_auth_routes(provider, issuer_url, ...)` | `mcp/server/auth/routes.py` | **零代码**，自动生成 `/.well-known/oauth-authorization-server`、`/authorize`、`/token`、`/register`、`/revoke` |
-| `BearerAuthBackend` | `.../middleware/bearer_auth.py` | **零代码**，401 时自动带 `WWW-Authenticate: Bearer resource_metadata=...`（就是①的触发器） |
-| `OAuthAuthorizationServerProvider` 协议 | `mcp/server/auth/provider.py` | **要实现**：`register_client` / `authorize` / `exchange_authorization_code` / `load_access_token` / `get_client` / `revoke_token` 等 10 个方法 |
-| `AuthorizationParams.code_challenge`（**必填**） | 同上 | PKCE S256 校验（公开客户端无 secret，必须 PKCE） |
-| `AuthorizationCode.subject` / `AccessToken.subject` | 同上 | 资源所有者身份 → 同意页登录的用户 = token 的 `sub` |
-
-#### 我们必须自己写的四块
-
-1. **provider 实现**（`app/mcp/common/oauth_provider.py`，约 300 行）
-   - OAuth 客户端注册表（新表 `mcp_oauth_clients`）
-   - 授权码存储（短时，建议放 Redis 或新表；一次性、5 分钟过期）
-   - **PKCE S256 校验**（`exchange_authorization_code` 里比对 `code_verifier`）
-   - **redirect_uri 白名单校验**（必须比对客户端注册时登记的 redirect_uri —— 否则就是开放重定向漏洞）
-2. **同意页**（前端新页面 `/mcp/authorize`）
-   - 未登录 → 跳 TestMate 登录页（带 redirect 回跳）
-   - 登录后 → 显示「客户端名 + 请求的 scope（逐条）+ 有效期」→ [同意] / [拒绝]
-   - [同意] → 调后端生成 code → 302 回客户端 `redirect_uri`
-3. **token 验证入口**：一个 `TokenVerifier` **同时接受两种凭证** —— 静态 `tm_live_*` 与 OAuth access token
-4. **nginx 加 location**：OAuth 端点在**根路径**（`/.well-known/...`、`/authorize`、`/token`、`/register`、`/revoke`），
-   **不在 `/api/` 下**，而现有 nginx 只把 `/api/` 转发给后端 → 必须单独加（否则 404 落到前端静态页）
-
-#### 代价与取舍
-
-| 维度 | 静态个人令牌（§4.2） | OAuth 2.1 授权流 |
-|---|---|---|
-| 用户操作 | 复制令牌 → 粘进配置 | 点「授权」→ 浏览器同意 → 完事 |
-| 后端工作量 | 1 张表 + 签发/校验/吊销 | 再加 1 张表 + provider(300行) + 同意页 + 4 处 nginx |
-| 凭证生命周期 | 长期（90 天或永不过期） | 短期 access token + refresh |
-| 适用场景 | Qoder / curl / CI / 脚本 | 图形化客户端（Qoder 等） |
-
-**推荐：两条都留，一个验证入口。**
-`TokenVerifier` 同时认 `tm_live_*` 和 OAuth access token，权限判定（scope + 用户平台能力）与审计
-（`mcp_tool_calls`）完全共用 —— 用户选哪种凭证，能力边界一模一样。
-
-### 4.9 Qoder 鉴权怎么弄（官方文档结论）
-
-**来源**：QoderWork CN 官方文档「连接器」章节（阿里云帮助中心）
-`https://www.alibabacloud.com/help/tc/lingma/qoderwork-cn/user-guide/getting-started`
-
-官方原文要点：
-
-> **手动填写配置** → 服务器类型选 **Streamable HTTP / SSE** → 需要填写：
-> **Server Name**、**Server URL**、**Headers（可选）：认证头，如 `Authorization: Bearer your-token`**
->
-> **粘贴 JSON 配置**样例：
-> ```json
-> { "mcpServers": { "service-name": {
->     "type": "streamable-http",
->     "url": "https://mcp-server-url.example.com/sse",
->     "headers": { "Authorization": "Bearer your-token" } } } }
-> ```
->
-> 「Streamable HTTP 是 SSE 的更新、更强大的继任者。如果市场提供 Streamable HTTP URL，应优先选择该类型。」
-
-**⇒ 结论一：静态 Bearer 令牌就是正解**，鉴权不需要 OAuth：
-
-```
-Qoder「设置 → 连接器与 MCP → + → 手动填写配置」
-  服务器类型：Streamable HTTP / SSE
-  Server URL：http://<平台地址>/mcp/skill          （SSE 模式则填 /mcp/skill/sse）
-  Headers：Authorization: Bearer tm_live_xxxxxxxx
-```
-
-**⇒ 结论二：截图里那些「需要授权」与自定义 MCP 无关**。
-GitHub / 阿里云 DevOps / 七鱼查 / AMAP 是 **Qoder 内置市场**的连接器，各自带第三方 OAuth 端点，
-点「授权」是去它们各自的系统登录。而**用户自己添加的 MCP 服务器显示在「已安装 → Custom」分类下**，
-走的是「配置 + Headers」这条路，**没有授权按钮**。
-
-> 佐证：本机 `~/.qoder-cn/logs/qoder-qmind/qmind-mcp.log` 里能看到 Qoder 的 MCP 客户端
-> 有完整的鉴权状态机（`mcp.auth.state_applied` / `mcp.auth.logged_in` / `principalType:"user"`），
-> 那是 Qoder **自带连接器**（stdio 型）的登录态，与我们自己配的远程 server 是两条路。
-
-**⇒ 结论三：OAuth 从「可能必需」降级为「可选增强」**（§4.8 保留设计，列为 P3.5）。
-只有当将来想让用户「点一下就授权」而完全不用碰令牌时，才需要上那 300 行 provider + 同意页。
-
-#### ⚠️ 先决问题：Qoder 到底需不需要 OAuth？
-
-这是**目前唯一没有实测证据**的点。两种可能：
-
-- **Qoder 支持在 MCP 配置里带 `headers`** → 静态令牌直接可用，**完全不需要 OAuth**
-  （平台的连接器资产格式本来就带 `headers`，`app/core/mcp_config.py` 一直在校验这个结构）
-- **Qoder 不发自定义头 / 坚持走自己的授权流程** → 必须实现 OAuth
-
-这台机器上没有 Qoder 客户端，无法直接验证。**建议实现阶段第一步就做这个 spike**（约 30 分钟）：
-用设计好的静态令牌在 Qoder 里配一次，看是直接连上、还是弹授权框。
-这一步直接决定 OAuth 是 P0 还是 P2 —— 别在没验证前就把 300 行 provider 写完。
+普通用户看不到这一组，也不需要令牌 —— 他们在 Qoder 点「授权」就行。
 
 ---
 
@@ -668,12 +521,13 @@ v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`
 
 | 文件 | 改动 |
 |---|---|
-| `app/main.py` | 挂载 dispatcher + lifespan 里跑各域 session manager + 注册 `/api/v1/mcp` 路由（约 15 行） |
+| `app/main.py` | 挂载 dispatcher + lifespan 里跑各域 session manager + OAuth 端点 + 注册 `/api/v1/mcp` 路由 + seed 内置连接器（约 25 行） |
 | `app/models/__init__.py` | 导出新模型（1 行） |
+| `app/models/asset.py` | 加 `is_builtin` 字段（1 行 + 迁移） |
 | `requirements.txt` / `requirements.lock` | 加 `mcp==1.29.1` 及 4 个传递依赖 |
 | `frontend_web/nginx.conf` | 加 `location /mcp`（约 12 行） |
 | `deploy/native/units/nginx.conf.tpl` | 同上（裸机模板） |
-| 前端 | 新增 `views/McpTokens/index.vue` + `api/mcp.ts`（新文件）；改 `router/index.ts`（加路由）、`components/UserMenu.vue`（加菜单项）、`views/Settings/index.vue`（加 admin 管理组） |
+| 前端 | 新增 `views/McpAuthorize/index.vue`（同意页）+ `api/mcp.ts`（新文件）；改 `router/index.ts`（加路由）、`views/Capability/Catalog/index.vue` 与 `AssetCard.vue`（内置资产隐藏操作按钮 + 徽标）、`views/Settings/index.vue`（admin 管理组） |
 
 **其余全部是新增文件**：`app/mcp/**`、`app/api/mcp.py`、`app/models/mcp.py`、alembic 迁移、测试。
 
@@ -694,14 +548,24 @@ v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`
 
 ```
 Qoder
- │  POST /mcp/skill   Authorization: Bearer tm_live_xxx
+ │  ① POST /mcp/skill   (无 Authorization)
  ▼
-FastAPI 中间件 ── 验签/有效期/吊销 ──▶ request.state.principal
+FastAPI 中间件 ── 没 token ──▶ 401 + WWW-Authenticate: Bearer resource_metadata="…"
+ │                                （SDK 的 BearerAuthBackend 自动带）
+ ▼
+Qoder 发现授权服务器 → 显示「授权」按钮 → 浏览器打开
+ │  ② GET /authorize?client_id=…&code_challenge=…&state=…
+ ▼
+同意页 /mcp/authorize ── 登录 TestMate → [同意] → 建授权码 → 302 回 Qoder
+ ▼
+Qoder ③ POST /token  (code + PKCE verifier) ──▶ 换到 access token（JWT）
+ ▼
+Qoder ④ POST /mcp/skill   Authorization: Bearer <access_token>
  ▼
 dispatcher (/mcp → /skill) ──▶ FastMCP JSON-RPC: initialize → tools/list → tools/call
  ▼
 tool handler (app/mcp/skill/tools.py)
- │  取 principal → 校验 scope → 组装 McpContext
+ │  取 Principal（来自 token 的 sub/scopes）→ 校验 scope → 组装 McpContext
  ▼
 adapter (app/mcp/skill/adapter.py)
  ▼
@@ -721,13 +585,14 @@ Asset 模型 + git 工作区 + GitLab（真身）
 | 落点 | 记什么 | 用途 |
 |---|---|---|
 | `asset_audits`（既有） | 上架/更新/审核/下架等业务动作，`actor` = 绑定用户 | 谁动了哪个资产（**既有逻辑，无需改动**） |
-| `mcp_tool_calls`（新增） | `token_id` / `user_id` / `tool` / 入参摘要 / `ok` / `error_code` / `duration_ms` / `created_at` | 排查 agent 行为、配额、异常调用 |
+| `mcp_tool_calls`（新增） | `user_id` / `client_id` / `client_name` / `tool` / 入参摘要 / `ok` / `error_code` / `duration_ms` / `created_at` | 排查 agent 行为、配额、异常调用 |
 
 ```sql
 CREATE TABLE mcp_tool_calls (
   id          BIGINT      NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  token_id    BIGINT      NOT NULL,
-  user_id     BIGINT      NOT NULL,
+  user_id     BIGINT      NOT NULL,     -- 授权人（token 的 sub）
+  client_id   VARCHAR(128) NOT NULL DEFAULT '',   -- OAuth 客户端；静态令牌走 'static'
+  client_name VARCHAR(128) NOT NULL DEFAULT '',   -- 客户端名，审计时人看得懂
   tool        VARCHAR(64) NOT NULL,
   domain      VARCHAR(32) NOT NULL,
   args_summary TEXT       NOT NULL,     -- 截断到 2KB，不落全文
@@ -736,7 +601,7 @@ CREATE TABLE mcp_tool_calls (
   duration_ms INT         NOT NULL DEFAULT 0,
   created_at  DATETIME    NOT NULL
 );
-CREATE INDEX ix_mcp_calls_token ON mcp_tool_calls (token_id, created_at);
+CREATE INDEX ix_mcp_calls_user ON mcp_tool_calls (user_id, client_id, created_at);
 ```
 
 ---
@@ -745,10 +610,27 @@ CREATE INDEX ix_mcp_calls_token ON mcp_tool_calls (token_id, created_at);
 
 | 迁移 | 内容 |
 |---|---|
-| `0030_add_mcp_api_tokens.py` | `mcp_api_tokens` 表 + 索引 |
-| `0031_add_mcp_tool_calls.py` | `mcp_tool_calls` 表 + 索引 |
+| `0030_add_mcp_api_tokens.py` | `mcp_api_tokens` 表 + 索引（**平台接入令牌**，adminOnly，无个人令牌页） |
+| `0031_add_mcp_tool_calls.py` | `mcp_tool_calls` 表 + 索引（审计 + 配额计数） |
+| `0032_add_mcp_oauth_clients.py` | `mcp_oauth_clients` 表 + 索引（DCR 客户端注册表） |
+| `0033_add_asset_is_builtin.py` | `assets.is_builtin` 字段 + 索引 |
 
 ORM 模型放 `app/models/mcp.py`（新文件），随 `app/models/__init__.py` 导出。
+
+`mcp_oauth_clients` 结构：
+
+```sql
+CREATE TABLE mcp_oauth_clients (
+  id             BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  client_id      VARCHAR(128) NOT NULL,      -- DCR 下发的 client_id
+  client_secret_hash CHAR(64) NULL,          -- 公开客户端可为空 (PKCE)
+  client_name    VARCHAR(128) NOT NULL DEFAULT '',   -- 同意页上显示给用户看的名字
+  redirect_uris  JSON         NOT NULL,      -- 登记的回调地址 —— **redirect_uri 必须逐字比对**
+  created_at     DATETIME     NOT NULL,
+  last_used_at   DATETIME     NULL
+);
+CREATE UNIQUE INDEX uk_mcp_oauth_client ON mcp_oauth_clients (client_id);
+```
 
 ---
 
@@ -791,51 +673,51 @@ location /mcp {
 
 同进程，无需额外服务；`tmctl.sh` 的 Python 依赖安装走 `requirements.lock`，自动覆盖。
 
-### 10.4 自举：TestMate 自己作为一个连接器上架
+### 10.4 内置连接器：TestMate 自己上架在「插件·技能·连接」
 
-平台「连接器」资产的内容就是 `mcpServers` JSON，已由 `app/core/mcp_config.py` 校验。
-把 TestMate MCP 发布成一个连接器资产：
+平台的「连接器」资产的内容就是 `mcpServers` JSON，已由 `app/core/mcp_config.py` 校验。
+TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 
 ```json
 {
   "mcpServers": {
-    "testmate-skill": {
-      "url": "http://<平台地址>/mcp/skill",
-      "headers": {"Authorization": "Bearer tm_live_<用户自行签发的令牌>"}
+    "testmate": {
+      "type": "http",
+      "url": "http://<平台地址>/mcp/skill"
     }
   }
 }
 ```
 
-- Qoder 可从平台市场直接装这个连接器
-- **明文令牌不进公共市场资产**：市场里只放 url 与占位符，令牌由每个用户自己在设置页签发并填进本地连接器配置
-- 该连接器资产本身走平台的审核流上架（自举也守规矩）
+- **没有 headers** —— 鉴权全靠 OAuth 流程（§4.9）
+- **url 是动态生成的**（`{{BASE}}` 占位符 + `marketplace.public_base_url` 替换），
+  因为每套部署的对外地址不同，不能写死进市场仓库
+- 用户在市场里看到这张卡 → [复制连接器配置] → 粘进 Qoder → 点「授权」
+- 资产**不可删除 / 不可下架 / 不可编辑**（§4.8），也不进审核台
 
-### 10.5 前端：新增「MCP 令牌」页 + 设置页管理组
+### 10.5 前端：同意页 + 市场卡片 + 设置页管理组
 
-⚠️ **不能只做设置页**：设置页是 adminOnly，普通用户进不去，个人令牌必须有自己的页面。
+⚠️ **没有个人令牌页**（D9）：普通用户走 OAuth，在 Qoder 点「授权」即可，全程不碰令牌。
 
 | 文件 | 改动 | 说明 |
 |---|---|---|
-| `views/McpTokens/index.vue` | **新增页面** | 「我的 MCP 令牌」：列表 / 签发 / 吊销 / 复制明文 / **复制连接器配置（Streamable HTTP / SSE 两个按钮）** / 工具清单 |
-| `router/index.ts` | 加一条路由 | `{ path: 'mcp-tokens', meta: { requiresAuth: true, title: 'MCP 令牌' } }`——**不加 `adminOnly`** |
-| `components/UserMenu.vue` | 加菜单项 | 「MCP 令牌」，**所有登录用户可见**，放在「设置」条目旁边（设置仍只给 admin） |
-| `api/mcp.ts` | **新增** | 令牌 CRUD + `getConnectionConfig()`（拿可粘贴的 mcpServers JSON） |
-| `views/Settings/index.vue` | 加一个 admin 组 | 「🔌 MCP 接入」：看**全部**令牌 / 吊销别人的 / 开关自助签发（`mcp.tokens.self_service`）/ 配 `mcp.allowed_hosts` |
+| `views/McpAuthorize/index.vue` | **新增页面** | **同意页**：显示客户端名 + scope 勾选 + [同意]/[拒绝]；未登录先跳登录页 |
+| `router/index.ts` | 加路由 | `{ path: 'mcp/authorize', meta: { requiresAuth: false } }`——未登录要能进（自己跳登录） |
+| `views/Capability/Catalog/AssetCard.vue` | 改 | 内置资产加「平台内置」徽标，隐藏「更新/下架/删除」按钮 |
+| `views/Capability/Catalog/index.vue` | 改 | `canModify` 计算加 `&& !is_builtin`；连接器卡片加「复制连接器配置」按钮 |
+| `views/Settings/index.vue` | 加 admin 组 | 「🔌 MCP 接入」：签发**平台接入令牌**（CI/脚本/兜底）/ 配 `mcp.allowed_hosts` / 开关 OAuth 自助授权 |
+| `api/mcp.ts` | **新增** | 平台接入令牌 CRUD + `getConnectionConfig()` |
 
-后端新增 `app/api/mcp.py`（`/api/v1/mcp`）：
+后端新增 `app/api/mcp.py`（`/api/v1/mcp`，**仅 admin**）：
 
 | 端点 | 权限 | 说明 |
 |---|---|---|
-| `GET /tokens` | 登录 | 自己的令牌；admin 可带 `?all=1` 看全部 |
-| `POST /tokens` | 登录（自助）/ admin（代发） | 签发，**响应里带一次明文** |
-| `DELETE /tokens/{id}` | 本人 / admin | 吊销 |
-| `GET /connection-config?transport=http\|sse` | 登录 | 返回拼好的 **Qoder 格式** mcpServers JSON（`type` + `url` + `headers.Authorization`），供一键复制；`transport=http` → `type=streamable-http` + `/mcp/skill`；`transport=sse` → `type=sse` + `/mcp/skill/sse` |
-| `GET /tools` | 登录 | 本域工具清单（供页面展示） |
+| `GET /tokens` | admin | 平台接入令牌列表 |
+| `POST /tokens` | admin | 签发（响应带一次明文） |
+| `DELETE /tokens/{id}` | admin | 吊销 |
+| `GET /connection-config` | 登录 | 返回 Qoder 格式的 mcpServers JSON（`type` + `url`），供市场卡片复制 |
 
-另在「插件·技能·连接」页加一个入口，说明「agent 可通过 TestMate MCP 操作技能市场」并链到令牌页。
-
----
+> 内置连接器的配置复制**不需要令牌**，所以这个端点任何登录用户都能调（市场卡片要给普通用户用）。
 
 ## 11. 测试策略
 
@@ -861,8 +743,12 @@ location /mcp {
 2. `tools/list` → 返回 13 个工具，名称与 §5 一致
 3. `tools/call skill_search` → 能拿到结果
 4. 工具函数内能读到 `ctx.request_context.request.headers["authorization"]` 与 `.state.principal`
-5. 无 token / 坏 token → **401**；已吊销 token → **401**；已过期 token → **401**（错误码 `token_expired`）
-5b. 令牌配额用尽 → 工具**不执行**，返回 tool error `quota_exceeded`（**不是** HTTP 429）
+5. 无 token → **401** 且带 `WWW-Authenticate: Bearer resource_metadata="…"`（Qoder 据此弹「授权」）
+5b. OAuth 全流程：`POST /register` → `GET /authorize`（未登录 → 跳登录页）→ 同意 → 302 回客户端
+    → `POST /token`（code + PKCE verifier）→ 拿到 access token → 带 token 调 `tools/call` 成功
+5c. PKCE 错误 / redirect_uri 不在白名单 → 拒绝发码
+5d. 配额用尽 → 工具**不执行**，返回 tool error `quota_exceeded`（**不是** HTTP 429）
+5e. 静态平台接入令牌仍然可用（兜底通道）
 6. **路径断言**：`POST /mcp/skill` = 200（不是 307！）；`POST /mcp/nope` = 404
 7. **transport_security 断言**：Host 不在 allowed_hosts 时 = 421（证明防护生效，不是被绕过）
 
@@ -879,27 +765,30 @@ location /mcp {
 
 | 阶段 | 内容 | 可独立验收 |
 |---|---|---|
-| **S0** | **Qoder 真机联调**：用静态令牌在 Qoder 里配一次，确认能连上 / 走的是 SSE 还是 Streamable HTTP / 头有没有带上 | 打通客户端接入（§4.9 末尾） |
-| S1 | 令牌体系（表 + 模型 + 签发/校验/吊销 API + 配额 + 设置页） | 能签发、能验、能吊销、配额能拦 |
-| S2 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计） | 能握手、能 `tools/list`（空工具集也算通过） |
-| S3 | 技能域适配层 + 13 个工具 | §12.1 全部通过 |
-| S4 | 部署与分发（nginx / 锁文件 / allowed_hosts 设置 / 自举连接器 / 设置页入口） | Qoder 实连成功 |
+| **S0** | **Qoder 真机联调**：手写一个最小 OAuth 服务器（或先只测 401+metadata 发现）确认 Qoder 会不会自动弹「授权」 | 决定 OAuth 路线是否成立（§4.9 末尾） |
+| S1 | **OAuth 骨架**：provider 实现 + 5 个端点 + access token 签发/校验 | 能用 code 换到 token |
+| S2 | **同意页**（前端）+ scope 勾选 + 登录回跳 | 浏览器里能走完「登录→同意→回客户端」 |
+| S3 | **内置连接器资产**：`is_builtin` + seed + 不可删/不可下架/不可编辑 + url 动态生成 + 市场卡片「复制连接器配置」 | 市场里能看到这张卡，复制出来的配置 url 正确 |
+| S4 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计 / 配额） | 能握手、能 `tools/list`（空工具集也算通过） |
+| S5 | 技能域适配层 + 13 个工具 | §12.1 全部通过 |
+| S6 | 部署与分发（nginx 5 处 + 锁文件 + `mcp.allowed_hosts` 设置 + 设置页管理组） | 全链路打通 |
 
-S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令牌，S3 依赖 S2。S2/S3 可并行。
+S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 之间无强耦合，可并行。
 
 ### 12.1 验收项
 
-1. **普通测试工程师**（tester，非 admin）登录后进 `/mcp-tokens` → 自助签发 → 拿到 `tm_live_...` 明文（只此一次）
-1b. **viewer** 签发时 scope 只有 `market:read`（可选项被自动收敛）；tester 可勾到 `market:write`
-2. 令牌页点「复制连接器配置」→ 得到一段 mcpServers JSON（url 自动取 `marketplace.public_base_url`）→ 粘进 Qoder → 能连上
-3. `tools/list` 返回 13 个工具，名称与 §5 一致
-4. agent 能：搜到技能 → 读 `SKILL.md` → 取到包 URL 与 sha256 → 下载后 sha256 与 `skill_package_info` 一致
-5. agent 能上架新技能 → 返回 job_id → `skill_job_status` 显示 succeeded → GitLab 出现对应 commit → 审核台可见
-6. agent 上架后状态为 `pending`（`pending_action=new`）→ **人工在网页审核台**点通过 → 技能出现在市场列表
-7. 吊销令牌 → 下一个请求立刻 401（错误码 `token_revoked`）；过期令牌 → 401（`token_expired`）
-7b. 令牌当日调用数超 `daily_quota` → 工具不执行，返回 `quota_exceeded`（**不得**返回 429）
-8. **`git diff --stat` 证明既有后端业务文件改动 < 40 行**（`app/main.py` ~15 行 + `app/models/__init__.py` 1 行 + 2 个 nginx 各 ~12 行）；现有 40+ 测试全绿
-9. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
+1. **普通测试工程师**（tester，非 admin）在市场看到「TestMate 平台能力」连接器卡片（带「平台内置」徽标），点「复制连接器配置」→ 得到 Qoder 格式 JSON（`type` + `url`，**无 headers**）
+2. Qoder 导入该配置 → 探活收到 401 → **弹出「授权」按钮** → 点开浏览器 → 跳到 TestMate 登录页 → 登录 → 同意页显示客户端名与 scope → [同意] → 自动回到 Qoder
+3. 同意页：viewer 只能勾 `market:read`；tester 可勾到 `market:write`；admin 全部
+4. Qoder `tools/list` 返回 13 个工具，名称与 §5 一致
+5. agent 能：搜到技能 → 读 `SKILL.md` → 取到包 URL 与 sha256 → 下载后 sha256 与 `skill_package_info` 一致
+6. agent 能上架新技能 → 返回 job_id → `skill_job_status` 显示 succeeded → GitLab 出现对应 commit → 审核台可见
+7. agent 上架后状态为 `pending`（`pending_action=new`）→ **人工在网页审核台**点通过 → 技能出现在市场列表
+8. 配额用尽 → 工具不执行，返回 `quota_exceeded`（**不得**返回 429）
+9. **内置资产不可删**：管理员调 `DELETE /api/v1/assets/testmate` → 409「平台内置资产不可删除」；下架/编辑同样 409
+10. 内置资产的 url 随 `marketplace.public_base_url` 改而变（不用重启、不用改仓库）
+11. **既有后端业务文件改动 < 40 行**（`app/main.py` ~25 行 + `app/models/*` 2 行 + nginx 2 处）；现有 40+ 测试全绿
+12. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
 
 ---
 
@@ -924,11 +813,11 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 
 | 阶段 | 内容 | 增量成本 |
 |---|---|---|
-| **P0（本轮）** | 令牌体系 + MCP 公共层 + 技能域 13 工具 + 部署分发 | — |
+| **P0（本轮）** | OAuth 授权流 + 同意页 + 内置连接器资产 + MCP 公共层 + 技能域 13 工具 + 部署分发 | — |
 | P1 | 知识库域：`app/mcp/kb/` + `kb_search` / `kb_list_datasets` / `kb_read_document` / `kb_ingest` | 1 个目录 + 1 行注册 |
 | P2 | 软件库域：`app/mcp/software/` + `software_search` / `software_download` / `software_upload` | 1 个目录 + 1 行注册 |
 | P3 | 插件 / 连接器域：`plugin_*` / `connector_*`（复用同一批 adapter 函数，改 kind 即可） | 少量 tool spec |
-| **P3.5** | **OAuth 2.1 授权流**（可选增强，静态令牌已够用）：provider + 同意页 + 4 处 nginx；与静态令牌共用 `TokenVerifier` | 约 300 行后端 + 1 个前端页 |
+| P3.5 | 同意页增强：「以后都同意」（记住授权，不再每次问）、refresh token | 小 |
 | P4 | stdio transport 薄壳（本地 CLI agent 用） | 1 个薄壳进程 |
 | P5 | MCP Resources / Prompts（把 `SKILL.md` 暴露成 Resource） | SDK 原生支持 |
 
@@ -943,5 +832,6 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 | 是否做 SSE 兼容层 | **不做** —— 只按 MCP 默认协议（Streamable HTTP）实现 | 若 Qoder 实测不兼容，走 SDK 自带的 SSE transport（不自己写兼容代码） |
 | 每 token 调用配额 | **已定：默认 200 次/天**，0 = 不限 | 观察 `mcp_tool_calls` 的真实用量后可调 |
 | 是否抽 domain 层 | 本轮**不抽**（§6） | 出现 §6.5 的三个信号时再下沉 |
+| 个人令牌页 | **已定：不做**（D9）—— 普通用户只走 OAuth | 若 S0 证明 Qoder 不走 OAuth，再把静态令牌页补回来 |
 | **Qoder 是否需要 OAuth** | **已定：不需要** —— 官方文档确认支持 `Headers: Authorization: Bearer ...`（§4.9）；OAuth 降级 P3.5 | 若将来要「点一下就授权」的体验再上 |
-| OAuth 的同意页放哪 | 暂定 `/mcp/authorize`（独立页，非设置页——设置页是 adminOnly） | 真正做的时候再定 |
+| 内置连接器的 code | 约定 `testmate`（用户可见、可改） | 改的话要注意已装到 Qoder 的用户配置会失效 |
