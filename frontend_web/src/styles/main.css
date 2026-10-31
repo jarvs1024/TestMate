@@ -178,6 +178,42 @@ html, html[data-theme] {
 .kind-tab.mine-tab { font-weight: 600; }
 .kind-tab.mine-tab:not(.active) { border-color: rgba(59, 130, 246, 0.35); color: var(--primary-2); }
 
+/* ------------------------------------------------------------
+ * 顶部动作条 (.mk-actions) —— **插件·技能·连接** + **软件库** 共用
+ *
+ * ⚠️ 2026-10-31 (第十七轮): 用户要求「软件库顶部那行跟市场那行一样」——
+ *    以前市场那行是**白底圆角面板 + 粘顶**, 软件库那边是**裸的一行**,
+ *    两页看着完全不是一套东西.
+ *    现在全局一份, 两页共用同一个长相 (别再各写各的 —— 漂移过一次了).
+ *
+ * ⚠️ 粘顶的 `top` 相对的是**最近的滚动容器** (.tm-main), 不是视口 ——
+ *    别拿视口坐标去改它, 会粘错位置.
+ * ------------------------------------------------------------ */
+.mk-actions {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  background: var(--surface-soft); backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: 10px 14px; box-shadow: var(--shadow-sm);
+  position: sticky; top: 0; z-index: 4;
+}
+/* 右边那组控件 (搜索 / 排序 / 主操作) —— 靠 margin-left:auto 顶到右边 */
+.mk-actions .ma-right {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-left: auto; min-width: 0;
+}
+/* 搜索框 —— 两页共用同一个长相 */
+.mk-actions .search {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 6px 10px; border-radius: 8px; color: var(--ink-500);
+}
+.mk-actions .search input {
+  border: 0; outline: none; background: transparent;
+  font-size: 13px; color: var(--ink-900); font-family: inherit;
+  /* 固定 190px 窄屏会撑破工具条 → 改成可伸缩 */
+  flex: 1; min-width: 120px; width: auto;
+}
+
 /* ============================================================
  * 全局控件样式 (C 版 · 毛玻璃 + 简约 · 单层 focus ring)
  * ============================================================ */

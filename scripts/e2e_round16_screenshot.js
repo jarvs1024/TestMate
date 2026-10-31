@@ -142,6 +142,54 @@ async function shot(page, name, desc) {
     `bgImage=${swTop.countBgImage.slice(0, 60)} color=${swTop.countColor}`);
   await shot(page, 'software-merged-row', '软件库 · 顶部融合成一行 (分类 tab + 搜索/排序/上架)');
 
+  // ================= ①b 顶部面板跟市场页**同一个** =================
+  // ⚠️ 2026-10-31 (第十七轮): 用户要求「图1 的样式保持和图2 的样式一致」——
+  //    以前市场那行是白底圆角面板 + 粘顶, 软件库是裸的一行.
+  console.log('\n── ①b 顶部面板: 软件库 == 市场页 ──');
+  const panelOf = async (p) => {
+    await page.goto(BASE + p, { waitUntil: 'domcontentloaded' });
+    await sleep(2600);
+    return page.evaluate(() => {
+      const bar = document.querySelector('.mk-actions');
+      if (!bar) return { found: false };
+      const cs = getComputedStyle(bar);
+      const r = bar.getBoundingClientRect();
+      const search = bar.querySelector('.search');
+      const ss = search ? getComputedStyle(search) : null;
+      return {
+        found: true,
+        bg: cs.backgroundColor,
+        radius: cs.borderRadius,
+        border: cs.borderTopWidth,
+        shadow: cs.boxShadow,
+        position: cs.position,
+        top: cs.top,
+        zIndex: cs.zIndex,
+        padding: cs.padding,
+        height: Math.round(r.height),
+        searchRadius: ss ? ss.borderRadius : null,
+        searchPadding: ss ? ss.padding : null,
+      };
+    });
+  };
+  const swPanel = await panelOf('/software');
+  const mkPanel = await panelOf('/market');
+  report.panels = { software: swPanel, market: mkPanel };
+  check('软件库顶部是**白底圆角面板** (不是裸的一行)',
+    swPanel.found && swPanel.bg !== 'rgba(0, 0, 0, 0)' && swPanel.radius !== '0px'
+    && swPanel.shadow !== 'none', `bg=${swPanel.bg} radius=${swPanel.radius}`);
+  check('软件库顶部**粘顶** (跟市场页一样)', swPanel.position === 'sticky' && swPanel.top === '0px',
+    `${swPanel.position} top=${swPanel.top}`);
+  check('⚠️ 两页顶部面板的计算样式**完全一致** (同一份样式)',
+    swPanel.bg === mkPanel.bg && swPanel.radius === mkPanel.radius
+    && swPanel.border === mkPanel.border && swPanel.shadow === mkPanel.shadow
+    && swPanel.padding === mkPanel.padding && swPanel.height === mkPanel.height
+    && swPanel.searchRadius === mkPanel.searchRadius,
+    `软件库 ${swPanel.bg}/${swPanel.radius}/${swPanel.padding}/${swPanel.height}px vs 市场 ${mkPanel.bg}/${mkPanel.radius}/${mkPanel.padding}/${mkPanel.height}px`);
+  await page.goto(BASE + '/software', { waitUntil: 'domcontentloaded' });
+  await sleep(2400);
+  await shot(page, 'software-panel', '软件库 · 顶部面板 (跟市场页同一个白底面板)');
+
   // 悬停一个未选中的 tab → 浅灰底 (图2 的交互)
   await page.hover('.mk-actions .kind-tabs .kind-tab:not(.active)').catch(() => {});
   await sleep(400);

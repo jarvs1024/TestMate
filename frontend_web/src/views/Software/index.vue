@@ -409,33 +409,23 @@ onMounted(async () => {
 
 <style scoped>
 /* ⚠️ 版式与「插件·技能·连接」那一页保持一致 (mk-actions / kind-tabs / grid /
-   state) —— 两个页面要看起来是一套东西. */
-.software { display: flex; flex-direction: column; }
+   state) —— 两个页面要看起来是一套东西.
+   ⚠️ 2026-10-31 (第十七轮): 间距也统一了 —— 那边是 `.market { gap: 14px }`
+   让**子元素自己排**, 这边以前是每个元素各写各的 margin-bottom —— 改一处漏一处. */
+.software { display: flex; flex-direction: column; gap: 14px; }
 
-/* ⚠️ 2026-10-31 (第十六轮): 顶部**合并成一行** ——
-   左边分类 tab (.kind-tab, 样式在全局 main.css), 右边搜索/排序/上架.
-   flex-wrap 留着: 分类多的时候换行, 别把搜索框挤扁. */
-.mk-actions {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-.ma-right { display: flex; align-items: center; gap: 9px; flex: 1; flex-wrap: wrap; justify-content: flex-end; }
-
-.search {
-  display: flex; align-items: center; gap: 6px;
-  border: 1px solid var(--border); border-radius: var(--radius-btn);
-  padding: 5px 10px; background: var(--surface); color: var(--ink-500);
-  min-width: 220px; flex: 1; max-width: 340px;
-}
-.search input {
-  border: none; outline: none; background: transparent; flex: 1;
-  font-size: 12.5px; color: var(--ink-900); font-family: inherit;
-}
+/* ⚠️ 顶部动作条 (.mk-actions / .ma-right / .search) 2026-10-31 (第十七轮) 提到
+   styles/main.css (全局) —— 软件库这一行要跟「插件·技能·连接」那行**同一个面板**
+   (白底圆角 + 粘顶), 别再各写各的.
+   这里只留这个页面特有的: 排序下拉 (那边用的是「全部项目 · 热门」那个菜单按钮). */
 .sort-sel {
-  border: 1px solid var(--border); border-radius: var(--radius-btn);
-  padding: 5px 8px; font-size: 12px; color: var(--ink-700);
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 11px; font-size: 12.5px; color: var(--ink-700);
   background: var(--surface); font-family: inherit; cursor: pointer;
+  transition: all 0.15s ease;
 }
+.sort-sel:hover { border-color: var(--primary); color: var(--ink-900); }
 
 /* ⚠️ 分类读取失败 → 提示要占一整行 (它不是筛选维度之一, 是"读失败"的告警) */
 .filter-err { font-size: 11.5px; color: var(--warn); flex-basis: 100%; }
@@ -443,7 +433,7 @@ onMounted(async () => {
 .sw-note {
   padding: 8px 11px; border-radius: var(--radius-sm); font-size: 12px;
   background: rgba(245, 158, 11, 0.10); color: var(--warn);
-  border: 1px solid rgba(245, 158, 11, 0.25); margin-bottom: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.25);
 }
 .sw-note.err { background: rgba(239, 68, 68, 0.08); color: var(--err); border-color: rgba(239, 68, 68, .25); }
 .sw-note.ok { background: rgba(16, 185, 129, .08); color: var(--ink-700); border-color: rgba(16, 185, 129, .22); }
@@ -478,7 +468,7 @@ onMounted(async () => {
 }
 .reset:hover { border-color: var(--primary); color: var(--primary); }
 
-.foot-hint { margin-top: 12px; font-size: 11px; color: var(--ink-500); }
+.foot-hint { font-size: 11px; color: var(--ink-500); }
 .link-btn {
   border: none; background: none; color: var(--primary);
   font-size: 11px; cursor: pointer; font-family: inherit; padding: 0 4px;

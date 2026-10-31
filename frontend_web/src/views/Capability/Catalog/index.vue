@@ -1040,17 +1040,8 @@ onUnmounted(() => {
 .pi-go { color: var(--ink-500); font-size: 13px; align-self: center; }
 .pick-item:hover .pi-go { color: var(--primary); }
 
-.search {
-  display: flex; align-items: center; gap: 6px;
-  background: var(--surface); border: 1px solid var(--border);
-  padding: 6px 10px; border-radius: 8px; color: var(--ink-500);
-}
-.search input {
-  border: 0; outline: none; background: transparent;
-  font-size: 13px; color: var(--ink-900); font-family: inherit;
-  /* 固定 190px 窄屏会撑破工具条 → 改成可伸缩 */
-  flex: 1; min-width: 120px; width: auto;
-}
+/* ⚠️ 搜索框 (.search) 2026-10-31 (第十七轮) 提到 styles/main.css (全局) ——
+   软件库那边要**同一个长相**的搜索框, 别再各抄一份. */
 
 /* ===== 我提交但未过审的提示条 ===== */
 .my-review-bar {
@@ -1074,19 +1065,10 @@ onUnmounted(() => {
 }
 .mrb-btn:hover { background: var(--primary); color: #fff; }
 
-/* ===== 动作条: 返回 + 类型 Tab + 搜索 + 主操作 (一栏, 粘顶) ===== */
-.mk-actions {
-  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  background: var(--surface-soft); backdrop-filter: blur(8px);
-  border: 1px solid var(--border); border-radius: var(--radius-card);
-  padding: 10px 14px; box-shadow: var(--shadow-sm);
-  position: sticky; top: 0; z-index: 4;
-}
-.ma-right {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin-left: auto; min-width: 0;
-}
-
+/* ⚠️ 动作条 (.mk-actions / .ma-right / .search) 2026-10-31 (第十七轮) 提到
+   styles/main.css (全局) —— 软件库那边要用**同一个面板**, 别再各抄一份.
+   这里只留这个页面特有的东西. */
+.toolbar-right { display: flex; align-items: center; gap: 8px; }
 
 /* ===== 分类 + 项目/排序筛选 ===== */
 .mk-filters {

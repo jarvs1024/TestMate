@@ -142,3 +142,47 @@ describe('.kind-tab 样式是全局的 (两页共用一份)', () => {
     expect(src).not.toMatch(/^\.kind-tabs\s*\{/m);
   });
 });
+
+/**
+ * 顶部动作条跟「插件·技能·连接」那一页**同一个面板** (2026-10-31 第十七轮).
+ *
+ * ⚠️ 用户原话「图1 的样式保持和图2 的样式一致」——
+ *    以前市场那行是**白底圆角面板 + 粘顶**, 软件库是**裸的一行**, 两页不是一套东西.
+ */
+describe('顶部动作条: 跟市场页同一个面板', () => {
+  it('面板样式在全局 main.css 里 (两页共用一份)', () => {
+    const css = read('src/styles/main.css');
+    expect(css).toMatch(/^\.mk-actions\s*\{/m);
+    // 白底 + 圆角 + 边框 + 阴影 + 粘顶 —— 五件套缺一不可
+    expect(css).toMatch(/--surface-soft/);
+    expect(css).toMatch(/--radius-card/);
+    expect(css).toMatch(/--shadow-sm/);
+    expect(css).toMatch(/position:\s*sticky/);
+    // 右边那组控件靠 margin-left:auto 顶到右边
+    expect(css).toMatch(/^\.mk-actions \.ma-right\s*\{/m);
+    expect(css).toMatch(/margin-left:\s*auto/);
+    // 搜索框也是共用的
+    expect(css).toMatch(/^\.mk-actions \.search\s*\{/m);
+  });
+
+  it('市场页那份 scoped 副本删了 (白底面板/搜索框都走全局)', () => {
+    const src = read('src/views/Capability/Catalog/index.vue');
+    expect(src).not.toMatch(/^\.mk-actions\s*\{/m);
+    expect(src).not.toMatch(/^\.ma-right\s*\{/m);
+    expect(src).not.toMatch(/^\.search\s*\{/m);
+  });
+
+  it('软件库自己那份副本也删了 (走全局)', () => {
+    const src = read('src/views/Software/index.vue');
+    expect(src).not.toMatch(/^\.mk-actions\s*\{/m);
+    expect(src).not.toMatch(/^\.ma-right\s*\{/m);
+    expect(src).not.toMatch(/^\.search\s*\{/m);
+  });
+
+  it('两页的根容器都是「纵向 flex + 14px 间距」(别一个用 gap 一个用 margin)', () => {
+    const sw = read('src/views/Software/index.vue');
+    const mk = read('src/views/Capability/Catalog/index.vue');
+    expect(sw).toMatch(/\.software\s*\{[^}]*flex-direction:\s*column[^}]*gap:\s*14px/);
+    expect(mk).toMatch(/\.market\s*\{[^}]*flex-direction:\s*column[^}]*gap:\s*14px/);
+  });
+});
