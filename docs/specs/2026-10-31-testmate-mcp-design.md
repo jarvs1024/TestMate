@@ -8,7 +8,7 @@
 > 2. **每个域一个独立 MCP server**，各自挂载于 `/mcp/{域}`，工具集互不污染
 > 3. **对现有业务代码零改动**——不重构 `marketplace.py`，MCP 侧用薄适配层调用现有路由函数
 > 4. 补入 **spike 实测结论**（装配路径 / 鉴权取身份 / DNS rebinding 421 / lifespan 500）
-> 5. **首期不含审核工具**（14 → 13 个）：上架后由人工在网页审核台处理，agent 不自己盖章
+> 5. **首期不含审核工具**（14 → 14 个）：上架后由人工在网页审核台处理，agent 不自己盖章
 > 6. **transport 双端点**：Streamable HTTP（`POST /mcp/skill`）+ **SSE**（`GET /mcp/skill/sse` + `POST /mcp/skill/messages/`）
 >    —— Qoder CN 走 SSE 模式，SSE **必须做**
 > 7. **鉴权走 OAuth 2.1**：Qoder 点「授权」→ 浏览器打开平台 → 登录并同意 → 自动回到 Qoder。
@@ -18,6 +18,8 @@
 > 9. 设置页（adminOnly）保留「平台接入令牌」作为 **CI/脚本/兜底**通道，不做个人令牌页
 > 10. **授权不过期**：access token 不带 `exp`；安全靠 **grant 表**（授权记录）+ 「我的授权」页撤销
 > 11. **架构规范化**：新增 §3.6「扩展点清单」—— 每种扩展都有明确落点，且有三条不变量（鉴权/业务/审计各只有一处）
+> 12. **写操作与前端对齐**（§4.12）：MCP 上架/更新/下架 = 调**既有 REST 端点**，审核与通知链路完全复用；
+>     合法性检查按前端表单同口径；**有选择/可选项一律先问用户，不许猜**（13 → 14 个工具，多一个 `skill_edit_meta`）
 >
 > 状态：**设计已定，待实现**。
 
@@ -26,7 +28,7 @@
 ## 一句话
 
 在现有 FastAPI 后端挂一组 `/mcp/{域}` 端点（MCP Streamable HTTP），用**长期 API Token** 鉴权；
-每个业务域一个独立 MCP server，技能域首批暴露 **13 个工具**；
+每个业务域一个独立 MCP server，技能域首批暴露 **14 个工具**；
 **现有业务代码一行不改**，MCP 能力全部收敛在新目录 `app/mcp/` 内。
 
 ---
@@ -79,6 +81,7 @@
 | D7 | 首期是否含审核工具 | **不含** —— 上架后由人工在**网页审核台**处理 | 审核是人工运营动作，agent 不该自己给自己盖章；写入面更小、更安全 |
 | D8 | TestMate MCP 的市场身份 | **平台内置连接器**：上架在「插件·技能·连接」，**不可删除 / 不可下架 / 不可编辑**，url 动态生成 | 平台自己的核心能力不该被当成普通资产随便删掉；内置资产不该走审核流 |
 | D9 | 普通用户的接入路径 | **只有 OAuth 一条**：Qoder 点「授权」→ 浏览器登录同意 | 用户不需要碰令牌；个人令牌页没有存在价值 |
+| D10 | MCP 写操作的行为 | **与前端同链路**：同一套合法性校验、同一个 REST 端点、同一条审核与通知链；**且不替用户做主**（有选择/可选项一律先确认） | agent 走出的结果必须和人在网页上走出来的一致，否则用户会看到两套平台 |
 
 ---
 
@@ -104,7 +107,7 @@ backend_gateway/app/
 │   │   ├── __init__.py
 │   │   ├── server.py           #     本域 MCP server 实例（name=testmate-skill）
 │   │   ├── adapter.py          #     调 app/api/marketplace.py 的薄适配层
-│   │   └── tools.py            #     13 个工具定义（schema + handler）
+│   │   └── tools.py            #     14 个工具定义（schema + handler）
 │   │
 │   ├── software/               #   软件库域（预留：只有骨架，无工具）
 │   │   └── __init__.py
@@ -133,13 +136,13 @@ backend_gateway/app/
 
 | 域 | MCP server name | 端点 | 状态 |
 |---|---|---|---|
-| 技能·插件 | `testmate-skill` | `POST /mcp/skill` | **本轮实现**（13 工具） |
+| 技能·插件 | `testmate-skill` | `POST /mcp/skill` | **本轮实现**（14 工具） |
 | 软件库 | `testmate-software` | `POST /mcp/software` | 预留骨架 |
 | 知识库 | `testmate-kb` | `POST /mcp/kb` | 预留骨架 |
 
 **为什么要分域而不是一个大 server**：
 
-- agent 只需连自己要的域 —— 连 `testmate-skill` 就只看到 13 个技能工具，不会被知识库/软件库工具淹没
+- agent 只需连自己要的域 —— 连 `testmate-skill` 就只看到 14 个技能工具，不会被知识库/软件库工具淹没
 - 每个域的 `instructions` 可以写自己的引导语（如「这是技能市场：先 search 再 read_doc 再 publish」）
 - 域之间零耦合：新增域 = 新增 `app/mcp/<域>/` 目录 + 在 `common/server.py` 的注册表加一行
 - 权限可分域授权（`market:read` / `kb:read` / `software:read`），未来可给 agent 只读某个域的令牌
@@ -422,7 +425,7 @@ GET /authorize?client_id=…&redirect_uri=…&code_challenge=…&state=…&scope
 | scope | 覆盖的工具 | 能力 |
 |---|---|---|
 | `market:read` | 9 个只读工具 | 只读 |
-| `market:write` | `skill_publish` `skill_update` `skill_submit_review` `skill_unpublish_request` | 上架 / 更新 / 提交审核 / 申请下架 |
+| `market:write` | `skill_publish` `skill_update` `skill_edit_meta` `skill_submit_review` `skill_unpublish_request` | 上架 / 发新版本 / 只改信息 / 提交审核 / 申请下架 |
 
 **可选项上限 = 绑定用户的平台能力**（复用 `market_policy.can_publish`，与网页一致）：
 非发布者只能给 `market:read`；发布者（含默认的 tester）可给 `market:write`；admin 全部。
@@ -515,7 +518,7 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
 ④ 点「授权」→ 浏览器打开 http://<平台地址>/authorize?…
       → 登录 TestMate → 同意页（显示客户端名 + scope）→ [同意]
       → 302 回 Qoder → Qoder 用 code 换 access token
-⑤ 之后所有调用带 Authorization: Bearer <access_token> → 开始用 13 个工具
+⑤ 之后所有调用带 Authorization: Bearer <access_token> → 开始用 14 个工具
 ```
 
 **内置连接器资产里绝不放任何密钥**：它只是 `{url}`，鉴权全靠 OAuth 流程。
@@ -530,9 +533,112 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
 
 普通用户看不到这一组，也不需要令牌 —— 他们在 Qoder 点「授权」就行。
 
+### 4.12 MCP 写操作契约：与前端同链路、同校验、不替用户做主
+
+> 这是本设计里**最容易做歪**的一节。MCP 是另一条入口，但它必须让 agent 走出
+> **和人在网页上完全一样的流程**——同样的合法性检查、同样的审核、同样的通知。
+
+#### 4.12.1 流程对齐：MCP 只做「触发」，不重写流程
+
+**原则**：MCP 的写工具**不实现任何状态机、通知或审核逻辑**，它只做三件事：
+① 收集参数 → ② 校验 → ③ 调**既有的 REST 端点**。
+之后的落盘、git commit、审核流转、钉钉通知，全部由既有的后端逻辑完成。
+
+| MCP 工具 | 前端页面上对应哪一步 | 调的既有端点 | 之后的既有流程 | 通知（既有逻辑，不重写） |
+|---|---|---|---|---|
+| `skill_publish` | 「上传新资产」 | `POST /assets/upload` | 落盘 → git commit → 审核 | `pending_action=new` → **通知管理员审核** |
+| `skill_update` | 「发新版本」（带包） | `PUT /assets/{code}` | 落盘 → git commit → 审核 | `pending_action=update` → **通知管理员审核** |
+| `skill_edit_meta` | 「编辑信息」（只改简介/说明，**不动包**） | `PATCH /assets/{code}` | 审核 | `pending_action=meta` → 通知管理员审核；⚠️ **审核通过后不通知市场群**（包没变，发那条是假消息） |
+| `skill_submit_review` | 「重新提交审核」（被驳回后） | `POST /assets/{code}/submit` | 状态机 | 通知审核 |
+| `skill_unpublish_request` | 「下架」（填 code 确认） | `POST /assets/{code}/unpublish`（`confirm_code` 必填） | 审核开关**开** → 申请制（`unpublish_pending`）→ 管理员确认后**彻底删除**<br>审核开关**关** → 自助下架（文件保留，可重新上架） | 下架通知；管理员确认走「通过下架」通知 |
+| ——（**人工在网页审核台**） | 审核台 | `POST /assets/{code}/review` | 通过 → 在架 | **通知市场群**（`pending_action=meta` 时不通知） |
+| ——（**人工在网页审核台**） | 下架审核 | `POST /assets/{code}/unpublish-review` | 通过 → 彻底删除 | 通过下架通知 |
+
+**所以 MCP 侧不需要审核工具**（D7）：审核是人工动作，agent 不该自己盖章。
+MCP 上架一次 = 走完「提交 → 待审核 → 人工审核 → 通知市场群」整条链，
+其中只有第一步是 agent 做的。
+
+#### 4.12.2 合法性检查：与前端表单同口径
+
+前端的必填/格式规则写在 `frontend_web/src/views/Capability/Catalog/assetForm.ts` + `useAssetUploadForm.ts`（TS）。
+MCP 在后端，**不能直接复用 TS**，所以在后端补一份**权威实现**（新文件，不动既有代码）：
+
+```
+backend_gateway/app/core/market_rules.py     ← 新增：上架/更新前的合法性规则（单一真源）
+```
+
+它复用后端已有校验，并补齐前端特有的一条：
+
+| 检查项 | 规则 | 复用的后端能力 |
+|---|---|---|
+| 必填 | `code` / `name` / `summary` / `version`；技能还要有包（或 MCP 要有配置） | — |
+| **code 格式** | `dml-` 前缀 + 小写字母/数字/连字符分段（**仅新建时**要求前缀，与前端一致） | `market_catalog.CODE_RE`（后端**不**强制前缀）+ 前端同款前缀规则 |
+| **包名 = code** | 上传的包文件名必须等于 code | `market_naming.check_package_consistency`（前端 `validatePackageName` 的后端孪生） |
+| **version** | semver（可带 `-beta`） | `market_catalog.validate_version` |
+| **分类** | 必须在分类表里，自填的一律归「其它」 | `market_categories.is_valid` / `normalize` |
+| **项目** | 必须在项目列表里，否则归「通用」 | `market_projects.normalize` |
+| **包结构体检** | 有 `SKILL.md` / 无路径穿越 / 后缀白名单 / 无敏感文件 | **直接调既有 `POST /assets/preview-package`**（前端上架前用的就是它 —— 同一路径 = 同一结论） |
+
+> ⚠️ **MCP 侧比网页更严是故意的**：网页有前端兜底，MCP 没有前端，
+> agent 可能从任何地方拼参数。后端是**最终关卡**，必须自己把住。
+> 代价：多一份 `market_rules.py` 与前端 TS 规则平行。
+> **后续收敛**（可选，不在 P0）：把规则做成 `GET /api/v1/assets/rules`，前端改为拉取 → 单一真源。
+
+#### 4.12.3 「不猜」协议：agent 不能替用户做决定
+
+用户的要求：**有选择就让用户确认才进行，包含可选的也是需要用户确认。**
+落到工具行为上就是一条铁律：
+
+> **MCP 的写工具不做任何「默认值兜底决策」。**
+> 凡是需要人拍板的地方（必填缺失、有多个候选、可选项未确认），工具**拒绝执行**，
+> 返回结构化的「需要确认」信息，由 agent 回问用户，拿到答复后再带参调用。
+
+| 情形 | 工具行为 |
+|---|---|
+| 必填字段缺失 | **不执行** → 返回 `missing_fields`（字段名 + 一句话说明 + 该填什么） |
+| 分类/项目不在枚举里 | **不执行** → 返回 `valid_values`（枚举清单） |
+| 有多个合理候选（如 category 有 5 个、icon 有多个） | **不执行** → 返回 `choices`（候选项 + 各自含义） |
+| **可选字段**（`use_when` / `not_for` / `tags` / `keywords` / `permissions` / `install_steps` / `featured` / `icon` / `project`）调用方没给 | **不执行** → 返回 `optional_fields`（列出这些可选项 + 说明「留空 vs 填了会影响什么」），让用户确认要不要填、填什么 |
+| 校验不通过（code 非法、包名不符、版本号非法…） | **不执行** → 返回逐条问题清单 |
+
+返回体：
+
+```jsonc
+{
+  "ok": false,
+  "needs_confirmation": {
+    "missing_fields":  [{"field": "summary", "hint": "一句话简介 —— 会在市场卡片和钉钉通知里显示"}],
+    "choices":        {"category": ["质量保障", "效率工具", "流程规范", "管理协同", "其他"]},
+    "optional_fields":[{"field": "use_when", "hint": "什么场景该用它（留空则市场页不显示这一栏）"},
+                       {"field": "not_for",  "hint": "什么场景别用它（写清楚能避免误用）"}],
+    "problems":       ["包名 xxx.zip 与资产 code yyy 不一致 —— 平台要求两者相同"]
+  }
+}
+```
+
+**能不能直接弹窗问用户？** MCP 规范有 **elicitation**（`ctx.elicit()`），客户端支持时可以直接在工具里弹表单。
+但 elicitation 需要较新的客户端（Qoder 未必支持），所以：
+
+- **优先**：`ctx.elicit()`（客户端支持 → 用户当场选）
+- **降级**：返回上面的 `needs_confirmation` payload → agent 回问 → 再调用
+
+两种方式都遵守同一条铁律：**不猜**。
+
+#### 4.12.4 由此带来的工具清单变化
+
+多一个 **`skill_edit_meta`**（只改信息）。理由不是凑数，而是**两条流程的审核后行为不同**：
+
+| | `skill_update`（发新版本，带包） | `skill_edit_meta`（只改信息） |
+|---|---|---|
+| 端点 | `PUT /assets/{code}` | `PATCH /assets/{code}` |
+| `pending_action` | `update` | `meta` |
+| 审核通过后 | **通知市场群** | **不通知市场群**（包没变） |
+
+合成一个工具会让 agent 不知道自己踩的是哪条流程，agent 和人都容易误判 → 分开。
+
 ---
 
-## 5. 工具清单（v1 = 技能·插件域，13 个 = 9 读 + 4 写）
+## 5. 工具清单（v1 = 技能·插件域，14 个 = 9 读 + 5 写）
 
 全部挂在 `testmate-skill` server（端点 `/mcp/skill`）下，作用于 `kind=skill`。
 插件（`kind=plugin`）与连接器（`kind=mcp`）走同一批底层能力，后续加 `plugin_*` / `connector_*` 前缀即可复用。
@@ -551,12 +657,13 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
 | `skill_projects` | — | `[str]` | 合法项目枚举 |
 | `skill_job_status` | `job_id` | `{id, action, status, error, commit_sha, created_at, updated_at}` | 上架/更新任务状态（git push 结果） |
 
-### 5.2 写工具（scope: `market:write`，`read_only=false`）
+### 5.2 写工具（scope: `market:write`，`read_only=false`，5 个）
 
 | 工具 | 入参 | 出参 | 说明 |
 |---|---|---|---|
 | `skill_publish` | `code` `name` `version` `summary` `description?` `use_when?` `not_for?` `category?` `project?` `icon?` `tags?` `keywords?` `permissions?` `install_steps?` `bindings?` `files?` `package_base64?` | `{job_id, status, code}` | 上架新技能。`files`（路径→文本内容映射）与 `package_base64`（zip 的 base64）二选一，都不给则 `invalid_argument`。base64 包按 `{code}.zip` 还原（命名契约要求包名与 `code` 一致，`market_naming.check_package_consistency` 会校验） |
-| `skill_update` | `code` + 上述任意字段（**均可省略**）+ `files?` / `package_base64?` | `{job_id, status, code}` | 发新版本。**字段省略 = 保持现状**（读当前 DB 资产值合并，read-modify-write）；`version` 省略时自动 patch 当前版本末位（`x.y.z → x.y.(z+1)`），给了则必须与当前版本不同。给了 `files`/`package_base64` = **整体替换**包内容（不是增量合并），未给 = 包内容不变 |
+| `skill_update` | `code` + 上述任意字段（**均可省略**）+ `files?` / `package_base64?` | `{job_id, status, code}` | 发新版本（**带包**）。**字段省略 = 保持现状**（读当前 DB 资产值合并，read-modify-write）；`version` 省略时自动 patch 当前版本末位（`x.y.z → x.y.(z+1)`），给了则必须与当前版本不同。给了 `files`/`package_base64` = **整体替换**包内容（不是增量合并），未给 = 包内容不变 → ⚠️ 未给包时**不算发新版本**，应当改用 `skill_edit_meta` |
+| `skill_edit_meta` | `code` + `name?` `summary?` `description?` `use_when?` `not_for?` `category?` `project?` `icon?` `tags?` `keywords?` `featured?` | `{job_id, status, code}` | **只改信息，不动包** → 审核后**不通知市场群**（`pending_action=meta`）。与 `skill_update` 分开是因为两条流程的审核后行为不同（§4.12.4） |
 | `skill_submit_review` | `code` | `{code, publish_status, pending_action}` | 提交审核 |
 | `skill_unpublish_request` | `code` `reason?` | `{code, publish_status}` | 申请下架（转 `unpublish_pending`，由管理员在网页确认；确认后资产才被彻底删除） |
 
@@ -571,6 +678,9 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
    （admin 令牌在 `marketplace.review.admin_self_approve=true`（默认）时上传即上架——这是平台既有口径，MCP 不改。）
 3. **zip 字节不进 tool 返回**：包体可能有 MB 级，塞进 JSON-RPC 响应会撑爆上下文。
    `skill_package_info` 给 URL + sha256，agent 自取；文本内容走 `skill_read_file`。
+4. **写操作与前端同链路、且不替用户做主**：MCP 的写工具只做「收集 → 校验 → 调既有端点」，
+   状态机/审核/通知全部复用既有逻辑（§4.12）；必填缺失、有歧义、可选项未确认时**拒绝执行**，
+   返回 `needs_confirmation` 让 agent 回问用户 —— **不许猜**。
 
 ### 5.4 结果形态
 
@@ -642,6 +752,7 @@ v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`
 | `app/main.py` | 挂载 dispatcher + lifespan 里跑各域 session manager + OAuth 端点 + 注册 `/api/v1/mcp` 路由 + seed 内置连接器（约 25 行） |
 | `app/models/__init__.py` | 导出新模型（1 行） |
 | `app/models/asset.py` | 加 `is_builtin` 字段（1 行 + 迁移） |
+| `app/core/market_rules.py` | **新文件**：上架/更新前的合法性规则（复用既有校验，不改既有模块） |
 | `requirements.txt` / `requirements.lock` | 加 `mcp==1.29.1` 及 4 个传递依赖 |
 | `frontend_web/nginx.conf` | 加 `location /mcp`（约 12 行） |
 | `deploy/native/units/nginx.conf.tpl` | 同上（裸机模板） |
@@ -862,7 +973,7 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 用例：
 
 1. `initialize` → 拿到 serverInfo.name == `testmate-skill`
-2. `tools/list` → 返回 13 个工具，名称与 §5 一致
+2. `tools/list` → 返回 14 个工具，名称与 §5 一致
 3. `tools/call skill_search` → 能拿到结果
 4. 工具函数内能读到 `ctx.request_context.request.headers["authorization"]` 与 `.state.principal`
 5. 无 token → **401** 且带 `WWW-Authenticate: Bearer resource_metadata="…"`（Qoder 据此弹「授权」）
@@ -871,6 +982,12 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 5c. PKCE 错误 / redirect_uri 不在白名单 → 拒绝发码
 5d. 配额用尽 → 工具**不执行**，返回 tool error `quota_exceeded`（**不是** HTTP 429）
 5f. **grant 撤销后** → 同一个 access token 再调 → **401**（证明「不过期」不等于「不可回收」）
+5g. **流程对齐**：MCP `skill_publish` 成功后 → 资产 `publish_status=pending` / `pending_action=new`
+    → 钉钉收到「提交了新资产, 等管理员审核」→ 人工在页面审核通过 → **市场群收到上架通知**
+    → `pending_action=meta` 的资产审核通过 → **市场群不收到通知**（断言通知事件差异）
+5h. **不猜协议**：缺 `summary` 调用 `skill_publish` → **不产生任何副作用**（DB 无新资产、无通知），
+    返回 `needs_confirmation.missing_fields`
+5i. `skill_unpublish_request` 后 → `publish_status=unpublish_pending`；人工在页面确认 → 资产被彻底删除
 5e. 静态平台接入令牌仍然可用（兜底通道）
 6. **路径断言**：`POST /mcp/skill` = 200（不是 307！）；`POST /mcp/nope` = 404
 7. **transport_security 断言**：Host 不在 allowed_hosts 时 = 421（证明防护生效，不是被绕过）
@@ -893,7 +1010,7 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 | S2 | **同意页 + grant 表**（前端）+ scope 勾选 + 登录回跳 + 「我的授权」页（撤销） | 浏览器里能走完「登录→同意→回客户端」，且撤销后 token 立刻失效 |
 | S3 | **内置连接器资产**：`is_builtin` + seed + 不可删/不可下架/不可编辑 + url 动态生成 + 市场卡片「复制连接器配置」 | 市场里能看到这张卡，复制出来的配置 url 正确 |
 | S4 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计 / 配额） | 能握手、能 `tools/list`（空工具集也算通过） |
-| S5 | 技能域适配层 + 13 个工具 | §12.1 全部通过 |
+| S5 | 技能域适配层 + 14 个工具 + `market_rules.py` 合法性校验 + 「不猜」协议 | §12.1 全部通过（尤其流程对齐与不猜） |
 | S6 | 部署与分发（nginx 5 处 + 锁文件 + `mcp.allowed_hosts` 设置 + 设置页管理组） | 全链路打通 |
 
 S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 之间无强耦合，可并行。
@@ -903,7 +1020,7 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 1. **普通测试工程师**（tester，非 admin）在市场看到「TestMate 平台能力」连接器卡片（带「平台内置」徽标），点「复制连接器配置」→ 得到 Qoder 格式 JSON（`type` + `url`，**无 headers**）
 2. Qoder 导入该配置 → 探活收到 401 → **弹出「授权」按钮** → 点开浏览器 → 跳到 TestMate 登录页 → 登录 → 同意页显示客户端名与 scope → [同意] → 自动回到 Qoder
 3. 同意页：viewer 只能勾 `market:read`；tester 可勾到 `market:write`；admin 全部
-4. Qoder `tools/list` 返回 13 个工具，名称与 §5 一致
+4. Qoder `tools/list` 返回 14 个工具，名称与 §5 一致
 5. agent 能：搜到技能 → 读 `SKILL.md` → 取到包 URL 与 sha256 → 下载后 sha256 与 `skill_package_info` 一致
 6. agent 能上架新技能 → 返回 job_id → `skill_job_status` 显示 succeeded → GitLab 出现对应 commit → 审核台可见
 7. agent 上架后状态为 `pending`（`pending_action=new`）→ **人工在网页审核台**点通过 → 技能出现在市场列表
@@ -913,7 +1030,10 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 9. **内置资产不可删**：管理员调 `DELETE /api/v1/assets/testmate` → 409「平台内置资产不可删除」；下架/编辑同样 409
 10. 内置资产的 url 随 `marketplace.public_base_url` 改而变（不用重启、不用改仓库）
 11. **既有后端业务文件改动 < 40 行**（`app/main.py` ~25 行 + `app/models/*` 2 行 + nginx 2 处）；现有 40+ 测试全绿
-12. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
+12. **流程与前端一致**：MCP 上架 → 待审核 + 通知管理员 → 人工在页面审核通过 → **市场群收到上架通知**；
+    只改信息（`skill_edit_meta`）→ 待审核 + 通知管理员 → 审核通过 → **市场群收不到通知**
+13. **不猜协议**：缺必填 / 有歧义 / 可选项未确认时，MCP 写工具**拒绝执行且无任何副作用**，返回 `needs_confirmation`
+14. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
 
 ---
 
@@ -938,7 +1058,7 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 
 | 阶段 | 内容 | 增量成本 |
 |---|---|---|
-| **P0（本轮）** | OAuth 授权流 + 同意页 + 内置连接器资产 + MCP 公共层 + 技能域 13 工具 + 部署分发 | — |
+| **P0（本轮）** | OAuth 授权流 + 同意页 + 内置连接器资产 + MCP 公共层 + 技能域 14 工具 + 部署分发 | — |
 | P1 | 知识库域：`app/mcp/kb/` + `kb_search` / `kb_list_datasets` / `kb_read_document` / `kb_ingest` | 1 个目录 + 1 行注册 |
 | P2 | 软件库域：`app/mcp/software/` + `software_search` / `software_download` / `software_upload` | 1 个目录 + 1 行注册 |
 | P3 | 插件 / 连接器域：`plugin_*` / `connector_*`（复用同一批 adapter 函数，改 kind 即可） | 少量 tool spec |
