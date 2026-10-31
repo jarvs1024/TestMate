@@ -12,7 +12,9 @@
  *   ③ **软件库「全部 / 👤 我的」** —— 以前选「我的」后点「全部」**点不亮**
  *      (要连点两次), 而且「我的」后面没数字, 「全部 N」还会跟着变成"我的"数量.
  *      现在一次点击就切回, 两个 tab 各带**恒定**计数.
- *   ④ **账号可删除** —— 用户管理里现在有「删除」按钮 (带二次确认).
+ *   ④ **账号可删除, 但管理员账号不许删** —— 用户管理里现在有「删除」按钮 (带二次确认:
+ *      必须手打账号名)。⚠️ 2026-10-31 用户明确要求「禁止删管理员」→ 管理员行的
+ *      删除按钮必须是**禁用**的, 普通账号的可删。
  *   ⑤ **知识库「新建数据集」按钮**跟软件库「上架软件」**同一个 class**.
  *
  * ⚠️ 本脚本**不写生产数据** —— 账号删除只验证"按钮在 + 确认框会弹", 不真的删.
@@ -270,26 +272,36 @@ async function shot(page, name, desc) {
   check('设置页目录里能点到「👥 用户」分区', pickedUsers, '');
   const userOps = await page.evaluate(() => {
     const list = document.querySelector('#sec-users');
-    if (!list) return { found: false, buttons: [] };
-    const li = list.querySelector('.user-list li');
-    if (!li) return { found: true, buttons: [] };
-    return {
-      found: true,
-      buttons: [...li.querySelectorAll('.u-ops button')].map((b) => ({
-        text: (b.textContent || '').trim(),
-        cls: b.className,
-        disabled: b.disabled,
-      })),
-    };
+    if (!list) return { found: false, rows: [] };
+    const rows = [...list.querySelectorAll('.user-list li')].map((li) => ({
+      username: (li.querySelector('.u-name code')?.textContent || '').trim(),
+      role: (li.querySelector('.u-name .badge')?.textContent || '').trim(),
+      deleteBtn: (() => {
+        const b = [...li.querySelectorAll('.u-ops button')].find((x) => (x.textContent || '').trim() === '删除');
+        if (!b) return null;
+        return { cls: b.className, disabled: b.disabled, title: b.title || '' };
+      })(),
+    }));
+    return { found: true, rows };
   });
   report.userOps = userOps;
   check('设置页有用户管理区块', userOps.found, JSON.stringify(userOps).slice(0, 200));
-  check('账号行有「删除」按钮',
-    userOps.buttons.some((b) => b.text.includes('删除')), userOps.buttons.map((b) => b.text).join(' | '));
+  const delRows = (userOps.rows || []).filter((r) => r.deleteBtn);
+  check('每个账号行都有「删除」按钮', delRows.length === (userOps.rows || []).length,
+    `${delRows.length}/${(userOps.rows || []).length}`);
   check('「删除」按钮是危险色 (danger class)',
-    userOps.buttons.some((b) => b.text.includes('删除') && /danger/.test(b.cls)),
-    userOps.buttons.map((b) => `${b.text}:${b.cls}`).join(' | '));
-  await shot(page, 'user-delete', '设置页 · 用户管理 (有「删除」按钮)');
+    delRows.length > 0 && delRows.every((r) => /danger/.test(r.deleteBtn.cls)),
+    delRows.map((r) => `${r.username}:${r.deleteBtn.cls}`).join(' | '));
+  // ⚠️ 管理员账号**一律不许删** (2026-10-31 用户明确要求) → 按钮必须禁用
+  const adminRows = delRows.filter((r) => r.role.includes('管理员'));
+  const otherRows = delRows.filter((r) => !r.role.includes('管理员'));
+  check('⚠️ 管理员账号的「删除」按钮**禁用**',
+    adminRows.length === 0 || adminRows.every((r) => r.deleteBtn.disabled),
+    adminRows.map((r) => `${r.username}:${r.deleteBtn.disabled}`).join(' | '));
+  check('⚠️ 非管理员账号的「删除」按钮可用',
+    otherRows.length === 0 || otherRows.every((r) => !r.deleteBtn.disabled),
+    otherRows.map((r) => `${r.username}:${r.deleteBtn.disabled}`).join(' | '));
+  await shot(page, 'user-delete', '设置页 · 用户管理 (管理员不可删 / 普通号可删)');
 
   // ================= ⑤ 知识库按钮对齐 =================
   console.log('\n── ⑤ 知识库「新建数据集」== 软件库「上架软件」 ──');

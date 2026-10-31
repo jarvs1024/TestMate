@@ -112,10 +112,13 @@
             </button>
             <!-- ⚠️ 删除 = **不可逆**: 账号没了, 名下资产的作者名会留着, 但再也没法以这个账号身份操作.
                所以按钮单独用 .ghost.danger (红字红框) 跟中性的停用/启用区分开.
-               「当前登录的这个账号」直接禁用 —— 后端也会拦 (400), 但让人白点一次没意义. -->
+               ⚠️ **管理员账号一律不许删** (2026-10-31 用户明确要求) ——
+                  管理员是"谁在管这个系统"的凭据, 删掉等于永久放弃一个管理入口.
+                  要下线一个管理员 → 走「停用」(可逆) 或把角色改成「测试者」.
+               「当前登录的这个账号」也直接禁用 —— 后端也会拦 (400), 但让人白点一次没意义. -->
             <button class="ghost danger"
-                    :disabled="busy || isSelf(u)"
-                    :title="isSelf(u) ? '不能删除当前登录的账号' : '删除账号 (不可恢复)'"
+                    :disabled="busy || isSelf(u) || u.role === 'admin'"
+                    :title="deleteTitle(u)"
                     @click="onDelete(u)">删除</button>
           </div>
         </li>
@@ -139,6 +142,8 @@
  *     (还看得出是谁交的), 但以后没法再以这个账号身份操作 (改不了、发不了新版本).
  *     所以删除必须走**加强的二次确认** —— 不只是弹个框点「确定」,
  *     而是要把**账号名原样敲出来**才放行 (跟知识库「删数据集」一个口径).
+ *   · ⚠️ **管理员账号一律不许删** —— 管理员是"谁在管这个系统"的凭据,
+ *     删掉等于永久放弃一个管理入口. 要下线一个管理员 → 「停用」或改成「测试者」。
  */
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
@@ -180,14 +185,30 @@ const currentUser = computed(() => userStore?.user ?? null);
  *   · id 对得上 → 同一个人;
  *   · 用户名对得上 —— 短名 ('admin') 和全邮箱 ('zhangsan@twsc.com.cn') 互认.
  *     只认一种的话会出现"后端放行、前端不敢给按钮"的拧巴状态 (见 utils/author.ts).
- * ⚠️ 别的**管理员**账号不算自己 —— 删别的管理员是允许的 (只要系统还剩别的可用管理员),
- *    这条护栏由后端兜底, 前端不越权猜.
  */
 function isSelf(u: ManagedUser): boolean {
   const me = currentUser.value;
   if (!me) return false;
   if (typeof me.id === 'number' && me.id > 0 && u.id === me.id) return true;
   return isAuthor(u.username, me.username);
+}
+
+/**
+ * 「删除」按钮的 tooltip —— 把**为什么不能删**说清楚 (别只写个灰按钮让人猜).
+ *
+ * ⚠️ 三种不能删的情况:
+ *   ① **管理员账号** —— 一律不许删 (2026-10-31 用户明确要求「禁止删管理员」).
+ *      管理员是"谁在管这个系统"的凭据, 删掉等于永久放弃一个管理入口。
+ *      要下线一个管理员 → 「停用」(可逆) 或把角色改成「测试者」;
+ *   ② 当前登录的账号 —— 后端也拦, 别让人白点;
+ *   ③ 其余情况 (普通账号) —— 可以删, 但不可逆。
+ */
+function deleteTitle(u: ManagedUser): string {
+  if (u.role === 'admin') {
+    return '管理员账号不能删除 —— 请改用「停用」或把角色改成「测试者」';
+  }
+  if (isSelf(u)) return '不能删除当前登录的账号';
+  return '删除账号 (不可恢复)';
 }
 
 /**
@@ -360,6 +381,10 @@ async function onToggleActive(u: ManagedUser) {
  */
 async function onDelete(u: ManagedUser) {
   if (busy.value) return;
+  if (u.role === 'admin') {
+    ElMessage.warning('管理员账号不能删除 —— 请改用「停用」或把角色改成「测试者」');
+    return;
+  }
   if (isSelf(u)) {
     ElMessage.warning('不能删除当前登录的账号');
     return;

@@ -11,6 +11,7 @@
  *   ⑤ 选「管理员」角色时**不显示** @twsc.com.cn 后缀 (管理员是账号名, 不是邮箱);
  *   ⑥ 管理员账号没设密码 → 禁用「创建账号」, 错误**贴在密码框下面** (字段级).
  *   ⑦ 删除账号 (2026-10-31) → 不可逆, 必须**手打账号名**确认并把后果写清楚;
+ *      ⚠️ **管理员账号一律不许删** (用户明确要求「禁止删管理员」);
  *      **当前登录的账号不能删** (按钮禁用), 别的管理员账号照常能删.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -320,20 +321,48 @@ describe('账号管理 · 删除账号', () => {
     w.unmount();
   });
 
-  it('当前登录的账号 → 「删除」禁用; 别的管理员账号照常能删', async () => {
-    // ⚠️ 短名 admin 登录, 列表里既有别的管理员 (opsadmin) 也有自己 (admin)
+  it('当前登录的账号 → 「删除」禁用; 管理员账号 → 一律禁用 (禁止删管理员)', async () => {
+    // ⚠️ 2026-10-31 用户明确要求「禁止删管理员」——
+    //    管理员是"谁在管这个系统"的凭据, 删掉等于永久放弃一个管理入口。
+    //    要下线一个管理员 → 「停用」(可逆) 或把角色改成「测试者」。
     const w = await mountComp(
       [
         user({ id: 2, username: 'opsadmin', role: 'admin', password_required: true }),
         user({ id: 3, username: 'admin', role: 'admin', password_required: true }),
+        user({ id: 4, username: 'zhangsan@twsc.com.cn', role: 'tester' }),
       ],
       { id: 99, username: 'admin', role: 'admin' },
     );
-    // 别的管理员 → 能删 (后端只保证"至少留一个可用管理员")
-    expect((deleteBtn(w, 0).element as HTMLButtonElement).disabled).toBe(false);
-    // 自己 → 禁用 (后端也会拦 400, 但别让人白点一次)
+    // 管理员 (别的) → 禁用
+    expect((deleteBtn(w, 0).element as HTMLButtonElement).disabled).toBe(true);
+    expect(deleteBtn(w, 0).attributes('title')).toContain('管理员账号不能删除');
+    // 自己 (也是管理员) → 禁用
     expect((deleteBtn(w, 1).element as HTMLButtonElement).disabled).toBe(true);
-    expect(deleteBtn(w, 1).attributes('title')).toContain('不能删除当前登录的账号');
+    expect(deleteBtn(w, 1).attributes('title')).toContain('管理员账号不能删除');
+    // 普通账号 → 能删
+    expect((deleteBtn(w, 2).element as HTMLButtonElement).disabled).toBe(false);
+    expect(deleteBtn(w, 2).attributes('title')).toContain('不可恢复');
+    w.unmount();
+  });
+
+  it('管理员账号即使点得动, 也不发请求 (前端也拦一道)', async () => {
+    const spy = vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: 'opsadmin' } as any);
+    const warnSpy = vi.spyOn(ElMessage, 'warning').mockImplementation((() => undefined) as any);
+    const w = await mountComp(
+      [user({ id: 2, username: 'opsadmin', role: 'admin', password_required: true })],
+      { id: 99, username: 'admin', role: 'admin' },
+    );
+    // ⚠️ 按钮是禁用的, 但组件方法本身也得自守一道 (别的入口可能调它)
+    await (w.vm as any).onDelete({
+      id: 2, username: 'opsadmin', role: 'admin',
+      is_active: true, password_required: true, created_at: '2026-01-01T00:00:00Z',
+    });
+    await flushPromises();
+    expect(spy).not.toHaveBeenCalled();
+    expect(api.deleteUser).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    spy.mockRestore();
+    warnSpy.mockRestore();
     w.unmount();
   });
 });

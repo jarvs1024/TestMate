@@ -209,67 +209,43 @@ async def test_admin_can_delete_normal_user(client, admin_user):
         assert await s.get(User, uid) is None, "账号应该真被删掉了"
 
 
-async def test_admin_can_delete_another_admin(client, admin_user):
-    """⚠️ 管理员账号**也是可以删掉的** (用户明确要求) —— 只要系统里还剩一个管理员."""
+async def test_admin_account_cannot_be_deleted(client, admin_user):
+    """⚠️ **管理员账号一律不许删** (2026-10-31 用户明确要求「禁止删管理员」).
+
+    以前只挡了"不能删最后一个管理员" —— 那意味着**两个管理员时是可以删掉一个的**,
+    用户不要这个口子: 管理员要么留、要么**停用**(可逆), 不给"删"。
+    """
     other_id = await _make_user("opsadmin2", role=UserRole.admin)
 
     r = await client.delete(f"/api/v1/auth/users/{other_id}", headers=_auth(admin_user))
-    assert r.status_code == 204, r.text
+    assert r.status_code == 400, r.text
+    assert "管理员" in r.json()["detail"]
 
+    # 账号还在
     async with AsyncSessionLocal() as s:
-        assert await s.get(User, other_id) is None
+        u = await s.get(User, other_id)
+        assert u is not None, "管理员账号不该被删掉"
+        assert u.role == UserRole.admin
+
+
+async def test_inactive_admin_account_cannot_be_deleted(client, admin_user):
+    """停用了的管理员**同样**不能删 —— "停用"才是下线管理员的正确姿势."""
+    other_id = await _make_user("opsadmin3", role=UserRole.admin)
+    async with AsyncSessionLocal() as s:
+        u = await s.get(User, other_id)
+        u.is_active = False
+        await s.commit()
+
+    r = await client.delete(f"/api/v1/auth/users/{other_id}", headers=_auth(admin_user))
+    assert r.status_code == 400, r.text
+    async with AsyncSessionLocal() as s:
+        assert await s.get(User, other_id) is not None
 
 
 async def test_cannot_delete_self(client, admin_user):
     r = await client.delete(f"/api/v1/auth/users/{admin_user['id']}", headers=_auth(admin_user))
     assert r.status_code == 400, r.text
-    assert "当前登录" in r.json()["detail"]
-
-
-async def test_cannot_delete_last_admin_account():
-    """护栏 (纵深防御): 删到"系统里一个管理员都不剩"时必须拦下.
-
-    ⚠️ 走 HTTP 路径其实**够不到**这条 —— 能调删除接口的人自己就是管理员,
-       他删别人时自己还留着. 但"删完之后一个管理员都不剩"是个不该发生的状态,
-       所以底层护栏要独立兜住 (万一以后有人加了别的删除入口).
-    """
-    from fastapi import HTTPException
-
-    from app.api.auth import _guard_last_admin_account
-
-    only_id = await _make_user("soloadmin", role=UserRole.admin)
-
-    # 系统里只剩它一个管理员 → 拦
-    async with AsyncSessionLocal() as s:
-        with pytest.raises(HTTPException) as ei:
-            await _guard_last_admin_account(s, only_id)
-    assert ei.value.status_code == 400
-    assert "管理员" in ei.value.detail
-
-    # 再加一个管理员 → 放行
-    await _make_user("secondadmin", role=UserRole.admin)
-    async with AsyncSessionLocal() as s:
-        await _guard_last_admin_account(s, only_id)
-
-
-async def test_last_admin_guard_also_checks_usable_admin():
-    """剩下的管理员**全停用**着 → 也得拦 (删完就没人能登录接管账号管理)."""
-    from fastapi import HTTPException
-
-    from app.api.auth import _guard_last_admin_account
-
-    target_id = await _make_user("targetadmin", role=UserRole.admin)
-    spare_id = await _make_user("spareadmin", role=UserRole.admin)
-    async with AsyncSessionLocal() as s:
-        u = await s.get(User, spare_id)
-        u.is_active = False
-        await s.commit()
-
-    async with AsyncSessionLocal() as s:
-        with pytest.raises(HTTPException) as ei:
-            await _guard_last_admin_account(s, target_id)
-    assert ei.value.status_code == 400
-    assert "可用" in ei.value.detail
+    assert "管理员" in r.json()["detail"]
 
 
 async def test_non_admin_cannot_delete_user(client, publisher_user):

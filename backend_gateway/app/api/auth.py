@@ -690,37 +690,21 @@ async def _guard_last_admin(session: AsyncSession, exclude_user_id: int) -> None
         raise HTTPException(status_code=400, detail="系统至少要保留一个可用的管理员账号")
 
 
-async def _guard_last_admin_account(session: AsyncSession, exclude_user_id: int) -> None:
-    """删号时用 —— 系统里必须还剩**一个管理员账号**.
-
-    ⚠️ 跟 _guard_last_admin 的区别 (别混):
-       · 那条管的是"停用/降级" —— 要求剩下的管理员**是启用状态**
-         (不然没人能登录接管账号管理);
-       · 这条管的是"删除" —— 删的多半是一个**已经不用的**号,
-         只要还剩一个管理员身份, 系统就不会"没人能管账号".
-       · 额外再判一条: 删的是**启用中**的管理员, 而剩下的人**全都停用着** →
-         删完就没人能登录接管了 → 拦下来.
-    """
-    result = await session.execute(select(User).where(User.role == UserRole.admin))
-    admins = [u for u in result.scalars().all() if u.id != exclude_user_id]
-    if not admins:
-        raise HTTPException(status_code=400, detail="系统至少要保留一个管理员账号")
-    if not any(u.is_active for u in admins):
-        raise HTTPException(status_code=400, detail="系统至少要保留一个可用的管理员账号")
-
-
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: int,
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(require_role(UserRole.admin)),
 ):
-    """删除账号 —— **不可逆**.
+    """删除账号 —— **不可逆**, 但**管理员账号一律不许删**.
 
-    ⚠️ 三条护栏 (防止管理员把自己锁在门外):
-       ① 不能删**自己** —— 别人还没接管就失去管理入口;
-       ② 不能删**最后一个**管理员账号;
-       ③ 删的是**启用中**的管理员, 而剩下的人全停用了 → 删完没人能接管 → 拦下.
+    ⚠️ 护栏 (2026-10-31 第十九轮改过一轮, 用户明确要求「禁止删管理员」):
+       ① **管理员账号一律不能删** —— 不管是当前登录的还是别人的;
+          管理员是"谁在管这个系统"的凭据, 删掉就等于**永久放弃一个管理入口**.
+          以前只挡了"不能删最后一个管理员" —— 那意味着**两个管理员时是可以删掉一个的**,
+          用户不要这个口子: 管理员账号要么留、要么**停用**(可逆), 不给"删"。
+       ② 不能删**自己** —— 别人还没接管就失去管理入口;
+       ③ 管理员想下线另一个管理员 → 走「停用」(可逆) 或「降级」(改成测试者), 不是删除。
 
     ⚠️ 账号名下的**资产 / 软件 / 知识库文档不会被一起删** ——
        那些东西的作者字段存的是**字符串用户名**, 删号之后作者名还留在那儿
@@ -734,11 +718,16 @@ async def delete_user(
     if user is None:
         raise HTTPException(status_code=404, detail="账号不存在")
 
+    # ① 管理员账号一律不许删 —— 先判这条, 免得"能不能删"取决于当前有几个管理员
+    if user.role == UserRole.admin:
+        raise HTTPException(
+            status_code=400,
+            detail="管理员账号不能删除 —— 请改用「停用」或把角色改成「测试者」",
+        )
+
+    # ② 不能删自己 (普通账号也一样)
     if user.id == admin.id:
         raise HTTPException(status_code=400, detail="不能删除当前登录的账号")
-
-    if user.role == UserRole.admin:
-        await _guard_last_admin_account(session, user.id)
 
     username = user.username
     role_value = user.role.value if hasattr(user.role, "value") else str(user.role)
