@@ -165,6 +165,36 @@ SETTING_SCHEMA: list[dict] = [
         "description": "平台显示名 (顶栏 + 标题)",
         "is_secret": False,
     },
+    {
+        # ⚠️ 2026-10-31 (第十八轮): 版本号**从代码里搬到设置里** ——
+        #    以前页头显示的是后端 APP_VERSION (写死在 config.py, 改一次要发版).
+        #    现在管理员在设置页就能改, 改完立刻生效.
+        "key": "general.platform_version",
+        "category": "general",
+        "value_type": "string",
+        "default": "1.0.0",
+        "description": (
+            "**平台版本号** —— 显示在页头 / 登录页 (填 1.0.0, 页面显示成 v1.0.0). "
+            "改了**立刻生效**, 不用重启也不用发版. "
+            "⚠️ 这是**平台**的版本 (给同事看的), 跟后端进程版本 (APP_VERSION) 不是一回事"
+        ),
+        "is_secret": False,
+    },
+    {
+        # ⚠️ 2026-10-31 (第十八轮): 副标题从写死的「SSD 测试伙伴」改成设置项 ——
+        #    平台早就不只是 SSD 相关了 (资产市场 / 软件库 / 知识库 / 代码检视 / 环境运维),
+        #    写死一个具体品类反而会误导人.
+        "key": "general.platform_tagline",
+        "category": "general",
+        "value_type": "string",
+        "default": "智能测试辅助平台",
+        "description": (
+            "**平台副标题** —— 品牌名 (TestMate) 下面那行小字 (页头 + 登录页). "
+            "默认「智能测试辅助平台」; 想换个方向 (如突出资产沉淀 / 团队协作) "
+            "改这里就行, 不用改代码"
+        ),
+        "is_secret": False,
+    },
 
     # ===== 知识检索源 (知识库页 KB 嵌入的 iframe URL) =====
     # 设计: 任意 URL 都能塞, 换 RAGFlow 或其他都不需要改代码

@@ -85,6 +85,53 @@ export async function buildEmbedUrl(prefix: string, theme: string): Promise<{ ur
   return (await request.get(`/settings/embed/${prefix}`, { params: { theme } })) as { url: string };
 }
 
+// ===== 平台信息 (副标题 + 版本号 · 页头/登录页显示) =====
+
+/** 平台对外信息 —— 后端从设置项里读 (general.platform_name / .platform_tagline / .platform_version) */
+export interface PlatformInfo {
+  /** 平台显示名 (如 TestMate) */
+  name: string;
+  /** 版本号, 不带 "v" 前缀 (如 1.0.0) */
+  version: string;
+  /** 副标题 (如 智能测试辅助平台) */
+  tagline: string;
+}
+
+/** ⚠️ 缓存 30 秒 —— 管理员改完设置刷新页面就该看到, 但别每翻一页都打一次接口 */
+const PLATFORM_INFO_TTL = 30_000;
+let platformInfoCache: PlatformInfo | null = null;
+let platformInfoAt = 0;
+
+/**
+ * 读平台信息 (版本号 + 副标题).
+ *
+ * ⚠️ **公开接口** (`GET /api/v1/platform/info`) —— 匿名用户也要看得到页头那行字,
+ *    所以它不走要登录的 `/settings/schema`.
+ *
+ * ⚠️ 取不到就返回空串, **调用方自己兜底** —— 页头不能因为接口挂了就显示空白.
+ */
+export async function getPlatformInfo(): Promise<PlatformInfo> {
+  if (platformInfoCache && Date.now() - platformInfoAt < PLATFORM_INFO_TTL) {
+    return platformInfoCache;
+  }
+  try {
+    const r = (await request.get('/platform/info', { silent: true })) as Partial<PlatformInfo>;
+    const info: PlatformInfo = {
+      name: String(r?.name || ''),
+      version: String(r?.version || ''),
+      tagline: String(r?.tagline || ''),
+    };
+    // ⚠️ 只缓存**成功**的结果 —— 失败要留机会下次再探 (后端可能只是暂时挂了)
+    if (info.name || info.version || info.tagline) {
+      platformInfoCache = info;
+      platformInfoAt = Date.now();
+    }
+    return info;
+  } catch {
+    return { name: '', version: '', tagline: '' };
+  }
+}
+
 // ===== 后端版本号 (页头显示) =====
 
 /** 已经探到的版本号 —— 一次会话只探一次, 别每页都发一遍请求 */

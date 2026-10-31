@@ -29,6 +29,14 @@ vi.mock('@/api/users', () => ({
   getAccountHint: vi.fn(async () => null),
 }));
 
+// ⚠️ 2026-10-31 (第十八轮): 登录页的品牌行 (名称/副标题/版本号) 走
+//    `GET /api/v1/platform/info` —— 打桩掉, 别让单测真发请求.
+vi.mock('@/api/settings', () => ({
+  getPlatformInfo: vi.fn(async () => ({
+    name: 'TestMate', version: '1.0.0', tagline: '智能测试辅助平台',
+  })),
+}));
+
 const LAST_USERNAME_KEY = 'testmate:last-username';
 const NEEDS_PASSWORD_KEY = 'testmate:needs-password';
 
@@ -303,6 +311,42 @@ describe('登录页 · 免密优先', () => {
   it('页面文案说清楚"账号要管理员先开通"', async () => {
     const { w } = await mountLogin(async () => {});
     expect(w.text()).toContain('管理员提前开通');
+    w.unmount();
+  });
+});
+
+/**
+ * 品牌行: 名称 / 副标题 / 版本号 (2026-10-31 第十八轮).
+ *
+ * ⚠️ 跟页头**同一套设置项** —— 以前登录页写死「SSD 测试伙伴」, 页头写死
+ *    「SSD 测试伙伴 · v0.1.0」, 两边都不跟设置走.
+ */
+describe('登录页 · 品牌行走设置项', () => {
+  it('显示设置项里的名称 + 副标题 + 版本号', async () => {
+    const { platformName, platformVersion, platformTagline } = await import('@/stores/platform');
+    platformName.value = '质量助手';
+    platformVersion.value = '2.3.4';
+    platformTagline.value = '资产协作平台';
+    const { w } = await mountLogin(async () => {});
+    await flushPromises();
+    expect(w.find('.t1').text()).toBe('质量助手');
+    expect(w.find('.t2').text()).toContain('资产协作平台');
+    expect(w.find('.t2').text()).toContain('v2.3.4');
+    w.unmount();
+  });
+
+  it('⚠️ 接口挂了 → 用兜底默认值 (不能是空, 也不能是旧的「SSD 测试伙伴」)', async () => {
+    const { platformName, platformVersion, platformTagline } = await import('@/stores/platform');
+    // ⚠️ 兜底默认值 = 共享模块的初始值 (接口没回来时的样子)
+    platformName.value = 'TestMate';
+    platformVersion.value = '1.0.0';
+    platformTagline.value = '智能测试辅助平台';
+    const { w } = await mountLogin(async () => {});
+    await flushPromises();
+    const t2 = w.find('.t2').text();
+    expect(t2).toContain('智能测试辅助平台');
+    expect(t2).toContain('v1.0.0');
+    expect(t2).not.toContain('SSD');
     w.unmount();
   });
 });

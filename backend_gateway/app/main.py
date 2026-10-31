@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, review_agent, marketplace, software
+from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, review_agent, marketplace, software, platform
 from app.api.agents import seed_agents
 from app.core.settings_store import seed_defaults
 from app.db.session import init_db
@@ -131,6 +131,8 @@ app.include_router(kb.router, prefix="/api/v1/kb", tags=["kb"])
 app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(settings_api.router, prefix="/api/v1/settings", tags=["settings"])
+# ⚠️ 平台信息 (副标题 / 版本号) —— **公开可读**: 页头在匿名状态下也显示, 登录页更是.
+app.include_router(platform.router, prefix="/api/v1/platform", tags=["platform"])
 app.include_router(review_agent.router, prefix="/api/v1/review-agent", tags=["review-agent"])
 app.include_router(marketplace.router, prefix="/api/v1/assets", tags=["marketplace"])
 # 软件库 —— 与「插件·技能·连接」完全分家: 那边真身在 GitLab, 这边真身在服务端磁盘.

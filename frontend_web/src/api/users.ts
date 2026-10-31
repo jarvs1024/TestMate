@@ -65,6 +65,14 @@ export async function updateUser(id: number, payload: UpdateUserPayload): Promis
   return (await request.patch(`/auth/users/${id}`, payload)) as ManagedUser;
 }
 
+/**
+ * 删除账号 (admin) —— **不可逆**, 账号名下的资产/软件/数据集归属会留成作者名, 但账号没了.
+ * ⚠️ 后端有护栏: 不能删自己, 不能删最后一个可用的管理员.
+ */
+export async function deleteUser(id: number): Promise<void> {
+  await request.delete(`/auth/users/${id}`);
+}
+
 /** 账号提示的结论 */
 export type AccountState = 'ok' | 'missing' | 'disabled' | 'unknown';
 

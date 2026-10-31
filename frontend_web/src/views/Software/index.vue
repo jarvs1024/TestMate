@@ -16,20 +16,26 @@
             (.kind-tab / .kind-tab.active / 渐变计数徽标 —— 样式在 styles/main.css). -->
     <div class="mk-actions">
       <div class="kind-tabs">
-        <button class="kind-tab" :class="{ active: category === '' && !mineOnly }" @click="category = ''; load()">
-          全部 <span class="count">{{ total }}</span>
+        <!-- ⚠️ 2026-10-31 (第十九轮): 「全部 / 我的 / 各分类」是**同一个维度** ——
+             同一时刻只能亮一个. 以前点「👤 我的」只改 mineOnly, 点「全部」只改 category,
+             两个能同时开着 → 「全部」tab 点不亮 (要多点一次「我的」才能切回去),
+             而且「全部 N」那个数也跟着变成"我的"条数 → 用户看到「全部 3 | 我的 3」,
+             完全不知道库里到底有多少东西. 现在统一走 selectCategory / selectMine 收敛. -->
+        <button class="kind-tab" :class="{ active: category === '' && !mineOnly }" @click="selectCategory('')">
+          全部 <span class="count">{{ allTotal ?? total }}</span>
         </button>
         <!-- ⚠️ 2026-10-30 (第十二轮): 「👤 我的」——
              只看**我上架的**软件. 后端早就支持 `status=mine`
-             (作者比对走 author_forms, 短名/全邮箱都认), 这里只是把入口露出来. -->
+             (作者比对走 author_forms, 短名/全邮箱都认), 这里只是把入口露出来.
+             ⚠️ 2026-10-31 (第十九轮): 后面补上计数 (后端给的 mine_total). -->
         <button class="kind-tab mine-tab" :class="{ active: mineOnly }"
                 title="只看我上架的软件"
-                @click="mineOnly = !mineOnly; load()">
-          👤 我的
+                @click="selectMine()">
+          👤 我的 <span class="count">{{ mineTotal ?? 0 }}</span>
         </button>
         <button v-for="c in categories" :key="c.name" class="kind-tab"
-                :class="{ active: category === c.name }"
-                @click="category = c.name; load()">
+                :class="{ active: category === c.name && !mineOnly }"
+                @click="selectCategory(c.name)">
           {{ c.name }}<span v-if="c.total" class="count">{{ c.total }}</span>
         </button>
       </div>
@@ -176,6 +182,17 @@ const sortBy = ref<SoftwareSort>('new');
  *    这里只是把入口露出来 —— 不在前端筛, 前端筛会漏 (列表有 limit).
  */
 const mineOnly = ref(false);
+/**
+ * tab 上的两个**恒定计数** (2026-10-31 第十九轮) —— 后端给的.
+ *
+ * ⚠️ all_total = 忽略 category 筛选的可见条目数 (受 q / platform / 可见性口径影响);
+ *    mine_total = 当前登录用户作为作者的条目数 (同样吃 q / platform, 不吃 category).
+ * ⚠️ 以前「全部」tab 上的数字直接用 `total` —— 那是**当前请求**的结果数,
+ *    一选「👤 我的」它就变成"我的"条数 → 「全部 3 | 我的 3」, 用户完全看不懂.
+ * ⚠️ 都是**可选字段**: 老后端没这两个字段 → undefined → 模板里回退 (见模板).
+ */
+const allTotal = ref<number | undefined>(undefined);
+const mineTotal = ref<number | undefined>(undefined);
 const config = ref<SoftwareConfig | null>(null);
 const configLoaded = ref(false);
 /**
@@ -252,6 +269,34 @@ async function clearFilter() {
   await load();
 }
 
+/**
+ * 选分类维度的某一项 (全部 / 某个分类) —— **同一维度只能选一个** (2026-10-31 第十九轮).
+ *
+ * ⚠️ 以前模板里内联 `@click="category = c.name; load()"` —— 只改 category,
+ *    不管 mineOnly → 点过「👤 我的」之后, 「全部」tab 的高亮条件
+ *    (`category === '' && !mineOnly`) 不成立 → **点不亮**, 得再点一次「我的」才切得回去.
+ *    现在选分类 = 分类维度**独占**, 顺手把「我的」关掉.
+ */
+function selectCategory(c: string) {
+  category.value = c;
+  // 互斥: 分类维度跟「👤 我的」不能同时开
+  mineOnly.value = false;
+  load();
+}
+
+/**
+ * 点「👤 我的」—— 与分类维度**互斥** (2026-10-31 第十九轮).
+ *
+ * ⚠️ 跟 selectCategory 对称: 开「我的」时分类维度让路 (category = ''),
+ *    关「我的」时也保持 category = '' —— 也就是回到「全部」.
+ */
+function selectMine() {
+  mineOnly.value = !mineOnly.value;
+  // 互斥: 分类维度让路
+  category.value = '';
+  load();
+}
+
 async function load() {
   loading.value = true;
   loadError.value = '';
@@ -269,6 +314,12 @@ async function load() {
     });
     items.value = r?.items ?? [];
     total.value = r?.total ?? 0;
+    // ⚠️ tab 上的两个恒定计数 (2026-10-31 第十九轮):
+    //    all_total = 忽略 category 的可见条目数 (「全部 N」该显示的那个数),
+    //    mine_total = 我上架的条目数 (「👤 我的 N」).
+    //    老后端没这两个字段 → undefined → 模板里回退到 total / 0.
+    allTotal.value = r?.all_total;
+    mineTotal.value = r?.mine_total;
     lastRefreshAt.value = new Date();
   } catch (e: any) {
     loadError.value = errText(e, '读取软件列表失败');

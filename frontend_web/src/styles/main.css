@@ -214,6 +214,24 @@ html, html[data-theme] {
   flex: 1; min-width: 120px; width: auto;
 }
 
+/* ------------------------------------------------------------
+ * 状态徽标 (.st-*) —— **全局**, 2026-10-31 (第十九轮) 提到这里.
+ *
+ * ⚠️ 为什么要提到全局: AppHeader.vue 和 CapabilityCard.vue 原来**各抄了一份**
+ *    .st-stable / .st-beta / .st-alpha / .st-draft / .st-deprecated,
+ *    改一处忘另一处就会漂移 (前面几轮 .asset-card / .kind-tab / .mk-actions
+ *    都是这么栽的).
+ *
+ * ⚠️ 而且 class 的口径变了: 以前按**原始 status** 生成 (st-beta / st-stable),
+ *    而 board / platform 两种角色的 beta 和 stable **文案都是「正常」** ——
+ *    同一句话两个颜色 (code-review 绿 / agent-market 橙), 用户看着莫名其妙.
+ *    现在按**语义色调** (statusTone) 生成, 所有「正常」都是绿色.
+ * ------------------------------------------------------------ */
+.st-ok { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
+.st-warn { background: rgba(245, 158, 11, 0.13); color: var(--warn); }
+.st-muted { background: var(--surface-sunken); color: var(--ink-500); }
+.st-danger { background: rgba(239, 68, 68, 0.10); color: var(--err); }
+
 /* ============================================================
  * 全局控件样式 (C 版 · 毛玻璃 + 简约 · 单层 focus ring)
  * ============================================================ */

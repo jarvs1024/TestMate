@@ -48,11 +48,15 @@
           <button v-if="docSearchKw" class="ghost-btn srch-clear" @click="clearDocSearch">清空</button>
           <!-- ⚠️ 这句话**一直**在 —— 不然用户搜内容搜不到, 会以为文档不存在 -->
           <span class="ds-hint srch-hint">只搜文件名，不搜内容</span>
+          <!-- ⚠️ 2026-10-31 (第十九轮): 主按钮改成跟「软件库」的「＋ 上架软件」
+               **完全同一个 class** (.mini-btn primary, 全局样式) ——
+               以前用的是局部 .primary-btn (纯色 + 边框 + 另一套圆角/padding),
+               两个页面长得完全不一样. 同行的「⬆ 上传文档」「↻ 刷新」不动. -->
           <button
             v-if="canWrite"
-            class="primary-btn ds-act"
+            class="mini-btn primary"
             title="新建一个数据集 (比如 项目管理 / 协议管理 那种分类)"
-            @click="openCreate">+ 新建数据集</button>
+            @click="openCreate">＋ 新建数据集</button>
           <button
             v-if="canWrite"
             class="ghost-btn ds-act"
@@ -2118,6 +2122,8 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 /* ---------- 数据集管理: 建库 / 上传 (2026-10-29) ---------- */
 /* 标题行右侧的主操作条 —— 建库和上传是知识库最高频的两个动作, 摆这儿一眼就能看见 */
 .ds-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* ⚠️ 2026-10-31 (第十九轮): 「＋ 新建数据集」已改用**全局** .mini-btn.primary
+   (跟软件库「＋ 上架软件」完全同一个 class), .ds-act 现在只剩「⬆ 上传文档」在用 —— 别删. */
 .ds-act { padding: 5px 13px; font-size: 12.5px; }
 /* 文档搜索框 —— 沿用「资产市场」那套 .search 样式 (放大镜 + 输入框) */
 .search {

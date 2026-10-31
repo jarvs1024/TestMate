@@ -19,7 +19,7 @@
           <span class="cc-cat">{{ domainLabel }}</span>
         </div>
       </div>
-      <div class="cc-badge" :class="`st-${capability.status}`">
+      <div class="cc-badge" :class="`st-${statusTone(capability.kind, capability.status)}`">
         <span class="dot"></span>{{ statusText }}
       </div>
     </div>
@@ -65,7 +65,7 @@
  */
 import { computed } from 'vue';
 import type { Capability } from '@/api/capabilities';
-import { categoryLabel, isPlanned, kindLabel, kindMeta, statusLabel } from '@/constants/capabilityKinds';
+import { categoryLabel, isPlanned, kindLabel, kindMeta, statusLabel, statusTone } from '@/constants/capabilityKinds';
 import { capabilityCta } from '@/utils/capabilities';
 
 const props = defineProps<{
@@ -137,15 +137,18 @@ function onClick() {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 8px; border-radius: var(--radius-pill);
   font-size: 10.5px; font-weight: 600;
-  background: var(--surface-sunken); color: var(--ink-700);
   flex-shrink: 0;
+  /* ⚠️ 这里**故意不写** background / color ——
+     颜色一律由全局的语义色调类 (.st-ok / .st-warn / .st-muted / .st-danger) 给.
+     ⚠️ 原因: scoped 样式编译成 `.cc-badge[data-v-xxx]` (特异度 0,2,0),
+        比全局的 `.st-ok` (0,1,0) **高** —— 只要这里还写着 background/color,
+        它就会把全局色调**盖掉**, 徽标永远是灰的. */
 }
 .cc-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.st-stable { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
-.st-beta { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
-.st-alpha { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
-.st-draft { background: var(--surface-sunken); color: var(--ink-500); }
-.st-deprecated { background: rgba(239, 68, 68, 0.10); color: var(--err); }
+/* ⚠️ 2026-10-31 (第十九轮): 状态徽标的颜色 (.st-ok / .st-warn / .st-muted / .st-danger)
+   已提到 **全局** styles/main.css 一份 —— 原来这里跟 AppHeader.vue 各抄了一份,
+   class 还按**原始 status** 生成 (st-beta / st-stable), 导致「正常」出现两个颜色.
+   现在按**语义色调** (statusTone) 生成, 这里不用再定义任何 .st-* 规则. */
 
 .cc-summary {
   margin: 0;

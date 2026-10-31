@@ -10,11 +10,15 @@
  *      停用是**立刻生效**的破坏性操作 → 必须**二次确认** (2026-10-30);
  *   ⑤ 选「管理员」角色时**不显示** @twsc.com.cn 后缀 (管理员是账号名, 不是邮箱);
  *   ⑥ 管理员账号没设密码 → 禁用「创建账号」, 错误**贴在密码框下面** (字段级).
+ *   ⑦ 删除账号 (2026-10-31) → 不可逆, 必须**手打账号名**确认并把后果写清楚;
+ *      **当前登录的账号不能删** (按钮禁用), 别的管理员账号照常能删.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
-import ElementPlus, { ElMessageBox } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus';
 import UserManage from '../UserManage.vue';
+import { useUserStore, type UserInfo } from '@/stores/user';
 import type { ManagedUser } from '@/api/users';
 
 const api = vi.hoisted(() => ({
@@ -27,6 +31,8 @@ const api = vi.hoisted(() => ({
     id: 1, username: 'zhangsan@twsc.com.cn', role: 'tester',
     is_active: p.is_active ?? true, password_required: !!p.password, created_at: '2026-10-25T10:00:00',
   })),
+  // ⚠️ 删除 = 204 无响应体 —— 没有返回值, 调用方只看成功/失败
+  deleteUser: vi.fn(async (_id: number) => undefined),
 }));
 
 vi.mock('@/api/users', () => api);
@@ -43,19 +49,45 @@ function user(over: Partial<ManagedUser> = {}): ManagedUser {
   };
 }
 
-async function mountComp(users: ManagedUser[] = []) {
+/**
+ * 挂组件.
+ *
+ * ⚠️ 必须起一个 pinia —— 组件里要读 user store 判断"当前登录的是哪个账号"
+ *    (「删除自己」那个按钮要禁用). 不给 pinia 的话组件读不到当前用户,
+ *    那个断言就没法测了.
+ *
+ * @param me 当前登录的账号 (不给 = 未登录/不知道是谁 → 删除按钮不禁用)
+ */
+async function mountComp(
+  users: ManagedUser[] = [],
+  me?: { id: number; username: string; role: UserInfo['role'] },
+) {
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  if (me) {
+    const store = useUserStore(pinia);
+    store.user = { id: me.id, username: me.username, role: me.role };
+  }
   const w = mount(UserManage, {
     props: { users },
-    global: { plugins: [ElementPlus] },
+    global: { plugins: [ElementPlus, pinia] },
   });
   await flushPromises();
   return w;
+}
+
+/** 找账号行里的「删除」按钮 (按文案精确找, 免得跟「重置密码」串了) */
+function deleteBtn(w: any, index = 0) {
+  return w.findAll('button').filter((b: any) => b.text().trim() === '删除')[index];
 }
 
 beforeEach(() => {
   api.createUser.mockClear();
   api.updateUser.mockClear();
   api.listUsers.mockClear();
+  api.deleteUser.mockClear();
+  // ⚠️ user store 的初始状态是从 localStorage 读的 —— 别让上一条用例的残留影响下一条
+  localStorage.clear();
 });
 
 describe('账号管理 · 建号', () => {
@@ -210,6 +242,98 @@ describe('账号管理 · 改账号', () => {
     await flushPromises();
     expect(api.updateUser).not.toHaveBeenCalled();
     spy.mockRestore();
+    w.unmount();
+  });
+});
+
+describe('账号管理 · 删除账号', () => {
+  it('每个账号行都有「删除」按钮', async () => {
+    const w = await mountComp([
+      user(),
+      user({ id: 2, username: 'opsadmin', role: 'admin', password_required: true }),
+    ]);
+    expect(w.findAll('button').filter((b: any) => b.text().trim() === '删除').length).toBe(2);
+    w.unmount();
+  });
+
+  it('点「删除」→ 先弹**要手打账号名**的二次确认 (后果写清楚), 确认前不发请求', async () => {
+    const spy = vi.spyOn(ElMessageBox, 'prompt').mockReturnValue(new Promise(() => {}) as any);
+    const w = await mountComp([user()]);
+    await deleteBtn(w).trigger('click');
+    await flushPromises();
+    expect(spy).toHaveBeenCalled();
+    const [msg, title, opts] = (spy as any).mock.calls[0];
+    expect(title).toBe('删除账号');
+    expect(opts.type).toBe('warning');
+    expect(opts.confirmButtonText).toBe('永久删除');
+    expect(opts.cancelButtonText).toBe('取消');
+    // ⚠️ 删除**不可逆** —— 提示里必须写清楚"无法恢复"和"资产的作者名还留着"
+    expect(msg).toContain('zhangsan@twsc.com.cn');
+    expect(msg).toContain('无法恢复');
+    expect(msg).toContain('资产');
+    // ⚠️ 二次确认必须**加强**: 要把账号名原样敲出来才放行 (不能只点一下"确定")
+    expect(opts.inputPlaceholder).toBe('zhangsan@twsc.com.cn');
+    expect(typeof opts.inputValidator).toBe('function');
+    // 名字对不上 → 拦下
+    expect(opts.inputValidator('随便写点什么')).toContain('账号名对不上');
+    expect(opts.inputValidator('zhangsan@twsc.com.cn')).toBe(true);
+    // 确认之前不能真删
+    expect(api.deleteUser).not.toHaveBeenCalled();
+    spy.mockRestore();
+    w.unmount();
+  });
+
+  it('确认 → 调 deleteUser(id) + 通知父组件刷新', async () => {
+    const spy = vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: 'zhangsan@twsc.com.cn' } as any);
+    const w = await mountComp([user()]);
+    await deleteBtn(w).trigger('click');
+    await flushPromises();
+    expect(api.deleteUser).toHaveBeenCalledWith(1);
+    expect(w.emitted('changed')).toBeTruthy();
+    spy.mockRestore();
+    w.unmount();
+  });
+
+  it('取消 → 不调接口', async () => {
+    const spy = vi.spyOn(ElMessageBox, 'prompt').mockRejectedValue('cancel' as any);
+    const w = await mountComp([user()]);
+    await deleteBtn(w).trigger('click');
+    await flushPromises();
+    expect(api.deleteUser).not.toHaveBeenCalled();
+    spy.mockRestore();
+    w.unmount();
+  });
+
+  it('删除失败 → 把后端的话弹出来 (不吞掉)', async () => {
+    const spy = vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: 'zhangsan@twsc.com.cn' } as any);
+    const errSpy = vi.spyOn(ElMessage, 'error').mockImplementation((() => undefined) as any);
+    api.deleteUser.mockRejectedValueOnce({
+      response: { data: { detail: '系统至少要保留一个可用的管理员账号' } },
+    });
+    const w = await mountComp([user()]);
+    await deleteBtn(w).trigger('click');
+    await flushPromises();
+    expect(errSpy).toHaveBeenCalled();
+    expect(String(errSpy.mock.calls[0][0])).toContain('保留一个可用的管理员');
+    spy.mockRestore();
+    errSpy.mockRestore();
+    w.unmount();
+  });
+
+  it('当前登录的账号 → 「删除」禁用; 别的管理员账号照常能删', async () => {
+    // ⚠️ 短名 admin 登录, 列表里既有别的管理员 (opsadmin) 也有自己 (admin)
+    const w = await mountComp(
+      [
+        user({ id: 2, username: 'opsadmin', role: 'admin', password_required: true }),
+        user({ id: 3, username: 'admin', role: 'admin', password_required: true }),
+      ],
+      { id: 99, username: 'admin', role: 'admin' },
+    );
+    // 别的管理员 → 能删 (后端只保证"至少留一个可用管理员")
+    expect((deleteBtn(w, 0).element as HTMLButtonElement).disabled).toBe(false);
+    // 自己 → 禁用 (后端也会拦 400, 但别让人白点一次)
+    expect((deleteBtn(w, 1).element as HTMLButtonElement).disabled).toBe(true);
+    expect(deleteBtn(w, 1).attributes('title')).toContain('不能删除当前登录的账号');
     w.unmount();
   });
 });

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
-import { nextTick } from 'vue';
+import { nextTick, watch } from 'vue';
 import { useUserStore } from '@/stores/user';
+import { platformName } from '@/stores/platform';
 
 /**
  * 路由表 —— 单独导出, 方便单测直接断言 (名字 / meta / 跳转规则).
@@ -85,10 +86,19 @@ const router = createRouter({
  * ⚠️ 标题以前永远是「TestMate」—— 开几个标签页分不清哪个是哪个.
  *    路由表里每个页面都已有 meta.title (见上面的 routes), 这里拼成
  *    「设置 · TestMate」这种形式; 没有 title 的 (如登录页) 退回裸的 TestMate.
+ *
+ * ⚠️ 2026-10-31 (第十八轮): 结尾的 **TestMate 改成平台显示名** ——
+ *    平台名是设置项 (`general.platform_name`), 管理员改了要跟着变.
+ *    ⚠️ 而且名字是**异步**加载的 → 名字到了必须**重算一次**标题,
+ *       否则标签页会一直停在旧名字.
  */
+function applyDocumentTitle(to: { meta?: Record<string, unknown> }) {
+  const t = (to.meta?.title as string | undefined) || '';
+  document.title = t ? `${t} · ${platformName.value}` : platformName.value;
+}
+
 router.afterEach((to, from) => {
-  const t = to.meta?.title as string | undefined;
-  document.title = t ? `${t} · TestMate` : 'TestMate';
+  applyDocumentTitle(to);
 
   // ⚠️ 切页面 → 把 .tm-main 滚回顶部 (等 DOM 更新完再动, 这时元素必定在).
   //    window 根本不滚, 浏览器原生的 scrollRestoration 只管 window → 管不到这里.
@@ -98,6 +108,9 @@ router.afterEach((to, from) => {
     if (main) main.scrollTop = 0;
   });
 });
+
+// ⚠️ 平台名加载完 → 标题重算 (第一次导航时名字可能还没到)
+watch(platformName, () => applyDocumentTitle(router.currentRoute.value));
 
 router.beforeEach((to, _from, next) => {
   // publicRead 路由 (首页能力墙 / 代码检视): 匿名也放行, 走完整 MainLayout 布局

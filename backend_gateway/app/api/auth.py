@@ -688,3 +688,73 @@ async def _guard_last_admin(session: AsyncSession, exclude_user_id: int) -> None
     admins = [u for u in result.scalars().all() if u.id != exclude_user_id]
     if not admins:
         raise HTTPException(status_code=400, detail="系统至少要保留一个可用的管理员账号")
+
+
+async def _guard_last_admin_account(session: AsyncSession, exclude_user_id: int) -> None:
+    """删号时用 —— 系统里必须还剩**一个管理员账号**.
+
+    ⚠️ 跟 _guard_last_admin 的区别 (别混):
+       · 那条管的是"停用/降级" —— 要求剩下的管理员**是启用状态**
+         (不然没人能登录接管账号管理);
+       · 这条管的是"删除" —— 删的多半是一个**已经不用的**号,
+         只要还剩一个管理员身份, 系统就不会"没人能管账号".
+       · 额外再判一条: 删的是**启用中**的管理员, 而剩下的人**全都停用着** →
+         删完就没人能登录接管了 → 拦下来.
+    """
+    result = await session.execute(select(User).where(User.role == UserRole.admin))
+    admins = [u for u in result.scalars().all() if u.id != exclude_user_id]
+    if not admins:
+        raise HTTPException(status_code=400, detail="系统至少要保留一个管理员账号")
+    if not any(u.is_active for u in admins):
+        raise HTTPException(status_code=400, detail="系统至少要保留一个可用的管理员账号")
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_role(UserRole.admin)),
+):
+    """删除账号 —— **不可逆**.
+
+    ⚠️ 三条护栏 (防止管理员把自己锁在门外):
+       ① 不能删**自己** —— 别人还没接管就失去管理入口;
+       ② 不能删**最后一个**管理员账号;
+       ③ 删的是**启用中**的管理员, 而剩下的人全停用了 → 删完没人能接管 → 拦下.
+
+    ⚠️ 账号名下的**资产 / 软件 / 知识库文档不会被一起删** ——
+       那些东西的作者字段存的是**字符串用户名**, 删号之后作者名还留在那儿
+       (方便追溯是谁上传的), 只是那个身份从此不能再登录.
+       所以前端确认框里要把这句**如实说给用户听**, 别让人以为资产也一起没了.
+
+    ⚠️ 留痕: 跟建号/改号一样写一条审计 (见 _audit_user_action),
+       管理员在「操作记录」抽屉里查得到.
+    """
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="不能删除当前登录的账号")
+
+    if user.role == UserRole.admin:
+        await _guard_last_admin_account(session, user.id)
+
+    username = user.username
+    role_value = user.role.value if hasattr(user.role, "value") else str(user.role)
+    was_active = bool(user.is_active)
+
+    await _audit_user_action(
+        session,
+        action="user.delete",
+        target=user,
+        actor=admin,
+        detail={"role": role_value, "username": username, "was_active": was_active},
+        comment=f"删除账号 {username} ({role_value})",
+    )
+
+    await session.delete(user)
+    await session.commit()
+    # ⚠️ 204 No Content —— 没有响应体 (前端只要状态码)
+    return None
+

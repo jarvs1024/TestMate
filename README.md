@@ -1,6 +1,11 @@
-# TestMate · SSD 测试伙伴
+# TestMate · 智能测试辅助平台
 
-> SSD 测试组的内网 AI 工作平台 —— Vue 3 + FastAPI，部署在内网。
+> 公司内网的 AI 测试工作平台（从 SSD 测试组起步）—— Vue 3 + FastAPI，部署在内网。
+
+> ⚠️ 2026-10-31 起页头/登录页的副标题改成「智能测试辅助平台」，**版本号和副标题都改成设置项**
+> （设置页「⚙️ 通用」组：`general.platform_version` / `general.platform_tagline` / `general.platform_name`），
+> 管理员改完立刻生效，不用改代码、不用发版。原来的「SSD 测试伙伴」写死了具体品类，
+> 而平台现在覆盖资产市场 / 软件库 / 知识库 / 代码检视看板 / 环境运维，不再只是 SSD 相关。
 
 ## 一句话
 

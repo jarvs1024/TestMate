@@ -78,6 +78,18 @@ export interface SoftwareDetail extends SoftwareItem {
 export interface SoftwareListResp {
   items: SoftwareItem[];
   total: number;
+  /**
+   * 忽略 `category` 筛选的条目总数 (但受 q / platform / 可见性口径影响).
+   *
+   * ⚠️ 可选字段 —— 后端没上时是 undefined, 前端回退到当前请求的 total.
+   */
+  all_total?: number;
+  /**
+   * 当前登录用户作为作者的条目数 (同样受 q / platform 影响, 不受 category 影响).
+   *
+   * ⚠️ 同样可选 —— 「👤 我的」tab 上的数字靠它, 拿不到时显示 0.
+   */
+  mine_total?: number;
 }
 
 export interface SoftwareConfig {

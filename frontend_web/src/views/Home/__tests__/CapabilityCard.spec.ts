@@ -116,3 +116,39 @@ describe('能力卡片', () => {
     expect(w.emitted('open')).toHaveLength(2);
   });
 });
+
+/**
+ * 状态徽标的**颜色** (2026-10-31 第十九轮).
+ *
+ * ⚠️ 用户投诉: 徽标 class 以前按**原始 status** 生成 (st-beta / st-stable),
+ *    而看板 / 资产的 beta 和 stable **文案都是「正常」** —— 同一句「正常」两个颜色.
+ *    现在按**语义色调**生成 (st-ok / st-warn / st-muted / st-danger).
+ */
+describe('状态徽标 · 语义色调', () => {
+  it('工具的 beta 是公测 → 橙色 st-warn', () => {
+    const w = mount(CapabilityCard, { props: { capability: cap({ kind: 'tool', status: 'beta' }) } });
+    expect(w.find('.cc-badge').classes()).toContain('st-warn');
+    expect(w.find('.cc-badge').classes()).not.toContain('st-beta');
+  });
+
+  it('看板的 beta 和 stable 文案都是「正常」→ 都是绿色 st-ok', () => {
+    const beta = mount(CapabilityCard, { props: { capability: cap({ kind: 'board', status: 'beta' }) } });
+    const stable = mount(CapabilityCard, { props: { capability: cap({ kind: 'board', status: 'stable' }) } });
+    expect(beta.find('.cc-badge').text()).toContain('正常');
+    expect(stable.find('.cc-badge').text()).toContain('正常');
+    expect(beta.find('.cc-badge').classes()).toContain('st-ok');
+    expect(stable.find('.cc-badge').classes()).toContain('st-ok');
+    expect(beta.find('.cc-badge').classes()).not.toContain('st-stable');
+    expect(beta.find('.cc-badge').classes()).not.toContain('st-beta');
+  });
+
+  it('资产的 beta 也得是绿色 (跟看板一样)', () => {
+    const w = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', status: 'beta' }) } });
+    expect(w.find('.cc-badge').classes()).toContain('st-ok');
+  });
+
+  it('规划中的卡 → 灰色 st-muted', () => {
+    const w = mount(CapabilityCard, { props: { capability: cap({ status: 'draft' }) } });
+    expect(w.find('.cc-badge').classes()).toContain('st-muted');
+  });
+});

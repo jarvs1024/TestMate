@@ -128,26 +128,32 @@
     <!-- ===== 分类 + 项目/排序筛选 (状态不在这层过滤 —— 每张卡片自己标着) ===== -->
     <div class="mk-filters">
       <div class="cat-chips">
-        <button class="chip" :class="{ active: category === '' }" @click="category = ''; load()">
-          全部 <span class="count">{{ rawItems.length }}</span>
+        <!-- ⚠️ 2026-10-31 (第十九轮): 这一行 chip 是**同一个维度** —— 同一时刻只能亮一个.
+             以前「👤 我的」只清 onlyMine、分类 chip 也不清 mineOnly → 两个维度能同时点亮,
+             后端把 status=mine + category=xxx 一起发, 结果既不是"我的全部"也不是"该分类的全部",
+             用户根本说不清看到的是什么. 现在统一走 selectCategory / selectMine 收敛. -->
+        <button class="chip" :class="{ active: category === '' && !mineOnly }" @click="selectCategory('')">
+          全部 <span class="count">{{ allTotal }}</span>
         </button>
         <!-- ⚠️ 2026-10-30 (第十二轮): 「👤 我的」——
              只看**我上传的**资产. 后端早就支持 `status=mine`
              (作者比对走 author_forms, 短名/全邮箱都认), 这里只是把入口露出来.
              ⚠️ 跟下面那三条「只看这些」不一样 —— 那三条是**紧急入口**(临时过滤),
                 「我的」是**常驻维度**: 分类 / 项目 / 类型筛选**照样生效**,
-                可以在「我的」基础上再按分类筛. -->
+                可以在「我的」基础上再按分类筛.
+             ⚠️ 2026-10-31 (第十九轮): 但它跟**分类维度互斥** —— 同一个 chip 行里
+                「我的」和「⭐精选」/某个分类不能同时亮 (两个维度打架, 筛选说不清). -->
         <button class="chip mine-chip" :class="{ active: mineOnly }"
                 title="只看我在市场上传的资产"
-                @click="toggleMineOnly()">
-          👤 我的
+                @click="selectMine()">
+          👤 我的 <span class="count">{{ mineTotal }}</span>
         </button>
-        <button class="chip" :class="{ active: category === '__featured' }" @click="category = '__featured'; load()">
+        <button class="chip" :class="{ active: category === '__featured' && !mineOnly }" @click="selectCategory('__featured')">
           ⭐ 精选
         </button>
         <button v-for="c in categories" :key="c.name" class="chip"
-                :class="{ active: category === c.name }" :title="c.desc"
-                @click="category = c.name; load()">
+                :class="{ active: category === c.name && !mineOnly }" :title="c.desc"
+                @click="selectCategory(c.name)">
           {{ c.name }}<span v-if="catCount(c)" class="count">{{ catCount(c) }}</span>
         </button>
       </div>
@@ -294,7 +300,19 @@ const GITLAB_PROJECT_FALLBACK = 'root/testmate-market';
 /** 列表加载超时 (ms) —— 超过就提示重试, 不让页面无限转圈 */
 const LOAD_TIMEOUT_MS = 15000;
 
-const kind = ref<MarketKind>('plugin');
+/**
+ * 进入页面时默认停在哪个类型 tab (2026-10-31 第十九轮, 用户指定).
+ *
+ * ⚠️ 以前默认是「插件」—— 但库里**技能**最多 (插件 3 / 技能 7 / 连接器 5),
+ *    一进来只看到空落落的 3 张卡, 看着像"市场没什么东西".
+ *    现在默认「技能」, 进页面先看到内容最多的那一类.
+ * ⚠️ 跟 `resetFilters()` 里的默认值必须**一致** —— "清空筛选"回到的就是初始态,
+ *    两处不一样的话, 清完筛选 tab 会跳到另一个类型, 用户以为页面自己动了.
+ */
+const DEFAULT_KIND: MarketKind = 'skill';
+
+const kind = ref<MarketKind>(DEFAULT_KIND);
+
 const category = ref('');
 const keyword = ref('');
 const sortBy = ref<MarketSort>('hot');
@@ -326,10 +344,40 @@ const onlyMine = ref<'review' | 'unpublish' | 'all-pending' | ''>('');
  */
 const mineOnly = ref(false);
 
-function toggleMineOnly() {
+/**
+ * 选分类维度的某一项 (全部 / ⭐精选 / 某个分类) —— **同一维度只能选一个**.
+ *
+ * ⚠️ 2026-10-31 (第十九轮): 以前这些 chip 是模板里内联的 `@click="category = xxx; load()"`,
+ *    每处都只改 `category`, 谁也没管 `mineOnly` → 「👤 我的」和「⭐精选」能同时点亮.
+ *    两个维度一起发给后端 (status=mine + category=xxx), 返回的既不是"我的全部"
+ *    也不是"该分类的全部" —— 用户说不清自己看到的是什么.
+ *    现在收敛成这一个函数: 选分类 = 分类维度**独占**, 顺手把「我的」和紧急入口清掉.
+ */
+function selectCategory(c: string) {
+  category.value = c;
+  // 互斥: 分类维度跟「👤 我的」不能同时开
+  mineOnly.value = false;
+  // 互斥: 分类维度跟那三条紧急入口也不能同时开 (否则筛选条件互相打架)
+  onlyMine.value = '';
+  // 分类 chip 的计数要跟当前口径一致 (照旧跟着刷新)
+  loadCategories();
+  load();
+}
+
+/**
+ * 点「👤 我的」—— 与分类维度**互斥**.
+ *
+ * ⚠️ 跟 `onlyMine` (那三条"只看这些"提示条) 也是互斥的 —— 那三条是临时紧急入口,
+ *    「我的」是常驻维度, 同时开没有意义 (一条是"我的待审", 一条是"我的全部").
+ * ⚠️ 2026-10-31 (第十九轮): 以前这里**只**清了 onlyMine, 没清 category ——
+ *    跟分类 chip 一起亮. 现在跟 selectCategory 对称: 两个维度互相让路.
+ */
+function selectMine() {
   mineOnly.value = !mineOnly.value;
-  // 互斥: 「我的」和那三条紧急入口不能同时开
+  // 互斥: 「我的」跟那三条紧急入口不能同时开
   if (mineOnly.value) onlyMine.value = '';
+  // 互斥: 分类维度让路 —— 切回时也保持 category = '' (即回到「全部」)
+  category.value = '';
   loadCategories();
   load();
 }
@@ -352,6 +400,34 @@ function toggleOnlyMine(mode: 'review' | 'unpublish' | 'all-pending') {
 }
 /** 未过滤的结果 (分类 chip 上的「全部 N」用) */
 const rawItems = ref<AssetItem[]>([]);
+
+/**
+ * 「全部 N」的数 —— 后端给的 `all_total` (2026-10-31 第十九轮).
+ *
+ * ⚠️ 以前写死 `rawItems.length` —— 那是**当前这一请求**回来的条数,
+ *    一旦选了某个分类, 「全部」chip 上的数也跟着变成那个分类的条数,
+ *    用户看到的"全部"根本不是全部.
+ * ⚠️ `all_total` 的口径 = 忽略 category 筛选、但受 kind / q / project / 可见性影响.
+ *    老后端没这个字段 → 回退 rawItems.length (保持旧行为, 不白屏).
+ */
+const allTotalRaw = ref<number | undefined>(undefined);
+/** 「👤 我的 N」的数 —— 后端给的 `mine_total` (同样不受 category 影响) */
+const mineTotalRaw = ref<number | undefined>(undefined);
+
+const allTotal = computed(() => {
+  // ⚠️ 只信**正数** —— 后端的 schema 里 all_total 默认值是 0 (字段还没被填时也返回 0),
+  //    那种情况下直接用 0 会让「全部」显示 0, 用户以为市场空了.
+  //    真·空的库 rawItems.length 也是 0 (后端的 all_total 恒 ≥ 当前列表条数),
+  //    两条路殊途同归, 不会算错 —— 所以这个兜底只影响"后端还没填字段"那个窗口期.
+  return (typeof allTotalRaw.value === 'number' && allTotalRaw.value > 0)
+    ? allTotalRaw.value
+    : rawItems.value.length;
+});
+/**
+ * ⚠️ 拿不到 mine_total 时显示 0 —— 后端上了这个字段之后才是真数.
+ *    (宁可显示 0 也不能不显示: 没有数字的 tab 会让人以为"我没有资产")
+ */
+const mineTotal = computed(() => mineTotalRaw.value ?? 0);
 
 const userStore = useUserStore();
 /** 管理员 —— 能拍板下架申请 (通过 = 资产被彻底删除) */
@@ -650,6 +726,12 @@ async function fetchList(opts: { silent?: boolean } = {}) {
     if (seq !== listSeq) return;   // 已有更新的请求在飞, 丢弃本次结果
     const rows = r?.items ?? [];
     rawItems.value = rows;
+    // ⚠️ chip 上的两个计数 (2026-10-31 第十九轮):
+    //    all_total = 忽略 category 的总数 (「全部 N」该显示的那个数),
+    //    mine_total = 我上传的总数 (「👤 我的 N」).
+    //    老后端没这两个字段 → undefined → 前端走兜底 (allTotal 回退 rawItems.length).
+    allTotalRaw.value = r?.all_total;
+    mineTotalRaw.value = r?.mine_total;
     items.value = (!mine && category.value === '__featured')
       ? rows.filter((i) => i.featured)
       : rows;
@@ -921,7 +1003,8 @@ onUnmounted(() => {
 });
 
 function resetFilters() {
-  kind.value = 'plugin';
+  // ⚠️ 回到**初始态** —— 类型 tab 的默认值跟页面刚进来时一致 (见 DEFAULT_KIND)
+  kind.value = DEFAULT_KIND;
   category.value = '';
   keyword.value = '';
   onlyMine.value = '';

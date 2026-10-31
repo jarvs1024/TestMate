@@ -315,29 +315,44 @@ async def list_software(
       · 管理员 —— 能看全部 (含 hidden)
     """
     async with AsyncSessionLocal() as session:
-        conds = [SoftwareItem.deleted_at.is_(None)]
-
-        if status == "mine":
-            conds.append(_author_cond(user))
-        elif not _is_admin(user):
+        # ⚠️ 2026-10-31 (第十九轮): 可见性条件拆成**两层** ——
+        #   · default_vis = 默认可见性 (**不跟 status 参数走**)
+        #   · list_vis    = 当前这次列表的可见性 (status=mine 时只看自己的)
+        #   为什么要分开: tab 上的「全部 N」必须**恒定** —— 选「👤 我的」时它
+        #   不能跟着变成"我的"条数 (以前就是这么乱的). all_total 用 default_vis 算,
+        #   所以不管当前在看哪一片, 「全部」永远是全库可见数.
+        default_vis: list = [SoftwareItem.deleted_at.is_(None)]
+        if not _is_admin(user):
             # ⚠️ 管理员默认看**全部** (含别人传了一半的) —— 管理员要能管这些条目.
             #    普通用户只看: 已上架的 + 自己的 (传了一半的别漏给别人看).
-            conds.append(
+            default_vis.append(
                 or_(
                     SoftwareItem.publish_status == "published",
                     _author_cond(user),
                 )
             )
 
-        if category:
-            conds.append(SoftwareItem.category == category)
+        list_vis: list = [SoftwareItem.deleted_at.is_(None)]
+        if status == "mine":
+            list_vis.append(_author_cond(user))
+        else:
+            list_vis.extend(default_vis[1:])
+
+        # 平台条件 (UI 没有这个筛选入口, 但 API 支持 —— 计数跟着走)
+        plat_conds: list = []
         if platform:
-            conds.append(SoftwareItem.platform == platform)
+            plat_conds.append(SoftwareItem.platform == platform)
+
+        # 分类条件 —— **只有**它参与"当前筛选"; tab 上的计数不看它
+        cat_conds: list = []
+        if category:
+            cat_conds.append(SoftwareItem.category == category)
 
         kw = (q or "").strip()
+        kw_conds: list = []
         if kw:
             like = f"%{kw}%"
-            conds.append(
+            kw_conds.append(
                 or_(
                     SoftwareItem.name.like(like),
                     SoftwareItem.summary.like(like),
@@ -349,8 +364,29 @@ async def list_software(
                 )
             )
 
+        conds = list_vis + plat_conds + kw_conds + cat_conds
+
         total = (
             await session.execute(select(func.count()).select_from(SoftwareItem).where(*conds))
+        ).scalar_one()
+
+        # ⚠️ all_total = 忽略分类的可见条目数 (tab 上「全部 N」用这个)
+        all_total = (
+            await session.execute(
+                select(func.count())
+                .select_from(SoftwareItem)
+                .where(*(default_vis + plat_conds + kw_conds))
+            )
+        ).scalar_one()
+
+        # ⚠️ mine_total = 我作为作者的条目数 (tab 上「👤 我的 N」用这个)
+        #    口径跟 all_total 一致 (同样吃 q / platform), 只多一条"作者是我".
+        mine_total = (
+            await session.execute(
+                select(func.count())
+                .select_from(SoftwareItem)
+                .where(*([SoftwareItem.deleted_at.is_(None), _author_cond(user)] + plat_conds + kw_conds))
+            )
         ).scalar_one()
 
         if sort == "hot":
@@ -377,7 +413,7 @@ async def list_software(
             )
             for r in rows
         ]
-    return SoftwareListOut(items=items, total=total)
+    return SoftwareListOut(items=items, total=total, all_total=all_total, mine_total=mine_total)
 
 
 async def _latest_ready_versions(session, item_ids: list[int]) -> dict[int, str]:

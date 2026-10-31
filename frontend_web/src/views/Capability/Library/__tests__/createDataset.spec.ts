@@ -107,7 +107,13 @@ describe('入口排版', () => {
     const w = await mountLib();
     const newBtn = w.findAll('.ds-tools button').find((b: any) => b.text().includes('新建数据集'));
     const upBtn = w.findAll('.ds-tools button').find((b: any) => b.text().includes('上传文档'));
-    expect(newBtn!.classes()).toContain('primary-btn');
+    // ⚠️ 2026-10-31 (第十九轮): 主按钮改成**全局** .mini-btn.primary ——
+    //    跟软件库的「＋ 上架软件」完全同一个 class (以前是局部 .primary-btn,
+    //    纯色 + 边框 + 另一套圆角/padding, 两个页面长得完全不一样).
+    expect(newBtn!.classes()).toContain('mini-btn');
+    expect(newBtn!.classes()).toContain('primary');
+    expect(newBtn!.classes()).not.toContain('primary-btn');
+    expect(upBtn!.classes()).not.toContain('primary');
     expect(upBtn!.classes()).not.toContain('primary-btn');
   });
 

@@ -110,6 +110,13 @@
             <button class="ghost" :disabled="busy" @click="onToggleActive(u)">
               {{ u.is_active ? '停用' : '启用' }}
             </button>
+            <!-- ⚠️ 删除 = **不可逆**: 账号没了, 名下资产的作者名会留着, 但再也没法以这个账号身份操作.
+               所以按钮单独用 .ghost.danger (红字红框) 跟中性的停用/启用区分开.
+               「当前登录的这个账号」直接禁用 —— 后端也会拦 (400), 但让人白点一次没意义. -->
+            <button class="ghost danger"
+                    :disabled="busy || isSelf(u)"
+                    :title="isSelf(u) ? '不能删除当前登录的账号' : '删除账号 (不可恢复)'"
+                    @click="onDelete(u)">删除</button>
           </div>
         </li>
       </ul>
@@ -126,15 +133,62 @@
  *   · 普通用户 = 公司邮箱 (后缀由后端的 AUTH_EMAIL_DOMAIN 决定, 这里运行时取), 建号时密码留空 → 免密, 填了 → 必须密码;
  *   · 管理员 = 不含 @ 的账号名, 一律要密码.
  *
- * ⚠️ 停用而不是删除: 账号名下的资产归属还在, 删号会把那些资产变成无主.
+ * ⚠️ 停用 vs 删除 (2026-10-31 加上删除):
+ *   · 停用 = **可逆** —— 临时封一个号, 随时「启用」回来, 名下资产一点没动;
+ *   · 删除 = **不可逆** —— 账号没了, 名下资产/软件/知识库文档的**作者名会留着**
+ *     (还看得出是谁交的), 但以后没法再以这个账号身份操作 (改不了、发不了新版本).
+ *     所以删除必须走**加强的二次确认** —— 不只是弹个框点「确定」,
+ *     而是要把**账号名原样敲出来**才放行 (跟知识库「删数据集」一个口径).
  */
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { createUser, updateUser, getAuthConfig, type ManagedUser, type UserRole } from '@/api/users';
+import { createUser, updateUser, deleteUser, getAuthConfig, type ManagedUser, type UserRole } from '@/api/users';
 import { parseApiTime } from '@/utils/format';
+import { isAuthor } from '@/utils/author';
+import { useUserStore } from '@/stores/user';
 
 defineProps<{ users: ManagedUser[]; error?: string }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
+
+/**
+ * 拿 user store —— 拿不到就 null.
+ *
+ * ⚠️ 为什么包 try/catch 而不是直接 useUserStore():
+ *    没有 pinia 上下文时 (有些单测直接 mount 这个组件, 没装 pinia 插件)
+ *    useUserStore() 会抛 "no active Pinia", 整个组件渲染不出来 ——
+ *    这里宁可当成"不知道当前是谁", 剩下的交给后端护栏 (不能删自己) 兜底.
+ * ⚠️ 也没用 getActivePinia() 判断: 它内部 inject pinia 时没给默认值,
+ *    组件里调它 Vue 会刷一条 "injection Symbol(pinia) not found" 的警告 —— 那种噪音更烦人.
+ */
+function safeUserStore(): ReturnType<typeof useUserStore> | null {
+  try {
+    return useUserStore();
+  } catch {
+    return null;
+  }
+}
+
+const userStore = safeUserStore();
+
+/** 当前登录账号 (null = 不知道, 比如没登录/没 pinia) */
+const currentUser = computed(() => userStore?.user ?? null);
+
+/**
+ * 这个账号是不是**当前登录的自己**?
+ *
+ * ⚠️ 两种口径都认 (跟后端 identity.name_matches 一致):
+ *   · id 对得上 → 同一个人;
+ *   · 用户名对得上 —— 短名 ('admin') 和全邮箱 ('zhangsan@twsc.com.cn') 互认.
+ *     只认一种的话会出现"后端放行、前端不敢给按钮"的拧巴状态 (见 utils/author.ts).
+ * ⚠️ 别的**管理员**账号不算自己 —— 删别的管理员是允许的 (只要系统还剩别的可用管理员),
+ *    这条护栏由后端兜底, 前端不越权猜.
+ */
+function isSelf(u: ManagedUser): boolean {
+  const me = currentUser.value;
+  if (!me) return false;
+  if (typeof me.id === 'number' && me.id > 0 && u.id === me.id) return true;
+  return isAuthor(u.username, me.username);
+}
 
 /**
  * 公司邮箱后缀 —— **运行时向后端取** (GET /api/v1/auth/config, 公开端点).
@@ -282,6 +336,60 @@ async function onToggleActive(u: ManagedUser) {
     emit('changed');
   } catch (e: any) {
     ElMessage.error(errText(e, '操作失败'));
+  } finally {
+    busy.value = false;
+  }
+}
+
+/**
+ * 删除账号 —— **不可逆**, 要**手打账号名**才能删.
+ *
+ * ⚠️ 为什么光点一下「确定」不够:
+ *    账号列表里一行就一个「删除」按钮, 挨着「停用」「改角色」——
+ *    点错的概率不低 (以前只弹一个确认框, 一路点「确定」就删了).
+ *    删号**没有回收站**: 账号没了就是没了, 名下的资产/软件/文档虽然留着,
+ *    但那个身份再也回不来 (也没法再以它发新版本/改说明).
+ *    所以沿用知识库「删数据集」那一套 —— **把账号名原样敲出来**才放行.
+ *    (本项目刚出过误删 5 篇协议 PDF 的事故, 见交接文档 §㉕⑧)
+ *
+ * ⚠️ 为什么前端也要拦「删自己」: 后端会返回 400 ("不能删除当前登录的账号"),
+ *    但那时用户已经点完确认框、白等了一趟 —— 按钮直接禁用 + title 说明更省事.
+ * ⚠️ 删**别的管理员**账号前端不拦: 用户要的就是"管理员也能删",
+ *    "至少留一个可用管理员"这条护栏由后端兜底, 前端不越权猜.
+ * ⚠️ ElMessageBox 是**纯文本**, 不渲染 Markdown —— 别写 `**强调**`.
+ */
+async function onDelete(u: ManagedUser) {
+  if (busy.value) return;
+  if (isSelf(u)) {
+    ElMessage.warning('不能删除当前登录的账号');
+    return;
+  }
+  try {
+    await ElMessageBox.prompt(
+      `即将删除账号「${u.username}」—— 删除后**无法恢复**，这个账号将立刻无法登录。\n`
+      + `它名下的资产、软件、知识库文档会保留（作者名还在），`
+      + `但以后没法再以这个账号身份操作。\n`
+      + `请输入账号名「${u.username}」以确认：`,
+      '删除账号',
+      {
+        type: 'warning',
+        confirmButtonText: '永久删除',
+        cancelButtonText: '取消',
+        inputPlaceholder: u.username,
+        inputValidator: (v: string) =>
+          (v || '').trim() === u.username ? true : '账号名对不上 —— 请原样输入上面的账号名',
+      },
+    );
+  } catch {
+    return;  // 用户取消 —— 不是错误
+  }
+  busy.value = true;
+  try {
+    await deleteUser(u.id);
+    ElMessage.success(`已删除账号 ${u.username}`);
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error(errText(e, '删除失败'));
   } finally {
     busy.value = false;
   }
@@ -473,4 +581,13 @@ async function onResetPwd(u: ManagedUser) {
 }
 .ghost:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
 .ghost:disabled { opacity: 0.5; cursor: not-allowed; }
+/* ⚠️ 删除按钮 = 红字红框, 跟旁边中性的 ghost 按钮区分开 (不可逆的操作不能长得跟"改角色"一样).
+   ⚠️ hover 必须**再写一条** .ghost.danger:hover:not(:disabled) ——
+   通用规则 .ghost:hover:not(:disabled) 权重更高, 会把红按钮一碰就变成主色蓝. */
+.ghost.danger { color: var(--err); border-color: rgba(239, 68, 68, 0.35); }
+.ghost.danger:hover:not(:disabled) {
+  border-color: var(--err);
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--err);
+}
 </style>

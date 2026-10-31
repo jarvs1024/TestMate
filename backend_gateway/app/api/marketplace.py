@@ -26,7 +26,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import ValidationError
 from fastapi import Response
-from sqlalchemy import Text, cast, select, or_, update
+from sqlalchemy import Text, cast, select, or_, update, func
 
 from app.api.auth import get_current_user, get_optional_user
 from app.core import git_sync, pkg
@@ -396,33 +396,48 @@ async def list_assets(
     is_reviewer = await _is_reviewer(user)
 
     async with AsyncSessionLocal() as session:
-        stmt = select(Asset)
+        # ⚠️ 2026-10-31 (第十九轮): 条件拆成**可复用的片段** ——
+        #   以前是一条 select(Asset) 链式 .where(), 想再算两个"恒定计数"就得
+        #   把整条链抄一遍. 现在拆成片段, 列表 / all_total / mine_total 各自组装.
+        #
+        #   口径约定 (跟软件库一致):
+        #     · category 是**分类维度** —— tab 上的计数不看它;
+        #     · kind / project / q 是**当前作用域** —— 计数跟着它们走;
+        #     · status 参数**不参与**计数 (选「👤 我的」时「全部 N」不能变成"我的"数).
+        kind_conds: list = []
         if kind:
-            stmt = stmt.where(Asset.kind == kind)
+            kind_conds.append(Asset.kind == kind)
+
+        cat_conds: list = []
         if category:
-            stmt = stmt.where(Asset.category == category)
+            cat_conds.append(Asset.category == category)
+
+        proj_conds: list = []
         if project:
             # ⚠️ 选某个项目 = 该项目特有 **+ 通用** ——
             #    "我在 6100 项目能用什么" 里当然包含通用资产.
             #    __general = 只看通用的 (筛"哪些是共享的").
             if project == "__general":
-                stmt = stmt.where(Asset.project == "")
+                proj_conds.append(Asset.project == "")
             else:
-                stmt = stmt.where(or_(Asset.project == project, Asset.project == ""))
+                proj_conds.append(or_(Asset.project == project, Asset.project == ""))
 
+        # 上架状态条件 / 作者条件 —— 分开装, 后面组装不同口径时要能各自取舍
+        status_conds: list = []
+        author_conds: list = []
         if status == "mine":
-            stmt = stmt.where(Asset.author.in_(author_forms(username)))
+            author_conds.append(Asset.author.in_(author_forms(username)))
         elif status in ("pending", "rejected", "unpublished", "unpublish_pending", "published"):
-            stmt = stmt.where(Asset.publish_status == status)
+            status_conds.append(Asset.publish_status == status)
             if not (is_admin or is_reviewer) and status != "published":
                 # 别人只能看自己的未发布资产 —— 别人的待审/被驳回内容不该被列出来.
                 # 审核人例外: 他要处理的就是这一批.
-                stmt = stmt.where(Asset.author.in_(author_forms(username)))
+                author_conds.append(Asset.author.in_(author_forms(username)))
         elif status == "all" or include_unpublished:
             # 不限上架状态 —— 但只对管理员/审核人开放
             # (include_unpublished 是旧参数, 语义等同 all)
             if not (is_admin or is_reviewer):
-                stmt = stmt.where(
+                author_conds.append(
                     or_(
                         Asset.publish_status.in_(("published", "unpublish_pending")),
                         Asset.author.in_(author_forms(username)),
@@ -438,12 +453,14 @@ async def list_assets(
             #  拿下载记录当"已安装"是虚假语义, 去掉更干净)
             # ⚠️ unpublish_pending (申请下架, 等管理员确认) **仍在架** ——
             #    管理员确认前它还在被用, 不能从列表里消失 (只是标个待审徽标).
-            stmt = stmt.where(
+            author_conds.append(
                 or_(
                     Asset.publish_status.in_(("published", "unpublish_pending")),
                     Asset.author.in_(author_forms(username)),
                 )
             )
+
+        q_conds: list = []
         if q:
             raw_q = q.strip()
             like = f"%{raw_q}%"
@@ -459,7 +476,7 @@ async def list_assets(
             if "通用" in raw_q:
                 # 「通用」是**显示名** —— 资产里通用 = project 为空串, LIKE 匹配不到
                 proj_match.append(Asset.project == "")
-            stmt = stmt.where(
+            q_conds.append(
                 or_(
                     Asset.name.like(like),
                     Asset.summary.like(like),
@@ -470,8 +487,39 @@ async def list_assets(
                     *proj_match,
                 )
             )
+
+        conds = kind_conds + cat_conds + proj_conds + status_conds + author_conds + q_conds
+        stmt = select(Asset).where(*conds) if conds else select(Asset)
         rows = list((await session.execute(stmt)).scalars().all())
         total = len(rows)
+
+        # ⚠️ all_total = **默认可见性**下、忽略分类与 status 参数的资产总数
+        #    (chip 上「全部 N」用这个 —— 它必须恒定, 选「👤 我的」时不能变).
+        default_vis: list = []
+        if not (is_admin or is_reviewer):
+            default_vis.append(
+                or_(
+                    Asset.publish_status.in_(("published", "unpublish_pending")),
+                    Asset.author.in_(author_forms(username)),
+                )
+            )
+        all_total = (
+            await session.execute(
+                select(func.count())
+                .select_from(Asset)
+                .where(*(kind_conds + proj_conds + default_vis + q_conds))
+            )
+        ).scalar_one()
+
+        # ⚠️ mine_total = 我作为作者的资产数 (chip 上「👤 我的 N」用这个)
+        mine_total = (
+            await session.execute(
+                select(func.count())
+                .select_from(Asset)
+                .where(*(kind_conds + proj_conds + q_conds + [Asset.author.in_(author_forms(username))]))
+            )
+        ).scalar_one()
+
         if sort == "new":
             rows.sort(key=lambda a: a.updated_at or datetime.min, reverse=True)
         elif sort == "name":
@@ -491,7 +539,7 @@ async def list_assets(
     is_reviewer = await _is_reviewer(user)
     items = [_to_out(a, can_review=is_reviewer) for a in page]
     await _apply_git_web_url(items)
-    return AssetListOut(items=items, total=total)
+    return AssetListOut(items=items, total=total, all_total=all_total, mine_total=mine_total)
 
 
 @router.get("/categories")

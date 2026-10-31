@@ -68,6 +68,19 @@ export interface AssetItem {
 export interface AssetListResp {
   items: AssetItem[];
   total: number;
+  /**
+   * 忽略 `category` 筛选的资产总数 (但受 kind / q / project / 可见性口径影响).
+   *
+   * ⚠️ 可选字段 —— 后端没上这个字段时是 undefined, 前端要能兜住
+   *    (否则老后端/老数据直接白屏).
+   */
+  all_total?: number;
+  /**
+   * 当前登录用户作为作者的资产数 (同样受 kind / q / project 影响, 不受 category 影响).
+   *
+   * ⚠️ 同样可选 —— 「👤 我的」那个 chip 的数字靠它, 拿不到时前端显示 0.
+   */
+  mine_total?: number;
 }
 
 export interface AssetFileNode {

@@ -18,6 +18,7 @@ import {
   kindLabel,
   kindMeta,
   statusLabel,
+  statusTone,
 } from '@/constants/capabilityKinds';
 
 describe('能力角色常量', () => {
@@ -83,5 +84,46 @@ describe('能力角色常量', () => {
     expect(categoryLabel('what-ever')).toBe('what-ever');
     expect(categoryLabel('')).toBe('—');
     expect(CATEGORY_LABELS['auto-code']).toBe('自动化代码');
+  });
+});
+
+/**
+ * 语义色调 (2026-10-31 第十九轮).
+ *
+ * ⚠️ 这是本轮修的用户投诉: 状态徽标的 class 以前按**原始 status** 生成,
+ *    而看板 / 资产两种角色的 beta 和 stable **文案都是「正常」** ——
+ *    同一句话两个颜色 (code-review 绿 / agent-market 橙), 用户看着莫名其妙.
+ *    现在颜色按**语义色调**走: 「正常」一律绿色.
+ */
+describe('状态语义色调', () => {
+  it('看板 / 资产的 beta 和 stable **都是绿色** —— 文案是「正常」, 颜色也得是「正常」', () => {
+    expect(statusTone('board', 'beta')).toBe('ok');
+    expect(statusTone('board', 'stable')).toBe('ok');
+    expect(statusTone('platform', 'beta')).toBe('ok');
+    expect(statusTone('platform', 'stable')).toBe('ok');
+    // 同一句「正常」→ 同一个色调 (这是这次要修的核心)
+    expect(statusTone('board', 'beta')).toBe(statusTone('board', 'stable'));
+    expect(statusTone('platform', 'beta')).toBe(statusTone('board', 'stable'));
+  });
+
+  it('工具角色按真实成熟度分级 (beta 公测是橙色, 不是绿色)', () => {
+    expect(statusTone('tool', 'beta')).toBe('warn');
+    expect(statusTone('tool', 'alpha')).toBe('warn');
+    expect(statusTone('tool', 'stable')).toBe('ok');
+    expect(statusTone('tool', 'draft')).toBe('muted');
+    expect(statusTone('tool', 'deprecated')).toBe('danger');
+  });
+
+  it('未知状态 / 未知角色 / 空值一律兜底成 muted (别白屏, 别乱上色)', () => {
+    expect(statusTone('tool', 'weird')).toBe('muted');
+    expect(statusTone(undefined, undefined)).toBe('muted');
+    expect(statusTone(null, null)).toBe('muted');
+    expect(statusTone('what-ever' as any, 'beta')).toBe('warn'); // 未知 kind → 当工具
+  });
+
+  it('已下线对所有角色都是红色 (danger)', () => {
+    for (const k of CAPABILITY_KINDS) {
+      expect(statusTone(k.value, 'deprecated')).toBe('danger');
+    }
   });
 });

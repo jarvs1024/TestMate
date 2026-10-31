@@ -2,8 +2,11 @@
   <header class="tm-header">
     <BrandLogo :size="38" />
     <div class="brand">
-      <span class="t1">TestMate</span>
-      <span class="t2">SSD 测试伙伴 · v{{ version }}</span>
+      <span class="t1">{{ platformName }}</span>
+      <!-- ⚠️ 2026-10-31 (第十八轮): 副标题 + 版本号**从设置项里取** ——
+           以前这两样是写死的 ("SSD 测试伙伴" + 后端 APP_VERSION),
+           现在管理员在设置页就能改, 改完立刻生效. -->
+      <span class="t2">{{ platformTagline }} · v{{ platformVersion }}</span>
     </div>
     <!-- 当前页面标题 (居中显示, 跟左侧 brand 视觉对称) -->
     <div v-if="pageTitle" class="page-title">
@@ -19,7 +22,7 @@
           <span class="pt-kind">{{ kindMeta(capIdent.kind).icon }} {{ kindMeta(capIdent.kind).label }}</span>
           <span class="pt-sep">·</span>
           <span class="pt-cat">{{ categoryLabel(capIdent.category) }}</span>
-          <span class="pt-badge" :class="`st-${capIdent.status}`">
+          <span class="pt-badge" :class="`st-${statusTone(capIdent.kind, capIdent.status)}`">
             <span class="dot"></span>{{ statusLabel(capIdent.kind, capIdent.status) }}
           </span>
         </template>
@@ -42,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BrandLogo from './BrandLogo.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
@@ -50,8 +53,8 @@ import UserMenu from './UserMenu.vue';
 import NoticeBar, { type NoticeItem } from './NoticeBar.vue';
 import { useUserStore } from '@/stores/user';
 import { capActions, capIdentity } from '@/stores/capShell';
-import { categoryLabel, kindMeta, statusLabel } from '@/constants/capabilityKinds';
-import { getBackendVersion } from '@/api/settings';
+import { platformName, platformTagline, platformVersion } from '@/stores/platform';
+import { categoryLabel, kindMeta, statusLabel, statusTone } from '@/constants/capabilityKinds';
 
 const route = useRoute();
 const pageTitle = computed(() => (route.meta?.title as string) || '');
@@ -66,20 +69,14 @@ const capIdent = computed(() => capIdentity.value);
 const capActs = computed(() => capActions.value);
 
 /**
- * 后端版本号 —— 真源在后端, 前端不再写死.
+ * 平台名称 + 副标题 + 版本号 (2026-10-31 第十八轮).
  *
- * ⚠️ 初始值是兜底默认: 版本号接口挂了也不能让页头显示空白 (更不能说"没有版本").
- *    取到真值后覆盖 —— 后端 APP_VERSION 默认就是 0.1.0, 一般看不出差别.
+ * ⚠️ 真源在**设置项**(`general.platform_name` / `general.platform_tagline` /
+ *    `general.platform_version`), 管理员在设置页改完立刻生效 —— 不用改代码, 也不用发版.
+ *
+ * ⚠️ 数据走 `@/stores/platform` 这个共享模块 (页头 / 登录页 / 标签页标题都要用),
+ *    加载在 `main.ts` 启动时做一次 —— 这里只读, 不自己发请求.
  */
-const version = ref('0.1');
-onMounted(async () => {
-  try {
-    const v = await getBackendVersion();
-    if (v) version.value = v;
-  } catch {
-    /* 取不到就保留默认版本号 */
-  }
-});
 
 // 通知数据源 (AppHeader 全局管理, 跨页面共享).
 // 当前: 匿名访问提示. 后续要加系统公告 / 实验功能提示, push 到 list 即可.
@@ -185,15 +182,18 @@ const notices = computed<NoticeItem[]>(() => {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 2px 8px; border-radius: var(--radius-pill);
   font-size: 10.5px; font-weight: 600;
-  background: var(--surface-sunken); color: var(--ink-700);
   flex-shrink: 0;
+  /* ⚠️ 这里**故意不写** background / color ——
+     颜色一律由全局的语义色调类 (.st-ok / .st-warn / .st-muted / .st-danger) 给.
+     ⚠️ 原因: scoped 样式编译成 `.pt-badge[data-v-xxx]` (特异度 0,2,0),
+        比全局的 `.st-ok` (0,1,0) **高** —— 只要这里还写着 background/color,
+        它就会把全局色调**盖掉**, 徽标永远是灰的. */
 }
 .pt-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.st-stable { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
-.st-beta { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
-.st-alpha { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
-.st-draft { background: var(--surface-sunken); color: var(--ink-500); }
-.st-deprecated { background: rgba(239, 68, 68, 0.10); color: var(--err); }
+/* ⚠️ 2026-10-31 (第十九轮): 状态徽标的颜色 (.st-ok / .st-warn / .st-muted / .st-danger)
+   已提到 **全局** styles/main.css 一份 —— 原来这里跟 CapabilityCard.vue 各抄了一份,
+   class 还按**原始 status** 生成 (st-beta / st-stable), 导致「正常」出现两个颜色.
+   现在按**语义色调** (statusTone) 生成, 这里不用再定义任何 .st-* 规则. */
 
 /* 页面自己的操作区 (看板的时间窗等) —— 跟着身份条一起进页头 */
 .cap-actions { display: inline-flex; align-items: center; gap: 8px; }

@@ -101,6 +101,56 @@ export const STATUS_LABELS: Record<CapabilityKind, Record<string, string>> = {
   },
 };
 
+/**
+ * 语义色调 —— 徽标的**颜色**只跟"好不好 / 危不危险"走, 跟原始 status 无关.
+ *
+ * ⚠️ 2026-10-31 (第十九轮) 为什么要有这层:
+ *    以前徽标的 class 是按**原始 status** 生成的 (`st-${status}`),
+ *    而看板 / 资产两种角色的 `beta` 和 `stable` **文案都是「正常」** ——
+ *    于是同一句话出现两个颜色 (code-review 绿 / agent-market 橙), 用户看着莫名其妙.
+ *    现在 class 按**色调**生成 (`st-${statusTone(...)}`), 所有「正常」都是绿色.
+ */
+export type StatusTone = 'ok' | 'warn' | 'muted' | 'danger';
+
+/**
+ * 状态 → 语义色调. 文案可以有多个来源, 颜色只有一个口径.
+ *
+ * ⚠️ 关键点: 看板 / 资产的 `beta` 跟 `stable` **都是绿色** ——
+ *    对这两种角色来说, beta 不代表"还在公测", 它就是"正常".
+ */
+export const STATUS_TONES: Record<CapabilityKind, Record<string, StatusTone>> = {
+  tool: {
+    draft: 'muted',       // 规划中 —— 还没上线
+    alpha: 'warn',        // 内测
+    beta: 'warn',         // 公测
+    stable: 'ok',         // 可用
+    deprecated: 'danger', // 已下线
+  },
+  board: {
+    draft: 'muted',       // 未接入
+    alpha: 'muted',       // 未接入
+    beta: 'ok',           // 正常 ← 跟 stable 一样绿
+    stable: 'ok',         // 正常
+    deprecated: 'danger', // 已下线
+  },
+  platform: {
+    draft: 'muted',       // 未接入
+    alpha: 'muted',       // 未接入
+    beta: 'ok',           // 正常 ← 跟 stable 一样绿
+    stable: 'ok',         // 正常
+    deprecated: 'danger', // 已下线
+  },
+};
+
+/** 取某个状态的语义色调 (未知 kind / 未知 status 一律兜底成 muted) */
+export function statusTone(
+  kind: CapabilityKind | string | undefined | null,
+  status: string | undefined | null,
+): StatusTone {
+  const byKind = STATUS_TONES[kindMeta(kind).value];
+  return byKind[status || ''] || 'muted';
+}
+
 /** 兜底角色 —— 未知 kind 一律当工具处理 (最保守: 有引擎有参数, 能跑) */
 const FALLBACK_KIND: CapabilityKindMeta = CAPABILITY_KINDS.find((k) => k.value === 'tool')!;
 

@@ -73,6 +73,17 @@ class SoftwareOut(UTCModel):
 class SoftwareListOut(BaseModel):
     items: list[SoftwareOut]
     total: int
+    # ⚠️ 2026-10-31 (第十九轮): 两个**恒定计数** —— tab 上的数字不该跟着筛选跳.
+    #
+    #   all_total  = 忽略 category 的可见条目数 (受 q / platform / 可见性口径影响)
+    #   mine_total = 当前用户作为作者的条目数 (同口径, 不受 category 影响)
+    #
+    #   以前 tab 上的「全部 N」用的是 total —— 那是**当前筛选结果数**.
+    #   一选「👤 我的」, total 就变成"我的"条数, 于是「全部 N」也跟着变成"我的"数量 →
+    #   用户看到「全部 3 | 我的 3」, 完全不知道这个库里到底有多少东西.
+    #   现在两个数各自恒定: 「全部」永远是全库可见数, 「我的」永远是我的数.
+    all_total: int = 0
+    mine_total: int = 0
 
 
 class SoftwareDetailOut(SoftwareOut):

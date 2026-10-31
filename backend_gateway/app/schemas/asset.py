@@ -57,6 +57,15 @@ class AssetOut(UTCModel):
 class AssetListOut(BaseModel):
     items: list[AssetOut]
     total: int
+    # ⚠️ 2026-10-31 (第十九轮): 两个**恒定计数** —— chip 上的数字不该跟着筛选跳.
+    #
+    #   all_total  = 忽略 category 的可见资产数 (受 kind / q / project / 可见性口径影响)
+    #   mine_total = 当前用户作为作者的资产数 (同口径, 不受 category 影响)
+    #
+    #   以前 chip 上的「全部 N」用的是前端拿到的列表长度 —— 一选「👤 我的」,
+    #   那个长度就变成"我的"条数, 「全部 N」跟着变 → 用户完全不知道库里有多少.
+    all_total: int = 0
+    mine_total: int = 0
 
 
 class AssetFileNode(BaseModel):

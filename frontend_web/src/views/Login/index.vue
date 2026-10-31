@@ -5,8 +5,10 @@
         <div class="brand">
           <BrandLogo :size="44" />
           <div class="b-txt">
-            <div class="t1">TestMate</div>
-            <div class="t2">SSD 测试伙伴</div>
+            <div class="t1">{{ platformName }}</div>
+            <!-- ⚠️ 2026-10-31 (第十八轮): 副标题 + 版本号跟页头**同一套**,
+                 都从设置项里取 (general.platform_tagline / general.platform_version). -->
+            <div class="t2">{{ platformTagline }} · v{{ platformVersion }}</div>
           </div>
         </div>
 
@@ -96,6 +98,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { useRouter, useRoute } from 'vue-router';
 import { useUserStore } from '@/stores/user';
 import { getAccountHint, getAuthConfig, type AccountHint } from '@/api/users';
+import { platformName, platformTagline, platformVersion } from '@/stores/platform';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 /** 上次登录用的用户名 */
@@ -140,6 +143,12 @@ let hintTimer: ReturnType<typeof setTimeout> | null = null;
  */
 const FALLBACK_EMAIL_DOMAIN = '@twsc.com.cn';
 const emailDomain = ref(FALLBACK_EMAIL_DOMAIN);
+
+/**
+ * 平台名称 + 副标题 + 版本号 (2026-10-31 第十八轮) —— 跟页头同一套设置项.
+ *
+ * ⚠️ 数据走 `@/stores/platform` 共享模块 (登录页没有页头, 但品牌行要一致).
+ */
 
 /** 输入里已经有 @ 了就不用再显示固定后缀 */
 const showDomain = computed(() => {
