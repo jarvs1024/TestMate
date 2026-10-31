@@ -1,20 +1,20 @@
-# TestMate MCP 设计（技能市场先行 · v6）
+# TestMate MCP 设计（技能市场先行 · v11）
 
 > 2026-10-31 · 让 **agent 能操作 TestMate**：上架 / 下载 / 更新技能；后续接知识库、软件库。
 > 本轮只做**技能·插件**一个域；每个域一个独立 MCP，公共部分单独放一层。
 >
-> 修订要点：
+> 修订要点（1–13 为历史版本要点，此处只列增量）：
 > 1. `app/mcp/` 改为**按域分目录**（`common/` `skill/` `software/` `kb/`），公共部分归 `common/`
 > 2. **每个域一个独立 MCP server**，各自挂载于 `/mcp/{域}`，工具集互不污染
-> 3. **对现有业务代码零改动**——不重构 `marketplace.py`，MCP 侧用薄适配层调用现有路由函数
+> 3. **不动现有业务逻辑**——不重构 `marketplace.py`（仅 3 处内置资产守卫 + 1 个只读端点），MCP 侧用薄适配层调用现有路由函数
 > 4. 补入 **spike 实测结论**（装配路径 / 鉴权取身份 / DNS rebinding 421 / lifespan 500）
-> 5. **首期不含审核工具**（14 → 14 个）：上架后由人工在网页审核台处理，agent 不自己盖章
+> 5. **首期不含审核工具**：上架后由人工在网页审核台处理，agent 不自己盖章
 > 6. **transport 双端点**：Streamable HTTP（`POST /mcp/skill`）+ **SSE**（`GET /mcp/skill/sse` + `POST /mcp/skill/messages/`）
 >    —— Qoder CN 走 SSE 模式，SSE **必须做**
 > 7. **鉴权走 OAuth 2.1**：Qoder 点「授权」→ 浏览器打开平台 → 登录并同意 → 自动回到 Qoder。
->    **普通用户不需要个人令牌页**；同意页（`/mcp/authorize`）取代它
+>    **普通用户不需要个人令牌页**；同意页（`/connect/authorize`）取代它
 > 8. **TestMate MCP 作为平台内置连接器上架**在「插件·技能·连接」市场：
->    **不可删除、不可下架、不可编辑**，url 动态生成（见 §4.8）
+>    **不可删除、不可下架**；文案可改，但 **url（`mcp_config`）不可改**（见 §4.9）
 > 9. 设置页（adminOnly）保留「平台接入令牌」作为 **CI/脚本/兜底**通道，不做个人令牌页
 > 10. **授权不过期**：access token 不带 `exp`；安全靠 **grant 表**（授权记录）+ 「我的授权」页撤销
 > 11. **架构规范化**：新增 §3.6「扩展点清单」—— 每种扩展都有明确落点，且有三条不变量（鉴权/业务/审计各只有一处）
@@ -24,15 +24,47 @@
 >     ② **契约测试**：同一场景 REST 与 MCP 各跑一遍，断言 DB 状态 + 钉钉通知序列 + 返回值三者一致
 >     ③ 参数反射检查：adapter 必须覆盖端点全部必填参数。新增能力漏写契约场景 → CI 直接红
 >
-> 状态：**设计已定，待实现**。
+> **v11 = 最后自审修正**（逐条对着 `mcp==1.29.1` 源码与 Starlette 路由实测核过）：
+> 14. **【致命】OAuth 装配不能用 SDK 的 `create_auth_routes`** —— 它第一行就调 `validate_issuer_url`，
+>     强制 issuer 必须 HTTPS（localhost 除外）。内网 `http://10.0.0.5:8081` 会在**装配时**直接抛
+>     `ValueError: Issuer URL must be HTTPS` → 服务起不来。
+>     → 自写 `app/mcp/common/oauth_routes.py`（复用 SDK 的 `AuthorizationHandler`/`TokenHandler`，
+>     只跳过 issuer 校验）；且**绝不能给 FastMCP 传 `auth_server_provider`**（传了它就会走
+>     `create_auth_routes` → 同样炸）。只用 `token_verifier` + `AuthSettings`。
+> 15. **【致命】dispatcher 装配写法**：必须是 `Route("/{域}")`（精确匹配 streamable）
+>     **与** `Mount("/{域}")`（前缀匹配 SSE）**并存**。只用 `Mount` → `POST /mcp/skill` 404；
+>     只用 `Route` → `/mcp/skill/sse` 404。
+> 16. **SSE 回传地址 = `scope["root_path"]` + 内层 endpoint**（SDK `sse.py:170-183`）→ 挂载路径写错，
+>     客户端会 POST 到错地址。装配必须保证 root_path = `/mcp/{域}`，并加集成测试断言。
+> 17. **【新发现】DCR 必须强制写 `scope`**：SDK 的 `OAuthClientMetadata.validate_scope` 在客户端注册时
+>     没带 `scope` 会**拒绝任何带 scope 的授权请求**（`invalid_scope`）；且
+>     `token_endpoint_auth_method=None` 会让 token 端点抛「Unsupported auth method」。
+>     → **自写 DCR 处理器**：强制 `none` + `grant_types=["authorization_code"]` + 完整 scope 集
+>     （不用 SDK 的 `RegistrationHandler`，它默认发 client_secret 且要求含 refresh_token）。
+> 18. **同意页 SPA 路由不能放在 `/mcp` 下** —— nginx 的 `location /mcp` 是前缀匹配，会把 SPA 路由
+>     劫持到后端 → 404。→ SPA 路由定为 `/connect/authorize`；OAuth 端点统一放 `/oauth/*`
+>     （nginx 一个 `location /oauth/` 覆盖全部 4 个端点）。
+> 19. **DCR 的 `redirect_uris` 只允许回环地址**（`http://127.0.0.1:*` / `http://localhost:*`），
+>     否则授权码可能被送到任意外部站点（开放重定向 + 授权码泄露）。
+> 20. **issuer / resource URL 在 FastMCP 构造时固化** → 改 `marketplace.public_base_url`
+>     需**重启后端**才生效（写进设置项说明与已知限制）。
+> 21. **内置连接器资产允许改文案**（summary / description 等），仅禁止改 `mcp_config`（url 改坏就废）。
+> 22. **契约测试用「预置 grant + 签发 token」构造身份**，不跑浏览器授权流程（浏览器流程另设专门集成测试）。
+> 23. **配额增加「按 user 的总量上限」**（现只有 user+client 维度）。
+> 24. **S0 改成独立的最小 OAuth 探针**（~100 行，不依赖本项目实现）；若 Qoder 不走 OAuth，
+>     切静态令牌路线**还需额外约 1 天**（个人令牌页 + 复制配置流程），不是现成的。
+>
+> 状态：**设计已定稿（v11），待实现**。
 
 ---
 
 ## 一句话
 
-在现有 FastAPI 后端挂一组 `/mcp/{域}` 端点（MCP Streamable HTTP），用**长期 API Token** 鉴权；
+在现有 FastAPI 后端挂一组 `/mcp/{域}` 端点（**MCP Streamable HTTP + SSE 双端点**），
+用 **OAuth 2.1 授权流**鉴权（Qoder 点「授权」→ 浏览器登录同意 → 自动回到 Qoder）；
 每个业务域一个独立 MCP server，技能域首批暴露 **14 个工具**；
-**现有业务代码一行不改**，MCP 能力全部收敛在新目录 `app/mcp/` 内。
+**现有业务逻辑零改动**（仅 3 处内置资产守卫 + 1 个只读端点），
+MCP 能力全部收敛在新目录 `app/mcp/` 内。
 
 ---
 
@@ -66,7 +98,9 @@
 - ❌ **不做个人令牌页**（D9）—— 普通用户只走 OAuth；设置页的「平台接入令牌」是 admin 专用的 CI/兜底通道
 - ❌ 不实现知识库 / 软件库的工具（只留目录骨架与公共层的扩展位）
 - ❌ 不做 stdio transport（首批只服务 Qoder，走远程 HTTP）
-- ❌ 不做 MCP OAuth 动态注册（静态 API Token，够用且好管）
+- ❌ **不做 MCP OAuth 动态注册**（静态 API Token，够用且好管）  ← **v11 修正：这条已作废**
+  → OAuth 2.1 要求 DCR（RFC 7591），Qoder 靠它自助注册；本轮**做 DCR**，
+  但**只允许回环 redirect_uri**（§4.3.3）
 - ❌ **不重构 `marketplace.py`**（见 §6，这是本方案与 v1 最大的分歧点）
 
 ---
@@ -79,12 +113,18 @@
 | D2 | agent 身份 | **OAuth 2.1 授权流**（Qoder 点「授权」→ 平台登录 + 同意 → 自动回客户端）；设置页另有**平台接入令牌**兜底 | 用户零操作、零密钥粘贴；权限随用户身份实时生效 |
 | D3 | 首批接入方 | **Qoder**（远程 HTTP，`{url, headers}` 连接器配置） | 团队主力 IDE；平台「连接器」资产格式天然匹配 |
 | D4 | MCP 的组织方式 | **`app/mcp/` 按域分目录；每域一个独立 MCP server；公共部分在 `common/`** | 域之间零耦合；agent 可只连需要的域，工具集不污染 |
-| D5 | 对现有代码的侵入度 | **零改动**：`marketplace.py` / `kb.py` / `software.py` 一行不动，MCP 侧用薄适配层调用 | 生产代码，3005 行重排的回归风险不可接受；MCP 是独立功能，应能独立落地 |
+| D5 | 对现有代码的侵入度 | **近乎零改动**：`marketplace.py` 不动业务逻辑，只在 **3 个函数顶部加内置资产守卫**（共约 9 行）+ 新增 1 个只读端点 `GET /assets/rules`；MCP 侧用薄适配层调用 | 生产代码，3005 行重排的回归风险不可接受；MCP 是独立功能，应能独立落地 |
 | D6 | 协议实现 | **官方 `mcp` SDK**（FastMCP），`stateless_http=True` + `json_response=True` | 握手/版本协商/能力声明有 SDK 兜底；依赖与现有锁文件无冲突 |
 | D7 | 首期是否含审核工具 | **不含** —— 上架后由人工在**网页审核台**处理 | 审核是人工运营动作，agent 不该自己给自己盖章；写入面更小、更安全 |
-| D8 | TestMate MCP 的市场身份 | **平台内置连接器**：上架在「插件·技能·连接」，**不可删除 / 不可下架 / 不可编辑**，url 动态生成 | 平台自己的核心能力不该被当成普通资产随便删掉；内置资产不该走审核流 |
+| D8 | TestMate MCP 的市场身份 | **平台内置连接器**：上架在「插件·技能·连接」，**不可删除 / 不可下架 / url 不可改**（文案可改），url 动态生成 | 平台自己的核心能力不该被当成普通资产随便删掉；内置资产不该走审核流 |
 | D9 | 普通用户的接入路径 | **只有 OAuth 一条**：Qoder 点「授权」→ 浏览器登录同意 | 用户不需要碰令牌；个人令牌页没有存在价值 |
 | D10 | MCP 写操作的行为 | **与前端同链路**：同一套合法性校验、同一个 REST 端点、同一条审核与通知链；**且不替用户做主**（有选择/可选项一律先确认） | agent 走出的结果必须和人在网页上走出来的一致，否则用户会看到两套平台 |
+| D11 | 授权有效期 | **不过期**（access token 不带 `exp`），靠 grant 表撤销兜底 | 用户体验优先；安全靠「可撤销 + 每次调用查 grant」 |
+| D12 | 架构分层 | transport → 协议 → 领域 → 既有业务；三条不变量（鉴权/业务/审计各只有一处） | 可扩展性 + 可维护性 |
+| D13 | 一致性机制 | 三层防线：L1 规则单一真源 + L2 契约测试（REST vs MCP 三项断言）+ L3 参数反射检查 | 「一致性」不能靠自觉，要靠会红的测试 |
+| **D16** | **OAuth 路由怎么写** | **自写 `app/mcp/common/oauth_routes.py`**（复用 SDK handler，跳过 issuer HTTPS 校验）；**不给 FastMCP 传 `auth_server_provider`** | SDK 的 `create_auth_routes` 强制 HTTPS，内网 http 部署直接起不来（v11 §4.3） |
+| **D17** | **OAuth 端点路径** | `/oauth/register`、`/oauth/authorize`、`/oauth/token`、`/oauth/revoke`；元数据在 `/.well-known/…`；**issuer = 站点根** | nginx 只需 2 个 location（`/oauth/` + `/.well-known/oauth-`），不与 SPA 路由冲突（v11 §4.3） |
+| **D18** | **同意页放哪** | SPA 路由 **`/connect/authorize`**（不在 `/mcp` 下）；OAuth `/oauth/authorize` 只负责 302 过去 | nginx `location /mcp` 是前缀匹配，会劫持 SPA 路由（v11 §4.5） |
 
 ---
 
@@ -99,7 +139,8 @@ backend_gateway/app/
 │   │   ├── __init__.py
 │   │   ├── server.py           #     MCP server 工厂 + 分域挂载（dispatcher）
 │   │   ├── auth.py             #     TokenVerifier（OAuth access token + 静态令牌）→ Principal
-│   │   ├── oauth_provider.py   #     OAuth 授权服务器实现（~300 行，见 §4.4）
+│   │   ├── oauth_provider.py   #     OAuth 授权服务器 provider 实现（见 §4.4）
+│   │   ├── oauth_routes.py     # ★   OAuth 元数据 + 4 个端点（**自写**，不用 SDK 的 create_auth_routes）
 │   │   ├── builtin_assets.py   #     内置连接器资产的 seed（照抄 seed_agents 范式）
 │   │   ├── context.py          #     McpContext（身份 + 域调用入口 + 审计）
 │   │   ├── errors.py           #     HTTPException / 业务异常 → MCP tool error
@@ -153,23 +194,88 @@ backend_gateway/app/
 **工具名仍带 `skill_` 前缀**：即使 server 已按域拆分，也保留前缀——部分 MCP 客户端会把多个 server 的工具名拍平展示，
 带前缀能避免 `search` / `get` 这类通用名互相撞车，日志里也更可读。
 
-### 3.3 装配与挂载（spike 已实测）
+### 3.3 装配与挂载（spike 已实测 + SDK 源码核实）
+
+#### 3.3.1 域 server 工厂
 
 ```python
 # app/mcp/common/server.py
-def build_mcp(name: str, instructions: str, *, path: str) -> FastMCP:
+def build_mcp(name: str, instructions: str, *, path: str,
+              issuer_url: str, resource_server_url: str,
+              token_verifier: TokenVerifier) -> FastMCP:
     return FastMCP(
         name=name,                       # 如 "testmate-skill"
         instructions=instructions,       # 给 agent 的引导语
         stateless_http=True,             # 无状态：不需要 session id，nginx/多副本友好
         json_response=True,              # 响应是 application/json，不走 SSE 流
-        streamable_http_path=path,       # "/skill" —— 域路径, 见下方挂载
+        streamable_http_path=path,       # "/skill" —— 域路径（相对于 /mcp 挂载点）
+        sse_path="/sse",                 # SSE 入口（相对于域挂载点）
+        message_path="/messages/",       # SSE 回传地址（相对于域挂载点）
+        # ⚠️ 只给 token_verifier，**绝不给 auth_server_provider** ——
+        #    给了它 FastMCP 会去调 create_auth_routes()，而那个函数第一行就
+        #    validate_issuer_url() → 内网 http issuer 直接 ValueError（v11 §4.3）
+        auth=AuthSettings(
+            issuer_url=issuer_url,                   # http://host（站点根，不带路径）
+            resource_server_url=resource_server_url, # http://host/mcp/skill
+            required_scopes=[],                      # scope 校验放在工具层做（域级）
+        ),
+        token_verifier=token_verifier,
         transport_security=TransportSecuritySettings(...),  # ⚠️ 必须显式配, 见 §3.4
     )
 ```
 
+> ⚠️ **`AuthSettings` 本身不校验 HTTPS**（只有 `create_auth_routes` 里的 `validate_issuer_url` 校验），
+> 所以 `issuer_url=http://10.0.0.5:8081` 在这里**完全合法**。这正是我们自写 OAuth 路由的原因（§4.3）。
+
+#### 3.3.2 分域 dispatcher：**Route + Mount 必须并存**
+
 ```python
-# app/main.py —— 只改这三处
+# app/mcp/common/server.py
+def build_dispatcher(domains: dict[str, FastMCP]) -> Starlette:
+    routes: list[Route | Mount] = []
+    for name, mcp in domains.items():
+        # ① Streamable HTTP：Route 精确匹配 "/{域}"（POST /mcp/skill）
+        routes.append(Route(f"/{name}", endpoint=mcp.streamable_http_app()))
+        # ② SSE：Mount 前缀匹配 "/{域}/..."（GET /mcp/skill/sse、POST /mcp/skill/messages/）
+        routes.append(Mount(f"/{name}", app=mcp.sse_app()))
+    return Starlette(routes=routes)
+```
+
+**为什么必须两个都有**（Starlette 路由语义，实测）：
+
+| 挂法 | `POST /mcp/skill` | `GET /mcp/skill/sse` | `POST /mcp/skill/messages/` |
+|---|---|---|---|
+| 只用 `Route("/skill")` | ✅ 200 | ❌ 404 | ❌ 404 |
+| 只用 `Mount("/skill")` | ❌ 404（Mount 只匹配带尾斜杠的子路径） | ✅ 200 | ✅ 200 |
+| **Route + Mount（本作法）** | ✅ 200 | ✅ 200 | ✅ 200 |
+
+> ⚠️ **不要用 `app.mount("/mcp/skill", ...)` 逐个挂**：`Mount("/mcp/skill")` 不匹配 `/mcp/skill`（无尾斜杠）
+> → 客户端连 `POST /mcp/skill` 会 307/404，而不少 MCP 客户端不跟随 POST 重定向 → 必然连不上。
+> 所以用「挂一次 `/mcp` + 内部按 `/域` 路由」的 dispatcher 写法。
+
+#### 3.3.3 SSE 的 root_path：客户端回传地址由它决定
+
+SDK `SseServerTransport.connect_sse`（`mcp/server/sse.py:170-183`）：
+
+```python
+root_path = scope.get("root_path", "")
+full_message_path_for_client = root_path.rstrip("/") + self._endpoint
+client_post_uri_data = f"{quote(full_message_path_for_client)}?session_id={session_id.hex}"
+```
+
+- `self._endpoint` = SSE transport 的 messages 路径（我们保持默认 `/messages/`，
+  **不要给 `sse_app(mount_path=...)` 传值**，否则会被拼成 `/mcp/skill/messages/` 再叠加 root_path）
+- `scope["root_path"]` 由 Starlette 的 `Mount` 自动设置 = `/mcp` + `/skill` = **`/mcp/skill`**
+
+⇒ 客户端收到的回传地址 = `/mcp/skill` + `/messages/` = **`/mcp/skill/messages/?session_id=…`** ✅
+
+> ⚠️ 这条**必须写集成测试**：`GET /mcp/skill/sse` 的第一帧 `event: endpoint` 的 `data`
+> 必须等于 `/mcp/skill/messages/?session_id=…`。挂载路径写错 → 客户端 POST 到不存在的地址 → 永远收不到响应。
+
+#### 3.3.4 主应用挂载（三处改动）
+
+```python
+# app/main.py
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ...
@@ -179,28 +285,29 @@ async def lifespan(app: FastAPI):
         yield
     ...
 
-app.mount("/mcp", build_dispatcher(ALL_MCPS))     # 分域分发
+# ① MCP 端点：/mcp/{域}（streamable + sse）
+app.mount("/mcp", build_dispatcher(ALL_MCPS))
+
+# ② OAuth 元数据（RFC 8414 / RFC 9728）：在**站点根**，不在 /mcp 下
+app.include_router(mcp_oauth_router)          # /.well-known/... 与 /oauth/*
+
+# ③ 内置连接器 seed（幂等）
 ```
 
-**分域分发**（`common/server.py`）：把各域的 `streamable_http_app()` 挂进一个 Starlette 应用：
+> ⚠️ `mcp.session_manager` 在 `streamable_http_app()` 被调用前访问会抛
+> `RuntimeError: ... calling streamable_http_app()`。⇒ **各域 app 必须在模块加载期构建好**
+> （`build_domain_apps()`），lifespan 里只负责 `run()`。
 
-```python
-def build_dispatcher(apps: dict[str, ASGIApp]) -> Starlette:
-    return Starlette(routes=[Route(f"/{name}", endpoint=app) for name, app in apps.items()])
-```
-
-路径推演（spike 实测）：
+**路径推演（spike 实测）**：
 
 | 请求 | 结果 | 说明 |
 |---|---|---|
 | `POST /mcp/skill` | **200** | 正确端点，无跳转 |
 | `POST /mcp/skill/` | 307 | 尾斜杠会跳转 → **对外公布的 URL 必须不带尾斜杠** |
+| `GET /mcp/skill/sse` | **200** | SSE 入口 |
+| `POST /mcp/skill/messages/?session_id=…` | 200 | SSE 回传 |
 | `POST /mcp/nope` | 404 | 未注册的域 |
 | `GET /mcp/skill` | 406 | SDK 要求 `Accept: application/json, text/event-stream` |
-
-> ⚠️ **不能用 `app.mount("/mcp/skill", ...)` 逐个挂**：Starlette 的 `Mount` 只匹配带尾斜杠的子路径，
-> `/mcp/skill`（无尾斜杠）会 307 跳到 `/mcp/skill/`，而不少 MCP 客户端不跟随 POST 重定向 → 必然连不上。
-> 所以用「挂一次 `/mcp` + 内部按 `/域` 路由」的 dispatcher 写法。
 
 ### 3.4 DNS rebinding 防护必须显式配置（spike 实测）
 
@@ -279,6 +386,7 @@ ALL_MCPS  = {p.domain: build_mcp(p) for p in PROVIDERS}
 | **新工具**（在已有域内） | 往该域的 `tools.py` 加一个 `ToolSpec` | ❌ 框架不动 |
 | **新 scope** | 该域的 `ToolSpec.scope` + `common/scopes.py` 的枚举 | ❌ 其它域不动 |
 | **新凭证类型**（服务账号 / 内部系统调用） | 在 `common/auth.py` 加一个 `CredentialVerifier` 实现，注册进 `VERIFIERS` | ❌ provider 与工具不动 |
+| **新 OAuth 端点 / 新授权方式**（如设备码流） | `common/oauth_routes.py` 加路由 + `common/oauth_provider.py` 加方法 + 集成测试加一条 | ❌ 工具与业务不动 |
 | **新 transport**（比如 stdio 薄壳） | `common/server.py` 的装配层加一个 app | ❌ 工具不动 |
 | **一个域多个 server**（如只读子集） | dispatcher 的 `{path: app}` 加一项 | ❌ 工具不动 |
 | **新内置资产**（不止 MCP 连接器） | `common/builtin_assets.py` 的清单加一项 | ❌ 其它不动 |
@@ -294,7 +402,7 @@ ALL_MCPS  = {p.domain: build_mcp(p) for p in PROVIDERS}
       ↓
   领域层       (skill/, kb/, software/)   ← 知道业务，通过 adapter 调既有 API
       ↓
-  既有业务层   (api/marketplace.py …)    ← 一行不改
+  既有业务层   (api/marketplace.py …)    ← 业务逻辑不改（仅 3 处守卫）
 
 ❌ 禁止：domain 层 import fastapi 的 Request/Depends/Form
 ❌ 禁止：common 层 import 任何业务模块
@@ -343,29 +451,123 @@ ALL_MCPS  = {p.domain: build_mcp(p) for p in PROVIDERS}
 > 授权码放内存而非 DB/Redis：SSE 已经要求后端**单进程**（`BACKEND_WORKERS=1`），
 > 进程内字典完全够用；进程重启导致授权码失效 → 用户重新点一次「同意」即可，代价可忽略。
 
-### 4.3 OAuth 端点（SDK 自动生成，我们只提供 provider）
+### 4.3 OAuth 端点：**必须自写路由**（不能用 SDK 的 `create_auth_routes`）
 
-| 端点 | 作用 | 来源 |
+#### 4.3.1 【致命】为什么不能用 SDK 的现成路由
+
+SDK 的 `create_auth_routes()`（`mcp/server/auth/routes.py:84`）第一行就是：
+
+```python
+def validate_issuer_url(url: AnyHttpUrl):
+    # RFC 8414 requires HTTPS, but we allow localhost HTTP for testing
+    if (url.scheme != "https" and url.host != "localhost"
+            and (url.host is not None and not url.host.startswith("127.0.0.1"))):
+        raise ValueError("Issuer URL must be HTTPS")
+```
+
+TestMate 的对外地址是内网 `http://10.0.0.5:8081` → **装配时直接抛 ValueError，服务起不来**。
+
+已核实的三件事：
+
+| 事实 | 结论 |
+|---|---|
+| `validate_issuer_url` **只在 `create_auth_routes` 一处**被调用 | `build_metadata` / `AuthSettings` / `ProtectedResourceMetadata` **都不校验** |
+| `AuthSettings.issuer_url` 是 `AnyHttpUrl` | pydantic 的 `AnyHttpUrl` **接受 http**，不强制 HTTPS |
+| FastMCP 只在 `self._auth_server_provider` 非空时才调 `create_auth_routes` | **只传 `token_verifier` 就完全绕开校验** |
+
+⇒ **两条硬约束**：
+
+1. **绝不给 FastMCP 传 `auth_server_provider`**（传了 → FastMCP 内部调 `create_auth_routes` → 同样炸）
+2. OAuth 端点由我们**自己拼路由**，复用 SDK 的 handler（`AuthorizationHandler` / `TokenHandler` /
+   `MetadataHandler`）与 `build_metadata`，只**跳过 `validate_issuer_url` 这一步**
+
+```python
+# app/mcp/common/oauth_routes.py —— 抄 SDK 的 create_auth_routes，删掉 validate_issuer_url 那行
+def build_auth_routes(provider, issuer_url, ...) -> list[Route]:
+    metadata = build_metadata(issuer_url, ...)          # SDK 的函数，不校验 HTTPS
+    client_authenticator = ClientAuthenticator(provider)
+    token_handler = TokenHandler(provider, client_authenticator)
+    return [
+        Route("/oauth/register", endpoint=..., methods=["POST"]),
+        Route("/oauth/authorize", endpoint=..., methods=["GET", "POST"]),
+        Route("/oauth/token",      endpoint=..., methods=["POST"]),
+        Route("/oauth/revoke",     endpoint=..., methods=["POST"]),
+    ]
+```
+
+#### 4.3.2 端点表（全部自写）
+
+| 端点 | 作用 | 实现 |
 |---|---|---|
-| `GET /.well-known/oauth-protected-resource/mcp/skill` | 受保护资源元数据（告诉客户端授权服务器在哪） | SDK |
-| `GET /.well-known/oauth-authorization-server` | 授权服务器元数据 | SDK |
-| `POST /register` | 动态客户端注册（DCR，RFC 7591） | SDK |
-| `GET|POST /authorize` | 授权入口 → 跳我们的**同意页** | SDK |
-| `POST /token` | code → access token | SDK |
-| `POST /revoke` | 吊销 | SDK（可选启用） |
+| `GET /.well-known/oauth-protected-resource/mcp/{域}` | 受保护资源元数据（RFC 9728）：告诉客户端「授权服务器是谁」 | 我们自己写（FastMCP 内部那份路由在 `/mcp` 挂载下不可达，见下注） |
+| `GET /.well-known/oauth-authorization-server` | 授权服务器元数据（RFC 8414） | `build_metadata()` + 我们的调整 |
+| `POST /oauth/register` | 动态客户端注册（DCR，RFC 7591） | **自写**（§4.3.3） |
+| `GET\|POST /oauth/authorize` | 授权入口 → 302 到同意页 | SDK `AuthorizationHandler` + 我们的 provider |
+| `POST /oauth/token` | code → access token（PKCE 校验） | SDK `TokenHandler` + 我们的 provider |
+| `POST /oauth/revoke` | 吊销 | SDK `RevocationHandler`（可选启用） |
 
-未认证请求 → **401 + `WWW-Authenticate: Bearer resource_metadata="…"`**（SDK 的 `BearerAuthBackend` 自动带）
-→ Qoder 据此发现授权服务器 → 弹「授权」按钮。
+**路径选择的理由**：
 
-### 4.4 我们要自己写的四块
+- 全部 OAuth 端点放 **`/oauth/`** 下 → nginx **一个** `location /oauth/` 覆盖 4 个端点（不写 4 个 location）
+- 元数据放**站点根**的 `/.well-known/…` → 符合 RFC 8414 / RFC 9728 的固定路径
+- **issuer = 站点根**（`http://10.0.0.5:8081`，不带路径）→ 元数据 URL 就是
+  `http://10.0.0.5:8081/.well-known/oauth-authorization-server`（**最通用、最兼容的形态**）
+- 端点 URL 由 AS 元数据里的 `authorization_endpoint` / `token_endpoint` 显式给出，
+  **不依赖客户端按 issuer 推导路径** → 放 `/oauth/` 完全安全
+
+> 📌 **关于 FastMCP 内部那份 PR metadata 路由**：`resource_server_url` 一旦设置，FastMCP 会
+> 在域 app 内部注册 `/.well-known/oauth-protected-resource/mcp/{域}`。但域 app 被挂在 `/mcp` 下，
+> 该路由**不可达（404）**。所以我们在**站点根**自己注册权威版本；
+> 集成测试断言 `GET /.well-known/oauth-protected-resource/mcp/skill` 返回 200 + 正确的 `authorization_servers`。
+
+#### 4.3.3 DCR 的三条强制规则（自写注册处理器）
+
+SDK 的 `RegistrationHandler` 不能直接用（它默认 `token_endpoint_auth_method="client_secret_post"`
+并签发 client_secret，且**要求 `grant_types` 含 `refresh_token`**——我们不发 refresh token）。
+我们**自写注册处理器**，强制三条：
+
+| # | 规则 | 不这么做会怎样 |
+|---|---|---|
+| 1 | **`token_endpoint_auth_method = "none"`**（公开客户端 + PKCE），不签发 client_secret | SDK 的 `ClientAuthenticator` 对 `None` 直接抛「Unsupported auth method」；发 secret 则要求客户端保存密钥，违背 OAuth 2.1 公开客户端模型 |
+| 2 | **`scope` 强制写入本服务支持的全部 scope**（`"market:read market:write"`，即使客户端没传） | SDK 的 `OAuthClientMetadata.validate_scope`：`allowed_scopes = [] if self.scope is None` → 客户端注册时没带 scope，**任何带 scope 的授权请求都会被拒**（`invalid_scope`）→ Qoder 直接授权失败 |
+| 3 | **`grant_types = ["authorization_code"]`**，**不签 refresh token** | 与「授权不过期」的产品决策一致；SDK handler 强制要求含 `refresh_token`，故不能复用 |
+
+#### 4.3.4 发现链路（Qoder 侧看到的顺序）
+
+```
+POST /mcp/skill  (无 Authorization)
+  → 401 + WWW-Authenticate: Bearer error="invalid_token", resource_metadata="http://host/.well-known/oauth-protected-resource/mcp/skill"
+  → GET /.well-known/oauth-protected-resource/mcp/skill
+      { "resource": "http://host/mcp/skill", "authorization_servers": ["http://host"], "scopes_supported": [...] }
+  → GET /.well-known/oauth-authorization-server
+      { "issuer": "http://host", "authorization_endpoint": "http://host/oauth/authorize",
+        "token_endpoint": "http://host/oauth/token", "registration_endpoint": "http://host/oauth/register",
+        "code_challenge_methods_supported": ["S256"], ... }
+  → POST /oauth/register   (DCR，带 redirect_uris=[http://127.0.0.1:xxxx/callback])
+  → 浏览器 GET /oauth/authorize?...  → 我们 302 到同意页 SPA /connect/authorize?...
+  → 同意 → 302 回 redirect_uri?code=…&state=…
+  → POST /oauth/token  (code + code_verifier) → access_token（JWT，无 exp）
+  → 之后所有 POST /mcp/skill 带 Authorization: Bearer <access_token>
+```
+
+#### 4.3.5 redirect_uri 白名单：只允许回环地址
+
+DCR 是**客户端自己声明**回调地址，若不限制，授权码可能被送到任意外部站点（开放重定向 + 授权码泄露）。
+
+> **规则**：DCR 时 `redirect_uris` **只允许** `http://127.0.0.1:*` 与 `http://localhost:*`；
+> 其它一律 `400 invalid_redirect_uri`。
+> 已登记客户端在 `/oauth/authorize` 时仍按 SDK 的 `validate_redirect_uri` **逐字比对**（防开放重定向）。
+
+### 4.4 我们要自己写的五块（+ nginx 配置）
 
 | # | 东西 | 位置 | 量级 |
 |---|---|---|---|
-| 1 | `OAuthAuthorizationServerProvider` 实现：客户端注册表读写、授权码生成/消费、PKCE S256 校验、**redirect_uri 白名单校验**、签发 access token | `app/mcp/common/oauth_provider.py` | ~300 行 |
-| 2 | `CredentialVerifier` 协议 + 两个实现（OAuth token / 静态令牌）+ `Principal` 模型 | `app/mcp/common/auth.py` | ~120 行 |
-| 3 | **同意页**（前端） | `views/McpAuthorize/index.vue` | 1 个页面 |
-| 4 | **「我的授权」页**（前端，撤销授权） | `views/McpGrants/index.vue` | 1 个轻量页面 |
-| 5 | nginx 加 5 处 location（OAuth 端点在**根路径**，不在 `/api/` 下） | `frontend_web/nginx.conf` + `deploy/native/units/nginx.conf.tpl` | ~40 行 |
+| 1 | `OAuthAuthorizationServerProvider` 实现：客户端注册表读写、授权码生成/消费、PKCE S256 校验、**redirect_uri 白名单校验**、签发 access token | `app/mcp/common/oauth_provider.py` | ~320 行 |
+| 2 | **OAuth 路由与元数据**（自写，绕开 SDK 的 HTTPS 校验）+ **自写 DCR 处理器**（§4.3.3 三条强制规则） | `app/mcp/common/oauth_routes.py` | ~180 行 |
+| 3 | `CredentialVerifier` 协议 + 两个实现（OAuth token / 静态令牌）+ `Principal` 模型 | `app/mcp/common/auth.py` | ~120 行 |
+| 4 | **同意页**（前端 SPA 路由 `/connect/authorize`） | `views/Connect/authorize.vue` | 1 个页面 |
+| 5 | **「我的授权」页**（前端，撤销授权） | `views/McpGrants/index.vue` | 1 个轻量页面 |
+| 6 | nginx 加 2 处 location（`/oauth/` 与 `/.well-known/oauth-`）+ 1 处 `/mcp` | `frontend_web/nginx.conf` + `deploy/native/units/nginx.conf.tpl` | ~50 行 |
 
 #### 鉴权层的可插拔结构（扩展点，不是 if/else）
 
@@ -396,30 +598,55 @@ VERIFIERS: list[CredentialVerifier] = [OAuthTokenVerifier(), StaticTokenVerifier
 
 ### 4.5 同意页（取代原「个人令牌页」）
 
-路由 `/mcp/authorize`（**所有登录用户**可见，不是 adminOnly）。
+**两个 URL，别混淆**：
+
+| URL | 谁提供 | 作用 |
+|---|---|---|
+| `/oauth/authorize` | **后端**（OAuth 端点） | OAuth 协议入口：校验 client / redirect_uri / scope / PKCE 参数，然后 302 到同意页 |
+| `/connect/authorize` | **前端 SPA**（Vue 页面） | 用户看到的同意界面（勾 scope、同意/拒绝） |
+
+> ⚠️ **SPA 路由为什么不能是 `/mcp/authorize`**：nginx 的 `location /mcp` 是**前缀匹配**，
+> 会把 `/mcp/authorize` 劫持到后端 → 前端路由拿不到 → 404。同理不能是 `/oauth/authorize`
+> （那是后端端点）。⇒ 定为 `/connect/authorize`。
 
 ```
-GET /authorize?client_id=…&redirect_uri=…&code_challenge=…&state=…&scope=…
+GET /oauth/authorize?client_id=…&redirect_uri=…&code_challenge=…&state=…&scope=…
+  │  （SDK 的 AuthorizationHandler 校验 client / redirect_uri / scope / PKCE 参数）
+  ↓  provider.authorize() 返回一个 URL（我们返回同意页地址）
   │
-  ├─ 未登录 → 跳 TestMate 登录页（带 redirect 回跳 /mcp/authorize?…）
-  │            （平台本来就要求「账号须管理员先建过才能登录」）
-  │
-  ├─ 已登录 → 同意页：
-  │     · 客户端名（来自 DCR 注册时填的 client_name）
-  │     · 请求的 scope，**逐条勾选**，可选项 = 该用户的平台能力上限
-  │     · [同意] / [拒绝]
-  │
-  ├─ [同意] → 后端建授权码 → 302 回 redirect_uri?code=…&state=…
-  └─ [拒绝] → 302 回 redirect_uri?error=access_denied&state=…
+  └─ 后端生成一次性 ticket → 302 到 SPA 同意页
+        /connect/authorize?ticket=xxxx
+        （**后端不检查登录态** —— 浏览器跳转请求没有 Authorization 头，
+          登录态由 SPA 用 localStorage 里的 JWT 处理）
+  ↓
+同意页 /connect/authorize（Vue）
+  ├─ 未登录 → 跳 TestMate 登录页（带 redirect 回跳本页）→ 登录完回到本页
+  ├─ GET /api/v1/mcp/oauth/authorize-info?ticket=…（带 JWT）
+  │    → { client_name, requested_scopes[], resource, redirect_uri }
+  ├─ 渲染：客户端名 + scope 清单（**逐条勾选**，可选项 = 该用户的平台能力上限）
+  ├─ [同意] → POST /api/v1/mcp/oauth/consent  {ticket, granted_scopes[]}
+  └─ [拒绝] → POST /api/v1/mcp/oauth/consent  {ticket, deny: true}
+        → 后端建授权码 → 302 回 redirect_uri?code=…&state=…
+        → 拒绝则 302 回 redirect_uri?error=access_denied&state=…
 ```
+
+**为什么中间要一个 ticket**：同意页是前端页面，前端传来的任何参数都不可信。
+`redirect_uri` / `code_challenge` / `client_id` / `state` **全部由后端保管**（放在后端的
+「待处理授权请求」缓存里，key = 随机 ticket，TTL 10 分钟，一次性），SPA 只提交
+`ticket` + 用户勾选的 scope。⇒ 前端无法篡改回调地址。
+
+> 「待处理授权请求」缓存放在**进程内内存**（与授权码同款）：SSE 已经要求后端单进程
+> （`BACKEND_WORKERS=1`），内存足够；进程重启 → 用户重新点一次「同意」即可。
 
 **安全要点**（都在我们这侧，SDK 不代劳）：
 
 - `redirect_uri` **必须**与客户端注册时登记的值逐字比对 —— 否则就是开放重定向漏洞
+- **DCR 时只允许回环 redirect_uri**（§4.3.5）
 - `state` 原样回传（CSRF 防护由客户端负责，我们不能丢）
 - 同意页表单自带 CSRF token
 - 授权码一次性、5 分钟过期、绑定 `client_id` + `redirect_uri` + `code_challenge`
-- token 端点校验 PKCE：`code_verifier` 的 S256 必须等于登记的 `code_challenge`
+- token 端点校验 PKCE：`code_verifier` 的 S256 必须等于登记的 `code_challenge`（SDK 的 `TokenHandler` 已做）
+- 用户勾选的 scope **必须**是「请求的 scope ∩ 用户平台能力上限」，越权直接拒绝
 
 > **授权不过期**：同意页不显示有效期选项，签发的 access token **不带 `exp`**。
 > 代价是「授权」变成一个长期状态 → 必须给用户一个**撤销入口**（见 §4.7「我的授权」）。
@@ -488,6 +715,11 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
   在工具层返回 tool error `quota_exceeded`，agent 能读懂「今天超量了，别再试了」。
 - **计数来源：`mcp_tool_calls` 表**（每次调用都落一行），按 `(user_id, client_id, created_at)` 索引范围计数
 - 超额那次调用**也要落审计**（`ok=false, error_code=quota_exceeded`），否则计数会漂
+- **两级上限**（v11 补）：
+  - **客户端级**：`user + client` 维度，默认 200 次/天
+  - **用户总量级**：`user` 维度，默认 1000 次/天
+    —— 因为「授权不过期 + 一个用户可授权多个客户端」，只卡单客户端会被「多客户端并用」绕过。
+    两级都超 → 同样返回 `quota_exceeded`（先判客户端级，再判用户级）。
 
 ### 4.9 内置连接器资产（平台内置，不可删除）
 
@@ -505,9 +737,10 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
 | url 动态生成 | 内置资产的 `mcp_config` 里 url 是占位符 `{{BASE}}/mcp/skill`，**读的时候**用 `marketplace.public_base_url` 替换（每套部署地址不同，不能写死进 GitLab） |
 | 不可删 | `DELETE /api/v1/assets/{code}` → 409「平台内置资产不可删除」 |
 | 不可下架 | `unpublish_asset` / `unpublish_request` → 409 同理 |
-| 不可编辑 | `update_asset` → 409（否则能把 url 改坏）；只读展示 |
+| **url 不可改** | `update_asset` 改 `mcp_config`（含 url）→ 409「平台内置连接器的地址不可修改」 |
+| **文案可改** | `summary` / `description` / `icon` / `tags` 等**普通字段允许修改**（走正常审核流）——「不可编辑」只针对 `mcp_config`（改坏 url 平台能力就废了），不是整块资产焊死 |
 | 不进审核台 | `publish_status` 恒为 `published`，`pending_action` 恒空 |
-| 前端 | `canModify` 计算里加上 `&& !is_builtin` → 卡片不显示「更新/下架/删除」按钮，标一个「平台内置」徽标 |
+| 前端 | 卡片标「平台内置」徽标；**不显示「下架/删除」按钮**；「更新」按钮保留，但表单里**连接器配置（`mcp_config`）字段只读**，只能改文案 |
 
 ### 4.10 交付链路（最终形态）
 
@@ -519,9 +752,9 @@ agent 最危险的失败模式不是越权，而是**失控循环**。配额改�
 ② Qoder：设置 → 连接器与 MCP → + → 粘贴 JSON 配置 → 导入
 ③ Qoder 探活 POST /mcp/skill → 我们回 401 + WWW-Authenticate
       → Qoder 发现授权服务器 → 显示「授权」按钮
-④ 点「授权」→ 浏览器打开 http://<平台地址>/authorize?…
-      → 登录 TestMate → 同意页（显示客户端名 + scope）→ [同意]
-      → 302 回 Qoder → Qoder 用 code 换 access token
+④ 点「授权」→ 浏览器打开 http://<平台地址>/oauth/authorize?…
+      → 登录 TestMate → 同意页 /connect/authorize（显示客户端名 + scope）→ [同意]
+      → 302 回 Qoder → Qoder 用 code 换 access token（POST /oauth/token）
 ⑤ 之后所有调用带 Authorization: Bearer <access_token> → 开始用 14 个工具
 ```
 
@@ -585,8 +818,9 @@ backend_gateway/app/core/market_rules.py     ← 新增：上架/更新前的合
 
 > ⚠️ **MCP 侧比网页更严是故意的**：网页有前端兜底，MCP 没有前端，
 > agent 可能从任何地方拼参数。后端是**最终关卡**，必须自己把住。
-> 代价：多一份 `market_rules.py` 与前端 TS 规则平行。
-> **后续收敛**（可选，不在 P0）：把规则做成 `GET /api/v1/assets/rules`，前端改为拉取 → 单一真源。
+> 代价：**过渡期**多一份 `market_rules.py` 与前端 TS 规则平行。
+> **S5.5 收敛**（在 P0 范围内）：把规则做成 `GET /api/v1/assets/rules`，前端改为拉取 → 单一真源，
+> 平行状态只存在于 S5 与 S5.5 之间（§4.13.2 L1）。
 
 #### 4.12.3 「不猜」协议：agent 不能替用户做决定
 
@@ -719,6 +953,10 @@ async def test_rest_and_mcp_identical(sc, db, notify_spy):
   —— 通知是「流程一致」最直接的证据：REST 触发了 `review`、MCP 也必须触发 `review`，
   且 `pending_action=meta` 时两边都**不能**发市场群通知。
 - 这条测试红 = 一致性破了。**这是整个一致性机制的核心资产。**
+- **契约测试不跑浏览器授权流程**（v11 明确）：测试用「**预置 grant + 直接签发 access token**」
+  构造身份（一个 fixture：建 user → 建 grant → 用 provider 签 token），
+  OAuth 的浏览器流程由 §11.2 的**专门集成测试**覆盖。理由：契约测试要跑 **8 场景 × 2 条路径 × 多次**，
+  每次都拉浏览器会让测试慢到不可用，且失败时不好定位。
 
 **L3 · 参数契约反射检查（解决 ②，防「漏传字段」）**
 
@@ -835,13 +1073,27 @@ def test_adapter_covers_route_params(tool, route):
 
 ## 6. 对现有代码的最小改动（本方案与 v1 的核心分歧）
 
-### 6.1 结论：业务代码零改动
+### 6.1 结论：业务逻辑零改动（只有 3 处守卫 + 1 个只读端点）
 
 v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`（REST 与 MCP 共用）。
 **v2 放弃这个做法**，改为：
 
-> `app/api/marketplace.py` **一行不动**。MCP 侧新增 `app/mcp/skill/adapter.py`，
+> `app/api/marketplace.py` **不动任何业务逻辑**。MCP 侧新增 `app/mcp/skill/adapter.py`，
 > 由它调用**现有的路由函数**，把 HTTP 形状的参数翻译成 MCP 工具的入参。
+
+**v11 修正一处「零改动」的夸大**：§4.9 要求「内置连接器不可删 / 不可下架 / 不可改 url」，
+这是**服务端必须拦**的规则（前端隐藏按钮只是体验，不是防线）→ 必须动 3 个既有函数。
+但改动是**纯守卫**，不碰任何业务分支：
+
+```python
+# app/api/marketplace.py —— 仅这 3 个函数顶部各加 2 行（共约 9 行）
+if asset.is_builtin:
+    raise HTTPException(status_code=409, detail="平台内置资产不可删除")   # delete_asset
+    raise HTTPException(status_code=409, detail="平台内置资产不可下架")   # unpublish_asset / unpublish_request
+    raise HTTPException(status_code=409, detail="平台内置连接器的地址不可修改")  # update_asset（仅当改了 mcp_config）
+```
+
+除此之外 `marketplace.py` **一行不动**，且**不新增 import**（`is_builtin` 是模型自带字段）。
 
 ### 6.2 为什么这个更合理
 
@@ -874,16 +1126,16 @@ v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`
 
 | 文件 | 改动 |
 |---|---|
-| `app/main.py` | 挂载 dispatcher + lifespan 里跑各域 session manager + OAuth 端点 + 注册 `/api/v1/mcp` 路由 + seed 内置连接器（约 25 行） |
+| `app/main.py` | 挂载 dispatcher + lifespan 里跑各域 session manager + 挂 OAuth 路由（`/oauth/*` 与 `/.well-known/*`）+ 注册 `/api/v1/mcp` 路由 + seed 内置连接器（约 30 行） |
 | `app/models/__init__.py` | 导出新模型（1 行） |
 | `app/models/asset.py` | 加 `is_builtin` 字段（1 行 + 迁移） |
 | `app/core/market_rules.py` | **新文件**：上架/更新前的合法性规则（复用既有校验，不改既有模块） |
-| `app/api/marketplace.py` | **+1 个只读端点** `GET /assets/rules`（不改任何现有函数体） |
+| `app/api/marketplace.py` | **+1 个只读端点** `GET /assets/rules` + **3 处内置资产守卫**（约 9 行，不动业务逻辑，见 §6.1） |
 | 前端 `Catalog/assetForm.ts` / `useAssetUploadForm.ts` | 硬编码正则与必填清单 → 改为从 `/assets/rules` 拉（§4.13.2 L1） |
 | `requirements.txt` / `requirements.lock` | 加 `mcp==1.29.1` 及 4 个传递依赖 |
-| `frontend_web/nginx.conf` | 加 `location /mcp`（约 12 行） |
+| `frontend_web/nginx.conf` | 加 **3 处** location：`/mcp`、`/oauth/`、`/.well-known/oauth-`（约 40 行） |
 | `deploy/native/units/nginx.conf.tpl` | 同上（裸机模板） |
-| 前端 | 新增 `views/McpAuthorize/index.vue`（同意页）+ `api/mcp.ts`（新文件）；改 `router/index.ts`（加路由）、`views/Capability/Catalog/index.vue` 与 `AssetCard.vue`（内置资产隐藏操作按钮 + 徽标）、`views/Settings/index.vue`（admin 管理组） |
+| 前端 | 新增 `views/Connect/authorize.vue`（同意页，SPA 路由 `/connect/authorize`）+ `views/McpGrants/index.vue`（我的授权）+ `api/mcp.ts`（新文件）；改 `router/index.ts`（加路由）、`views/Capability/Catalog/index.vue` 与 `AssetCard.vue`（内置资产徽标 + 隐藏下架/删除 + 配置只读）、`views/Settings/index.vue`（admin 管理组） |
 
 **其余全部是新增文件**：`app/mcp/**`、`app/api/mcp.py`、`app/models/mcp.py`、alembic 迁移、测试。
 
@@ -906,17 +1158,27 @@ v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`
 Qoder
  │  ① POST /mcp/skill   (无 Authorization)
  ▼
-FastAPI 中间件 ── 没 token ──▶ 401 + WWW-Authenticate: Bearer resource_metadata="…"
- │                                （SDK 的 BearerAuthBackend 自动带）
+SDK 的 RequireAuthMiddleware ── 没 token ──▶ 401 + WWW-Authenticate: Bearer resource_metadata="…"
+ │                                （SDK 自动带，URL 由 auth.resource_server_url 推导）
  ▼
-Qoder 发现授权服务器 → 显示「授权」按钮 → 浏览器打开
- │  ② GET /authorize?client_id=…&code_challenge=…&state=…
+Qoder ② GET /.well-known/oauth-protected-resource/mcp/skill  → 我们在**站点根**提供
  ▼
-同意页 /mcp/authorize ── 登录 TestMate → [同意] → 建授权码 → 302 回 Qoder
+Qoder ③ GET /.well-known/oauth-authorization-server  → 拿到 issuer / authorize / token / register
  ▼
-Qoder ③ POST /token  (code + PKCE verifier) ──▶ 换到 access token（JWT）
+Qoder ④ POST /oauth/register  (DCR：redirect_uris=[http://127.0.0.1:*/cb])
  ▼
-Qoder ④ POST /mcp/skill   Authorization: Bearer <access_token>
+Qoder 显示「授权」按钮 → 浏览器打开
+ │  ⑤ GET /oauth/authorize?client_id=…&code_challenge=…&state=…&scope=…
+ ▼
+后端校验登录态 → 302 到同意页 /connect/authorize?ticket=…
+ ▼
+同意页（Vue）── 登录 TestMate → 勾 scope → [同意] → POST /api/v1/mcp/oauth/consent
+ ▼
+后端建授权码 → 302 回 redirect_uri?code=…&state=…
+ ▼
+Qoder ⑥ POST /oauth/token  (code + PKCE verifier) ──▶ 换到 access token（JWT，无 exp）
+ ▼
+Qoder ⑦ POST /mcp/skill   Authorization: Bearer <access_token>
  ▼
 dispatcher (/mcp → /skill) ──▶ FastMCP JSON-RPC: initialize → tools/list → tools/call
  ▼
@@ -925,7 +1187,7 @@ tool handler (app/mcp/skill/tools.py)
  ▼
 adapter (app/mcp/skill/adapter.py)
  ▼
-app/api/marketplace.py 的现有路由函数（**一行未改**）
+app/api/marketplace.py 的现有路由函数（**业务逻辑未改**）
  ▼
 Asset 模型 + git 工作区 + GitLab（真身）
  ▼
@@ -1006,25 +1268,55 @@ CREATE UNIQUE INDEX uk_mcp_oauth_client ON mcp_oauth_clients (client_id);
 
 ### 10.2 nginx
 
+**新增 3 处 location**（`frontend_web/nginx.conf` 与 `deploy/native/units/nginx.conf.tpl`
+裸机模板**两处都要加**，内容保持一致）：
+
 ```nginx
+# ① MCP 端点（Streamable HTTP + SSE）
 location /mcp {
     proxy_pass http://backend:8000;
     proxy_http_version 1.1;
     proxy_set_header Host $host;            # ⚠️ $host 丢端口 → allowed_hosts 要含裸 host
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Connection '';
     client_max_body_size 200m;
     proxy_buffering off;
     proxy_read_timeout 300s;
 }
-```
-`frontend_web/nginx.conf` 与 `deploy/native/units/nginx.conf.tpl`（裸机模板）**两处都要加**。
 
-> ⚠️ **SSE 需要的 nginx 配置**（上面已包含，此处强调）：
+# ② OAuth 端点（DCR / authorize / token / revoke）
+location /oauth/ {
+    proxy_pass http://backend:8000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+
+# ③ OAuth 元数据（RFC 8414 / RFC 9728）—— 必须在站点根
+location ^~ /.well-known/oauth- {
+    proxy_pass http://backend:8000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+> ⚠️ **三处都要写 `proxy_set_header Host $host;`** —— 丢了 Host 头，
+> SDK 的 DNS rebinding 防护（§3.4）会把请求判成 421。
+> 而 `$host` **不带端口** → `mcp.allowed_hosts` 必须同时包含裸 host 与 `host:port` 两种形式。
+
+> ⚠️ **SSE 需要的 nginx 配置**（已在 ① 里，此处强调）：
 > · `proxy_buffering off` —— **必须有**，否则 SSE 事件流会被 nginx 攒着不发，客户端一直转圈
 > · `proxy_read_timeout 300s` —— SSE 是长连接，超时太短会周期性断开
 > · `proxy_set_header Connection ''` —— 避免上游 keep-alive 干扰长连接
 > · `location /mcp` 是**前缀匹配** ⇒ `/mcp/skill`、`/mcp/skill/sse`、`/mcp/skill/messages/` 一次全中，不用再开 location
+>
+> ⚠️ **不要把 `/connect/authorize`（前端同意页）写进 `location /mcp`** ——
+> 它必须由 nginx 的默认 SPA location 服务（`try_files $uri /index.html`）。
+> 同理 `/oauth/` 与 `/.well-known/` **不能**被 SPA 的 `location /` 吞掉 → 才有上面 ②③ 两处。
 
 ### 10.3 裸机模式
 
@@ -1050,7 +1342,7 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 - **url 是动态生成的**（`{{BASE}}` 占位符 + `marketplace.public_base_url` 替换），
   因为每套部署的对外地址不同，不能写死进市场仓库
 - 用户在市场里看到这张卡 → [复制连接器配置] → 粘进 Qoder → 点「授权」
-- 资产**不可删除 / 不可下架 / 不可编辑**（§4.8），也不进审核台
+- 资产**不可删除 / 不可下架 / url 不可改**（文案可改）（§4.9），也不进审核台
 
 ### 10.5 前端：同意页 + 市场卡片 + 设置页管理组
 
@@ -1058,13 +1350,13 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 
 | 文件 | 改动 | 说明 |
 |---|---|---|
-| `views/McpAuthorize/index.vue` | **新增页面** | **同意页**：显示客户端名 + scope 勾选 + [同意]/[拒绝]；未登录先跳登录页 |
+| `views/Connect/authorize.vue` | **新增页面** | **同意页**（SPA 路由 `/connect/authorize`）：显示客户端名 + scope 勾选 + [同意]/[拒绝]；未登录先跳登录页 |
 | `views/McpGrants/index.vue` | **新增页面** | **「我的授权」**：我在哪些客户端授权过 TestMate + [撤销]（**不是令牌页 —— 不发任何密钥**） |
-| `router/index.ts` | 加路由 | `mcp/authorize`（`requiresAuth: false`，未登录自己跳登录）+ `mcp/grants`（`requiresAuth: true`） |
-| `views/Capability/Catalog/AssetCard.vue` | 改 | 内置资产加「平台内置」徽标，隐藏「更新/下架/删除」按钮 |
+| `router/index.ts` | 加路由 | `connect/authorize`（`requiresAuth: false`，未登录自己跳登录）+ `mcp/grants`（`requiresAuth: true`） |
+| `views/Capability/Catalog/AssetCard.vue` | 改 | 内置资产加「平台内置」徽标，隐藏「下架/删除」按钮，「更新」时配置字段只读 |
 | `views/Capability/Catalog/index.vue` | 改 | `canModify` 计算加 `&& !is_builtin`；连接器卡片加「复制连接器配置」按钮 |
 | `views/Settings/index.vue` | 加 admin 组 | 「🔌 MCP 接入」：签发**平台接入令牌**（CI/脚本/兜底）/ 配 `mcp.allowed_hosts` / 开关 OAuth 自助授权 |
-| `api/mcp.ts` | **新增** | 平台接入令牌 CRUD + `getConnectionConfig()` |
+| `api/mcp.ts` | **新增** | 平台接入令牌 CRUD + `getConnectionConfig()` + 同意页提交 |
 
 后端新增 `app/api/mcp.py`（`/api/v1/mcp`，**仅 admin**）：
 
@@ -1074,6 +1366,8 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 | `POST /tokens` | admin | 签发（响应带一次明文） |
 | `DELETE /tokens/{id}` | admin | 吊销 |
 | `GET /connection-config` | 登录 | 返回 Qoder 格式的 mcpServers JSON（`type` + `url`），供市场卡片复制 |
+| `GET /oauth/authorize-info?ticket=…` | 登录 | 同意页渲染用：客户端名 + 请求的 scope + 回调地址 |
+| `POST /oauth/consent` | 登录 | 同意页提交：`{ticket, granted_scopes[]}` 或 `{ticket, deny:true}` → 302 回 `redirect_uri` |
 | `GET /grants` | 登录 | **我的授权**列表（自己的） |
 | `DELETE /grants/{client_id}` | 登录 | **撤销**自己的某个授权（= 该客户端的 token 立刻失效） |
 
@@ -1104,9 +1398,15 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 3. `tools/call skill_search` → 能拿到结果
 4. 工具函数内能读到 `ctx.request_context.request.headers["authorization"]` 与 `.state.principal`
 5. 无 token → **401** 且带 `WWW-Authenticate: Bearer resource_metadata="…"`（Qoder 据此弹「授权」）
-5b. OAuth 全流程：`POST /register` → `GET /authorize`（未登录 → 跳登录页）→ 同意 → 302 回客户端
-    → `POST /token`（code + PKCE verifier）→ 拿到 access token → 带 token 调 `tools/call` 成功
+5a. **元数据**：`GET /.well-known/oauth-protected-resource/mcp/skill` → 200，`resource` / `authorization_servers` 正确；
+    `GET /.well-known/oauth-authorization-server` → 200，`issuer` / 4 个端点 URL 正确
+5b. **OAuth 全流程**：`POST /oauth/register` → `GET /oauth/authorize` → 302 到 `/connect/authorize?ticket=…`
+    → `GET /api/v1/mcp/oauth/authorize-info?ticket=…` → `POST /api/v1/mcp/oauth/consent` → 302 回客户端
+    → `POST /oauth/token`（code + PKCE verifier）→ 拿到 access token → 带 token 调 `tools/call` 成功
 5c. PKCE 错误 / redirect_uri 不在白名单 → 拒绝发码
+5c2. **DCR 三条强制规则**：注册时没带 `scope` → 授权请求带 scope **不报 invalid_scope**；
+    注册结果 `token_endpoint_auth_method == "none"` 且无 `client_secret`；
+    `redirect_uris` 含非回环地址 → **400 invalid_redirect_uri**
 5d. 配额用尽 → 工具**不执行**，返回 tool error `quota_exceeded`（**不是** HTTP 429）
 5f. **grant 撤销后** → 同一个 access token 再调 → **401**（证明「不过期」不等于「不可回收」）
 5g. **流程对齐**：MCP `skill_publish` 成功后 → 资产 `publish_status=pending` / `pending_action=new`
@@ -1116,7 +1416,9 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
     返回 `needs_confirmation.missing_fields`
 5i. `skill_unpublish_request` 后 → `publish_status=unpublish_pending`；人工在页面确认 → 资产被彻底删除
 5e. 静态平台接入令牌仍然可用（兜底通道）
-6. **路径断言**：`POST /mcp/skill` = 200（不是 307！）；`POST /mcp/nope` = 404
+6. **路径断言**：`POST /mcp/skill` = 200（不是 307！）；`POST /mcp/nope` = 404；
+    `GET /mcp/skill/sse` = 200，且**首帧 `event: endpoint` 的 `data` == `/mcp/skill/messages/?session_id=…`**
+    （SSE 回传地址由 `root_path` 决定，挂载写错就错在这里 —— §3.3.3）
 7. **transport_security 断言**：Host 不在 allowed_hosts 时 = 421（证明防护生效，不是被绕过）
 
 ### 11.3 一致性测试（§4.13 的核心资产）
@@ -1131,7 +1433,7 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 
 ### 11.4 回归
 
-现有 40+ 测试文件**必须全绿**——这是「零改动」方案的核心验收指标：
+现有 40+ 测试文件**必须全绿**——这是「不动业务逻辑」方案的核心验收指标：
 只要 `marketplace.py` 一行没动，现有测试理应全部原样通过（若有任何失败，说明改到了不该改的地方）。
 
 ---
@@ -1142,16 +1444,27 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 
 | 阶段 | 内容 | 可独立验收 |
 |---|---|---|
-| **S0** | **Qoder 真机联调**：手写一个最小 OAuth 服务器（或先只测 401+metadata 发现）确认 Qoder 会不会自动弹「授权」 | 决定 OAuth 路线是否成立（§4.9 末尾） |
-| S1 | **OAuth 骨架**：provider 实现 + 5 个端点 + access token 签发/校验 | 能用 code 换到 token |
+| **S0** | **Qoder 真机探针**（**独立最小 OAuth spike**，~100 行，与本项目实现完全无关）：起一个最小 AS（http、自签、无 TLS）+ 一个最小 RS（`/mcp/skill` 返回 401 + PR metadata + AS metadata），在 Qoder 里配置后看**会不会自动弹「授权」** | 决定 OAuth 路线是否成立 |
+| S1 | **OAuth 骨架**：provider 实现 + **自写路由**（`oauth_routes.py`，**不调 SDK 的 `create_auth_routes`**）+ 自写 DCR 处理器 + access token 签发/校验 | 能用 code 换到 token |
 | S2 | **同意页 + grant 表**（前端）+ scope 勾选 + 登录回跳 + 「我的授权」页（撤销） | 浏览器里能走完「登录→同意→回客户端」，且撤销后 token 立刻失效 |
-| S3 | **内置连接器资产**：`is_builtin` + seed + 不可删/不可下架/不可编辑 + url 动态生成 + 市场卡片「复制连接器配置」 | 市场里能看到这张卡，复制出来的配置 url 正确 |
+| S3 | **内置连接器资产**：`is_builtin` + seed + 不可删/不可下架/不可改 url + url 动态生成 + 市场卡片「复制连接器配置」 | 市场里能看到这张卡，复制出来的配置 url 正确 |
 | S4 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计 / 配额） | 能握手、能 `tools/list`（空工具集也算通过） |
 | S5 | 技能域适配层 + 14 个工具 + `market_rules.py` 合法性校验 + 「不猜」协议 | §12.1 全部通过（尤其流程对齐与不猜） |
 | **S5.5** | **一致性收敛**：`/assets/rules` 端点 + 前端改为拉规则 + **契约测试 8 场景** + 参数反射检查 | 契约测试全绿（REST 与 MCP 产出完全一致） |
-| S6 | 部署与分发（nginx 5 处 + 锁文件 + `mcp.allowed_hosts` 设置 + 设置页管理组） | 全链路打通 |
+| S6 | 部署与分发（nginx 3 处 + 锁文件 + `mcp.allowed_hosts` 设置 + 设置页管理组） | 全链路打通 |
 
-S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 之间无强耦合，可并行。
+**阶段依赖与兜底**：
+
+```
+S0（独立探针）──通过──▶ S1 → S2 ──▶ S6
+   │
+   └──不通过──▶ 切「静态令牌路线」：S1/S2 降级为「令牌页 + 复制配置」
+                （⚠️ 额外约 1 天工作量：个人令牌页 + Qoder 手填 Bearer header 的引导流程）
+```
+
+- S0 排在最前 —— 它验证的是整条路线的地基，且**不依赖本项目任何代码**（否则就是循环依赖）
+- S1/S2 与 S3/S4 之间无强耦合，可并行
+- S4 的 dispatcher 必须按 §3.3.2 **Route + Mount 并存**实现（否则 SSE 与 streamable 必有一个连不上）
 
 ### 12.1 验收项
 
@@ -1165,15 +1478,23 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 8. 配额用尽 → 工具不执行，返回 `quota_exceeded`（**不得**返回 429）
 8b. **授权不过期**：签发的 access token 里**没有 `exp`**；隔一天再调仍然可用
 8c. 在「我的授权」页撤销某客户端 → 该客户端的 token **下一个请求就 401** → Qoder 重新弹「授权」
-9. **内置资产不可删**：管理员调 `DELETE /api/v1/assets/testmate` → 409「平台内置资产不可删除」；下架/编辑同样 409
+9. **内置资产不可删**：管理员调 `DELETE /api/v1/assets/testmate` → 409「平台内置资产不可删除」；下架同样 409；
+    改 `mcp_config`（url）→ 409；**但改 summary/description 等文案是允许的**
 10. 内置资产的 url 随 `marketplace.public_base_url` 改而变（不用重启、不用改仓库）
-11. **既有后端业务文件改动 < 40 行**（`app/main.py` ~25 行 + `app/models/*` 2 行 + nginx 2 处）；现有 40+ 测试全绿
+11. **既有后端业务文件改动 < 40 行**（`app/main.py` ~30 行 + `app/models/*` 2 行 + `marketplace.py` 守卫 9 行 + nginx 3 处）；现有 40+ 测试全绿
 12. **流程与前端一致**：MCP 上架 → 待审核 + 通知管理员 → 人工在页面审核通过 → **市场群收到上架通知**；
     只改信息（`skill_edit_meta`）→ 待审核 + 通知管理员 → 审核通过 → **市场群收不到通知**
 13. **不猜协议**：缺必填 / 有歧义 / 可选项未确认时，MCP 写工具**拒绝执行且无任何副作用**，返回 `needs_confirmation`
 14. **一致性**：契约测试（8 个场景 × REST/MCP 两条路径）全绿 —— DB 状态、钉钉通知序列、返回值三者一致
 15. **规则单一真源**：改 `market_rules.py` 里的必填清单 → 前端表单与 MCP 校验**同时**跟着变（前端不再有第二份硬编码）
 16. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
+17. **【v11】内网 http 部署可用**：后端能正常启动（没有 `Issuer URL must be HTTPS` 报错），
+    `GET /.well-known/oauth-authorization-server` 与 `GET /.well-known/oauth-protected-resource/mcp/skill` 都返回 200
+18. **【v11】DCR 三条强制规则生效**：客户端注册时不带 `scope` 也能完成带 scope 的授权；
+    注册结果无 client_secret 且 `token_endpoint_auth_method=none`；非回环 `redirect_uris` 被拒
+19. **【v11】SSE 回传地址正确**：`GET /mcp/skill/sse` 首帧 `event: endpoint` 的 data
+    == `/mcp/skill/messages/?session_id=…`，且该地址能被 POST 成功
+20. **【v11】两级配额**：客户端级超限与用户总量级超限都返回 tool error `quota_exceeded`（不是 429）
 
 ---
 
@@ -1193,6 +1514,12 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 | agent 失控循环刷爆平台 | 中 | 令牌级 `daily_quota`（默认 200/天）；超限在**工具层**拦（返回 tool error，不返 429，避免客户端重试风暴） |
 | **REST 与 MCP 悄悄分叉** | 高 | §4.13 三层防线：规则单一真源 + **契约测试（REST vs MCP 三项断言）** + 参数反射检查；分叉 = CI 红 |
 | 前端收敛改动引入回归 | 中 | `assetForm.ts` / `useAssetUploadForm.ts` 改拉规则后，跑既有前端单测（该目录已有 `__tests__/`）；后端既有 40+ 测试不动即绿 |
+| **【v11】OAuth 路由自写 → 与 SDK 版本漂移** | 中 | 只复用 SDK 的 handler（`AuthorizationHandler`/`TokenHandler`/`MetadataHandler`）与 `build_metadata`，**不重写协议逻辑**；锁 `mcp==1.29.1`；升级 SDK 时跑 §11.2 的 5a/5b/5c2 用例即可发现 |
+| **【v11】DCR 未强制 scope → Qoder 授权直接失败** | 高 | §4.3.3 三条强制规则 + 集成测试 5c2 锁死 |
+| **【v11】SSE root_path 写错 → 客户端 POST 到不存在的地址** | 高 | §3.3.3 装配约束 + 集成测试断言首帧 endpoint 的 data 字符串 |
+| **【v11】同意页路由被 nginx `location /mcp` 劫持 → 404** | 中 | 同意页定在 `/connect/authorize`（不在 `/mcp` 下）；nginx 配置评审清单里带上这一条 |
+| **【v11】issuer / resource URL 固化 → 改域名后 OAuth 发现失败** | 中 | 已知限制（§15）：改 `marketplace.public_base_url` 后**必须重启后端**；设置项说明里写死这句提醒 |
+| **【v11】授权码 / 待处理授权请求在内存 → 多进程会失效** | 中 | SSE 已要求单进程（`BACKEND_WORKERS=1`）；`tmctl` 已在 >1 时告警；文档化这条部署约束 |
 
 ---
 
@@ -1215,10 +1542,13 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 | 事项 | 本轮取值 | 何时需要回看 |
 |---|---|---|
 | 首期是否含审核工具 | **已定：不含**（D7）——上架后人工在网页审核台处理 | 若日后要放开，再加回 `skill_review` 一个 tool spec（受平台审核人权限约束） |
-| 令牌有效期 | **已定：默认 90 天**，可勾选「永不过期」 | 用户反馈经常过期影响使用时可调整默认值 |
-| 是否做 SSE 兼容层 | **不做** —— 只按 MCP 默认协议（Streamable HTTP）实现 | 若 Qoder 实测不兼容，走 SDK 自带的 SSE transport（不自己写兼容代码） |
-| 每 token 调用配额 | **已定：默认 200 次/天**，0 = 不限 | 观察 `mcp_tool_calls` 的真实用量后可调 |
+| **OAuth access token 有效期** | **已定：不过期**（D11）—— 不带 `exp`；安全靠 grant 表撤销 | 用户反馈长期授权有风险时，再引入 refresh token（P3.5） |
+| **是否做 SSE transport** | **已定：做**（Qoder CN 的类型下拉里 SSE 与 HTTP 并列，必须都支持） | 若实测 SSE 不可用，再降级为只留 Streamable HTTP |
+| 静态平台接入令牌有效期 | **已定：默认不过期**，可设期限（adminOnly 的 CI/兜底通道） | — |
+| 每客户端调用配额 | **已定：默认 200 次/天**，0 = 不限；**另加用户总量 1000 次/天** | 观察 `mcp_tool_calls` 的真实用量后可调 |
 | 是否抽 domain 层 | 本轮**不抽**（§6） | 出现 §6.5 的三个信号时再下沉 |
-| 个人令牌页 | **已定：不做**（D9）—— 普通用户只走 OAuth | 若 S0 证明 Qoder 不走 OAuth，再把静态令牌页补回来 |
-| **Qoder 是否需要 OAuth** | **已定：不需要** —— 官方文档确认支持 `Headers: Authorization: Bearer ...`（§4.9）；OAuth 降级 P3.5 | 若将来要「点一下就授权」的体验再上 |
+| 个人令牌页 | **已定：不做**（D9）—— 普通用户只走 OAuth | **若 S0 证明 Qoder 不走 OAuth，则必须补回来**（约 1 天工作量） |
+| **Qoder 是否会自动走 OAuth 发现** | **待 S0 验证**（无 Qoder 客户端环境，无法离线确认） | S0 探针跑完即定；不成立则切静态令牌路线 |
 | 内置连接器的 code | 约定 `testmate`（用户可见、可改） | 改的话要注意已装到 Qoder 的用户配置会失效 |
+| **【v11】改 `marketplace.public_base_url` 后是否要重启** | **要重启后端**（issuer / resource URL 在 FastMCP 构造时固化） | 若将来要求热改，需要把 URL 改成运行时读取（增加一层间接） |
+| **【v11】OAuth 端点路径** | 已定：`/oauth/*` + 站点根 `/.well-known/…`（D17） | 将来若要兼容「只认 SDK 默认路径」的客户端，再加别名路由 |
