@@ -1,4 +1,4 @@
-# TestMate MCP 设计（技能市场先行 · v3）
+# TestMate MCP 设计（技能市场先行 · v4）
 
 > 2026-10-31 · 让 **agent 能操作 TestMate**：上架 / 下载 / 更新技能；后续接知识库、软件库。
 > 本轮只做**技能·插件**一个域；每个域一个独立 MCP，公共部分单独放一层。
@@ -11,6 +11,9 @@
 > 5. **首期不含审核工具**（14 → 13 个）：上架后由人工在网页审核台处理，agent 不自己盖章
 > 6. **令牌模型加料**：绑定方式（必绑具体用户）/ scope 固定枚举 / 默认 90 天有效期 / 每日调用配额
 > 7. **不做 SSE 兼容层**：只按 MCP 默认协议（Streamable HTTP）实现
+> 8. **令牌自助签发**：任何登录用户可给自己签发（设置页是 adminOnly，放那儿等于只有管理员能用 agent）；
+>    scope 上限 = 用户平台能力（复用 `market_policy.can_publish`）
+> 9. **令牌页 `/mcp-tokens` + 一键复制连接器配置**：用户不用手拼 mcpServers JSON，url 自动取 `marketplace.public_base_url`
 >
 > 状态：**设计已定，待实现**。
 
@@ -278,13 +281,28 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 
 ### 4.2 签发与吊销
 
-设置页新增「MCP 接入令牌」组（**admin 专属**），签发表单字段与默认值：
+**谁可以签发**：**任何登录用户都能给自己签发**（自助），管理员额外可以**代发给别的用户**。
+
+⚠️ 原设计写成「设置页 admin 专属」是错的：`/settings` 整个页面是 **adminOnly**
+（路由守卫 `adminOnly` + UserMenu 隐藏入口 + 页面内兜底，普通用户连进都进不去），
+放那儿等于**只有管理员能用 agent**，普通测试工程师想用就得找人代开 —— 瓶颈且不合理。
+
+签发方式改为两条路：
+
+| 路径 | 谁能用 | 绑定谁 | scope 上限 |
+|---|---|---|---|
+| **自助签发** | 任何登录用户 | 只能绑自己 | 该用户当前的平台能力（见 §4.4） |
+| **管理员代发** | admin | 可选任意用户 | 同上（仍是那个用户的权限） |
+
+平台开关 `mcp.tokens.self_service`（默认 **true**）：admin 关掉后，只有 admin 能签发。
+
+签发表单字段与默认值：
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `name` | 必填 | 令牌名，如「张三的 Qoder 笔记本」—— 出问题时靠它定位 |
-| `user_id` | 必填 | **绑定的用户**（令牌权限实时取该用户当前角色） |
-| `scopes` | `["market:read"]` | 勾选式，**取值来自固定枚举**（见 §4.4），不接受自由字符串 |
+| `name` | 必填 | 令牌名，如「我的 Qoder 笔记本」—— 出问题时靠它定位 |
+| `user_id` | 自助=自己；代发=手选 | **绑定的用户**（令牌权限实时取该用户当前角色） |
+| `scopes` | `["market:read"]` | 勾选式，**取值来自固定枚举**（见 §4.4），不接受自由字符串；**可选项受 scope 上限约束** |
 | `expires_at` | **创建后 90 天** | 可勾「永不过期」；过期后 agent 会收到明确报错 |
 | `daily_quota` | **200 次/天** | 0 = 不限；防跑飞 agent（详见 §4.5） |
 
@@ -318,6 +336,19 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 | 令牌层 | `scopes` 必须包含该工具的 `scope`；`read_only` 工具额外要求 scope 带 `:read` |
 
 **令牌权限永远不超过绑定用户**：绑定 viewer 就干不了发布者的事；admin 也可以签发只读令牌给 agent 防误删。
+
+#### scope 上限 = 绑定用户的平台能力（自助签发时自动收敛）
+
+不靠"按钮能不能点"来管权限，而是**复用平台已有的能力判定**——发 scope 时按用户能力自动收敛可选项：
+
+| 用户的平台能力（既有口径） | 可选 scope |
+|---|---|
+| 非发布者（viewer / 不在发布者白名单） | 只能 `market:read` |
+| 发布者（`market_policy.can_publish` 为真，默认 tester 即可） | `market:read` + `market:write` |
+| admin | 全部 + `market:*` |
+
+这样普通测试工程师能自助拿到「能上架技能」的 agent 令牌，而 viewer 拿到的必然是只读令牌，
+**不需要管理员逐个发**。判定逻辑复用 `app/core/market_policy.py`，MCP 侧不另造一套角色体系。
 
 #### scope 取值（固定枚举，不接受自由字符串）
 
@@ -363,6 +394,45 @@ agent 最危险的失败模式不是「权限越界」，而是**失控循环**�
 - 吊销即时生效；默认 90 天过期，过期与吊销返回**不同的错误码**（`token_expired` vs `token_revoked`），便于 agent 自诊断
 - 每次 tool 调用落审计（见 §8），含 token_id，可追责到人
 - 令牌明文不进公共市场资产（自举连接器只放 url + 占位符，见 §10.4）
+
+### 4.7 令牌怎么进到 MCP 客户端（交付链路）
+
+MCP 客户端（Qoder）需要的不只是一个 token，而是**一整段配置**：
+
+```json
+{
+  "mcpServers": {
+    "testmate-skill": {
+      "url": "http://10.0.0.5:8081/mcp/skill",
+      "headers": { "Authorization": "Bearer tm_live_xxxxxxxx" }
+    }
+  }
+}
+```
+
+让用户自己手拼这段 JSON 极易出错（漏引号、url 写错路径、少了 `/mcp/skill`）。所以交付链路是：
+
+```
+令牌页(新建 /mcp-tokens)
+  ├─ [签发令牌]  → 明文 tm_live_xxx（只此一次，弹窗 + 一键复制）
+  ├─ [复制连接器配置] → 后端拼好上面的 JSON（含正确的 url + Bearer 头）→ 一键复制
+  └─ [工具清单] → 列出本域 13 个工具，让用户知道 agent 能干什么
+                          ↓ 粘贴
+                    Qoder 的 MCP 配置（mcp.json / 设置里的 MCP 面板）
+                          ↓
+                    Qoder 连 http://<平台地址>/mcp/skill
+```
+
+**url 自动取对**：后端用既有设置项 `marketplace.public_base_url`（已是「对外可达的基地址」，
+marketplace.json 和钉钉通知链接都在用它）+ `/mcp/skill` 拼出，用户不用手填 IP。
+该设置项留空时回落到「请求来源 host」（与 `app/core/dingtalk.py` 的做法一致）。
+
+**为什么不让平台市场直接下发带令牌的连接器**：「连接器」资产是**公共**的（全员可见），
+把某个人的明文令牌写进去 = 全员可见的长期凭证。绝不这么做。
+市场里的 TestMate 连接器资产只放 url 与 `<你的令牌>` 占位符，令牌由每个人自己在令牌页签发。
+
+**没有 OAuth 动态注册**：MCP 规范支持 OAuth 授权服务器 + 动态客户端注册，但那是给公开 SaaS 用的；
+内网平台用「管理员/用户自助签发的静态 token」更简单可控，不引入授权服务器。
 
 ---
 
@@ -478,7 +548,7 @@ v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`
 | `requirements.txt` / `requirements.lock` | 加 `mcp==1.29.1` 及 4 个传递依赖 |
 | `frontend_web/nginx.conf` | 加 `location /mcp`（约 12 行） |
 | `deploy/native/units/nginx.conf.tpl` | 同上（裸机模板） |
-| 前端设置页 | 加「MCP 接入令牌」组（新组件 + 设置页挂载一处） |
+| 前端 | 新增 `views/McpTokens/index.vue` + `api/mcp.ts`（新文件）；改 `router/index.ts`（加路由）、`components/UserMenu.vue`（加菜单项）、`views/Settings/index.vue`（加 admin 管理组） |
 
 **其余全部是新增文件**：`app/mcp/**`、`app/api/mcp.py`、`app/models/mcp.py`、alembic 迁移、测试。
 
@@ -610,10 +680,29 @@ location /mcp {
 - **明文令牌不进公共市场资产**：市场里只放 url 与占位符，令牌由每个用户自己在设置页签发并填进本地连接器配置
 - 该连接器资产本身走平台的审核流上架（自举也守规矩）
 
-### 10.5 前端设置页
+### 10.5 前端：新增「MCP 令牌」页 + 设置页管理组
 
-设置页新增「MCP 接入令牌」组（仅 admin 可见）：令牌列表 / 签发 / 吊销 / 复制明文。
-另在「插件·技能·连接」页面加一个入口，说明「agent 可通过 TestMate MCP 操作技能市场」。
+⚠️ **不能只做设置页**：设置页是 adminOnly，普通用户进不去，个人令牌必须有自己的页面。
+
+| 文件 | 改动 | 说明 |
+|---|---|---|
+| `views/McpTokens/index.vue` | **新增页面** | 「我的 MCP 令牌」：列表 / 签发 / 吊销 / 复制明文 / 复制连接器配置 / 工具清单 |
+| `router/index.ts` | 加一条路由 | `{ path: 'mcp-tokens', meta: { requiresAuth: true, title: 'MCP 令牌' } }`——**不加 `adminOnly`** |
+| `components/UserMenu.vue` | 加菜单项 | 「MCP 令牌」，**所有登录用户可见**，放在「设置」条目旁边（设置仍只给 admin） |
+| `api/mcp.ts` | **新增** | 令牌 CRUD + `getConnectionConfig()`（拿可粘贴的 mcpServers JSON） |
+| `views/Settings/index.vue` | 加一个 admin 组 | 「🔌 MCP 接入」：看**全部**令牌 / 吊销别人的 / 开关自助签发（`mcp.tokens.self_service`）/ 配 `mcp.allowed_hosts` |
+
+后端新增 `app/api/mcp.py`（`/api/v1/mcp`）：
+
+| 端点 | 权限 | 说明 |
+|---|---|---|
+| `GET /tokens` | 登录 | 自己的令牌；admin 可带 `?all=1` 看全部 |
+| `POST /tokens` | 登录（自助）/ admin（代发） | 签发，**响应里带一次明文** |
+| `DELETE /tokens/{id}` | 本人 / admin | 吊销 |
+| `GET /connection-config` | 登录 | 返回拼好的 mcpServers JSON（url + Bearer），供一键复制 |
+| `GET /tools` | 登录 | 本域工具清单（供页面展示） |
+
+另在「插件·技能·连接」页加一个入口，说明「agent 可通过 TestMate MCP 操作技能市场」并链到令牌页。
 
 ---
 
@@ -668,8 +757,9 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 
 ### 12.1 验收项
 
-1. 管理员在设置页签发令牌 → 拿到 `tm_live_...` 明文（只此一次）
-2. Qoder 里配置连接器 `{url: http://<host>/mcp/skill, headers: {Authorization: "Bearer tm_live_..."}}` → 能连上
+1. **普通测试工程师**（tester，非 admin）登录后进 `/mcp-tokens` → 自助签发 → 拿到 `tm_live_...` 明文（只此一次）
+1b. **viewer** 签发时 scope 只有 `market:read`（可选项被自动收敛）；tester 可勾到 `market:write`
+2. 令牌页点「复制连接器配置」→ 得到一段 mcpServers JSON（url 自动取 `marketplace.public_base_url`）→ 粘进 Qoder → 能连上
 3. `tools/list` 返回 13 个工具，名称与 §5 一致
 4. agent 能：搜到技能 → 读 `SKILL.md` → 取到包 URL 与 sha256 → 下载后 sha256 与 `skill_package_info` 一致
 5. agent 能上架新技能 → 返回 job_id → `skill_job_status` 显示 succeeded → GitLab 出现对应 commit → 审核台可见
