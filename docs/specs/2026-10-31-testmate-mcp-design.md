@@ -1,4 +1,4 @@
-# TestMate MCP 设计（技能市场先行 · v4）
+# TestMate MCP 设计（技能市场先行 · v5）
 
 > 2026-10-31 · 让 **agent 能操作 TestMate**：上架 / 下载 / 更新技能；后续接知识库、软件库。
 > 本轮只做**技能·插件**一个域；每个域一个独立 MCP，公共部分单独放一层。
@@ -14,6 +14,8 @@
 > 8. **令牌自助签发**：任何登录用户可给自己签发（设置页是 adminOnly，放那儿等于只有管理员能用 agent）；
 >    scope 上限 = 用户平台能力（复用 `market_policy.can_publish`）
 > 9. **令牌页 `/mcp-tokens` + 一键复制连接器配置**：用户不用手拼 mcpServers JSON，url 自动取 `marketplace.public_base_url`
+> 10. **Qoder 的 OAuth 2.1 授权流**（§4.8）写成可选增强：SDK 已有一等支持，但要我们自己写 provider + 同意页；
+>    **是否需要它取决于 Qoder 能不能吃静态 Bearer 令牌 —— 实现第一步先做这个 spike**
 >
 > 状态：**设计已定，待实现**。
 
@@ -431,8 +433,77 @@ marketplace.json 和钉钉通知链接都在用它）+ `/mcp/skill` 拼出，用
 把某个人的明文令牌写进去 = 全员可见的长期凭证。绝不这么做。
 市场里的 TestMate 连接器资产只放 url 与 `<你的令牌>` 占位符，令牌由每个人自己在令牌页签发。
 
-**没有 OAuth 动态注册**：MCP 规范支持 OAuth 授权服务器 + 动态客户端注册，但那是给公开 SaaS 用的；
-内网平台用「管理员/用户自助签发的静态 token」更简单可控，不引入授权服务器。
+### 4.8 Qoder 的「点授权 → 跳系统 → 网页同意」流程（OAuth 2.1，可选增强）
+
+Qoder 里配好 MCP 后弹「需要授权」、点一下跳到网页去同意、再回到 Qoder 拿到工具权限——
+这是 **MCP 规范里的标准 OAuth 2.1 流程**（Resource Server + Authorization Server 双角色），不是 Qoder 私有机制。
+
+完整链路：
+
+```
+① Qoder 探活 POST /mcp/skill  → 我们返回 401
+   + WWW-Authenticate: Bearer resource_metadata="http://host/.well-known/oauth-protected-resource/mcp/skill"
+② Qoder 读「受保护资源元数据」→ 得知授权服务器在 http://host
+③ Qoder 读「授权服务器元数据」 http://host/.well-known/oauth-authorization-server
+   → 拿到 authorization_endpoint / token_endpoint / registration_endpoint
+④ Qoder 动态注册客户端 POST http://host/register  (RFC 7591)
+⑤ Qoder 打开浏览器 http://host/authorize?...&code_challenge=...&state=...
+   → 我们引导登录 TestMate → **同意页**（显示客户端名 + 请求的 scope）→ [同意]
+   → 生成授权码 → 302 回 Qoder 的 redirect_uri?code=...&state=...
+⑥ Qoder 用 code + PKCE 校验串换 access token  POST http://host/token
+   → 之后所有请求带 Authorization: Bearer <access_token>
+```
+
+#### SDK 已经给好了大半（已逐个核实 API）
+
+| SDK 能力 | 位置 | 我们要写什么 |
+|---|---|---|
+| `FastMCP(auth=AuthSettings(issuer_url, resource_server_url), auth_server_provider=..., token_verifier=...)` | `mcp/server/fastmcp/server.py` | 传参即可 |
+| `create_auth_routes(provider, issuer_url, ...)` | `mcp/server/auth/routes.py` | **零代码**，自动生成 `/.well-known/oauth-authorization-server`、`/authorize`、`/token`、`/register`、`/revoke` |
+| `BearerAuthBackend` | `.../middleware/bearer_auth.py` | **零代码**，401 时自动带 `WWW-Authenticate: Bearer resource_metadata=...`（就是①的触发器） |
+| `OAuthAuthorizationServerProvider` 协议 | `mcp/server/auth/provider.py` | **要实现**：`register_client` / `authorize` / `exchange_authorization_code` / `load_access_token` / `get_client` / `revoke_token` 等 10 个方法 |
+| `AuthorizationParams.code_challenge`（**必填**） | 同上 | PKCE S256 校验（公开客户端无 secret，必须 PKCE） |
+| `AuthorizationCode.subject` / `AccessToken.subject` | 同上 | 资源所有者身份 → 同意页登录的用户 = token 的 `sub` |
+
+#### 我们必须自己写的四块
+
+1. **provider 实现**（`app/mcp/common/oauth_provider.py`，约 300 行）
+   - OAuth 客户端注册表（新表 `mcp_oauth_clients`）
+   - 授权码存储（短时，建议放 Redis 或新表；一次性、5 分钟过期）
+   - **PKCE S256 校验**（`exchange_authorization_code` 里比对 `code_verifier`）
+   - **redirect_uri 白名单校验**（必须比对客户端注册时登记的 redirect_uri —— 否则就是开放重定向漏洞）
+2. **同意页**（前端新页面 `/mcp/authorize`）
+   - 未登录 → 跳 TestMate 登录页（带 redirect 回跳）
+   - 登录后 → 显示「客户端名 + 请求的 scope（逐条）+ 有效期」→ [同意] / [拒绝]
+   - [同意] → 调后端生成 code → 302 回客户端 `redirect_uri`
+3. **token 验证入口**：一个 `TokenVerifier` **同时接受两种凭证** —— 静态 `tm_live_*` 与 OAuth access token
+4. **nginx 加 location**：OAuth 端点在**根路径**（`/.well-known/...`、`/authorize`、`/token`、`/register`、`/revoke`），
+   **不在 `/api/` 下**，而现有 nginx 只把 `/api/` 转发给后端 → 必须单独加（否则 404 落到前端静态页）
+
+#### 代价与取舍
+
+| 维度 | 静态个人令牌（§4.2） | OAuth 2.1 授权流 |
+|---|---|---|
+| 用户操作 | 复制令牌 → 粘进配置 | 点「授权」→ 浏览器同意 → 完事 |
+| 后端工作量 | 1 张表 + 签发/校验/吊销 | 再加 1 张表 + provider(300行) + 同意页 + 4 处 nginx |
+| 凭证生命周期 | 长期（90 天或永不过期） | 短期 access token + refresh |
+| 适用场景 | Qoder / curl / CI / 脚本 | 图形化客户端（Qoder 等） |
+
+**推荐：两条都留，一个验证入口。**
+`TokenVerifier` 同时认 `tm_live_*` 和 OAuth access token，权限判定（scope + 用户平台能力）与审计
+（`mcp_tool_calls`）完全共用 —— 用户选哪种凭证，能力边界一模一样。
+
+#### ⚠️ 先决问题：Qoder 到底需不需要 OAuth？
+
+这是**目前唯一没有实测证据**的点。两种可能：
+
+- **Qoder 支持在 MCP 配置里带 `headers`** → 静态令牌直接可用，**完全不需要 OAuth**
+  （平台的连接器资产格式本来就带 `headers`，`app/core/mcp_config.py` 一直在校验这个结构）
+- **Qoder 不发自定义头 / 坚持走自己的授权流程** → 必须实现 OAuth
+
+这台机器上没有 Qoder 客户端，无法直接验证。**建议实现阶段第一步就做这个 spike**（约 30 分钟）：
+用设计好的静态令牌在 Qoder 里配一次，看是直接连上、还是弹授权框。
+这一步直接决定 OAuth 是 P0 还是 P2 —— 别在没验证前就把 300 行 provider 写完。
 
 ---
 
@@ -748,6 +819,7 @@ location /mcp {
 
 | 阶段 | 内容 | 可独立验收 |
 |---|---|---|
+| **S0** | **Qoder 联调 spike**：静态令牌在 Qoder 里配一次，看是直接连上还是弹授权框 | **决定 OAuth 是不是 P0**（§4.8 末尾） |
 | S1 | 令牌体系（表 + 模型 + 签发/校验/吊销 API + 配额 + 设置页） | 能签发、能验、能吊销、配额能拦 |
 | S2 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计） | 能握手、能 `tools/list`（空工具集也算通过） |
 | S3 | 技能域适配层 + 13 个工具 | §12.1 全部通过 |
@@ -796,6 +868,7 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 | P1 | 知识库域：`app/mcp/kb/` + `kb_search` / `kb_list_datasets` / `kb_read_document` / `kb_ingest` | 1 个目录 + 1 行注册 |
 | P2 | 软件库域：`app/mcp/software/` + `software_search` / `software_download` / `software_upload` | 1 个目录 + 1 行注册 |
 | P3 | 插件 / 连接器域：`plugin_*` / `connector_*`（复用同一批 adapter 函数，改 kind 即可） | 少量 tool spec |
+| **P3.5** | **OAuth 2.1 授权流**（若 S0 spike 证明 Qoder 需要）：provider + 同意页 + 4 处 nginx；与静态令牌共用 `TokenVerifier` | 约 300 行后端 + 1 个前端页 |
 | P4 | stdio transport 薄壳（本地 CLI agent 用） | 1 个薄壳进程 |
 | P5 | MCP Resources / Prompts（把 `SKILL.md` 暴露成 Resource） | SDK 原生支持 |
 
@@ -810,3 +883,5 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 | 是否做 SSE 兼容层 | **不做** —— 只按 MCP 默认协议（Streamable HTTP）实现 | 若 Qoder 实测不兼容，走 SDK 自带的 SSE transport（不自己写兼容代码） |
 | 每 token 调用配额 | **已定：默认 200 次/天**，0 = 不限 | 观察 `mcp_tool_calls` 的真实用量后可调 |
 | 是否抽 domain 层 | 本轮**不抽**（§6） | 出现 §6.5 的三个信号时再下沉 |
+| **Qoder 是否需要 OAuth** | **未知** —— 本轮按「静态令牌够用」设计，OAuth 列为 P3.5 | **S0 spike 出结果就定**：能吃静态头 → 永远不做；不能吃 → 提到 P0 |
+| OAuth 的同意页放哪 | 暂定 `/mcp/authorize`（独立页，非设置页——设置页是 adminOnly） | 真正做的时候再定 |
