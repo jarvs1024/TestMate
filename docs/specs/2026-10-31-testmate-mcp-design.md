@@ -420,10 +420,12 @@ MCP 客户端（Qoder）需要的不只是一个 token，而是**一整段配置
 ```
 令牌页(新建 /mcp-tokens)
   ├─ [签发令牌]  → 明文 tm_live_xxx（只此一次，弹窗 + 一键复制）
-  ├─ [复制连接器配置 · Streamable HTTP] → {"mcpServers":{"testmate-skill":{
+  ├─ [复制连接器配置 · HTTP] → {"mcpServers":{"testmate-skill":{
   │        "type":"streamable-http","url":"http://<平台地址>/mcp/skill",
   │        "headers":{"Authorization":"Bearer tm_live_xxx"}}}}   ← 一键复制
-  ├─ [复制连接器配置 · SSE] → 同上，但 url 换成 .../mcp/skill/sse、type 换成 "sse"
+  │        (对应 Qoder「传输类型」下拉选 **HTTP**)
+  ├─ [复制连接器配置 · SSE] → 同上，url 换成 .../mcp/skill/sse、type 换成 "sse"
+  │        (对应 Qoder「传输类型」下拉选 **SSE**)
   └─ [工具清单] → 列出本域 13 个工具，让用户知道 agent 能干什么
                           ↓ 粘贴
                     Qoder：设置 → 连接器与 MCP → + → 粘贴 JSON 配置 → 导入
@@ -828,7 +830,7 @@ location /mcp {
 | `GET /tokens` | 登录 | 自己的令牌；admin 可带 `?all=1` 看全部 |
 | `POST /tokens` | 登录（自助）/ admin（代发） | 签发，**响应里带一次明文** |
 | `DELETE /tokens/{id}` | 本人 / admin | 吊销 |
-| `GET /connection-config?transport=streamable-http\|sse` | 登录 | 返回拼好的 **Qoder 格式** mcpServers JSON（`type` + `url` + `headers.Authorization`），供一键复制 |
+| `GET /connection-config?transport=http\|sse` | 登录 | 返回拼好的 **Qoder 格式** mcpServers JSON（`type` + `url` + `headers.Authorization`），供一键复制；`transport=http` → `type=streamable-http` + `/mcp/skill`；`transport=sse` → `type=sse` + `/mcp/skill/sse` |
 | `GET /tools` | 登录 | 本域工具清单（供页面展示） |
 
 另在「插件·技能·连接」页加一个入口，说明「agent 可通过 TestMate MCP 操作技能市场」并链到令牌页。
