@@ -16,7 +16,7 @@
 ## 一句话
 
 在现有 FastAPI 后端挂一组 `/mcp/{域}` 端点（MCP Streamable HTTP），用**长期 API Token** 鉴权；
-每个业务域一个独立 MCP server，技能域首批暴露 **14 个工具**；
+每个业务域一个独立 MCP server，技能域首批暴露 **13 个工具**；
 **现有业务代码一行不改**，MCP 能力全部收敛在新目录 `app/mcp/` 内。
 
 ---
@@ -47,6 +47,7 @@
 
 - ❌ 不提供「硬删资产」工具（删除语义 = 下架审核通过，由平台既有流程承担）
 - ❌ 不绕过审核流（agent 不能自行绕过 `marketplace.review.*` 设置）
+- ❌ **不提供审核（approve/reject）工具** —— 审核由人工在网页审核台完成（D7）
 - ❌ 不实现知识库 / 软件库的工具（只留目录骨架与公共层的扩展位）
 - ❌ 不做 stdio transport（首批只服务 Qoder，走远程 HTTP）
 - ❌ 不做 MCP OAuth 动态注册（静态 API Token，够用且好管）
@@ -64,7 +65,7 @@
 | D4 | MCP 的组织方式 | **`app/mcp/` 按域分目录；每域一个独立 MCP server；公共部分在 `common/`** | 域之间零耦合；agent 可只连需要的域，工具集不污染 |
 | D5 | 对现有代码的侵入度 | **零改动**：`marketplace.py` / `kb.py` / `software.py` 一行不动，MCP 侧用薄适配层调用 | 生产代码，3005 行重排的回归风险不可接受；MCP 是独立功能，应能独立落地 |
 | D6 | 协议实现 | **官方 `mcp` SDK**（FastMCP），`stateless_http=True` + `json_response=True` | 握手/版本协商/能力声明有 SDK 兜底；依赖与现有锁文件无冲突 |
-| D7 | 首期是否含审核工具 | **含**（`skill_review`），完全受平台既有审核人权限约束 | admin 令牌可完成「上架→审核→在架」闭环 |
+| D7 | 首期是否含审核工具 | **不含** —— 上架后由人工在**网页审核台**处理 | 审核是人工运营动作，agent 不该自己给自己盖章；写入面更小、更安全 |
 
 ---
 
@@ -88,7 +89,7 @@ backend_gateway/app/
 │   │   ├── __init__.py
 │   │   ├── server.py           #     本域 MCP server 实例（name=testmate-skill）
 │   │   ├── adapter.py          #     调 app/api/marketplace.py 的薄适配层
-│   │   └── tools.py            #     14 个工具定义（schema + handler）
+│   │   └── tools.py            #     13 个工具定义（schema + handler）
 │   │
 │   ├── software/               #   软件库域（预留：只有骨架，无工具）
 │   │   └── __init__.py
@@ -117,13 +118,13 @@ backend_gateway/app/
 
 | 域 | MCP server name | 端点 | 状态 |
 |---|---|---|---|
-| 技能·插件 | `testmate-skill` | `POST /mcp/skill` | **本轮实现**（14 工具） |
+| 技能·插件 | `testmate-skill` | `POST /mcp/skill` | **本轮实现**（13 工具） |
 | 软件库 | `testmate-software` | `POST /mcp/software` | 预留骨架 |
 | 知识库 | `testmate-kb` | `POST /mcp/kb` | 预留骨架 |
 
 **为什么要分域而不是一个大 server**：
 
-- agent 只需连自己要的域 —— 连 `testmate-skill` 就只看到 14 个技能工具，不会被知识库/软件库工具淹没
+- agent 只需连自己要的域 —— 连 `testmate-skill` 就只看到 13 个技能工具，不会被知识库/软件库工具淹没
 - 每个域的 `instructions` 可以写自己的引导语（如「这是技能市场：先 search 再 read_doc 再 publish」）
 - 域之间零耦合：新增域 = 新增 `app/mcp/<域>/` 目录 + 在 `common/server.py` 的注册表加一行
 - 权限可分域授权（`market:read` / `kb:read` / `software:read`），未来可给 agent 只读某个域的令牌
@@ -313,7 +314,7 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 
 ---
 
-## 5. 工具清单（v1 = 技能·插件域，14 个）
+## 5. 工具清单（v1 = 技能·插件域，13 个 = 9 读 + 4 写）
 
 全部挂在 `testmate-skill` server（端点 `/mcp/skill`）下，作用于 `kind=skill`。
 插件（`kind=plugin`）与连接器（`kind=mcp`）走同一批底层能力，后续加 `plugin_*` / `connector_*` 前缀即可复用。
@@ -339,15 +340,17 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 | `skill_publish` | `code` `name` `version` `summary` `description?` `use_when?` `not_for?` `category?` `project?` `icon?` `tags?` `keywords?` `permissions?` `install_steps?` `bindings?` `files?` `package_base64?` | `{job_id, status, code}` | 上架新技能。`files`（路径→文本内容映射）与 `package_base64`（zip 的 base64）二选一，都不给则 `invalid_argument`。base64 包按 `{code}.zip` 还原（命名契约要求包名与 `code` 一致，`market_naming.check_package_consistency` 会校验） |
 | `skill_update` | `code` + 上述任意字段（**均可省略**）+ `files?` / `package_base64?` | `{job_id, status, code}` | 发新版本。**字段省略 = 保持现状**（读当前 DB 资产值合并，read-modify-write）；`version` 省略时自动 patch 当前版本末位（`x.y.z → x.y.(z+1)`），给了则必须与当前版本不同。给了 `files`/`package_base64` = **整体替换**包内容（不是增量合并），未给 = 包内容不变 |
 | `skill_submit_review` | `code` | `{code, publish_status, pending_action}` | 提交审核 |
-| `skill_review` | `code` `approve: bool` `note?` | `{code, publish_status, pending_action}` | 审核通过 / 驳回。需审核人身份，否则 403 |
-| `skill_unpublish_request` | `code` `reason?` | `{code, publish_status}` | 申请下架 |
+| `skill_unpublish_request` | `code` `reason?` | `{code, publish_status}` | 申请下架（转 `unpublish_pending`，由管理员在网页确认；确认后资产才被彻底删除） |
 
 ### 5.3 三个刻意的取舍
 
 1. **不提供硬删工具**：平台的删除语义是「下架审核通过 → 彻底删除资产」，属于人工运营动作。
    agent 要下架只能走 `skill_unpublish_request`，需管理员确认。
-2. **不绕过审核**：`skill_publish` 内部调用与网页**同一个** `_review_required` 判断逻辑，
-   非 admin 令牌上架后落在 `pending`，需要审核；admin 令牌在 `admin_self_approve=true` 时直接上架。
+2. **不提供审核工具，上架后走人工网页审核台**：`skill_publish` / `skill_update` 内部调用与网页**同一个**
+   `_review_required` 判断逻辑 —— 非 admin 令牌上架后落在 `publish_status=pending` + `pending_action=new|update`，
+   由**人工在网页审核台**点通过才上架。MCP 侧**不提供 approve/reject 工具**：审核是人工运营动作，
+   agent 不该自己给自己盖章。agent 仍可用 `skill_submit_review` 把**被驳回的**资产重新提交审核。
+   （admin 令牌在 `marketplace.review.admin_self_approve=true`（默认）时上传即上架——这是平台既有口径，MCP 不改。）
 3. **zip 字节不进 tool 返回**：包体可能有 MB 级，塞进 JSON-RPC 响应会撑爆上下文。
    `skill_package_info` 给 URL + sha256，agent 自取；文本内容走 `skill_read_file`。
 
@@ -389,12 +392,12 @@ v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`
 | 细节 | 现状 | adapter 的处理 |
 |---|---|---|
 | 参数形状 | 路由用 `Form(...)` / `Query(...)` 默认值 | 直接调用时**必须显式传全部参数**（默认值是 `Form` 对象不是值），adapter 内逐个补齐 |
-| 用户参数名不一致 | `submit_for_review` / `review_asset` / `list_projects` 的参数名是 **`_user`**（下划线前缀） | adapter 按关键字传 `_user=...`；**在代码里写注释说明原因**，免得后人以为是笔误 |
+| 用户参数名不一致 | `submit_for_review` / `list_projects` 的参数名是 **`_user`**（下划线前缀） | adapter 按关键字传 `_user=...`；**在代码里写注释说明原因**，免得后人以为是笔误 |
 | 错误类型 | 路由抛 `HTTPException(status_code, detail)` | adapter 捕获 → 按 status 映射成 MCP error code（400→bad_request / 403→permission_denied / 404→not_found / 409→conflict / 422→invalid_argument / 5xx→upstream_failed） |
 | 上传包 | 路由要 `UploadFile` | adapter 用 `UploadFile(file=BytesIO(data), filename=f"{code}.zip")` 构造 |
 | 多文件上传 | 路由要 `list[UploadFile]` | adapter 逐个构造 |
 | 下载 | 路由返回 `Response`（bytes + `X-Content-Sha256` 头） | adapter 取 `response.body` 与响应头，不让 bytes 进 tool 返回 |
-| 审核 | `review_asset(code, decision="approve"|"reject", comment)` | MCP 工具把 `approve: bool` 翻译成 `decision` |
+| 审核 | `review_asset(code, decision="approve"|"reject", comment)` | **本轮不做**（D7：审核由人工在网页审核台完成，MCP 不提供 approve/reject 工具） |
 | 下架 | `unpublish_asset(code, confirm_code, comment)` | MCP 工具**必须**回填 `confirm_code=code`（这是平台既有的防误操作契约，MCP 不能绕过） |
 | 返回值 | Pydantic 模型（`AssetOut` / `AssetJobOut` …） | `model_dump(mode="json")` 后裁剪字段，避免把内部字段（如 `git_path`）泄给 agent |
 | 权限 | 依赖注入 `Depends(require_publisher)` 等 | adapter **显式传入**已解析的用户 → 依赖注入的检查在函数体内仍会执行 |
@@ -568,7 +571,7 @@ location /mcp {
 用例：
 
 1. `initialize` → 拿到 serverInfo.name == `testmate-skill`
-2. `tools/list` → 返回 14 个工具，名称与 §5 一致
+2. `tools/list` → 返回 13 个工具，名称与 §5 一致
 3. `tools/call skill_search` → 能拿到结果
 4. 工具函数内能读到 `ctx.request_context.request.headers["authorization"]` 与 `.state.principal`
 5. 无 token / 坏 token → **401**；已吊销 token → **401**
@@ -590,7 +593,7 @@ location /mcp {
 |---|---|---|
 | S1 | 令牌体系（表 + 模型 + 签发/校验/吊销 API + 设置页） | 能签发、能验、能吊销 |
 | S2 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计） | 能握手、能 `tools/list`（空工具集也算通过） |
-| S3 | 技能域适配层 + 14 个工具 | §12.1 全部通过 |
+| S3 | 技能域适配层 + 13 个工具 | §12.1 全部通过 |
 | S4 | 部署与分发（nginx / 锁文件 / allowed_hosts 设置 / 自举连接器 / 设置页入口） | Qoder 实连成功 |
 
 S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令牌，S3 依赖 S2。S2/S3 可并行。
@@ -599,10 +602,10 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 
 1. 管理员在设置页签发令牌 → 拿到 `tm_live_...` 明文（只此一次）
 2. Qoder 里配置连接器 `{url: http://<host>/mcp/skill, headers: {Authorization: "Bearer tm_live_..."}}` → 能连上
-3. `tools/list` 返回 14 个工具，名称与 §5 一致
+3. `tools/list` 返回 13 个工具，名称与 §5 一致
 4. agent 能：搜到技能 → 读 `SKILL.md` → 取到包 URL 与 sha256 → 下载后 sha256 与 `skill_package_info` 一致
 5. agent 能上架新技能 → 返回 job_id → `skill_job_status` 显示 succeeded → GitLab 出现对应 commit → 审核台可见
-6. 审核人在 agent 侧（或网页）审核通过后，技能出现在市场列表
+6. agent 上架后状态为 `pending`（`pending_action=new`）→ **人工在网页审核台**点通过 → 技能出现在市场列表
 7. 吊销令牌 → 下一个请求立刻 401
 8. **`git diff --stat` 证明既有后端业务文件改动 < 40 行**（`app/main.py` ~15 行 + `app/models/__init__.py` 1 行 + 2 个 nginx 各 ~12 行）；现有 40+ 测试全绿
 9. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
@@ -629,7 +632,7 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 
 | 阶段 | 内容 | 增量成本 |
 |---|---|---|
-| **P0（本轮）** | 令牌体系 + MCP 公共层 + 技能域 14 工具 + 部署分发 | — |
+| **P0（本轮）** | 令牌体系 + MCP 公共层 + 技能域 13 工具 + 部署分发 | — |
 | P1 | 知识库域：`app/mcp/kb/` + `kb_search` / `kb_list_datasets` / `kb_read_document` / `kb_ingest` | 1 个目录 + 1 行注册 |
 | P2 | 软件库域：`app/mcp/software/` + `software_search` / `software_download` / `software_upload` | 1 个目录 + 1 行注册 |
 | P3 | 插件 / 连接器域：`plugin_*` / `connector_*`（复用同一批 adapter 函数，改 kind 即可） | 少量 tool spec |
@@ -642,7 +645,7 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 
 | 事项 | 本轮取值 | 何时需要回看 |
 |---|---|---|
-| 首期是否含审核工具 | **含**（D7），严格受平台审核人权限约束 | 用户若只想让 agent 提交待审，删掉 `skill_review` 一个 tool spec 即可 |
+| 首期是否含审核工具 | **已定：不含**（D7）——上架后人工在网页审核台处理 | 若日后要放开，再加回 `skill_review` 一个 tool spec（受平台审核人权限约束） |
 | 令牌有效期 | 默认**不过期**（`expires_at=NULL`），可签发时指定 | 内网场景可接受；对外暴露时收紧 |
 | SSE 兜底端点 | 先实现 Streamable HTTP，**预留** `/mcp/sse` 挂载点 | Qoder 实测不兼容时启用 |
 | 每 token 调用配额 | 本轮**不限**，只审计 | 观察一段时间后按 `mcp_tool_calls` 加限流 |
