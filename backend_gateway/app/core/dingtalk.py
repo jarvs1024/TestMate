@@ -24,6 +24,7 @@ import hmac
 import logging
 import time
 import urllib.parse
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -43,6 +44,115 @@ MAX_ATTEMPTS = 5
 RETRY_BASE_SEC = 30
 # 重试扫描间隔 (秒)
 RETRY_SCAN_SEC = 30
+
+# ---------- 「平台是从哪个地址被访问的」 (2026-10-31 · 第十三轮) ----------
+#
+# 通知正文里那个「去市场看看 / 去软件库看看」的链接, 得是**同事点得开**的地址.
+# ⚠️ 写死一个地址 (如 http://127.0.0.1:8081) 有三个问题:
+#    ① 换台机部署 → 链接指到别的机器去了;
+#    ② 同事从 http://10.0.0.5:8081 访问 → 那个 127.0.0.1 是**他自己**的电脑;
+#    ③ 用域名访问 → 链接还是 IP, 看着就不对.
+#    所以改成**动态推断**: 从这次请求的 Host 头反推"用户实际访问的地址".
+#
+# _request_base_url —— ContextVar, **当前请求**的基地址 (请求链里共享).
+# _last_base_url    —— 进程内缓存「最近一次推断到的」, 给**后台任务**用
+#                     (聚合汇总 worker / 重试 worker 不在请求上下文里, 但它们也要发带链接的消息).
+_request_base_url: ContextVar[str] = ContextVar("tm_request_base_url", default="")
+_last_base_url: str = ""
+
+
+def _sanitize_host(host: str) -> str:
+    """主机头清洗 —— 只留「像主机名/端口」的东西.
+
+    ⚠️ 为什么必须洗: host 是**客户端可控**的请求头, 直接拼进通知里的链接,
+       就能被构造成钓鱼链接 (比如 `evil.com/#` 这种带路径的).
+       这里只放行字母数字、点、横线、冒号 —— 域名和端口够了.
+    """
+    h = (host or "").strip()
+    if not h:
+        return ""
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:")
+    if any(c not in allowed for c in h):
+        return ""
+    return h
+
+
+def set_request_base_url(base: str) -> None:
+    """中间件调用: 记下"这次请求是从哪个地址进来的".
+
+    传空串 = 清掉**当前请求**的记录 (但保留进程内缓存, 供后台任务用).
+    """
+    global _last_base_url
+    b = (base or "").strip().rstrip("/")
+    if b:
+        _last_base_url = b
+    _request_base_url.set(b)
+
+
+def get_request_base_url() -> str:
+    """当前请求的基地址 —— 没有请求上下文时回落到「最近一次推断到的」."""
+    return _request_base_url.get() or _last_base_url
+
+
+def reset_base_url_cache() -> None:
+    """清掉「进程内缓存的基地址」—— **只给测试用**.
+
+    ⚠️ 生产里这个缓存是**故意**跨请求保留的 (后台 worker 没请求上下文, 要靠它),
+       所以别在业务代码里调 —— 只有单测需要 (免得一个用例推断出的地址漏给下一个).
+    """
+    global _last_base_url
+    _last_base_url = ""
+    _request_base_url.set("")
+
+
+# ---------- 平台账号 → 钉钉 userid 映射 (2026-10-31 · 第十三轮) ----------
+#
+# ⚠️ 为什么需要这个表:
+#    通知里要 @ 某个**具体的人** (如「审核不通过, @发布者」), 钉钉接口的
+#    `atUserIds` 要的是**钉钉 userid**, 不是平台账号名.
+#    平台这边只知道账号名 (admin / zhangsan / xxx@twsc.com.cn),
+#    两边对不上 → 把账号名塞进 atUserIds 是**无效的**, 人根本收不到提醒.
+#    (只有账号名恰好等于钉钉 userid 的情况才会中 —— 那属于巧合.)
+#
+# ⚠️ 仓库里没有"账号 ↔ 钉钉 userid"的对照表, 也不该写死在代码里 ——
+#    让管理员在设置里自己填:  dingtalk.userid_map = "admin=manager1234;zhangsan=lin.san"
+#
+# ⚠️ 填不上怎么办: **只保留正文里的 "@账号名" 文字点名**, atUserIds 里**不放无效 id**
+#    —— 塞一个钉钉不认识的 id 只会变成噪音, 还会让 at 名单看起来"我明明 @ 了人".
+_USERID_MAP_KEY = "dingtalk.userid_map"
+
+
+def parse_userid_map(raw: str) -> dict[str, str]:
+    """解析 `账号=userid;账号2=userid2` → {账号(小写): userid}.
+
+    容错: 逗号/换行/多余空格都吃掉; 缺 "=" 的片段直接跳过 (不报错, 免得一行写错
+    就让**所有**通知都发不出去).
+    """
+    out: dict[str, str] = {}
+    for chunk in (raw or "").replace("\n", ";").replace(",", ";").split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        acc, _, uid = chunk.partition("=")
+        acc = acc.strip().lower()
+        uid = uid.strip()
+        if acc and uid:
+            out[acc] = uid
+    return out
+
+
+async def resolve_userid(account: str) -> str:
+    """平台账号名 → 钉钉 userid. 查不到返回空串 (调用方据此决定不 @)."""
+    acc = (account or "").strip().lower()
+    if not acc:
+        return ""
+    raw = (await get(_USERID_MAP_KEY, "")) or ""
+    mapping = parse_userid_map(raw)
+    if acc in mapping:
+        return mapping[acc]
+    # ⚠️ 跟 isAuthor() 一个口径: 全邮箱 `zhangsan@twsc.com.cn` 也认短名 `zhangsan`
+    local = acc.split("@", 1)[0]
+    return mapping.get(local, "")
 
 # ---------- 审核类通知的窗口合并 (2026-10-28) ----------
 #
@@ -144,6 +254,9 @@ _EVENT_TEXT = {
     # ⚠️ 2026-10-30 (第十一轮): 软件库的通知 —— 走市场群, 但文案要说清是"软件包"
     "software_publish": "📦 新软件上架",
     "software_update": "🆙 软件新版本",
+    # ⚠️ 2026-10-31 (第十三轮): 软件**下架**也要通知 ——
+    #    之前软件库根本没有"下架"这条通知 (静默下架, 谁都不知道那个软件没了).
+    "software_unpublish": "🗑 软件已下架",
     # ⚠️ unpublish = **彻底下架** (资产已从市场移除), 不是"有人申请下架".
     #    申请阶段走 unpublish_request 事件 (发审核群).
     "unpublish": "🗑 资产已下架",
@@ -171,8 +284,11 @@ _SWITCH_KEY = {
     # ⚠️ 2026-10-30 (第十一轮): 软件库的「上架」和「发布新版本」**共用一个开关** ——
     #    用户原话「上架和发布新版本共有一个配置」.
     #    所以两个 event 映射到**同一个**设置项 —— 开关打开 = 两个都发, 关掉 = 两个都不发.
+    # ⚠️ 2026-10-31 (第十三轮): 「下架」也归到**同一个**开关 ——
+    #    软件库的事就一个开关, 免得设置页里一堆软件相关的开关.
     "software_publish": "dingtalk.notify_on_software",
     "software_update": "dingtalk.notify_on_software",
+    "software_unpublish": "dingtalk.notify_on_software",
 }
 
 # ---------- 两个通知频道 (两个群) ----------
@@ -197,6 +313,8 @@ _CHANNEL_OF_EVENT = {
     #    以后想分开群, 再加一套独立配置也不迟 —— 那时只要改这里的映射.
     "software_publish": "market",
     "software_update": "market",
+    # ⚠️ 2026-10-31 (第十三轮): 软件下架也走市场群 (同一个机器人)
+    "software_unpublish": "market",
 }
 
 _CHANNEL_KEYS = {
@@ -236,10 +354,14 @@ _EVENT_AT = {
     "unpublish": {"at_all": True, "at_author": False},
     "reject": {"at_all": False, "at_author": True},
     "delete": {"at_all": True, "at_author": False},
-    # ⚠️ 2026-10-30 (第十一轮): 软件库**不 @所有人** ——
-    #    软件上架是低频事, @所有人太吵; 但仍然发, 让人知道有新的内部软件可用.
-    "software_publish": {"at_all": False, "at_author": False},
-    "software_update": {"at_all": False, "at_author": False},
+    # ⚠️ 2026-10-31 (第十三轮): 软件库三个事件**都 @所有人** ——
+    #    用户原话「软件上架要@所有人的, 下架软件也要通知@所有人」.
+    #    · 上架   → 有新软件了, 大家都该知道;
+    #    · 新版本 → 有新版可下, 跟资产的 update 一个口径;
+    #    · 下架   → 那个软件没了, **更**要所有人知道 (别再去找它了).
+    "software_publish": {"at_all": True, "at_author": False},
+    "software_update": {"at_all": True, "at_author": False},
+    "software_unpublish": {"at_all": True, "at_author": False},
 }
 
 # ⚠️ 2026-10-30 (第十一轮): 通知里「说明/更新」那一行的**标签** ——
@@ -249,6 +371,8 @@ _NOTE_LABEL = {
     "update": "更新",
     "software_publish": "说明",
     "software_update": "更新",
+    # ⚠️ 2026-10-31 (第十三轮): 下架说的是"这个软件没了", 不是"它干嘛的"
+    "software_unpublish": "下架说明",
 }
 
 # 通知里「查看详情」链接的**相对路径** (按事件) + 链接文字.
@@ -258,6 +382,8 @@ _DEFAULT_LINK_PATH = {
     "update": "/market",
     "software_publish": "/software",
     "software_update": "/software",
+    # ⚠️ 2026-10-31 (第十三轮): 软件下架 → 也指向软件库
+    "software_unpublish": "/software",
 }
 _LINK_TEXT = {
     "/market": "去市场看看",
@@ -349,21 +475,35 @@ async def _review_entry_link() -> str:
 
 
 async def _notify_base_url() -> str:
-    """通知正文里「查看详情」链接的基地址 (2026-10-30 加).
+    """通知正文里「查看详情」链接的基地址 (2026-10-30 加, 2026-10-31 改动态).
 
-    ⚠️ 取值顺序:
-        ① dingtalk.notify_base_url —— 通知专用的基地址 (**优先**);
-        ② marketplace.public_base_url —— 市场的对外基地址 (回落);
-        ③ 都没有 → **不给链接** (别发一个打不开的地址).
+    ⚠️ 取值顺序 (2026-10-31 第十三轮改成**动态优先**):
+        ① `dingtalk.notify_base_url` —— 显式配置, **优先**.
+           留空 = 自动按实际访问地址推断 (见下面的 ②).
+           用户主动配了就听用户的 (比如要发公网域名给外部人看).
+        ② **动态推断** —— "这次请求是从哪个地址进来的".
+           同事在浏览器里打开 `http://10.0.0.5:8081`, 通知里的链接就该是
+           `http://10.0.0.5:8081/market`, 点开就在他眼前 —— 而不是某个写死的 IP.
+           ⚠️ 请求头 `Host` 被 nginx 改成了 `$host` (**不含端口**),
+              所以后端优先读 nginx 专门透传的 `X-Forwarded-Host` ($http_host, 含端口).
+        ③ `marketplace.public_base_url` —— 市场的对外基地址 (给 Qoder 装包用的).
+        ④ 都没有 → **不给链接** (别发一个打不开的地址).
 
-    ⚠️ 为什么不直接用 marketplace.public_base_url:
+    ⚠️ 为什么不只用 `marketplace.public_base_url`:
         那个是给 **Qoder 装包**用的对外地址 (可能是公网域名/CDN),
         而通知链接是给**同事**点的 —— 同一台机器上, 内网地址更顺手.
         两个用途分开配, 才不会一边改坏另一边.
     """
+    # ① 显式配置优先 (用户主动指定了就听用户的)
     base = (await get("dingtalk.notify_base_url", "") or "").strip().rstrip("/")
-    if not base:
-        base = (await get("marketplace.public_base_url", "") or "").strip().rstrip("/")
+    if base:
+        return base
+    # ② 动态推断 (这次请求实际是从哪个地址进来的)
+    base = get_request_base_url().strip().rstrip("/")
+    if base:
+        return base
+    # ③ 市场的对外基地址
+    base = (await get("marketplace.public_base_url", "") or "").strip().rstrip("/")
     return base
 
 
@@ -489,6 +629,8 @@ async def _render_market_body(
     title_override: str = "",
     summary: str = "",
     release_notes: str = "",
+    at_all: bool | None = None,
+    at_author: bool | None = None,
 ) -> tuple[list[str], list[str], str]:
     """构造通知正文 —— 返回 (行, 汇总用的属性, 标题文案).
 
@@ -537,7 +679,9 @@ async def _render_market_body(
     elif detail:
         # ⚠️ detail 是**这次操作发生了什么** (如"审核不通过"), 不是资产的简介 ——
         #    把简介塞进来会变成"说明: 把测试数据整理成报告", 看着像重复了一遍简介.
-        lines.append(f"- 说明: {detail}")
+        # ⚠️ 2026-10-31 (第十三轮): 标签也走 _NOTE_LABEL ——
+        #    软件下架的 detail 说的是"它没了", 标成「说明」读着别扭, 该标「下架说明」.
+        lines.append(f"- {_NOTE_LABEL.get(event, '说明')}: {detail}")
         body_bits.append(detail)
     # ---- 链接 ----
     # ⚠️ 2026-10-30 (第十一轮): 没显式传 link 时**按事件给默认链接** ——
@@ -558,6 +702,25 @@ async def _render_market_body(
         entry = await _review_entry_link()
         if entry:
             lines.append(f"- [去审核台]({entry})")
+
+    # ---------- @谁 (2026-10-31 第十三轮: 挪进渲染层) ----------
+    # ⚠️ 以前 @ 是在 `notify_market` 里发送前才拼的 → **预览里看不到**,
+    #    管理员在设置页「👀 预览消息」看到的正文跟真发出去的不一样.
+    #    现在统一在渲染层拼: 预览 = 真发出去的样子.
+    # ⚠️ 钉钉要正文里带 "@xxx" 才渲染成提醒 (at 字段只是"谁被 @" 的名单).
+    at_rule = _EVENT_AT.get(event, {"at_all": False, "at_author": False})
+    do_at_all = at_rule["at_all"] if at_all is None else at_all
+    do_at_author = at_rule["at_author"] if at_author is None else at_author
+    if do_at_all:
+        lines.append("@所有人")
+    if do_at_author and author:
+        # ⚠️ 账号名是**平台账号**, 不是钉钉 userid ——
+        #    真能 @ 到人得靠 `dingtalk.userid_map` (见 resolve_userid).
+        #    这里只是正文点名, 渲染层不该去查表 (预览是纯渲染).
+        if actor and actor != author:
+            lines.append(f"@{author} (提交人: {actor})")
+        else:
+            lines.append(f"@{author}")
     return lines, body_bits, event_text
 
 
@@ -652,6 +815,7 @@ async def notify_market(
         code=code, kind=kind, category=category, project=project,
         author=author, title_override=title_override,
         summary=summary, release_notes=release_notes,
+        at_all=at_all, at_author=at_author,
     )
 
     # ---------- 审核类通知: 窗口合并 ----------
@@ -676,16 +840,18 @@ async def notify_market(
     text = "\n".join(lines)
     title = f"{event_text} · {name}"
 
-    # ---------- @谁 ----------
-    # ⚠️ 钉钉要正文里带 "@xxx" 才渲染成提醒 (at 字段只是"谁被 @" 的名单).
+    # ---------- @谁: 只算「at 名单」, 正文里的 @ 已经在渲染层拼好了 ----------
+    # ⚠️ 2026-10-31 (第十三轮): @ 文本挪进 `_render_market_body` 了 (预览要能看到),
+    #    这里**只**负责算出钉钉接口要的 atUserIds / isAtAll.
     at_user_ids: list[str] = []
-    if do_at_all:
-        text += "\n@所有人"
     if do_at_author and author:
-        at_user_ids.append(author)
-        text += f"\n@{author}"
-        if actor and actor != author:
-            text += f" (提交人: {actor})"
+        # ⚠️ atUserIds 要的是**钉钉 userid**, 不是平台账号名.
+        #    以前直接塞账号名 → 钉钉 @ 不到人 (只有账号名恰好是 userid 才行).
+        #    现在查映射表 (dingtalk.userid_map); 查不到就**不放无效 id**,
+        #    只保留正文里的 "@账号名" 文字点名 —— 至少群里看得出在说谁.
+        uid = await resolve_userid(author)
+        if uid:
+            at_user_ids.append(uid)
 
     # ⚠️ 自定义机器人默认开启**关键词校验**: 消息里必须含指定关键词, 否则报
     #    310000 "关键词不匹配", 消息根本发不出去. 关键词配在设置里 (留空则不加).
@@ -911,7 +1077,14 @@ async def retry_failed_notifications() -> int:
             continue
         # @ 了谁要从正文里还原 (回执里没单独存 at 名单)
         at_all, at_users = _parse_mentions(r.text)
-        if await _attempt(r, webhook, secret, at_user_ids=at_users, is_at_all=at_all):
+        # ⚠️ 正文里存的是**平台账号名**, 钉钉要的是 userid ——
+        #    查映射表换一下; 查不到的**丢掉** (塞无效 id 钉钉只会当噪音).
+        resolved: list[str] = []
+        for u in at_users:
+            uid = await resolve_userid(u)
+            if uid:
+                resolved.append(uid)
+        if await _attempt(r, webhook, secret, at_user_ids=resolved, is_at_all=at_all):
             n += 1
     if skipped:
         logger.info("dingtalk 跳过 %d 条待发通知 (开关关了或没配 webhook)", skipped)

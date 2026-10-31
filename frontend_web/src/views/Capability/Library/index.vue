@@ -41,7 +41,7 @@
             <input
               v-model="docSearchKw"
               placeholder="按文件名搜索文档（不区分大小写）"
-              title="跨所有知识库搜 —— 只搜**文件名**, 不搜文档内容"
+              title="跨所有知识库搜 —— 只搜「文件名」, 不搜文档内容"
               @input="onDocSearchInput"
               @keyup.enter="doDocSearch" />
           </div>

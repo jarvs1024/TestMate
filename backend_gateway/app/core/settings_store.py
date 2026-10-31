@@ -541,8 +541,24 @@ SETTING_SCHEMA: list[dict] = [
         "default": "",
         "description": (
             "通知正文里「查看详情」链接的基地址 (如 http://testmate.internal:8081). "
-            "留空则回落到 marketplace.public_base_url; 再留空则通知里**不带链接** "
-            "(别发一个打不开的地址)"
+            "**留空 = 自动按实际访问地址推断** (同事从哪个地址打开平台, 通知里的链接就是那个) —— "
+            "推荐留空; 只有想发一个固定地址 (比如公网域名给外部人看) 才填. "
+            "留空且推断不出来时, 通知里**不带链接** (别发一个打不开的地址)"
+        ),
+        "is_secret": False,
+    },
+    {
+        "key": "dingtalk.userid_map",
+        "category": "notification",
+        "value_type": "string",
+        "default": "",
+        "description": (
+            "**平台账号 → 钉钉 userid** 映射表 (让「@某个人」真能 @ 到). "
+            "格式: `账号=userid;账号2=userid2` (分号分隔, 逗号也行). "
+            "例: `admin=manager1234;zhangsan=lin.san` —— "
+            "账号填平台里的**登录名或邮箱**, userid 填钉钉通讯录里那个人的 userid. "
+            "⚠️ 没填的话, 通知里只会在**正文点名** (@账号名), 不会真的触发钉钉提醒 —— "
+            "因为钉钉要的是 userid, 平台只有账号名"
         ),
         "is_secret": False,
     },
@@ -764,6 +780,16 @@ async def seed_defaults() -> None:
                 if existing.category != s["category"]:
                     logger.info("settings: fix category %s: %s -> %s", s["key"], existing.category, s["category"])
                     existing.category = s["category"]
+                # ⚠️ 2026-10-31 (第十三轮): **描述**也跟 SCHEMA 对齐 ——
+                #    描述是**代码管的** (前端只让改值, 改不了描述),
+                #    以前改了 SCHEMA 里的 description, DB 行里存的还是旧的 →
+                #    设置页显示的是旧文案, 跟实际行为对不上 (踩过: notify_base_url
+                #    改成动态推断了, 页面还写着"回落到 public_base_url").
+                if existing.description != s["description"]:
+                    logger.info("settings: sync description %s", s["key"])
+                    existing.description = s["description"]
+                if existing.is_secret != s["is_secret"]:
+                    existing.is_secret = s["is_secret"]
                 cur_v = existing.value.get("v") if isinstance(existing.value, dict) else existing.value
                 # 默认值改版迁移 —— DB 值还等于旧默认值 → 换成新默认值
                 change = DEFAULT_CHANGES.get(s["key"])

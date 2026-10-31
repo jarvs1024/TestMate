@@ -12,7 +12,21 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from app.core import dingtalk
+
+
+@pytest.fixture(autouse=True)
+def _clean_base_url_cache():
+    """⚠️ 每个用例前后都清掉「进程内缓存的基地址」.
+
+    不清的话, 推断过地址的用例会把地址**漏给后面的用例** ——
+    同一个进程里跑几百个用例, 谁先跑谁倒霉, 断言互相打架.
+    """
+    dingtalk.reset_base_url_cache()
+    yield
+    dingtalk.reset_base_url_cache()
 
 
 def _fake_get(values: dict[str, str]):
@@ -253,8 +267,219 @@ async def test_software_switch_on_sends_both(monkeypatch):
     assert len(sent) == 2, sent
 
 
-async def test_software_events_do_not_at_all(monkeypatch):
-    """软件库通知**不 @所有人** —— 太吵."""
+async def test_software_events_at_all(monkeypatch):
+    """⚠️ 2026-10-31 (第十三轮): 软件库三个事件**都 @所有人**.
+
+    用户原话「软件上架要@所有人的, 下架软件也要通知@所有人」.
+    · 上架   → 有新软件了;
+    · 新版本 → 有新版可下 (跟资产的 update 一个口径);
+    · 下架   → 那个软件没了, **更**要所有人知道.
+    """
+    sent: list = []
+
+    async def fake_send(webhook, title, text, **kw):
+        sent.append(text)
+        return {"errcode": 0, "errmsg": "ok"}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({
+            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.notify_on_software": "true",
+        }),
+    )
+    for ev, ver in (("software_publish", "1.0.0"), ("software_update", "1.1.0"),
+                    ("software_unpublish", "1.0.0")):
+        await dingtalk.notify_market(ev, name="A", version=ver, kind="software")
+    assert len(sent) == 3, sent
+    for t in sent:
+        assert "@所有人" in t, t
+
+
+async def test_software_unpublish_event_registered():
+    """软件下架事件要在事件表里 (不然 notify_market 直接拒)."""
+    for ev in ("software_publish", "software_update", "software_unpublish"):
+        assert ev in dingtalk._EVENT_TEXT, ev
+        assert ev in dingtalk._SWITCH_KEY, ev
+        assert ev in dingtalk._CHANNEL_OF_EVENT, ev
+    # ⚠️ 三个事件**共用一个开关** (软件库的事就一个开关)
+    assert dingtalk._SWITCH_KEY["software_unpublish"] == "dingtalk.notify_on_software"
+    # 下架链接指向软件库
+    assert dingtalk._DEFAULT_LINK_PATH["software_unpublish"] == "/software"
+
+
+async def test_software_unpublish_message(monkeypatch):
+    """软件下架的消息要说清"它没了" —— 不能还在介绍它是干嘛的."""
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({"dingtalk.notify_base_url": "http://127.0.0.1:8081"}),
+    )
+    r = await dingtalk.preview_market_message(
+        "software_unpublish", name="E2E 演示软件", version="1.0.0", actor="zhangsan",
+        kind="software", category="工具", code="e2e-demo",
+        detail="该软件已从软件库下架",
+    )
+    text = r["text"]
+    assert "软件已下架" in text, text
+    assert "软件包" in text, "类型要说清楚是软件包"
+    assert "下架说明: 该软件已从软件库下架" in text, text
+    assert "http://127.0.0.1:8081/software" in text, "链接指向软件库"
+
+
+# ---------- 通知链接的基地址: 动态推断 (2026-10-31 · 第十三轮) ----------
+
+
+async def test_base_url_is_dynamic_from_request(monkeypatch):
+    """⚠️ 链接基地址要**动态**取"实际访问地址" —— 不能写死.
+
+    同事在浏览器里打开 http://10.0.0.5:8081, 通知里的链接就该是那个.
+    """
+    monkeypatch.setattr(dingtalk, "get", _fake_get({}))
+    dingtalk.set_request_base_url("http://10.0.0.5:8081")
+    try:
+        r = await dingtalk.preview_market_message(
+            "publish", name="X", version="1.0.0", kind="plugin", summary="简介")
+        assert "http://10.0.0.5:8081/market" in r["text"], r["text"]
+    finally:
+        dingtalk.reset_base_url_cache()
+
+
+async def test_explicit_base_url_beats_dynamic(monkeypatch):
+    """显式配置**优先**于动态推断 —— 用户主动配了就听用户的 (比如公网域名)."""
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({"dingtalk.notify_base_url": "http://public.example.com"}),
+    )
+    dingtalk.set_request_base_url("http://10.0.0.5:8081")
+    try:
+        r = await dingtalk.preview_market_message(
+            "publish", name="X", version="1.0.0", kind="plugin", summary="简介")
+        assert "http://public.example.com/market" in r["text"], r["text"]
+    finally:
+        dingtalk.reset_base_url_cache()
+
+
+def test_sanitize_host_rejects_evil_host():
+    """⚠️ Host 头是**客户端可控**的 —— 直接拼进链接能被构造成钓鱼链接."""
+    assert dingtalk._sanitize_host("10.0.0.5:8081") == "10.0.0.5:8081"
+    assert dingtalk._sanitize_host("testmate.company.com") == "testmate.company.com"
+    # 带路径/空格/@ 的都要拒掉
+    assert dingtalk._sanitize_host("evil.com/#x") == ""
+    assert dingtalk._sanitize_host("a b") == ""
+    assert dingtalk._sanitize_host("user@host") == ""
+    assert dingtalk._sanitize_host("") == ""
+
+
+# ---------- @个人: 平台账号 → 钉钉 userid (2026-10-31 · 第十三轮) ----------
+
+
+def test_parse_userid_map():
+    """映射表解析 —— 容错: 逗号/换行/空格都吃掉, 缺 "=" 的片段跳过."""
+    m = dingtalk.parse_userid_map("admin=manager1234;zhangsan=lin.san")
+    assert m == {"admin": "manager1234", "zhangsan": "lin.san"}
+    # 逗号分隔也行
+    assert dingtalk.parse_userid_map("a=1,b=2") == {"a": "1", "b": "2"}
+    # 写错的那行不影响别的
+    assert dingtalk.parse_userid_map("坏了; a=1") == {"a": "1"}
+    assert dingtalk.parse_userid_map("") == {}
+
+
+async def test_resolve_userid(monkeypatch):
+    """查表: 账号名 / 邮箱 都能查到 userid; 查不到返回空."""
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({"dingtalk.userid_map": "admin=manager1234;zhangsan=lin.san"}),
+    )
+    assert await dingtalk.resolve_userid("zhangsan") == "lin.san"
+    # 大小写不敏感
+    assert await dingtalk.resolve_userid("ZhangSan") == "lin.san"
+    # ⚠️ 全邮箱也认 (跟 isAuthor() 一个口径): 邮箱先整体查, 查不到再退到短名
+    assert await dingtalk.resolve_userid("zhangsan@twsc.com.cn") == "lin.san"
+    assert await dingtalk.resolve_userid("nobody") == ""
+    assert await dingtalk.resolve_userid("") == ""
+
+
+async def test_at_author_uses_real_userid(monkeypatch):
+    """⚠️ @个人 要塞**钉钉 userid** —— 塞平台账号名是 @ 不到人的."""
+    sent: list = []
+
+    async def fake_send(webhook, title, text, **kw):
+        sent.append((text, kw))
+        return {"errcode": 0, "errmsg": "ok"}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({
+            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.notify_on_reject": "true",
+            "dingtalk.userid_map": "zhangsan=lin.san",
+        }),
+    )
+    await dingtalk.notify_market(
+        "reject", name="A", version="1.0.0", kind="plugin",
+        author="zhangsan", actor="admin", detail="简介写得太笼统",
+    )
+    assert len(sent) == 1, sent
+    text, kw = sent[0]
+    assert kw.get("at_user_ids") == ["lin.san"], kw
+    assert kw.get("is_at_all") is False
+    assert "@zhangsan" in text, "正文里要点名"
+
+
+async def test_at_author_without_map_does_not_send_bogus_id(monkeypatch):
+    """⚠️ 映射表里查不到 → **不放无效 id** —— 只在正文里点名.
+
+    塞一个钉钉不认识的 id 只会变成噪音, 还让"我明明 @ 了人"变成假象.
+    """
+    sent: list = []
+
+    async def fake_send(webhook, title, text, **kw):
+        sent.append((text, kw))
+        return {"errcode": 0, "errmsg": "ok"}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({
+            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.notify_on_reject": "true",
+        }),
+    )
+    await dingtalk.notify_market(
+        "reject", name="A", version="1.0.0", kind="plugin",
+        author="zhangsan", actor="admin", detail="简介写得太笼统",
+    )
+    assert len(sent) == 1, sent
+    text, kw = sent[0]
+    assert not kw.get("at_user_ids"), kw
+    assert "@zhangsan" in text, "正文里还是要点名"
+
+
+async def test_preview_shows_at_markers(monkeypatch):
+    """⚠️ 预览里要能看到 @ 了谁 —— 预览必须跟真发出去的**一样**.
+
+    以前 @ 是发送前才拼的 → 设置页「👀 预览消息」看到的正文跟群里那条不一样.
+    """
+    monkeypatch.setattr(dingtalk, "get", _fake_get({}))
+    r = await dingtalk.preview_market_message(
+        "software_publish", name="A", version="1.0.0", kind="software")
+    assert "@所有人" in r["text"], r["text"]
+
+    r2 = await dingtalk.preview_market_message(
+        "reject", name="A", version="1.0.0", kind="plugin",
+        author="zhangsan", actor="admin", detail="简介写得太笼统")
+    assert "@zhangsan" in r2["text"], r2["text"]
+    assert "@所有人" not in r2["text"], "审核不通过只 @发布者"
+    # 审核类通知不 @任何人 (窗口合并后一条汇总, @反而吵)
+    r3 = await dingtalk.preview_market_message(
+        "review", name="A", version="1.0.0", kind="plugin", summary="简介")
+    assert "@所有人" not in r3["text"], r3["text"]
+
+
+async def test_notify_does_not_double_at(monkeypatch):
+    """⚠️ @ 挪进渲染层了 —— 发送时**不能再拼一遍** (@所有人 出现两次就重复了)."""
     sent: list = []
 
     async def fake_send(webhook, title, text, **kw):
@@ -271,4 +496,4 @@ async def test_software_events_do_not_at_all(monkeypatch):
     )
     await dingtalk.notify_market(
         "software_publish", name="A", version="1.0.0", kind="software")
-    assert "@所有人" not in sent[0], sent[0]
+    assert sent and sent[0].count("@所有人") == 1, sent[0] if sent else ""

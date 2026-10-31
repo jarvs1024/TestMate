@@ -1031,6 +1031,45 @@ async def _notify_software_published(
         logger.warning("软件库钉钉通知失败 code=%s err=%s", code, e)
 
 
+async def _notify_software_unpublished(
+    code: str,
+    name: str,
+    version: str,
+    category: str,
+    author: str,
+    user: User,
+    comment: str = "",
+) -> None:
+    """软件下架 → 通知钉钉 (2026-10-31 第十三轮).
+
+    ⚠️ 之前软件下架是**静默**的 —— 那个软件从库里没了, 谁都不知道.
+       现在补上这条, 并且**@所有人** (用户原话「下架软件也要通知@所有人」):
+       大家别再去找那个软件了 / 别再下它了.
+
+    ⚠️ 开关跟上架/发新版本**共用一个** (`dingtalk.notify_on_software`) ——
+       软件库的事就一个开关, 设置页里不会堆一堆软件相关的开关.
+
+    ⚠️ 字段由**调用方**传进来 (不在这里查库) —— 彻底删除 (purge) 之后
+       那一行已经没了, 再查就查不到, 通知会静默丢掉.
+    """
+    try:
+        await notify_market(
+            "software_unpublish",
+            name=name,
+            version=version,
+            actor=user.username,
+            kind="software",
+            category=category,
+            author=author,
+            code=code,
+            # ⚠️ 下架说的是"这个软件没了、为什么没了" —— 简介当"下架说明"不合适,
+            #    所以这里不传 summary, 只传 detail (下架原因).
+            detail=comment or "该软件已从软件库下架",
+        )
+    except Exception as e:  # noqa: BLE001 — 通知失败**不能**影响下架结果
+        logger.warning("软件下架钉钉通知失败 code=%s err=%s", code, e)
+
+
 @router.patch("/{code}/versions/{version}", response_model=SoftwareVersionOut)
 async def update_version(
     code: str,
@@ -1564,6 +1603,11 @@ async def delete_software(
 
         item.publish_status = "hidden"
         item.deleted_at = datetime.utcnow()
+        # ⚠️ 通知要用的字段**趁记录还在**取出来 (软删不删行, 但统一做法更省心)
+        sw_name = item.name
+        sw_version = item.version or ""
+        sw_category = item.category or ""
+        sw_author = item.author or ""
         await _audit(
             session,
             code=code,
@@ -1573,6 +1617,12 @@ async def delete_software(
             detail={},
         )
         await session.commit()
+    # ⚠️ 2026-10-31 (第十三轮): 软删也是"下架" —— 同样通知 (@所有人).
+    #    (前端「下架」按钮走的是 purge; 这个端点是软删, 文件留着可恢复.)
+    await _notify_software_unpublished(
+        code, sw_name, sw_version, sw_category, sw_author, user,
+        comment="该软件已从软件库下架 (文件保留)",
+    )
     return SoftwareDeleteOut(ok=True, code=code, deleted_files=0)
 
 
@@ -1610,6 +1660,11 @@ async def purge_software(
         for v in versions:
             await session.delete(v)
         await session.delete(item)
+        # ⚠️ 通知要用的字段**趁记录还在**取出来 —— 删完就查不到了
+        sw_name = item.name
+        sw_version = item.version or ""
+        sw_category = item.category or ""
+        sw_author = item.author or ""
         await _audit(
             session,
             code=code,
@@ -1621,4 +1676,10 @@ async def purge_software(
         await session.commit()
     # ⚠️ 所有候选根都删 —— 换过存储根目录时, 老文件在旧根 (2026-10-28)
     software_store.remove_item_dir_anywhere(roots, code)
+    # ⚠️ 2026-10-31 (第十三轮): **下架也要通知钉钉** (市场群, @所有人) ——
+    #    之前是静默下架, 那个软件从库里没了, 谁都不知道.
+    #    通知放在**删完之后** —— 通知说的就是"它已经没了"这个既成事实.
+    await _notify_software_unpublished(
+        code, sw_name, sw_version, sw_category, sw_author, user,
+    )
     return SoftwareDeleteOut(ok=True, code=code, deleted_files=n)

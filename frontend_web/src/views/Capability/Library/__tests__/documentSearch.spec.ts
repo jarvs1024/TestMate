@@ -255,3 +255,14 @@ describe('搜索出错', () => {
     expect(w.text()).toContain('重试');
   });
 });
+
+// ---------- ⑤ 提示文案里不能有字面的 markdown 星号 ----------
+
+describe('⚠️ 纯文本 UI 不渲染 Markdown', () => {
+  it('搜索框的 title 里没有 `**` (否则用户看到的是字面星号)', async () => {
+    const w = await mountLib();
+    const input = w.find('input[placeholder*="文件名"]');
+    expect(input.exists()).toBe(true);
+    expect(String(input.attributes('title') || '')).not.toContain('**');
+  });
+});

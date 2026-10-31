@@ -554,6 +554,61 @@ async def test_software_new_version_notifies_update(client, sw_auth, sw_root, mo
     assert kw["release_notes"] == "修了日志解析的截断问题", "要说明这次改了啥"
 
 
+# ---------- 软件下架也要通知钉钉 (2026-10-31 · 第十三轮) ----------
+
+
+async def test_software_unpublish_notifies_dingtalk(client, sw_auth, sw_root, monkeypatch):
+    """⚠️ 用户原话「下架软件也要通知@所有人」.
+
+    之前软件下架是**静默**的 —— 那个软件从库里没了, 谁都不知道.
+    """
+    from app.api import software as sw_api
+
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_notify(event, asset=None, **kw):
+        calls.append((event, kw))
+        return True
+
+    monkeypatch.setattr(sw_api, "notify_market", fake_notify)
+
+    await _create(client, sw_auth)
+    await _upload(client, sw_auth, "demo-sw", b"hello")
+    assert [e for e, _ in calls] == ["software_publish"], calls
+
+    # ⚠️ 前端「下架」按钮走的是 purge (删记录 + 删文件)
+    r = await client.delete("/api/v1/software/demo-sw/purge", headers=sw_auth)
+    assert r.status_code == 200, r.text
+
+    assert [e for e, _ in calls] == ["software_publish", "software_unpublish"], calls
+    event, kw = calls[-1]
+    assert event == "software_unpublish"
+    assert kw["kind"] == "software", "类型要说清楚是软件包"
+    assert kw["name"] == "演示软件"
+    assert kw["detail"], "要说清楚为什么下架"
+
+
+async def test_software_soft_delete_also_notifies(client, sw_auth, sw_root, monkeypatch):
+    """软删 (文件保留) 也是下架 —— 同样通知."""
+    from app.api import software as sw_api
+
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_notify(event, asset=None, **kw):
+        calls.append((event, kw))
+        return True
+
+    monkeypatch.setattr(sw_api, "notify_market", fake_notify)
+
+    await _create(client, sw_auth)
+    await _upload(client, sw_auth, "demo-sw", b"hello")
+    calls.clear()
+
+    r = await client.delete("/api/v1/software/demo-sw", headers=sw_auth)
+    assert r.status_code == 200, r.text
+    assert [e for e, _ in calls] == ["software_unpublish"], calls
+
+
 # ---------- 权限 ----------
 
 

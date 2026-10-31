@@ -54,6 +54,11 @@ http {
             proxy_pass http://127.0.0.1:@@BACKEND_PORT@@;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
+            # ⚠️ 2026-10-31 (第十三轮): 通知里的链接要**动态**取实际访问地址.
+            #    `Host $host` **不含端口** (访问 http://ip:8081 时后端只看到 `ip`),
+            #    拼出来的链接会丢掉 :8081 → 点不开.
+            #    $http_host 是原始 Host 头, **含端口** —— 补一个专门的头传过去.
+            proxy_set_header X-Forwarded-Host $http_host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
@@ -66,6 +71,11 @@ http {
         location ~* ^/api/assets/.+\.(zip|tar\.gz|tgz)$ {
             proxy_pass http://127.0.0.1:@@BACKEND_PORT@@;
             proxy_set_header Host $host;
+            # ⚠️ 2026-10-31 (第十三轮): 通知里的链接要**动态**取实际访问地址.
+            #    `Host $host` **不含端口** (访问 http://ip:8081 时后端只看到 `ip`),
+            #    拼出来的链接会丢掉 :8081 → 点不开.
+            #    $http_host 是原始 Host 头, **含端口** —— 补一个专门的头传过去.
+            proxy_set_header X-Forwarded-Host $http_host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_buffering off;
@@ -92,6 +102,11 @@ http {
             proxy_pass http://127.0.0.1:@@BACKEND_PORT@@;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
+            # ⚠️ 2026-10-31 (第十三轮): 通知里的链接要**动态**取实际访问地址.
+            #    `Host $host` **不含端口** (访问 http://ip:8081 时后端只看到 `ip`),
+            #    拼出来的链接会丢掉 :8081 → 点不开.
+            #    $http_host 是原始 Host 头, **含端口** —— 补一个专门的头传过去.
+            proxy_set_header X-Forwarded-Host $http_host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;

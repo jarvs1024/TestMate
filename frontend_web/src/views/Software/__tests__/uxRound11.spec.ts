@@ -78,8 +78,26 @@ describe('② 发新版本: 「新增 / 覆盖」二选一', () => {
     expect(upload).toMatch(/versionMode\.value === 'replace' && v === versionForm\.value\.replace_version/);
   });
 
+  it('⚠️ 2026-10-31 (第十三轮): 默认选中「**覆盖已有版本**」', () => {
+    // 用户要求: 发新版本时默认走「覆盖」(图1 里蓝色高亮的就是覆盖).
+    expect(upload).toMatch(/const versionMode = ref<'new' \| 'replace'>\('replace'\)/);
+  });
+
+  it('⚠️ 但**没有可覆盖的版本时必须回落「新增」** (第一个版本只能新增)', () => {
+    // 不回落的话: 下拉是空的 → required 校验过不去 → 提交直接卡住.
+    expect(upload).toMatch(/if \(versionOptions\.value\.length\)/);
+    expect(upload).toMatch(/versionMode\.value = 'new'/);
+  });
+
   it('「设为推荐下载版本」复选框要保留 (多版本还要用)', () => {
     expect(uploadTpl).toContain('设为推荐下载版本');
+  });
+
+  it('⚠️ 2026-10-31 (第十三轮): 提示文案里**不能有字面的 markdown 星号**', () => {
+    // 纯文本 UI 不渲染 Markdown —— `**原地换掉**` 会**字面显示**给用户看.
+    // ⚠️ 断言前先去掉注释 (注释里全是"以前写的是…"的旧代码示例).
+    const tplNoComment = uploadTpl.replace(/<!--[\s\S]*?-->/g, '');
+    expect(tplNoComment).not.toContain('**');
   });
 });
 

@@ -207,7 +207,7 @@
             </el-option>
           </el-select>
           <p class="hint">
-            选中的那一版会被**原地换掉** —— 版本号、说明、安装包全换成这次填的,
+            选中的那一版会被<b>原地换掉</b> —— 版本号、说明、安装包全换成这次填的,
             版本总条数不变. 别的版本不受影响.
           </p>
         </el-form-item>
@@ -332,7 +332,13 @@ const form = ref(emptyForm());
 // ⚠️ is_default 默认 **true** —— 新版本默认接管推荐位 (2026-10-28)
 const versionForm = ref({ version: '', variant: '', is_default: true, replace_version: '' });
 // ⚠️ 2026-10-30: 版本处理方式 —— 'new' = 新增一条, 'replace' = 原地覆盖某一条
-const versionMode = ref<'new' | 'replace'>('new');
+/**
+ * 版本处理方式 —— 默认「**覆盖已有版本**」 (2026-10-31 第十三轮, 用户要求).
+ *
+ * ⚠️ 但**没有可覆盖的版本时必须回落「新增」** —— 第一个版本只能新增,
+ *    强行停在「覆盖」会卡住提交 (下拉是空的, required 校验过不去).
+ */
+const versionMode = ref<'new' | 'replace'>('replace');
 const featuresText = ref('');
 const tagsText = ref('');
 const releaseNotes = ref('');
@@ -444,8 +450,8 @@ function resetDraft() {
   versionForm.value.variant = '';
   versionForm.value.is_default = true;
   versionForm.value.replace_version = '';
-  // 版本处理方式回到「新增」 —— 上次覆盖过, 这次不一定还要覆盖
-  versionMode.value = 'new';
+  // 版本处理方式回到「覆盖」 (默认) —— 上次覆盖过, 这次不一定还要覆盖, 用户自己切
+  versionMode.value = 'replace';
   // 下次打开时图标由 loadConfig 重新挑一个空闲的
   iconTouched.value = false;
 }
@@ -466,9 +472,17 @@ watch(() => props.modelValue, (open) => {
     //    发新版 = 让大家下新的. 想让老版本继续当默认 (比如 LTS 版还在给老环境用),
     //    就把勾去掉 —— 这就是下面那个复选框的用处.
     versionForm.value.is_default = true;
-    // 版本处理方式默认「新增」 —— 想覆盖的话用户自己切
-    versionMode.value = 'new';
+    // ⚠️ 2026-10-31 (第十三轮): 版本处理方式默认「**覆盖已有版本**」(用户要求).
+    //    ⚠️ 但**没有可覆盖的版本时回落「新增」** —— 第一个版本只能新增,
+    //    停在「覆盖」的话下拉是空的, required 校验过不去, 提交直接卡住.
     versionForm.value.replace_version = '';
+    if (versionOptions.value.length) {
+      versionMode.value = 'replace';
+      // 默认选第一个可覆盖的版本 —— 少一次点击
+      onPickReplaceTarget(versionOptions.value[0].version);
+    } else {
+      versionMode.value = 'new';
+    }
   }
 });
 

@@ -838,6 +838,15 @@ _PREVIEW_SCENES: list[dict[str, Any]] = [
         },
     },
     {
+        "event": "software_unpublish",
+        "label": "软件库 · 下架软件",
+        "kw": {
+            "name": "E2E 演示软件", "version": "1.0.3", "actor": "admin",
+            "kind": "software", "category": "工具", "code": "e2e-demo",
+            "detail": "该软件已从软件库下架, 后续不再提供下载",
+        },
+    },
+    {
         "event": "review",
         "label": "市场 · 上架待审核 (审核群)",
         "kw": {
@@ -858,6 +867,20 @@ _PREVIEW_SCENES: list[dict[str, Any]] = [
             "summary": "一键串联: 取 MR diff → 送检视 → 回写评论 → 汇总结果",
             "detail": "修改了资产信息, 等管理员审核",
             "title_override": "📝 资产信息修改, 待审核",
+        },
+    },
+    {
+        # ⚠️ 2026-10-31 (第十三轮): **唯一 @个人** 的事件 ——
+        #    审核不通过要告诉**发布者本人**. 钉钉要的是 userid, 平台只有账号名,
+        #    所以要在设置里填 `dingtalk.userid_map` (账号=钉钉userid) 才真能 @ 到人;
+        #    没填的话这条消息只在正文里点名 (@账号名).
+        "event": "reject",
+        "label": "市场 · 审核不通过 (@发布者)",
+        "kw": {
+            "name": "SSD 日志医生", "version": "1.0.0", "actor": "admin",
+            "kind": "skill", "category": "兜住质量", "code": "dml-ssd-doctor",
+            "author": "lisi",
+            "detail": "简介写得太笼统, 请补充说明能解决什么问题",
         },
     },
 ]

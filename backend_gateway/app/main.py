@@ -89,6 +89,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def _capture_public_base_url(request: Request, call_next):
+    """记下「平台这次是从哪个地址被访问的」—— 通知正文里的链接要用它.
+
+    ⚠️ 为什么动态 (2026-10-31 · 第十三轮):
+       写死一个地址 (如 http://127.0.0.1:8081) 有三个问题 ——
+       ① 换台机部署, 链接指到别的机器去了;
+       ② 同事从 http://10.0.0.5:8081 访问, 那个 127.0.0.1 是**他自己**的电脑;
+       ③ 用域名访问, 链接却是 IP, 看着就不对.
+       动态推断出来的才是"同事眼前那个地址", 点开就在他眼前.
+
+    ⚠️ **端口会丢**: nginx 把 Host 头改成了 `$host` (**不含端口**) ——
+       访问 `http://10.0.0.5:8081` 时后端只看到 `10.0.0.5`, 拼出来的链接少了 :8081 就点不开.
+       所以优先读 nginx 专门透传的 `X-Forwarded-Host` ($http_host, **含端口**).
+
+    ⚠️ Host 是**客户端可控**的请求头, 直接拼进链接能被构造成钓鱼链接 ——
+       所以要过一遍 `_sanitize_host` (只放行域名/端口该有的字符).
+    """
+    from app.core.dingtalk import _sanitize_host, set_request_base_url
+
+    host = _sanitize_host(
+        request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    )
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").strip()
+    if proto not in ("http", "https"):
+        proto = "http"
+    set_request_base_url(f"{proto}://{host}" if host else "")
+    try:
+        return await call_next(request)
+    finally:
+        # ⚠️ 只清**当前请求**的记录 (进程内缓存保留 —— 后台 worker 要用)
+        set_request_base_url("")
+
 # 路由
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])

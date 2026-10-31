@@ -622,6 +622,9 @@ async def test_reject_at_author_only(monkeypatch):
         return {
             "dingtalk.notify_on_reject": "true",
             "dingtalk.market_webhook": "http://market/hook",
+            # ⚠️ 2026-10-31 (第十三轮): 钉钉要的是 **userid**, 不是平台账号名 ——
+            #    所以 atUserIds 里放的是映射表查出来的 userid.
+            "dingtalk.userid_map": "jarvs=manager1234",
         }.get(key, default)
 
     monkeypatch.setattr(dingtalk, "get", _get)
@@ -632,7 +635,7 @@ async def test_reject_at_author_only(monkeypatch):
     )
     assert ok is True
     assert sent[0]["all"] is False, "审核不通过不该 @所有人"
-    assert sent[0]["at"] == ["jarvs"], sent[0]
+    assert sent[0]["at"] == ["manager1234"], sent[0]
     assert "@jarvs" in sent[0]["text"], sent[0]["text"]
     # ⚠️ 技能在 UI 上就叫「技能」—— 通知里曾经叫「技能包」, 两种叫法会让人以为是两种东西
     assert "类型: 技能" in sent[0]["text"], sent[0]["text"]
