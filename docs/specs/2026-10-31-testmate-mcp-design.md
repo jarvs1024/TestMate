@@ -20,6 +20,9 @@
 > 11. **架构规范化**：新增 §3.6「扩展点清单」—— 每种扩展都有明确落点，且有三条不变量（鉴权/业务/审计各只有一处）
 > 12. **写操作与前端对齐**（§4.12）：MCP 上架/更新/下架 = 调**既有 REST 端点**，审核与通知链路完全复用；
 >     合法性检查按前端表单同口径；**有选择/可选项一律先问用户，不许猜**（13 → 14 个工具，多一个 `skill_edit_meta`）
+> 13. **一致性机制**（§4.13）：三层防线 —— ① 规则单一真源（前端改为拉 `/assets/rules`，MCP 直接 import）
+>     ② **契约测试**：同一场景 REST 与 MCP 各跑一遍，断言 DB 状态 + 钉钉通知序列 + 返回值三者一致
+>     ③ 参数反射检查：adapter 必须覆盖端点全部必填参数。新增能力漏写契约场景 → CI 直接红
 >
 > 状态：**设计已定，待实现**。
 
@@ -272,6 +275,7 @@ ALL_MCPS  = {p.domain: build_mcp(p) for p in PROVIDERS}
 | 想加什么 | 改哪里 | 要不要动其它层 |
 |---|---|---|
 | **新业务域**（知识库 / 软件库） | 新建 `app/mcp/<域>/`（server + tools + adapter）＋ `PROVIDERS` 加一行 | ❌ common 不动、业务代码不动 |
+| **新业务操作**（在已有域内） | 后端端点 + 前端 UI + MCP 工具 + **契约测试加一个场景**（§4.13.3） | 漏了契约场景 → CI 红 |
 | **新工具**（在已有域内） | 往该域的 `tools.py` 加一个 `ToolSpec` | ❌ 框架不动 |
 | **新 scope** | 该域的 `ToolSpec.scope` + `common/scopes.py` 的枚举 | ❌ 其它域不动 |
 | **新凭证类型**（服务账号 / 内部系统调用） | 在 `common/auth.py` 加一个 `CredentialVerifier` 实现，注册进 `VERIFIERS` | ❌ provider 与工具不动 |
@@ -638,6 +642,127 @@ backend_gateway/app/core/market_rules.py     ← 新增：上架/更新前的合
 
 ---
 
+### 4.13 一致性机制：让「REST 与 MCP 走同一条流程」可验证、不靠自觉
+
+> 需求原话：「确保一致性，后续新增功能也能同步，维护也方便，修改也不容易出错」。
+> 答案不是「写文档提醒大家」，而是**把一致性变成会红的测试**。
+
+#### 4.13.1 先看清：现在有哪三处会漂移
+
+| # | 漂移点 | 现状 | 后果 |
+|---|---|---|---|
+| ① | **校验规则两份** | 前端 `assetForm.ts` 硬编码 `CODE_PATTERN` / `SEGMENT_PATTERN` / `PACKAGE_EXT_RE`，`useAssetUploadForm.ts` 里还有一份 `missing` 必填清单；MCP 侧要在 Python 里另写一份 | 前端改了后端没改 → agent 能提交前端不让提交的东西 |
+| ② | **adapter 与端点脱节** | MCP adapter 手写参数列表去调路由函数 | 端点加了必填字段，adapter 漏传 → 400，且**报错对 agent 毫无指导性** |
+| ③ | **新增能力只改一半** | 加一个业务操作要动：后端端点 + 前端 UI + MCP 工具 | 漏一处 → 网页有、MCP 没有（或反之），用户觉得「平台有两套」 |
+
+而**状态机与通知这一块天然一致**（§4.12.1）——因为 MCP 调的就是同一个端点。
+所以一致性机制只需解决 ①②③。
+
+#### 4.13.2 三层防线
+
+**L1 · 规则单一真源（解决 ①）**
+
+```
+app/core/market_rules.py          ← 唯一真源（Python）
+        │
+        ├── MCP 直接 import（同进程，零成本、零漂移）
+        │
+        └── GET /api/v1/assets/rules   ← 前端从接口取，不再硬编码
+```
+
+规则包里有什么：
+
+| 键 | 内容 | 谁在用 |
+|---|---|---|
+| `code_pattern` / `segment_pattern` | code 的两条正则（新建要前缀 / 存量不要求） | 前端表单校验、MCP 校验 |
+| `required_fields` | 按操作分的必填清单：`create` / `update` / `edit_meta` | 前端 `missing`、MCP 校验 |
+| `package_ext` | 允许的包扩展名 | 前端、MCP |
+| `categories` / `projects` | 枚举（本来就来自后端，顺手一起发） | 前端、MCP |
+| `enforcement` | 每条规则**谁负责把关**（见下） | 排查用 |
+
+**「约定」与「技术限制」分两档**（前端注释里已经写得很清楚，MCP 必须沿用同一口径）：
+
+| 档 | 例子 | 前端 | MCP | REST 端点 |
+|---|---|---|---|---|
+| **技术合法性** | code 分段合法、version 是 semver、分类在表里、包名 = code | ✅ 卡 | ✅ 卡 | ✅ 卡（既有逻辑） |
+| **团队约定** | 新建 code 必须 `dml-` 前缀 | ✅ 卡 | ✅ 卡 | ⚠️ **暂不卡**（保持向后兼容：存量 14 个资产没前缀，强卡会锁死它们的更新） |
+
+> 「团队约定」这一档 REST 端点故意保持宽松 —— 这是**有意的兼容取舍**，不是遗漏。
+> `enforcement` 字段把这个取舍显式写出来，避免以后有人以为是 bug。
+
+**L2 · 契约测试（解决 ②③，也是「一致性」的可执行定义）**
+
+核心思路：**同一个场景，分别从 REST 和 MCP 各走一遍，断言两者产出完全一致。**
+
+```python
+# backend_gateway/tests/test_mcp_contract.py
+Scenario(
+    name="上架新技能",
+    rest=lambda c: c.post("/api/v1/assets/upload", data=NEW_SKILL),
+    mcp =lambda c: c.call_tool("skill_publish", NEW_SKILL_ARGS),
+    expect={"publish_status": "pending", "pending_action": "new"},
+    expect_notify=["review"],          # 钉钉事件序列
+)
+
+@pytest.mark.parametrize("sc", SCENARIOS, ids=lambda s: s.name)
+async def test_rest_and_mcp_identical(sc, db, notify_spy):
+    rest = await run_via_rest(sc, db, notify_spy)
+    mcp  = await run_via_mcp(sc, db, notify_spy)
+    assert mcp.db_state == rest.db_state             # ① DB 落库状态一致
+    assert mcp.notifications == rest.notifications   # ② 钉钉通知事件序列一致
+    assert mcp.result == rest.result                  # ③ 返回值一致（字段裁剪后）
+```
+
+场景表覆盖 §4.12.1 的每一条：上架 / 发新版本 / 只改信息 / 重新提交 / 下架申请 / 人工审核通过 / 人工审核下架确认。
+
+- **钉钉通知用 spy 捕获**（mock `market_notify.notify_asset`，记事件名 + actor + detail）
+  —— 通知是「流程一致」最直接的证据：REST 触发了 `review`、MCP 也必须触发 `review`，
+  且 `pending_action=meta` 时两边都**不能**发市场群通知。
+- 这条测试红 = 一致性破了。**这是整个一致性机制的核心资产。**
+
+**L3 · 参数契约反射检查（解决 ②，防「漏传字段」）**
+
+```python
+# backend_gateway/tests/test_mcp_adapter_params.py
+@pytest.mark.parametrize("tool,route", TOOL_ROUTE_MAP)
+def test_adapter_covers_route_params(tool, route):
+    # MCP 工具必须覆盖端点的全部必填参数 —— 漏一个就是不一致
+    required = {p.name for p in inspect.signature(route).parameters.values()
+                if p.default is inspect.Parameter.empty}
+    assert required <= set(inspect.signature(tool).parameters), \
+        f"{tool} 漏了端点 {route.__name__} 的必填参数"
+```
+
+**新增一个 Form 字段忘了在 adapter 传 → 这条测试立刻红**，而不是等 agent 在生产上报 400。
+
+#### 4.13.3 新增一个业务能力时的动作清单
+
+| 步 | 做什么 | 漏了会怎样 |
+|---|---|---|
+| ① | 后端加端点（业务逻辑写在既有模块里） | — |
+| ② | 前端加 UI（规则从 `/assets/rules` 拿，不硬编码） | 前端与 MCP 规则漂移 |
+| ③ | MCP 加工具（adapter 调该端点，参数一一对应） | 契约测试红 |
+| ④ | **契约测试加一个场景** | ← **这一步漏了，后面全漏** |
+
+> ④ 是关键：**每个新能力都必须有一个「REST vs MCP」的场景用例**。
+> 场景表就是那张「能力登记表」—— 代码即文档，不另写文档（避免文档和代码各说各话）。
+
+#### 4.13.4 这套机制的成本
+
+| 成本项 | 量级 | 一次性? |
+|---|---|---|
+| `app/core/market_rules.py` | ~120 行 | 一次性 |
+| `GET /api/v1/assets/rules` | ~15 行（只读端点，不改任何现有函数体） | 一次性 |
+| 前端 `assetForm.ts` / `useAssetUploadForm.ts` 改为拉规则 | ~40 行（替换硬编码常量与 `missing` 清单） | 一次性 |
+| 契约测试（8 个场景 × 2 条路径） | ~250 行 | 一次性，但**每加一个能力就加一个场景** |
+| 参数反射检查 | ~50 行 | 一次性 |
+
+> ⚠️ 唯一会让人不适的地方：**前端要改**（把硬编码规则换成拉接口）。
+> 这是「规则单一真源」的必要代价，也是唯一一次性的结构收敛 ——
+> 做完之后，规则永远只有一份，以后加能力不会再有「两份规则要不要同步」的问题。
+
+---
+
 ## 5. 工具清单（v1 = 技能·插件域，14 个 = 9 读 + 5 写）
 
 全部挂在 `testmate-skill` server（端点 `/mcp/skill`）下，作用于 `kind=skill`。
@@ -753,6 +878,8 @@ v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`
 | `app/models/__init__.py` | 导出新模型（1 行） |
 | `app/models/asset.py` | 加 `is_builtin` 字段（1 行 + 迁移） |
 | `app/core/market_rules.py` | **新文件**：上架/更新前的合法性规则（复用既有校验，不改既有模块） |
+| `app/api/marketplace.py` | **+1 个只读端点** `GET /assets/rules`（不改任何现有函数体） |
+| 前端 `Catalog/assetForm.ts` / `useAssetUploadForm.ts` | 硬编码正则与必填清单 → 改为从 `/assets/rules` 拉（§4.13.2 L1） |
 | `requirements.txt` / `requirements.lock` | 加 `mcp==1.29.1` 及 4 个传递依赖 |
 | `frontend_web/nginx.conf` | 加 `location /mcp`（约 12 行） |
 | `deploy/native/units/nginx.conf.tpl` | 同上（裸机模板） |
@@ -992,7 +1119,17 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 6. **路径断言**：`POST /mcp/skill` = 200（不是 307！）；`POST /mcp/nope` = 404
 7. **transport_security 断言**：Host 不在 allowed_hosts 时 = 421（证明防护生效，不是被绕过）
 
-### 11.3 回归
+### 11.3 一致性测试（§4.13 的核心资产）
+
+| 文件 | 断言什么 |
+|---|---|
+| `tests/test_mcp_contract.py` | **同一场景 REST vs MCP**：DB 状态、钉钉通知事件序列、返回值三者一致（8 个场景） |
+| `tests/test_mcp_adapter_params.py` | adapter 函数签名**覆盖**路由函数的全部必填参数（漏传即红） |
+| `tests/test_market_rules.py` | 规则包自洽：必填清单与实际端点签名不矛盾；`enforcement` 档位符合预期 |
+
+> 这三个文件是「一致性」的可执行定义 —— 它们红了，就是 REST 与 MCP 已经分叉了。
+
+### 11.4 回归
 
 现有 40+ 测试文件**必须全绿**——这是「零改动」方案的核心验收指标：
 只要 `marketplace.py` 一行没动，现有测试理应全部原样通过（若有任何失败，说明改到了不该改的地方）。
@@ -1011,6 +1148,7 @@ TestMate MCP 作为一个**平台内置连接器**（`kind=mcp`）上架：
 | S3 | **内置连接器资产**：`is_builtin` + seed + 不可删/不可下架/不可编辑 + url 动态生成 + 市场卡片「复制连接器配置」 | 市场里能看到这张卡，复制出来的配置 url 正确 |
 | S4 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计 / 配额） | 能握手、能 `tools/list`（空工具集也算通过） |
 | S5 | 技能域适配层 + 14 个工具 + `market_rules.py` 合法性校验 + 「不猜」协议 | §12.1 全部通过（尤其流程对齐与不猜） |
+| **S5.5** | **一致性收敛**：`/assets/rules` 端点 + 前端改为拉规则 + **契约测试 8 场景** + 参数反射检查 | 契约测试全绿（REST 与 MCP 产出完全一致） |
 | S6 | 部署与分发（nginx 5 处 + 锁文件 + `mcp.allowed_hosts` 设置 + 设置页管理组） | 全链路打通 |
 
 S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 之间无强耦合，可并行。
@@ -1033,7 +1171,9 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 12. **流程与前端一致**：MCP 上架 → 待审核 + 通知管理员 → 人工在页面审核通过 → **市场群收到上架通知**；
     只改信息（`skill_edit_meta`）→ 待审核 + 通知管理员 → 审核通过 → **市场群收不到通知**
 13. **不猜协议**：缺必填 / 有歧义 / 可选项未确认时，MCP 写工具**拒绝执行且无任何副作用**，返回 `needs_confirmation`
-14. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
+14. **一致性**：契约测试（8 个场景 × REST/MCP 两条路径）全绿 —— DB 状态、钉钉通知序列、返回值三者一致
+15. **规则单一真源**：改 `market_rules.py` 里的必填清单 → 前端表单与 MCP 校验**同时**跟着变（前端不再有第二份硬编码）
+16. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
 
 ---
 
@@ -1051,6 +1191,8 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 | agent 误上架 / 误删 | 中 | 无硬删工具；审核流不变；scopes 可只读；每次调用留审计 |
 | token 泄漏 | 中 | 明文一次性展示；只存 sha256；吊销即时生效；不进 URL / 不进 access log |
 | agent 失控循环刷爆平台 | 中 | 令牌级 `daily_quota`（默认 200/天）；超限在**工具层**拦（返回 tool error，不返 429，避免客户端重试风暴） |
+| **REST 与 MCP 悄悄分叉** | 高 | §4.13 三层防线：规则单一真源 + **契约测试（REST vs MCP 三项断言）** + 参数反射检查；分叉 = CI 红 |
+| 前端收敛改动引入回归 | 中 | `assetForm.ts` / `useAssetUploadForm.ts` 改拉规则后，跑既有前端单测（该目录已有 `__tests__/`）；后端既有 40+ 测试不动即绿 |
 
 ---
 
@@ -1058,7 +1200,7 @@ S0 排在最前 —— 它验证的是整条路线的地基。S1/S2 与 S3/S4 �
 
 | 阶段 | 内容 | 增量成本 |
 |---|---|---|
-| **P0（本轮）** | OAuth 授权流 + 同意页 + 内置连接器资产 + MCP 公共层 + 技能域 14 工具 + 部署分发 | — |
+| **P0（本轮）** | OAuth 授权流 + 同意页 + 内置连接器资产 + MCP 公共层 + 技能域 14 工具 + **一致性收敛（规则真源 + 契约测试）** + 部署分发 | — |
 | P1 | 知识库域：`app/mcp/kb/` + `kb_search` / `kb_list_datasets` / `kb_read_document` / `kb_ingest` | 1 个目录 + 1 行注册 |
 | P2 | 软件库域：`app/mcp/software/` + `software_search` / `software_download` / `software_upload` | 1 个目录 + 1 行注册 |
 | P3 | 插件 / 连接器域：`plugin_*` / `connector_*`（复用同一批 adapter 函数，改 kind 即可） | 少量 tool spec |
