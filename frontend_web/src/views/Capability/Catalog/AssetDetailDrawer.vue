@@ -129,7 +129,9 @@
         <div v-show="techOpen" class="tech-body">
           <div class="tech-line mono">
             <span>资产号 {{ item.code }}</span>
-            <span>下载 {{ item.download_count || 0 }} 次</span>
+            <!-- ⚠️ 2026-10-31 (第十四轮): 连接器 (mcp) **没有安装包** ——
+                 下载接口直接 400, 写「下载 0 次」只会让人以为坏了. -->
+            <span v-if="item.kind !== 'mcp'">下载 {{ item.download_count || 0 }} 次</span>
           </div>
           <div v-if="item.git_path" class="ad-git mono">
             <span class="ad-git-label">GitLab 存储</span>

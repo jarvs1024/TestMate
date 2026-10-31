@@ -272,3 +272,96 @@ async def test_project_and_review_note_survive_index_roundtrip(ws, restore_git_c
         a = (await s.execute(select(Asset).where(Asset.code == "rt-demo"))).scalar_one()
         assert a.project == "6100"
         assert a.review_note == "权限声明不完整"
+
+
+# ---------- ⑭ 下载次数: 同步**不能**把它清零 (2026-10-31 第十四轮) ----------
+
+
+def test_index_entry_does_not_carry_download_count():
+    """⚠️ 下载次数**不进索引** —— 它是**运行时指标**, 不是"这个资产是什么"的源状态.
+
+    放进索引 → 同步 (默认 **30 秒**一次) 每次都拿**发布那一刻的旧快照**
+    覆盖 DB 里的实时计数 → 计数永远归零 (用户报的「下载计数不累计」).
+    """
+    e = mc.asset_to_index_entry(_FakeAsset(download_count=42))
+    assert "download_count" not in e
+
+
+async def test_sync_does_not_reset_download_count(ws, restore_git_config):  # noqa: ARG001
+    """⚠️ 同步**不能**把下载计数清零 —— 计数只增不减.
+
+    实测过的坑: 下载 3 次 → 计数 3 → 触发一次同步 → 计数变 0.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+    from sqlalchemy import select
+
+    code = "dc-demo"
+    async with AsyncSessionLocal() as s:
+        s.add(Asset(
+            code=code, name="下载计数演示", kind="skill", version="1.0.0",
+            publish_status="published", git_path="assets/skills/misc/dc-demo",
+            download_count=7,
+        ))
+        await s.commit()
+
+    # 造一个**老格式**的 index.json —— 里面带着发布时的旧快照 (0)
+    idx = {
+        "schema_version": mc.INDEX_SCHEMA_VERSION,
+        "generated_by": "testmate-marketplace",
+        "assets": [{
+            "code": code, "name": "下载计数演示", "kind": "skill", "version": "1.0.0",
+            "summary": "摘要", "description": "", "use_when": "", "not_for": "",
+            "category": "", "project": "", "tags": [], "keywords": [],
+            "author": "admin", "featured": False, "homepage": None,
+            "permissions": {}, "install_steps": [], "bindings": {},
+            "git_path": "assets/skills/misc/dc-demo",
+            "download_count": 0,           # ⚠️ 老索引里的旧快照
+            "publish_status": "published", "review_note": "", "mcp_config": None,
+            "updated_at": "",
+        }],
+    }
+    (ws / mc.INDEX_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (ws / mc.INDEX_PATH).write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
+
+    async with AsyncSessionLocal() as s:
+        await mc.apply_index_to_db(s)
+
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(select(Asset).where(Asset.code == code))).scalar_one()
+        assert a.download_count == 7, f"同步把下载计数抹成 {a.download_count} 了"
+
+
+async def test_sync_takes_max_download_count(ws, restore_git_config):  # noqa: ARG001
+    """跨实例同步: 索引里的计数**更大**时要用它 (取 max), 更小时保留本地的."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+    from sqlalchemy import select
+
+    code = "dc-demo2"
+    async with AsyncSessionLocal() as s:
+        s.add(Asset(
+            code=code, name="下载计数演示2", kind="skill", version="1.0.0",
+            publish_status="published", git_path="assets/skills/misc/dc-demo2",
+            download_count=3,
+        ))
+        await s.commit()
+
+    async with AsyncSessionLocal() as s:
+        await mc.stage_index(s, override={
+            "code": code, "name": "下载计数演示2", "kind": "skill", "version": "1.0.0",
+            "summary": "摘要", "project": "", "tags": [], "keywords": [],
+            "author": "admin", "featured": False, "homepage": None,
+            "permissions": {}, "install_steps": [], "bindings": {},
+            "git_path": "assets/skills/misc/dc-demo2",
+            "download_count": 99,          # ⚠️ 另一台实例上的计数更大
+            "publish_status": "published", "review_note": "", "mcp_config": None,
+            "updated_at": "",
+        })
+
+    async with AsyncSessionLocal() as s:
+        await mc.apply_index_to_db(s)
+
+    async with AsyncSessionLocal() as s:
+        a = (await s.execute(select(Asset).where(Asset.code == code))).scalar_one()
+        assert a.download_count == 99, a.download_count

@@ -201,3 +201,27 @@ describe('资产详情抽屉 · 适用项目与适用场景', () => {
     expect(w.find('.ins-more').text()).toContain('~/.qoder-cn');
   });
 });
+
+/**
+ * 下载次数 (2026-10-31 第十四轮).
+ *
+ * ⚠️ **连接器 (mcp) 没有安装包** —— 后端下载接口直接 400, 所以「下载 N 次」
+ *    对连接器没意义 (永远是 0), 显示出来只会让人以为坏了.
+ */
+describe('详情抽屉 · 下载次数', () => {
+  beforeEach(() => {
+    api.downloadAssetPackage.mockClear();
+  });
+
+  it('技能/插件 → 技术信息里有「下载 N 次」', async () => {
+    const w = await mountDrawer({ it: item({ kind: 'skill', download_count: 7 }) });
+    await w.find('.tech-toggle').trigger('click');
+    expect(w.text()).toContain('下载 7 次');
+  });
+
+  it('连接器 (mcp) → **不显示**「下载 N 次」', async () => {
+    const w = await mountDrawer({ it: item({ kind: 'mcp', download_count: 0 }) });
+    await w.find('.tech-toggle').trigger('click');
+    expect(w.text()).not.toContain('下载 0 次');
+  });
+});

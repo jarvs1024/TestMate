@@ -230,7 +230,10 @@ def asset_to_index_entry(a: Asset) -> dict[str, Any]:
         "install_steps": list(a.install_steps or []),
         "bindings": dict(a.bindings or {}),
         "git_path": a.git_path,
-        "download_count": a.download_count,
+        # ⚠️ 2026-10-31 (第十四轮): 下载次数**不进索引** ——
+        #    它是**运行时指标** (这个部署里谁下载过), 不是"这个资产是什么"的源状态.
+        #    放进索引 → 每次同步都拿**发布那一刻的旧快照**覆盖 DB 的实时计数,
+        #    计数永远归零 (同步默认 30 秒一次).
         # 生命周期状态也在索引里 —— 上下架必须能被别的实例看到
         "publish_status": a.publish_status or "published",
         # 审核意见也要进索引 —— 否则跨实例同步后, 发布者看到「已驳回」却不知道为什么
@@ -393,18 +396,24 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         # 审核意见 (索引里没有这一项的旧数据 = 没有意见)
         a.review_note = e.get("review_note") or ""
         a.mcp_config = e.get("mcp_config") if (a.kind or "") == "mcp" else None
+        # ⚠️ 2026-10-31 (第十四轮): 下载次数**不再**被索引覆盖 ——
+        #    index.json 里存的是**发布那一刻**的快照 (绝大多数是 0),
+        #    而同步默认**每 30 秒**跑一次 → 每同步一次就把计数清零,
+        #    用户看到的永远是 0 (报的「下载计数不累计」就是这个).
+        #    下载次数是**运行时指标** (本部署谁下载过), 不是"这个资产是什么"的源状态 ——
+        #    所以取两边的**较大值**: 计数只增不减, 跨实例同步也不会抹掉已有的下载数.
         if e.get("download_count") is not None:
             # ⚠️ 坏值 (字符串/浮点/负数) 会让 int() 抛异常 → sync_puller 循环吞掉
-            #     → POST /sync 500. 坏值按 0 处理并记日志, 别让一条脏数据打死整轮同步.
+            #     → POST /sync 500. 坏值**保留原来的计数** (以前是清零 ——
+            #     一条脏数据就能把下载数抹了), 并记日志.
             try:
-                a.download_count = max(0, int(e["download_count"]))
+                a.download_count = max(a.download_count or 0, int(e["download_count"]))
             except (TypeError, ValueError):
                 logger.warning(
-                    "index.json 里的 download_count 不是整数, 已按 0 处理: "
+                    "index.json 里的 download_count 不是整数, 已保留原值: "
                     "code=%s value=%r",
                     code, str(e["download_count"])[:40],
                 )
-                a.download_count = 0
         if e.get("updated_at"):
             from datetime import datetime
 

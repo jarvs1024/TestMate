@@ -123,3 +123,31 @@ describe('AssetCard 不显示权限角标', () => {
     expect(w.find('.tag-perm').exists()).toBe(false);
   });
 });
+
+/**
+ * 下载计数 (2026-10-31 第十四轮).
+ *
+ * ⚠️ **连接器 (mcp) 没有安装包** —— 它是一段 MCP 配置, 后端下载接口直接 400
+ *    ("连接器没有安装包, 请照资产详情里的「MCP 配置」手动添加到宿主").
+ *    所以卡片上**不能**显示下载计数 —— 显示个永远 0 的 ⬇0 只会让人以为坏了.
+ */
+describe('AssetCard 下载计数', () => {
+  function dl(w: ReturnType<typeof mount>) {
+    return w.findAll('.ac-meta .meta-item')
+      .map((s) => s.text().trim())
+      .filter((t) => /^⬇/.test(t));
+  }
+
+  it('技能/插件 → 显示下载计数', () => {
+    const w = mount(AssetCard, { props: { item: item({ kind: 'skill', download_count: 7 }) } });
+    expect(dl(w)).toEqual(['⬇ 7']);
+    const w2 = mount(AssetCard, { props: { item: item({ kind: 'plugin', download_count: 3 }) } });
+    expect(dl(w2)).toEqual(['⬇ 3']);
+  });
+
+  it('连接器 (mcp) → **不显示**下载计数 (它压根没有安装包)', () => {
+    const w = mount(AssetCard, { props: { item: item({ kind: 'mcp', download_count: 0 }) } });
+    expect(dl(w)).toEqual([]);
+    expect(w.text()).not.toContain('⬇');
+  });
+});

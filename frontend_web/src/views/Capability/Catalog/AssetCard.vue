@@ -48,7 +48,12 @@
     </div>
 
     <div class="ac-meta">
-      <span class="meta-item" :title="`已下载 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
+      <!-- ⚠️ 2026-10-31 (第十四轮): **连接器 (mcp) 没有安装包** ——
+           它是一段 MCP 配置, 后端下载接口直接 400 (「连接器没有安装包」),
+           所以卡片上**不能**显示下载计数 —— 显示个永远 0 的 ⬇0 只会让人以为坏了.
+           技能/插件/连接器在页签上是分开的, 这里按 kind 判断即可. -->
+      <span v-if="item.kind !== 'mcp'" class="meta-item"
+            :title="`已下载 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
       <span class="meta-item">{{ item.author || '未知' }}</span>
       <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
     </div>
