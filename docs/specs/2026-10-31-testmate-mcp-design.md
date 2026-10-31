@@ -1,17 +1,23 @@
-# TestMate MCP 设计（技能市场先行）
+# TestMate MCP 设计（技能市场先行 · v2）
 
-> 2026-10-31 · 让 **agent 能操作 TestMate**：上架/下载/更新技能，读知识库，取软件包。
-> 本轮只做**技能市场**一个域，知识库 / 软件库 / 插件 / 连接器按同一套扩展点后接。
+> 2026-10-31 · 让 **agent 能操作 TestMate**：上架 / 下载 / 更新技能；后续接知识库、软件库。
+> 本轮只做**技能·插件**一个域；每个域一个独立 MCP，公共部分单独放一层。
 >
-> 状态：**设计已定，待实现**。配套实施计划见 `docs/superpowers/specs/` 下的计划文档。
+> v2 修订要点（相对 v1）：
+> 1. `app/mcp/` 改为**按域分目录**（`common/` `skill/` `software/` `kb/`），公共部分归 `common/`
+> 2. **每个域一个独立 MCP server**，各自挂载于 `/mcp/{域}`，工具集互不污染
+> 3. **对现有业务代码零改动**——不重构 `marketplace.py`，MCP 侧用薄适配层调用现有路由函数
+> 4. 补入 **spike 实测结论**（装配路径 / 鉴权取身份 / DNS rebinding 421 / lifespan 500）
+>
+> 状态：**设计已定，待实现**。
 
 ---
 
 ## 一句话
 
-在现有 FastAPI 后端里挂一个 `/mcp` 端点（MCP Streamable HTTP），用**长期 API Token** 鉴权，
-把「技能市场」的读写能力暴露成 **14 个 MCP 工具**；业务逻辑抽到一层与传输无关的
-**domain 服务层**，REST 与 MCP 共用同一份语义——为后续接知识库、软件库留好扩展位。
+在现有 FastAPI 后端挂一组 `/mcp/{域}` 端点（MCP Streamable HTTP），用**长期 API Token** 鉴权；
+每个业务域一个独立 MCP server，技能域首批暴露 **14 个工具**；
+**现有业务代码一行不改**，MCP 能力全部收敛在新目录 `app/mcp/` 内。
 
 ---
 
@@ -34,16 +40,17 @@
 
 1. agent 能**发现**技能：搜索、看详情、读 `SKILL.md`、看包文件树
 2. agent 能**获取**技能：取到包（URL + sha256）与文本文件内容
-3. agent 能**上架/更新**技能：走与网页完全一致的校验、命名契约、审核流
-4. 架构上**可扩展**：后续接知识库 / 软件库 / 插件 / 连接器时，只新增「域模块」，不动 MCP 框架层
+3. agent 能**上架 / 更新**技能：走与网页完全一致的校验、命名契约、审核流
+4. 架构上**可扩展**：后续加知识库 / 软件库时，只新增 `app/mcp/<域>/` 一个目录，**不改公共层、不改业务代码**
 
 ### 1.3 非目标（本轮不做）
 
 - ❌ 不提供「硬删资产」工具（删除语义 = 下架审核通过，由平台既有流程承担）
 - ❌ 不绕过审核流（agent 不能自行绕过 `marketplace.review.*` 设置）
-- ❌ 不做知识库 / 软件库 / 插件 / 连接器的工具实现（只留扩展位与接口占位）
+- ❌ 不实现知识库 / 软件库的工具（只留目录骨架与公共层的扩展位）
 - ❌ 不做 stdio transport（首批只服务 Qoder，走远程 HTTP）
-- ❌ 不做 MCP OAuth 动态注册（用静态 API Token，够用且好管）
+- ❌ 不做 MCP OAuth 动态注册（静态 API Token，够用且好管）
+- ❌ **不重构 `marketplace.py`**（见 §6，这是本方案与 v1 最大的分歧点）
 
 ---
 
@@ -51,109 +58,191 @@
 
 | # | 决策点 | 结论 | 理由 |
 |---|---|---|---|
-| D1 | MCP server 跑在哪 | **挂进现有 FastAPI 后端**，新增 `/mcp` 端点（Streamable HTTP） | 一套部署；复用 DB 会话、权限判定、审计、资产 job 队列；改动面最小 |
-| D2 | agent 身份 | **新增长期 API Token**（管理员签发/吊销，绑定某个用户身份） | agent 配置里只放一个 token；权限可精确到用户 + scope |
+| D1 | MCP server 跑在哪 | **挂进现有 FastAPI 后端**，端点 `/mcp/{域}`（Streamable HTTP） | 一套部署；复用 DB、权限判定、审计、资产 job 队列 |
+| D2 | agent 身份 | **新增长期 API Token**（管理员签发/吊销，绑定用户身份 + scope） | agent 配置里只放一个 token；权限可精确到用户 + scope |
 | D3 | 首批接入方 | **Qoder**（远程 HTTP，`{url, headers}` 连接器配置） | 团队主力 IDE；平台「连接器」资产格式天然匹配 |
-| D4 | 业务逻辑分层 | **抽 domain 服务层**，REST 与 MCP 共用 | 避免三份适配；扩展成本从「复制一遍」降为「加一个模块」 |
-| D5 | 协议实现 | **官方 `mcp` SDK**（FastMCP），`stateless_http=True` + `json_response=True` | 握手/版本协商/能力声明有 SDK 兜底；Qoder 兼容更有把握；依赖与现有锁文件无冲突 |
-| D6 | 首期是否含审核工具 | **含**（`skill_review`），完全受平台既有审核人权限约束 | admin 令牌可完成「上架→审核→在架」闭环；权限判定复用 `require_reviewer` 同一套逻辑 |
+| D4 | MCP 的组织方式 | **`app/mcp/` 按域分目录；每域一个独立 MCP server；公共部分在 `common/`** | 域之间零耦合；agent 可只连需要的域，工具集不污染 |
+| D5 | 对现有代码的侵入度 | **零改动**：`marketplace.py` / `kb.py` / `software.py` 一行不动，MCP 侧用薄适配层调用 | 生产代码，3005 行重排的回归风险不可接受；MCP 是独立功能，应能独立落地 |
+| D6 | 协议实现 | **官方 `mcp` SDK**（FastMCP），`stateless_http=True` + `json_response=True` | 握手/版本协商/能力声明有 SDK 兜底；依赖与现有锁文件无冲突 |
+| D7 | 首期是否含审核工具 | **含**（`skill_review`），完全受平台既有审核人权限约束 | admin 令牌可完成「上架→审核→在架」闭环 |
 
 ---
 
 ## 3. 总体架构
 
-### 3.1 分层
+### 3.1 目录结构（按域分类）
 
 ```
 backend_gateway/app/
-├── domain/                # ★ 业务域层 —— 与 HTTP / MCP 都无关
-│   ├── base.py            #   ToolSpec / DomainProvider 协议
-│   ├── errors.py          #   DomainError 家族
-│   ├── market.py          #   技能市场域（本轮实现）
-│   ├── kb.py              #   知识库域（占位：接口 + 空工具列表）
-│   └── software.py        #   软件库域（占位）
-├── mcp/                   # ★ MCP 框架层 —— 与业务无关
-│   ├── server.py          #   FastMCP 实例、工具注册、ASGI 挂载
-│   ├── auth.py            #   API Token → Principal 解析 + 中间件
-│   ├── context.py         #   McpContext（身份 + 域调用入口）
-│   └── errors.py          #   DomainError → MCP tool error 映射
+├── mcp/                        # ★ MCP 功能整体 —— 本轮新增，**全部代码都在这里**
+│   ├── common/                 #   公共部分：与具体业务域无关
+│   │   ├── __init__.py
+│   │   ├── server.py           #     MCP server 工厂 + 分域挂载（dispatcher）
+│   │   ├── auth.py             #     API Token 校验 → Principal；FastAPI 中间件
+│   │   ├── context.py          #     McpContext（身份 + 域调用入口 + 审计）
+│   │   ├── errors.py           #     HTTPException / 业务异常 → MCP tool error
+│   │   ├── tool.py             #     ToolSpec 契约 + 注册辅助
+│   │   └── audit.py            #     tool 调用审计落库
+│   │
+│   ├── skill/                  # ★ 技能·插件 域（本轮实现）
+│   │   ├── __init__.py
+│   │   ├── server.py           #     本域 MCP server 实例（name=testmate-skill）
+│   │   ├── adapter.py          #     调 app/api/marketplace.py 的薄适配层
+│   │   └── tools.py            #     14 个工具定义（schema + handler）
+│   │
+│   ├── software/               #   软件库域（预留：只有骨架，无工具）
+│   │   └── __init__.py
+│   └── kb/                     #   知识库域（预留：只有骨架，无工具）
+│       └── __init__.py
+│
 ├── api/
-│   ├── marketplace.py     #   瘦身成 HTTP 适配层
-│   ├── kb.py              #   后续瘦身（不在本轮范围）
-│   └── software.py        #   后续瘦身（不在本轮范围）
-└── main.py                #   lifespan 里跑 MCP session manager + 注册域
+│   ├── marketplace.py          #   **不改动**
+│   ├── mcp.py                  # ★ 新增：令牌管理 REST（/api/v1/mcp/tokens，仅 admin）
+│   └── ...
+├── models/mcp.py               # ★ 新增：mcp_api_tokens / mcp_tool_calls ORM
+└── main.py                     #   仅改 3 处：挂载 / lifespan / 路由注册
 ```
 
-**依赖方向**：`api → domain ← mcp`
+> ⚠️ **命名易混淆，注意区分**：
+> `app/core/mcp_config.py` = 「连接器**资产**里那段 MCP 配置的校验器」（既有代码，不动）
+> `app/mcp/` = 「TestMate **自己作为 MCP server** 的实现」（本轮新增）
+>
+> ⚠️ `app/mcp/` 与 PyPI 的 `mcp` 包**同名但不冲突**：后端一律以 `uvicorn app.main:app` 启动
+> （工作目录 = `backend_gateway/`，其下没有 `mcp/` 目录），Python 3 绝对导入下
+> `from mcp.server.fastmcp import FastMCP` 仍指向 site-packages 的官方 SDK。
+> ⚠️ 但**禁止**在 `backend_gateway/` 目录下新建顶层 `mcp/` 目录，也禁止把 `app/` 本身加入 `sys.path`，
+> 否则 `import mcp` 会解析到 `app/mcp/` → 官方 SDK 导入失败。
 
-- `domain` 不 import `fastapi`（除 Pydantic schema 与 SQLAlchemy 模型），不认识 `Depends` / `Form` / `HTTPException`
-- `mcp` 不 import `api`，只依赖 `domain.base` 的接口
-- 传输层各管各的：REST 管 HTTP 状态码与 schema，MCP 管 JSON-RPC 与 tool schema
+### 3.2 分域 MCP：一个域一个 server
 
-### 3.2 扩展点：域注册表
+| 域 | MCP server name | 端点 | 状态 |
+|---|---|---|---|
+| 技能·插件 | `testmate-skill` | `POST /mcp/skill` | **本轮实现**（14 工具） |
+| 软件库 | `testmate-software` | `POST /mcp/software` | 预留骨架 |
+| 知识库 | `testmate-kb` | `POST /mcp/kb` | 预留骨架 |
+
+**为什么要分域而不是一个大 server**：
+
+- agent 只需连自己要的域 —— 连 `testmate-skill` 就只看到 14 个技能工具，不会被知识库/软件库工具淹没
+- 每个域的 `instructions` 可以写自己的引导语（如「这是技能市场：先 search 再 read_doc 再 publish」）
+- 域之间零耦合：新增域 = 新增 `app/mcp/<域>/` 目录 + 在 `common/server.py` 的注册表加一行
+- 权限可分域授权（`market:read` / `kb:read` / `software:read`），未来可给 agent 只读某个域的令牌
+
+**工具名仍带 `skill_` 前缀**：即使 server 已按域拆分，也保留前缀——部分 MCP 客户端会把多个 server 的工具名拍平展示，
+带前缀能避免 `search` / `get` 这类通用名互相撞车，日志里也更可读。
+
+### 3.3 装配与挂载（spike 已实测）
 
 ```python
-# app/domain/base.py
+# app/mcp/common/server.py
+def build_mcp(name: str, instructions: str, *, path: str) -> FastMCP:
+    return FastMCP(
+        name=name,                       # 如 "testmate-skill"
+        instructions=instructions,       # 给 agent 的引导语
+        stateless_http=True,             # 无状态：不需要 session id，nginx/多副本友好
+        json_response=True,              # 响应是 application/json，不走 SSE 流
+        streamable_http_path=path,       # "/skill" —— 域路径, 见下方挂载
+        transport_security=TransportSecuritySettings(...),  # ⚠️ 必须显式配, 见 §3.4
+    )
+```
+
+```python
+# app/main.py —— 只改这三处
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    ...
+    async with AsyncExitStack() as stack:
+        for mcp in ALL_MCPS:                       # 每个域一个
+            await stack.enter_async_context(mcp.session_manager.run())
+        yield
+    ...
+
+app.mount("/mcp", build_dispatcher(ALL_MCPS))     # 分域分发
+```
+
+**分域分发**（`common/server.py`）：把各域的 `streamable_http_app()` 挂进一个 Starlette 应用：
+
+```python
+def build_dispatcher(apps: dict[str, ASGIApp]) -> Starlette:
+    return Starlette(routes=[Route(f"/{name}", endpoint=app) for name, app in apps.items()])
+```
+
+路径推演（spike 实测）：
+
+| 请求 | 结果 | 说明 |
+|---|---|---|
+| `POST /mcp/skill` | **200** | 正确端点，无跳转 |
+| `POST /mcp/skill/` | 307 | 尾斜杠会跳转 → **对外公布的 URL 必须不带尾斜杠** |
+| `POST /mcp/nope` | 404 | 未注册的域 |
+| `GET /mcp/skill` | 406 | SDK 要求 `Accept: application/json, text/event-stream` |
+
+> ⚠️ **不能用 `app.mount("/mcp/skill", ...)` 逐个挂**：Starlette 的 `Mount` 只匹配带尾斜杠的子路径，
+> `/mcp/skill`（无尾斜杠）会 307 跳到 `/mcp/skill/`，而不少 MCP 客户端不跟随 POST 重定向 → 必然连不上。
+> 所以用「挂一次 `/mcp` + 内部按 `/域` 路由」的 dispatcher 写法。
+
+### 3.4 DNS rebinding 防护必须显式配置（spike 实测）
+
+FastMCP 默认 `host="127.0.0.1"` → **自动开启** DNS rebinding 防护，只放行 `127.0.0.1:*` / `localhost:*` / `[::1]:*`。
+TestMate 是用 `http://10.0.0.5:8081` 这类内网地址访问的，Host 头匹配不上 → **每个请求都 421 Misdirected Request**。
+
+```python
+TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=[...],   # ⚠️ 见下方格式要求
+    allowed_origins=[...],
+)
+```
+
+**allowed_hosts 的格式坑**（spike 实测）：
+
+- SDK 的 `:*` 通配**只匹配带端口的 Host**（`host.startswith(base + ":")`）
+- nginx 的 `proxy_set_header Host $host;` **会丢掉端口** → 实际 Host 头是 `10.0.0.5` 而不是 `10.0.0.5:8081`
+- ⇒ allowed_hosts 必须**同时**包含裸 host 与 `host:port` 两种形式
+
+allowed_hosts 来源（按优先级合并）：
+
+1. 新设置项 `mcp.allowed_hosts`（管理员显式填，逗号分隔）—— 主入口
+2. 既有设置项 `marketplace.public_base_url` 的 host 部分 —— 平台对外地址
+3. 内置兜底：`localhost:*`、`127.0.0.1:*`、`[::1]:*`
+
+allowed_origins 同理（浏览器侧 Origin），默认留空（Origin 缺失时 SDK 放行）。
+
+### 3.5 扩展点：域注册表
+
+```python
+# app/mcp/common/tool.py
 @dataclass(frozen=True)
 class ToolSpec:
     name: str                                   # 全局唯一，带域前缀
     description: str                            # 给 agent 看的说明
-    input_schema: dict[str, Any]                # JSON Schema (draft-07)
+    input_schema: dict[str, Any]                # JSON Schema
     handler: Callable[["McpContext", dict[str, Any]], Awaitable[Any]]
     scope: str                                  # market:read / market:write / kb:read …
-    read_only: bool                             # 只读标记（供客户端判断 + 审计分级）
+    read_only: bool                             # 只读标记（客户端判断 + 审计分级）
     domain: str                                 # 所属域
-    annotations: dict[str, Any] | None = None   # MCP ToolAnnotations（idempotentHint 等）
+    annotations: dict[str, Any] | None = None   # MCP ToolAnnotations
 
 
 class DomainProvider(Protocol):
-    name: str                                   # 域标识：market / kb / software
+    domain: str                                 # "skill" / "software" / "kb"
+    server_name: str                            # "testmate-skill"
+    instructions: str                           # 给 agent 的引导语
     def tools(self) -> list[ToolSpec]: ...
 ```
 
-注册流程（`app/mcp/server.py`）：
+注册（`common/server.py`）：
 
 ```
-启动 → 遍历 PROVIDERS → 逐个取 tools() → 校验 name 全局唯一 → 注册进 FastMCP
+PROVIDERS = [SkillProvider()]            # ← 新增一个域 = 加一行 + 写一个 app/mcp/<域>/ 目录
+ALL_MCPS  = {p.domain: build_mcp(p) for p in PROVIDERS}
 ```
 
 **加一个新域的完整步骤**（这是「今后扩展性」的可验证承诺）：
 
-1. 写 `app/domain/<new>.py`，实现一个 provider，暴露 `tools()`
-2. 在 provider 列表登记一行
-3. `app/mcp/*` **零改动**
-
-### 3.3 MCP server 装配
-
-```python
-# app/mcp/server.py（要点）
-mcp = FastMCP(
-    name="testmate",
-    instructions="TestMate 平台能力：技能市场 / 知识库 / 软件库",
-    stateless_http=True,        # 无状态：不需要 session id，nginx/多副本友好
-    json_response=True,         # 响应是 application/json，不走 SSE 流
-    streamable_http_path="/",   # 配合下面 mount，最终对外 URL 恰好是 /mcp
-)
-```
-
-挂载（在 `app/main.py`）：
-
-```python
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    ...
-    async with mcp.session_manager.run():   # ← 关键：子应用 lifespan 不会自动跑
-        yield
-    ...
-
-app.mount("/mcp", mcp.streamable_http_app())
-```
-
-> ⚠️ **Starlette 不会把被 mount 的子应用的 lifespan 传给父应用**——不手动 `async with mcp.session_manager.run()`，
-> 端点会 500。这是本设计里最容易踩的坑，实现时必须有对应测试兜住。
-
-对外 URL：`POST {base}/mcp`（`streamable_http_path="/"` + `mount("/mcp")` → 路径不重复）。
-SSE 兜底端点 `/mcp/sse` **本轮只预留不实现**（`app/mcp/server.py` 留好挂载位置与开关），Qoder 实测不兼容 Streamable HTTP 时再启用。
+1. 建 `app/mcp/<新域>/` 目录（`server.py` + `tools.py` + 需要的 `adapter.py`）
+2. 实现一个 provider，暴露 `tools()`
+3. 在 `PROVIDERS` 列表登记一行
+4. `app/mcp/common/*` 与业务代码 **零改动**
 
 ---
 
@@ -179,25 +268,28 @@ CREATE UNIQUE INDEX uk_mcp_tokens_hash ON mcp_api_tokens (token_hash);
 CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 ```
 
-**只存 sha256，不存明文**：token 是 256-bit 随机串，不存在字典攻击风险，sha256 足够；慢哈希（bcrypt）在这里只会拖慢每个请求。
-**明文只在签发那一刻返回一次**，之后任何接口都拿不到。
+**只存 sha256，不存明文**：token 是 256-bit 随机串，不存在字典攻击风险；慢哈希（bcrypt）在这里只会拖慢每个请求。
+**明文只在签发那一刻返回一次**。
 
 ### 4.2 签发与吊销
 
-- 设置页新增「MCP 接入令牌」组（admin 专属）：签发（填名称 + 绑定用户 + scopes + 有效期）、吊销、列表（显示 prefix / 绑定用户 / 最后使用时间 / 状态）
+- 设置页新增「MCP 接入令牌」组（admin 专属）：签发（名称 + 绑定用户 + scopes + 有效期）、吊销、列表（前缀 / 绑定用户 / 最后使用时间 / 状态）
 - 令牌明文格式：`tm_live_<32字节base64url>`
 - 吊销 = 置 `revoked_at`，**即时生效**（每个请求现查库，无本地缓存 → 吊销后下一个请求必然 401）
 
-### 4.3 校验链路
+### 4.3 校验链路（spike 已验证身份可传递）
 
 ```
 请求 → FastAPI 中间件(path startswith /mcp)
      → 取 Authorization: Bearer <token>
-     → sha256 → 查 mcp_api_tokens（token_hash 唯一索引，单行查询，成本可忽略）
+     → sha256 → 查 mcp_api_tokens（token_hash 唯一索引，单行查询）
      → 校验: 存在 / 未吊销 / 未过期
      → 加载绑定 user（检查 user.is_active、角色）
-     → principal = Principal(user, token, scopes)
-     → scope["state"]["principal"] = principal
+     → request.state.principal = Principal(user, token, scopes)   # ← Starlette 自动建 scope["state"]
+     ▼
+工具函数 → ctx.request_context.request
+         ├─ .headers.get("authorization")     → spike 实测: ✅ 能拿到
+         └─ .state.principal                  → spike 实测: ✅ 中间件写入的身份可见
 ```
 
 失败一律 **HTTP 401**（transport 级），不是 tool error——这才是 MCP 客户端期待的认证失败形态，
@@ -217,26 +309,26 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 - token 不进 URL、不进 query、不进 access log（只走 Authorization 头）
 - 明文一次性展示，UI 不缓存明文
 - 吊销即时生效
-- 每次 tool 调用落审计（见 §7），含 token_id，可追责到人
+- 每次 tool 调用落审计（见 §8），含 token_id，可追责到人
 
 ---
 
-## 5. 工具清单（v1 = 技能市场）
+## 5. 工具清单（v1 = 技能·插件域，14 个）
 
-命名规范：`<域>_<动作>`，全小写蛇形，全局唯一。域内能力对应 `kind=skill`；
-插件 / 连接器后续可用同一批 domain 函数挂 `plugin_*` / `connector_*` 前缀。
+全部挂在 `testmate-skill` server（端点 `/mcp/skill`）下，作用于 `kind=skill`。
+插件（`kind=plugin`）与连接器（`kind=mcp`）走同一批底层能力，后续加 `plugin_*` / `connector_*` 前缀即可复用。
 
 ### 5.1 读工具（scope: `market:read`，`read_only=true`）
 
 | 工具 | 入参 | 出参 | 说明 |
 |---|---|---|---|
-| `skill_search` | `keyword?` `category?` `project?` `tag?` `author?` `include_unpublished?` `page?` `page_size?` | `{items:[{code,name,version,summary,category,project,author,publish_status,download_count}], total, page, page_size}` | 搜索技能。默认只返回 `published`；`include_unpublished=true` **仅对作者本人/管理员/审核人生效**，其他调用者的该参数被忽略（不可通过它探测未上架资产）。分页默认 `page=1, page_size=20`，`page_size` 上限 100 |
+| `skill_search` | `keyword?` `category?` `project?` `tag?` `author?` `include_unpublished?` `page?` `page_size?` | `{items:[{code,name,version,summary,category,project,author,publish_status,download_count}], total, page, page_size}` | 搜索技能。默认只返回 `published`；`include_unpublished=true` **仅对作者本人/管理员/审核人生效**，其他调用者的该参数被忽略（不可探测未上架资产）。分页默认 `page=1, page_size=20`，上限 100 |
 | `skill_get` | `code` | manifest 全字段 + `install_steps` / `permissions` / `bindings` / `git_web_url` / `can_review` | 技能详情。对调用者不可见的资产（未上架且非作者/非审核人）返回 `not_found`，不泄露存在性 |
-| `skill_read_doc` | `code` | `{file, content}` | 读 `SKILL.md`（技能展示文档） |
+| `skill_read_doc` | `code` | `{file, content}` | 读 `SKILL.md`（技能展示文档）——agent 真正要的东西 |
 | `skill_read_file` | `code` `path` | `{path, content, size}` | 读包内文本文件；后缀白名单同 `market_catalog.ALLOWED_SUFFIXES`；路径越界拒绝 |
 | `skill_list_files` | `code` | `{files:[{path, size}]}` | 包内文件树 |
 | `skill_package_info` | `code` `version?` | `{version, size_bytes, sha256, download_url, expires_at}` | 下载链接 + 校验值。`download_url` 带**短时票据**（新增票据类型 `asset-dl`，绑定 `code`+`version`，TTL 600s，与软件库 `sw-dl` 同机制），票据免登录即可换取包字节；未上架资产不出票据 |
-| `skill_categories` | — | `[{name, slug, order, desc}]` | 合法分类枚举 |
+| `skill_categories` | — | `[{name, slug, order, desc}]` | 合法分类枚举（agent 填表用） |
 | `skill_projects` | — | `[str]` | 合法项目枚举 |
 | `skill_job_status` | `job_id` | `{id, action, status, error, commit_sha, created_at, updated_at}` | 上架/更新任务状态（git push 结果） |
 
@@ -244,7 +336,7 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 
 | 工具 | 入参 | 出参 | 说明 |
 |---|---|---|---|
-| `skill_publish` | `code` `name` `version` `summary` `description?` `use_when?` `not_for?` `category?` `project?` `icon?` `tags?` `keywords?` `permissions?` `install_steps?` `bindings?` `files?` `package_base64?` | `{job_id, status, code}` | 上架新技能。`files`（路径→文本内容映射）与 `package_base64`（zip 的 base64）二选一，都不给则报 `invalid_argument`。base64 包的文件名按 `{code}.zip` 还原（平台命名契约要求包名与 `code` 一致，`market_naming.check_package_consistency` 会校验） |
+| `skill_publish` | `code` `name` `version` `summary` `description?` `use_when?` `not_for?` `category?` `project?` `icon?` `tags?` `keywords?` `permissions?` `install_steps?` `bindings?` `files?` `package_base64?` | `{job_id, status, code}` | 上架新技能。`files`（路径→文本内容映射）与 `package_base64`（zip 的 base64）二选一，都不给则 `invalid_argument`。base64 包按 `{code}.zip` 还原（命名契约要求包名与 `code` 一致，`market_naming.check_package_consistency` 会校验） |
 | `skill_update` | `code` + 上述任意字段（**均可省略**）+ `files?` / `package_base64?` | `{job_id, status, code}` | 发新版本。**字段省略 = 保持现状**（读当前 DB 资产值合并，read-modify-write）；`version` 省略时自动 patch 当前版本末位（`x.y.z → x.y.(z+1)`），给了则必须与当前版本不同。给了 `files`/`package_base64` = **整体替换**包内容（不是增量合并），未给 = 包内容不变 |
 | `skill_submit_review` | `code` | `{code, publish_status, pending_action}` | 提交审核 |
 | `skill_review` | `code` `approve: bool` `note?` | `{code, publish_status, pending_action}` | 审核通过 / 驳回。需审核人身份，否则 403 |
@@ -270,68 +362,100 @@ CREATE INDEX ix_mcp_tokens_user ON mcp_api_tokens (user_id);
 
 ---
 
-## 6. 业务逻辑分层改造（domain 抽取）
+## 6. 对现有代码的最小改动（本方案与 v1 的核心分歧）
 
-这是本轮**最大的工作量与最大风险**，单列一节。
+### 6.1 结论：业务代码零改动
 
-### 6.1 目标形态
+v1 方案主张把 `marketplace.py` 的业务逻辑抽到 `app/domain/market.py`（REST 与 MCP 共用）。
+**v2 放弃这个做法**，改为：
 
-`app/api/marketplace.py`（3005 行）拆成：
+> `app/api/marketplace.py` **一行不动**。MCP 侧新增 `app/mcp/skill/adapter.py`，
+> 由它调用**现有的路由函数**，把 HTTP 形状的参数翻译成 MCP 工具的入参。
 
-```
-app/domain/market.py      业务能力：列表 / 详情 / 文档 / 文件 / 包 / 上架 / 更新 / 审核 / 下架
-app/domain/errors.py      DomainError 家族
-app/api/marketplace.py    HTTP 适配层：解析 Form/File → 调 domain → 返 Pydantic schema
-```
+### 6.2 为什么这个更合理
 
-### 6.2 改造原则
-
-- **先搬不改**：逐个函数平移到 domain 层，函数体逻辑一字不改，只把 `Depends` 依赖改成显式入参
-- **每搬一个就跑测试**：现有 `tests/test_market_api.py` / `test_market_edge.py` / `test_unpublish_flow.py` /
-  `test_permissions.py` / `test_publisher_whitelist.py` / `test_market_meta_edit.py` 全绿再继续
-- **路由层保持薄**：路由函数只做「取参 → 调 domain → 抛 HTTPException 或返 schema」
-- **审计写在 domain 层**：`_audit(...)` 调用随业务逻辑一起搬过去 → REST 与 MCP 自动共享审计行为
-
-### 6.3 搬不动的部分
-
-与 MCP 无关、本轮**不搬**的部分：jobs 查询、notifications、sync-status、probe、config、
-categories、projects 的路由实现（这些留在 api 层，或 domain 暴露纯函数、路由做包装）。
-目标不是「一次拆干净」，而是**给 MCP 抽出它需要的那些能力**，同时留下清晰的分层接缝。
-
-### 6.4 错误模型
-
-```python
-# app/domain/errors.py
-class DomainError(Exception):
-    code = "domain_error"
-    http_status = 500
-class NotFound(DomainError):        code, http_status = "not_found", 404
-class PermissionDenied(DomainError):code, http_status = "permission_denied", 403
-class Conflict(DomainError):        code, http_status = "conflict", 409
-class InvalidArgument(DomainError): code, http_status = "invalid_argument", 422
-class UpstreamFailed(DomainError):  code, http_status = "upstream_failed", 502
-```
-
-两种出口，同一套异常：
-
-| DomainError | REST 出口 | MCP 出口 |
+| 维度 | v1（抽 domain 层） | **v2（零改动 + 适配层）** |
 |---|---|---|
-| NotFound | HTTP 404 + `detail` | tool error `code=not_found` |
-| PermissionDenied | HTTP 403 | tool error `code=permission_denied` |
-| Conflict | HTTP 409 | tool error `code=conflict` |
-| InvalidArgument | HTTP 422 | tool error `code=invalid_argument` |
-| UpstreamFailed | HTTP 502 | tool error `code=upstream_failed`（附「查 skill_job_status」） |
+| 回归风险 | 高 —— 要搬 3005 行生产代码，虽有 40+ 测试兜底，仍是最大风险源 | **零** —— 现有代码一行不动，现有测试必然全绿 |
+| 交付节奏 | 必须先完成重构才能做 MCP（串行） | MCP 可独立落地（重构变成可选优化） |
+| 语义一致性 | 最强（同一份函数） | **同样强**（MCP 调的就是网页在调的同一个函数，不是复制品） |
+| 架构整洁度 | 边界最干净 | 有一处 HTTP 形状耦合，**集中在 adapter.py 一个文件里** |
+| 未来演进 | 已到位 | 需要时可**平滑下沉**成 service 层：REST 与 MCP 同时改为调用它，是自然演进而非重写 |
 
-`app/api/marketplace.py` 加一个异常处理器把 `DomainError` 转 `HTTPException`；
-`app/mcp/errors.py` 把 `DomainError` 转 MCP `ToolError`。
+关键认知：**MCP 调现有路由函数，不是「复制一份业务逻辑」**。语义一致性不打折。
+
+### 6.3 适配层要处理的具体细节（已逐个核对函数签名）
+
+| 细节 | 现状 | adapter 的处理 |
+|---|---|---|
+| 参数形状 | 路由用 `Form(...)` / `Query(...)` 默认值 | 直接调用时**必须显式传全部参数**（默认值是 `Form` 对象不是值），adapter 内逐个补齐 |
+| 用户参数名不一致 | `submit_for_review` / `review_asset` / `list_projects` 的参数名是 **`_user`**（下划线前缀） | adapter 按关键字传 `_user=...`；**在代码里写注释说明原因**，免得后人以为是笔误 |
+| 错误类型 | 路由抛 `HTTPException(status_code, detail)` | adapter 捕获 → 按 status 映射成 MCP error code（400→bad_request / 403→permission_denied / 404→not_found / 409→conflict / 422→invalid_argument / 5xx→upstream_failed） |
+| 上传包 | 路由要 `UploadFile` | adapter 用 `UploadFile(file=BytesIO(data), filename=f"{code}.zip")` 构造 |
+| 多文件上传 | 路由要 `list[UploadFile]` | adapter 逐个构造 |
+| 下载 | 路由返回 `Response`（bytes + `X-Content-Sha256` 头） | adapter 取 `response.body` 与响应头，不让 bytes 进 tool 返回 |
+| 审核 | `review_asset(code, decision="approve"|"reject", comment)` | MCP 工具把 `approve: bool` 翻译成 `decision` |
+| 下架 | `unpublish_asset(code, confirm_code, comment)` | MCP 工具**必须**回填 `confirm_code=code`（这是平台既有的防误操作契约，MCP 不能绕过） |
+| 返回值 | Pydantic 模型（`AssetOut` / `AssetJobOut` …） | `model_dump(mode="json")` 后裁剪字段，避免把内部字段（如 `git_path`）泄给 agent |
+| 权限 | 依赖注入 `Depends(require_publisher)` 等 | adapter **显式传入**已解析的用户 → 依赖注入的检查在函数体内仍会执行 |
+
+### 6.4 实际要改的既有文件（后端业务文件合计 < 40 行）
+
+| 文件 | 改动 |
+|---|---|
+| `app/main.py` | 挂载 dispatcher + lifespan 里跑各域 session manager + 注册 `/api/v1/mcp` 路由（约 15 行） |
+| `app/models/__init__.py` | 导出新模型（1 行） |
+| `requirements.txt` / `requirements.lock` | 加 `mcp==1.29.1` 及 4 个传递依赖 |
+| `frontend_web/nginx.conf` | 加 `location /mcp`（约 12 行） |
+| `deploy/native/units/nginx.conf.tpl` | 同上（裸机模板） |
+| 前端设置页 | 加「MCP 接入令牌」组（新组件 + 设置页挂载一处） |
+
+**其余全部是新增文件**：`app/mcp/**`、`app/api/mcp.py`、`app/models/mcp.py`、alembic 迁移、测试。
+
+### 6.5 什么时候才值得抽 domain 层
+
+等 MCP 稳定运行一段时间后，如果出现下列信号再考虑下沉：
+
+- 同一段业务逻辑在 REST / MCP / 定时任务三处出现**第三份**实现
+- REST API 的 Form 结构频繁变动，导致 adapter 反复改
+- 需要让**非 HTTP** 的调用方（CLI worker）复用业务能力
+
+到那时把 `marketplace.py` 的相关函数平移到 `app/domain/market.py`，REST 路由与 MCP adapter 同时改为调用它，
+是一次**机械搬移**（不是重写），且有测试兜底。
 
 ---
 
-## 7. 审计
+## 7. 数据流
+
+```
+Qoder
+ │  POST /mcp/skill   Authorization: Bearer tm_live_xxx
+ ▼
+FastAPI 中间件 ── 验签/有效期/吊销 ──▶ request.state.principal
+ ▼
+dispatcher (/mcp → /skill) ──▶ FastMCP JSON-RPC: initialize → tools/list → tools/call
+ ▼
+tool handler (app/mcp/skill/tools.py)
+ │  取 principal → 校验 scope → 组装 McpContext
+ ▼
+adapter (app/mcp/skill/adapter.py)
+ ▼
+app/api/marketplace.py 的现有路由函数（**一行未改**）
+ ▼
+Asset 模型 + git 工作区 + GitLab（真身）
+ ▼
+返回值 → adapter 裁剪 → MCP tool result（JSON）
+```
+
+失败路径：`HTTPException` → `common/errors.py` → MCP tool error（isError=true）→ 记 `mcp_tool_calls`。
+
+---
+
+## 8. 审计
 
 | 落点 | 记什么 | 用途 |
 |---|---|---|
-| `asset_audits`（既有） | 上架/更新/审核/下架等业务动作，`actor` = 绑定用户，`detail` 增 `transport=mcp` + `token_id` | 谁动了哪个资产 |
+| `asset_audits`（既有） | 上架/更新/审核/下架等业务动作，`actor` = 绑定用户 | 谁动了哪个资产（**既有逻辑，无需改动**） |
 | `mcp_tool_calls`（新增） | `token_id` / `user_id` / `tool` / 入参摘要 / `ok` / `error_code` / `duration_ms` / `created_at` | 排查 agent 行为、配额、异常调用 |
 
 ```sql
@@ -352,31 +476,6 @@ CREATE INDEX ix_mcp_calls_token ON mcp_tool_calls (token_id, created_at);
 
 ---
 
-## 8. 数据流
-
-```
-Qoder
- │  POST /mcp   Authorization: Bearer tm_live_xxx
- ▼
-FastAPI 中间件 ── 验签/有效期/吊销 ──▶ scope["state"]["principal"]
- ▼
-FastMCP (JSON-RPC: initialize → tools/list → tools/call)
- ▼
-tool handler（app/mcp/server.py 注册的闭包）
- │  取 principal → 校验 scope → 组装 McpContext
- ▼
-domain 层（app/domain/market.py）
- │  复用既有 market_policy / market_state / market_catalog / git_sync / asset_jobs
- ▼
-Asset 模型 + git 工作区 + GitLab（真身）
- ▼
-返回 → domain 结果 → MCP tool result（JSON）
-```
-
-失败路径：domain 抛 `DomainError` → `app/mcp/errors.py` 转 tool error（isError=true）→ 记 `mcp_tool_calls`。
-
----
-
 ## 9. 数据库变更
 
 | 迁移 | 内容 |
@@ -393,14 +492,13 @@ ORM 模型放 `app/models/mcp.py`（新文件），随 `app/models/__init__.py` 
 ### 10.1 依赖
 
 `requirements.txt` 增 `mcp>=1.29,<2`（**API 已核实于 1.29.1**：`stateless_http` / `json_response` /
-`streamable_http_path` / `ctx.request_context.request` 均存在；2.x 有 breaking change，本轮不碰），
+`streamable_http_path` / `ctx.request_context.request` / `transport_security` 均存在；2.x 有 breaking change，本轮不碰），
 `requirements.lock` 锁到 `mcp==1.29.1` 并补全传递依赖：新增 `httpx-sse`、`sse-starlette`、
 `jsonschema`(+`referencing`/`rpds-py`)、`pyjwt[crypto]`。
 其余依赖已满足：`starlette 1.8.0 ≥ 0.27`、`pydantic 2.14.1 ≥ 2.11`、`uvicorn 0.54 ≥ 0.31.1`、
 `httpx 0.28.1 ≥ 0.27.1`、`anyio 4.15.1 ≥ 4.5`、`pydantic-settings 2.16.0 ≥ 2.5.2`。
 
-> 离线部署：backend 镜像在**有网机器**上构建（`deploy/offline-save.sh` 现有流程），
-> 新依赖走正常 pip 解析即可，无需额外的离线包机制。
+> 离线部署：backend 镜像在**有网机器**上构建（`deploy/offline-save.sh` 现有流程），新依赖走正常 pip 解析即可。
 
 ### 10.2 nginx
 
@@ -408,7 +506,7 @@ ORM 模型放 `app/models/mcp.py`（新文件），随 `app/models/__init__.py` 
 location /mcp {
     proxy_pass http://backend:8000;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $host;            # ⚠️ $host 丢端口 → allowed_hosts 要含裸 host
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     client_max_body_size 200m;
@@ -430,8 +528,8 @@ location /mcp {
 ```json
 {
   "mcpServers": {
-    "testmate": {
-      "url": "http://<平台地址>/mcp",
+    "testmate-skill": {
+      "url": "http://<平台地址>/mcp/skill",
       "headers": {"Authorization": "Bearer tm_live_<用户自行签发的令牌>"}
     }
   }
@@ -455,22 +553,32 @@ location /mcp {
 
 | 目标 | 用例要点 |
 |---|---|
-| domain 层 | 每个操作的正常路径 + 权限拒绝 + 状态机非法迁移 + 参数校验 |
+| adapter 层 | 每个适配函数：正常路径 + HTTPException 映射 + `UploadFile` 构造 + 返回值裁剪 |
 | 令牌 | 签发格式 / 校验通过 / 吊销后失败 / 过期失败 / 绑定用户被停用后失败 / scope 不足被拒 |
-| 错误映射 | 每个 `DomainError` → REST 状态码、MCP error code 的映射正确 |
-| schema | 每个工具的 `input_schema` 是合法 JSON Schema，且 name 全局唯一 |
+| 错误映射 | 每个 HTTP 状态码 → MCP error code 的映射正确 |
+| schema | 每个工具的 `input_schema` 是合法 JSON Schema，且 name 在域内唯一 |
 | 作用域 | 只读令牌调写工具 → `permission_denied` |
 
-### 11.2 集成测试
+### 11.2 集成测试（spike 已给出可行写法）
 
-用 `httpx.ASGITransport` 走完整 MCP 握手：
-`initialize` → `tools/list` → `tools/call`；
-断言：无 token → 401；坏 token → 401；好 token → 能列出全部工具、能读到 `SKILL.md`。
-另测 **挂载路径正确**（`/mcp` 而非 `/mcp/mcp`）与 **session manager 生命周期**（lifespan 里已启动）。
+**关键**：`httpx.ASGITransport` **不触发 lifespan** → 测试里必须手动驱动，否则报
+`RuntimeError: Task group is not initialized. Make sure to use run()`。
+在 `backend_gateway/tests/_lifespan.py` 提供一个最小 lifespan 驱动（发 `lifespan.startup` → 等 `startup.complete`）。
+
+用例：
+
+1. `initialize` → 拿到 serverInfo.name == `testmate-skill`
+2. `tools/list` → 返回 14 个工具，名称与 §5 一致
+3. `tools/call skill_search` → 能拿到结果
+4. 工具函数内能读到 `ctx.request_context.request.headers["authorization"]` 与 `.state.principal`
+5. 无 token / 坏 token → **401**；已吊销 token → **401**
+6. **路径断言**：`POST /mcp/skill` = 200（不是 307！）；`POST /mcp/nope` = 404
+7. **transport_security 断言**：Host 不在 allowed_hosts 时 = 421（证明防护生效，不是被绕过）
 
 ### 11.3 回归
 
-现有 40+ 测试文件全绿（`marketplace.py` 瘦身是主要风险面）。
+现有 40+ 测试文件**必须全绿**——这是「零改动」方案的核心验收指标：
+只要 `marketplace.py` 一行没动，现有测试理应全部原样通过（若有任何失败，说明改到了不该改的地方）。
 
 ---
 
@@ -481,24 +589,23 @@ location /mcp {
 | 阶段 | 内容 | 可独立验收 |
 |---|---|---|
 | S1 | 令牌体系（表 + 模型 + 签发/校验/吊销 API + 设置页） | 能签发、能验、能吊销 |
-| S2 | domain 抽取（`app/domain/market.py` + 路由瘦身），**行为零变化** | 现有 40+ 测试全绿 |
-| S3 | MCP 框架层（FastMCP 装配 + 中间件 + 错误映射 + 工具注册机制） | 能握手、能 `tools/list`（空工具集也算通过） |
-| S4 | 技能市场 14 个工具实现 | §12.1 全部通过 |
-| S5 | 部署与分发（nginx / 锁文件 / 自举连接器 / 设置页入口） | Qoder 实连成功 |
+| S2 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计） | 能握手、能 `tools/list`（空工具集也算通过） |
+| S3 | 技能域适配层 + 14 个工具 | §12.1 全部通过 |
+| S4 | 部署与分发（nginx / 锁文件 / allowed_hosts 设置 / 自举连接器 / 设置页入口） | Qoder 实连成功 |
 
-S2 是 S4 的前置（工具要调 domain）；S1 是 S3 的前置（中间件要认 token）。S2 与 S3 之间无耦合，可并行。
+S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令牌，S3 依赖 S2。S2/S3 可并行。
 
 ### 12.1 验收项
 
 1. 管理员在设置页签发令牌 → 拿到 `tm_live_...` 明文（只此一次）
-2. Qoder 里配置连接器 `{url: http://<host>/mcp, headers: {Authorization: "Bearer tm_live_..."}}` → 能连上
+2. Qoder 里配置连接器 `{url: http://<host>/mcp/skill, headers: {Authorization: "Bearer tm_live_..."}}` → 能连上
 3. `tools/list` 返回 14 个工具，名称与 §5 一致
 4. agent 能：搜到技能 → 读 `SKILL.md` → 取到包 URL 与 sha256 → 下载后 sha256 与 `skill_package_info` 一致
 5. agent 能上架新技能 → 返回 job_id → `skill_job_status` 显示 succeeded → GitLab 出现对应 commit → 审核台可见
 6. 审核人在 agent 侧（或网页）审核通过后，技能出现在市场列表
 7. 吊销令牌 → 下一个请求立刻 401
-8. `git log` 能看到 domain 抽取是**独立提交**，可单独回滚
-9. 后续接知识库域 = 新增 `app/domain/kb.py` 一个 provider 模块 + 登记一行，`app/mcp/*` 零改动
+8. **`git diff --stat` 证明既有后端业务文件改动 < 40 行**（`app/main.py` ~15 行 + `app/models/__init__.py` 1 行 + 2 个 nginx 各 ~12 行）；现有 40+ 测试全绿
+9. 后续接知识库域 = 新增 `app/mcp/kb/` 目录 + `PROVIDERS` 加一行，`common/*` 与业务代码零改动
 
 ---
 
@@ -506,12 +613,15 @@ S2 是 S4 的前置（工具要调 domain）；S1 是 S3 的前置（中间件�
 
 | 风险 | 影响 | 对策 |
 |---|---|---|
-| 瘦身 `marketplace.py` 引入回归 | 高 | 先搬不改 + 逐步跑既有测试 + 独立提交可回滚；领域层不动 HTTP 层契约 |
-| Qoder 客户端对 `stateless_http`/`json_response` 兼容性未知 | 中 | 保留 SSE 挂载 `/mcp/sse` 兜底；实现阶段先做联调 spike 验证握手 |
+| **allowed_hosts 没配对 → 全站 421** | 高（全功能不可用） | §3.4 已明确格式（裸 host + `host:port` 双写）；集成测试断言 421 场景；设置项兜底 |
+| **子应用 lifespan 未驱动 → 500** | 高 | 父应用 lifespan 用 `AsyncExitStack` 跑各域 session manager；集成测试手动驱动 lifespan |
+| **`/mcp/skill` 路径 307 跳转 → 客户端连不上** | 高 | dispatcher 写法（不逐个 mount）；集成测试断言 200 而非 307 |
+| 适配层与路由函数签名漂移 | 中 | adapter 是唯一耦合点；单测逐个覆盖；路由签名变更时 adapter 单测会红 |
+| `_user` 这类怪参数名被后人「顺手改掉」→ adapter 崩 | 中 | adapter 内写明注释；单测覆盖该路径 |
+| Qoder 对 `stateless_http` / `json_response` 兼容性未知 | 中 | 预留 `/mcp/sse` 兜底挂载点；实现阶段先做联调 spike |
 | 新增 pip 依赖影响离线部署 | 低 | 镜像在有网机器构建；锁文件补全；仅 4 个新传递依赖 |
 | agent 误上架 / 误删 | 中 | 无硬删工具；审核流不变；scopes 可只读；每次调用留审计 |
 | token 泄漏 | 中 | 明文一次性展示；只存 sha256；吊销即时生效；不进 URL / 不进 access log |
-| domain 层抽象过早 / 抽象不足 | 中 | 本轮只抽 MCP 需要的操作；kb / software 域接入时再调整 seam，不做大爆炸重构 |
 
 ---
 
@@ -519,10 +629,10 @@ S2 是 S4 的前置（工具要调 domain）；S1 是 S3 的前置（中间件�
 
 | 阶段 | 内容 | 增量成本 |
 |---|---|---|
-| **P0（本轮）** | 令牌体系 + MCP 框架层 + 技能市场 14 工具 + domain 抽取 | — |
-| P1 | 知识库域：`kb_search` / `kb_list_datasets` / `kb_read_document` / `kb_ingest` | 1 个 provider 模块 |
-| P2 | 软件库域：`software_search` / `software_download` / `software_upload` | 1 个 provider 模块 |
-| P3 | 插件 / 连接器域：`plugin_*` / `connector_*`（复用 market domain 函数，改 kind 即可） | 少量 tool spec |
+| **P0（本轮）** | 令牌体系 + MCP 公共层 + 技能域 14 工具 + 部署分发 | — |
+| P1 | 知识库域：`app/mcp/kb/` + `kb_search` / `kb_list_datasets` / `kb_read_document` / `kb_ingest` | 1 个目录 + 1 行注册 |
+| P2 | 软件库域：`app/mcp/software/` + `software_search` / `software_download` / `software_upload` | 1 个目录 + 1 行注册 |
+| P3 | 插件 / 连接器域：`plugin_*` / `connector_*`（复用同一批 adapter 函数，改 kind 即可） | 少量 tool spec |
 | P4 | stdio transport 薄壳（本地 CLI agent 用） | 1 个薄壳进程 |
 | P5 | MCP Resources / Prompts（把 `SKILL.md` 暴露成 Resource） | SDK 原生支持 |
 
@@ -532,7 +642,8 @@ S2 是 S4 的前置（工具要调 domain）；S1 是 S3 的前置（中间件�
 
 | 事项 | 本轮取值 | 何时需要回看 |
 |---|---|---|
-| 首期是否含审核工具 | **含**（D6），但严格受平台审核人权限约束 | 用户若只想让 agent 提交待审，删掉 `skill_review` 一个 tool spec 即可 |
-| 令牌有效期 | 默认**不过期**（`expires_at=NULL`），可签发时指定 | 内部网场景可接受；对外暴露时收紧 |
-| SSE 兜底端点 | 先实现 Streamable HTTP，**预留** `/mcp/sse` | Qoder 实测不兼容时启用 |
+| 首期是否含审核工具 | **含**（D7），严格受平台审核人权限约束 | 用户若只想让 agent 提交待审，删掉 `skill_review` 一个 tool spec 即可 |
+| 令牌有效期 | 默认**不过期**（`expires_at=NULL`），可签发时指定 | 内网场景可接受；对外暴露时收紧 |
+| SSE 兜底端点 | 先实现 Streamable HTTP，**预留** `/mcp/sse` 挂载点 | Qoder 实测不兼容时启用 |
 | 每 token 调用配额 | 本轮**不限**，只审计 | 观察一段时间后按 `mcp_tool_calls` 加限流 |
+| 是否抽 domain 层 | 本轮**不抽**（§6） | 出现 §6.5 的三个信号时再下沉 |
