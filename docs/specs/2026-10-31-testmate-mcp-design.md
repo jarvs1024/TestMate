@@ -1,4 +1,4 @@
-# TestMate MCP 设计（技能市场先行 · v5）
+# TestMate MCP 设计（技能市场先行 · v6）
 
 > 2026-10-31 · 让 **agent 能操作 TestMate**：上架 / 下载 / 更新技能；后续接知识库、软件库。
 > 本轮只做**技能·插件**一个域；每个域一个独立 MCP，公共部分单独放一层。
@@ -10,12 +10,15 @@
 > 4. 补入 **spike 实测结论**（装配路径 / 鉴权取身份 / DNS rebinding 421 / lifespan 500）
 > 5. **首期不含审核工具**（14 → 13 个）：上架后由人工在网页审核台处理，agent 不自己盖章
 > 6. **令牌模型加料**：绑定方式（必绑具体用户）/ scope 固定枚举 / 默认 90 天有效期 / 每日调用配额
-> 7. **不做 SSE 兼容层**：只按 MCP 默认协议（Streamable HTTP）实现
-> 8. **令牌自助签发**：任何登录用户可给自己签发（设置页是 adminOnly，放那儿等于只有管理员能用 agent）；
+> 7. **令牌自助签发**：任何登录用户可给自己签发（设置页是 adminOnly，放那儿等于只有管理员能用 agent）；
 >    scope 上限 = 用户平台能力（复用 `market_policy.can_publish`）
-> 9. **令牌页 `/mcp-tokens` + 一键复制连接器配置**：用户不用手拼 mcpServers JSON，url 自动取 `marketplace.public_base_url`
-> 10. **Qoder 的 OAuth 2.1 授权流**（§4.8）写成可选增强：SDK 已有一等支持，但要我们自己写 provider + 同意页；
->    **是否需要它取决于 Qoder 能不能吃静态 Bearer 令牌 —— 实现第一步先做这个 spike**
+> 8. **令牌页 `/mcp-tokens` + 一键复制连接器配置**：用户不用手拼 mcpServers JSON，url 自动取 `marketplace.public_base_url`
+> 9. **transport 双端点**：Streamable HTTP（`POST /mcp/skill`）+ **SSE**（`GET /mcp/skill/sse` + `POST /mcp/skill/messages/`）
+>    —— Qoder CN 走 SSE 模式，SSE **必须做**（v5 写的「不做 SSE」已被 Qoder 官方文档推翻，见 §4.9）
+> 10. **鉴权用静态 Bearer 令牌**：Qoder 官方文档明确支持 MCP 服务器配 `Headers: Authorization: Bearer ...`
+>    ⇒ **不需要 OAuth**；截图里的「需要授权」是 Qoder 内置市场连接器（第三方各自的 OAuth），与自定义 MCP 无关
+> 11. **Qoder 的 OAuth 2.1 授权流**（§4.8）降级为 **P3.5 可选增强**（静态令牌已够用）；SDK 有一等支持，
+>    将来若要「点一下就授权」的用户体验再上
 >
 > 状态：**设计已定，待实现**。
 
@@ -417,13 +420,21 @@ MCP 客户端（Qoder）需要的不只是一个 token，而是**一整段配置
 ```
 令牌页(新建 /mcp-tokens)
   ├─ [签发令牌]  → 明文 tm_live_xxx（只此一次，弹窗 + 一键复制）
-  ├─ [复制连接器配置] → 后端拼好上面的 JSON（含正确的 url + Bearer 头）→ 一键复制
+  ├─ [复制连接器配置 · Streamable HTTP] → {"mcpServers":{"testmate-skill":{
+  │        "type":"streamable-http","url":"http://<平台地址>/mcp/skill",
+  │        "headers":{"Authorization":"Bearer tm_live_xxx"}}}}   ← 一键复制
+  ├─ [复制连接器配置 · SSE] → 同上，但 url 换成 .../mcp/skill/sse、type 换成 "sse"
   └─ [工具清单] → 列出本域 13 个工具，让用户知道 agent 能干什么
                           ↓ 粘贴
-                    Qoder 的 MCP 配置（mcp.json / 设置里的 MCP 面板）
+                    Qoder：设置 → 连接器与 MCP → + → 粘贴 JSON 配置 → 导入
                           ↓
                     Qoder 连 http://<平台地址>/mcp/skill
 ```
+
+⚠️ **输出格式要按 Qoder 的来**：Qoder 的「粘贴 JSON 配置」样例带 `type` 字段
+（`"type": "streamable-http"` / `"sse"`），这是 Qoder 特有的。
+平台自己的 `app/core/mcp_config.py` 校验连接器配置时**只检查已知字段、忽略未知键**，
+所以 `type` 不会导致校验失败 —— 两边格式天然兼容，不用改既有校验器。
 
 **url 自动取对**：后端用既有设置项 `marketplace.public_base_url`（已是「对外可达的基地址」，
 marketplace.json 和钉钉通知链接都在用它）+ `/mcp/skill` 拼出，用户不用手填 IP。
@@ -492,6 +503,47 @@ Qoder 里配好 MCP 后弹「需要授权」、点一下跳到网页去同意、
 **推荐：两条都留，一个验证入口。**
 `TokenVerifier` 同时认 `tm_live_*` 和 OAuth access token，权限判定（scope + 用户平台能力）与审计
 （`mcp_tool_calls`）完全共用 —— 用户选哪种凭证，能力边界一模一样。
+
+### 4.9 Qoder 鉴权怎么弄（官方文档结论）
+
+**来源**：QoderWork CN 官方文档「连接器」章节（阿里云帮助中心）
+`https://www.alibabacloud.com/help/tc/lingma/qoderwork-cn/user-guide/getting-started`
+
+官方原文要点：
+
+> **手动填写配置** → 服务器类型选 **Streamable HTTP / SSE** → 需要填写：
+> **Server Name**、**Server URL**、**Headers（可选）：认证头，如 `Authorization: Bearer your-token`**
+>
+> **粘贴 JSON 配置**样例：
+> ```json
+> { "mcpServers": { "service-name": {
+>     "type": "streamable-http",
+>     "url": "https://mcp-server-url.example.com/sse",
+>     "headers": { "Authorization": "Bearer your-token" } } } }
+> ```
+>
+> 「Streamable HTTP 是 SSE 的更新、更强大的继任者。如果市场提供 Streamable HTTP URL，应优先选择该类型。」
+
+**⇒ 结论一：静态 Bearer 令牌就是正解**，鉴权不需要 OAuth：
+
+```
+Qoder「设置 → 连接器与 MCP → + → 手动填写配置」
+  服务器类型：Streamable HTTP / SSE
+  Server URL：http://<平台地址>/mcp/skill          （SSE 模式则填 /mcp/skill/sse）
+  Headers：Authorization: Bearer tm_live_xxxxxxxx
+```
+
+**⇒ 结论二：截图里那些「需要授权」与自定义 MCP 无关**。
+GitHub / 阿里云 DevOps / 七鱼查 / AMAP 是 **Qoder 内置市场**的连接器，各自带第三方 OAuth 端点，
+点「授权」是去它们各自的系统登录。而**用户自己添加的 MCP 服务器显示在「已安装 → Custom」分类下**，
+走的是「配置 + Headers」这条路，**没有授权按钮**。
+
+> 佐证：本机 `~/.qoder-cn/logs/qoder-qmind/qmind-mcp.log` 里能看到 Qoder 的 MCP 客户端
+> 有完整的鉴权状态机（`mcp.auth.state_applied` / `mcp.auth.logged_in` / `principalType:"user"`），
+> 那是 Qoder **自带连接器**（stdio 型）的登录态，与我们自己配的远程 server 是两条路。
+
+**⇒ 结论三：OAuth 从「可能必需」降级为「可选增强」**（§4.8 保留设计，列为 P3.5）。
+只有当将来想让用户「点一下就授权」而完全不用碰令牌时，才需要上那 300 行 provider + 同意页。
 
 #### ⚠️ 先决问题：Qoder 到底需不需要 OAuth？
 
@@ -727,6 +779,12 @@ location /mcp {
 ```
 `frontend_web/nginx.conf` 与 `deploy/native/units/nginx.conf.tpl`（裸机模板）**两处都要加**。
 
+> ⚠️ **SSE 需要的 nginx 配置**（上面已包含，此处强调）：
+> · `proxy_buffering off` —— **必须有**，否则 SSE 事件流会被 nginx 攒着不发，客户端一直转圈
+> · `proxy_read_timeout 300s` —— SSE 是长连接，超时太短会周期性断开
+> · `proxy_set_header Connection ''` —— 避免上游 keep-alive 干扰长连接
+> · `location /mcp` 是**前缀匹配** ⇒ `/mcp/skill`、`/mcp/skill/sse`、`/mcp/skill/messages/` 一次全中，不用再开 location
+
 ### 10.3 裸机模式
 
 同进程，无需额外服务；`tmctl.sh` 的 Python 依赖安装走 `requirements.lock`，自动覆盖。
@@ -757,7 +815,7 @@ location /mcp {
 
 | 文件 | 改动 | 说明 |
 |---|---|---|
-| `views/McpTokens/index.vue` | **新增页面** | 「我的 MCP 令牌」：列表 / 签发 / 吊销 / 复制明文 / 复制连接器配置 / 工具清单 |
+| `views/McpTokens/index.vue` | **新增页面** | 「我的 MCP 令牌」：列表 / 签发 / 吊销 / 复制明文 / **复制连接器配置（Streamable HTTP / SSE 两个按钮）** / 工具清单 |
 | `router/index.ts` | 加一条路由 | `{ path: 'mcp-tokens', meta: { requiresAuth: true, title: 'MCP 令牌' } }`——**不加 `adminOnly`** |
 | `components/UserMenu.vue` | 加菜单项 | 「MCP 令牌」，**所有登录用户可见**，放在「设置」条目旁边（设置仍只给 admin） |
 | `api/mcp.ts` | **新增** | 令牌 CRUD + `getConnectionConfig()`（拿可粘贴的 mcpServers JSON） |
@@ -770,7 +828,7 @@ location /mcp {
 | `GET /tokens` | 登录 | 自己的令牌；admin 可带 `?all=1` 看全部 |
 | `POST /tokens` | 登录（自助）/ admin（代发） | 签发，**响应里带一次明文** |
 | `DELETE /tokens/{id}` | 本人 / admin | 吊销 |
-| `GET /connection-config` | 登录 | 返回拼好的 mcpServers JSON（url + Bearer），供一键复制 |
+| `GET /connection-config?transport=streamable-http\|sse` | 登录 | 返回拼好的 **Qoder 格式** mcpServers JSON（`type` + `url` + `headers.Authorization`），供一键复制 |
 | `GET /tools` | 登录 | 本域工具清单（供页面展示） |
 
 另在「插件·技能·连接」页加一个入口，说明「agent 可通过 TestMate MCP 操作技能市场」并链到令牌页。
@@ -819,7 +877,7 @@ location /mcp {
 
 | 阶段 | 内容 | 可独立验收 |
 |---|---|---|
-| **S0** | **Qoder 联调 spike**：静态令牌在 Qoder 里配一次，看是直接连上还是弹授权框 | **决定 OAuth 是不是 P0**（§4.8 末尾） |
+| **S0** | **Qoder 真机联调**：用静态令牌在 Qoder 里配一次，确认能连上 / 走的是 SSE 还是 Streamable HTTP / 头有没有带上 | 打通客户端接入（§4.9 末尾） |
 | S1 | 令牌体系（表 + 模型 + 签发/校验/吊销 API + 配额 + 设置页） | 能签发、能验、能吊销、配额能拦 |
 | S2 | MCP 公共层（server 工厂 / dispatcher / 中间件 / 错误映射 / 工具契约 / 审计） | 能握手、能 `tools/list`（空工具集也算通过） |
 | S3 | 技能域适配层 + 13 个工具 | §12.1 全部通过 |
@@ -868,7 +926,7 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 | P1 | 知识库域：`app/mcp/kb/` + `kb_search` / `kb_list_datasets` / `kb_read_document` / `kb_ingest` | 1 个目录 + 1 行注册 |
 | P2 | 软件库域：`app/mcp/software/` + `software_search` / `software_download` / `software_upload` | 1 个目录 + 1 行注册 |
 | P3 | 插件 / 连接器域：`plugin_*` / `connector_*`（复用同一批 adapter 函数，改 kind 即可） | 少量 tool spec |
-| **P3.5** | **OAuth 2.1 授权流**（若 S0 spike 证明 Qoder 需要）：provider + 同意页 + 4 处 nginx；与静态令牌共用 `TokenVerifier` | 约 300 行后端 + 1 个前端页 |
+| **P3.5** | **OAuth 2.1 授权流**（可选增强，静态令牌已够用）：provider + 同意页 + 4 处 nginx；与静态令牌共用 `TokenVerifier` | 约 300 行后端 + 1 个前端页 |
 | P4 | stdio transport 薄壳（本地 CLI agent 用） | 1 个薄壳进程 |
 | P5 | MCP Resources / Prompts（把 `SKILL.md` 暴露成 Resource） | SDK 原生支持 |
 
@@ -883,5 +941,5 @@ S1 是 S2 的前置（中间件要认 token）；S2 与 S1 之间耦合仅在令
 | 是否做 SSE 兼容层 | **不做** —— 只按 MCP 默认协议（Streamable HTTP）实现 | 若 Qoder 实测不兼容，走 SDK 自带的 SSE transport（不自己写兼容代码） |
 | 每 token 调用配额 | **已定：默认 200 次/天**，0 = 不限 | 观察 `mcp_tool_calls` 的真实用量后可调 |
 | 是否抽 domain 层 | 本轮**不抽**（§6） | 出现 §6.5 的三个信号时再下沉 |
-| **Qoder 是否需要 OAuth** | **未知** —— 本轮按「静态令牌够用」设计，OAuth 列为 P3.5 | **S0 spike 出结果就定**：能吃静态头 → 永远不做；不能吃 → 提到 P0 |
+| **Qoder 是否需要 OAuth** | **已定：不需要** —— 官方文档确认支持 `Headers: Authorization: Bearer ...`（§4.9）；OAuth 降级 P3.5 | 若将来要「点一下就授权」的体验再上 |
 | OAuth 的同意页放哪 | 暂定 `/mcp/authorize`（独立页，非设置页——设置页是 adminOnly） | 真正做的时候再定 |
