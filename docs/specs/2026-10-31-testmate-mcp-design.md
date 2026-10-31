@@ -1026,7 +1026,7 @@ def test_adapter_covers_route_params(tool, route):
 |---|---|---|---|
 | `skill_publish` | `code` `name` `version` `summary` `description?` `use_when?` `not_for?` `category?` `project?` `icon?` `tags?` `keywords?` `permissions?` `install_steps?` `bindings?` `files?` `package_base64?` | `{job_id, status, code}` | 上架新技能。`files`（路径→文本内容映射）与 `package_base64`（zip 的 base64）二选一，都不给则 `invalid_argument`。base64 包按 `{code}.zip` 还原（命名契约要求包名与 `code` 一致，`market_naming.check_package_consistency` 会校验） |
 | `skill_update` | `code` + 上述任意字段（**均可省略**）+ `files?` / `package_base64?` | `{job_id, status, code}` | 发新版本（**带包**）。**字段省略 = 保持现状**（读当前 DB 资产值合并，read-modify-write）；`version` 省略时自动 patch 当前版本末位（`x.y.z → x.y.(z+1)`），给了则必须与当前版本不同。给了 `files`/`package_base64` = **整体替换**包内容（不是增量合并），未给 = 包内容不变 → ⚠️ 未给包时**不算发新版本**，应当改用 `skill_edit_meta` |
-| `skill_edit_meta` | `code` + `name?` `summary?` `description?` `use_when?` `not_for?` `category?` `project?` `icon?` `tags?` `keywords?` `featured?` | `{job_id, status, code}` | **只改信息，不动包** → 审核后**不通知市场群**（`pending_action=meta`）。与 `skill_update` 分开是因为两条流程的审核后行为不同（§4.12.4） |
+| `skill_edit_meta` | `code` + `name?` `summary?` `description?` `use_when?` `not_for?` `category?` `project?` `icon?` `tags?` `keywords?` | `{job_id, status, code}` | **只改信息，不动包** → 审核后**不通知市场群**（`pending_action=meta`）。与 `skill_update` 分开是因为两条流程的审核后行为不同（§4.12.4）。⚠️ **不含 `featured`** —— 既有的 `AssetMetaUpdateIn`（`app/schemas/asset.py`）里没有这个字段，传了也传不进去 |
 | `skill_submit_review` | `code` | `{code, publish_status, pending_action}` | 提交审核 |
 | `skill_unpublish_request` | `code` `reason?` | `{code, publish_status}` | 申请下架（转 `unpublish_pending`，由管理员在网页确认；确认后资产才被彻底删除） |
 

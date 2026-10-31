@@ -125,7 +125,8 @@ TestMate/
 | 文档 | 用途 |
 |---|---|
 | [能力墙重构设计](docs/specs/2026-10-25-capability-wall-design.md) | **当前主设计** —— 信息架构 / 角色模型 / 文案对照 / Dify 下线 / 发布权限 |
-| [TestMate MCP 设计](docs/specs/2026-10-31-testmate-mcp-design.md) | 让 agent 操作 TestMate —— MCP 端点 / API Token 鉴权 / domain 服务层 / 技能市场 14 个工具 |
+| [TestMate MCP 设计](docs/specs/2026-10-31-testmate-mcp-design.md) | 让 agent 操作 TestMate —— MCP 端点 / OAuth 2.1 鉴权 / 按域拆分的 MCP server / 技能市场 14 个工具 |
+| [TestMate MCP 实施计划](docs/superpowers/plans/2026-10-31-testmate-mcp-implementation.md) | S0~S6 共 23 个任务的完整拆解 —— OAuth 骨架 / 同意页 / 内置连接器 / 14 个工具 / 一致性三层防线 / 部署 |
 | [软件库设计](docs/specs/2026-10-28-software-library.md) | 内部软件的上传（流式 · ≤5G）/ 存储路径 / 下载票据 / 版本与权限 |
 | [插件·技能·连接总览](docs/specs/2026-10-22-ai-asset-market-overview.md) | 资产市场的能力模型与上架流程（文档写于「AI 资产市场」时期） |
 | [资产市场验证记录](docs/specs/2026-10-23-asset-market-verification.md) | 验证用例与结论 |
