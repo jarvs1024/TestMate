@@ -7,7 +7,23 @@
     </div>
     <!-- 当前页面标题 (居中显示, 跟左侧 brand 视觉对称) -->
     <div v-if="pageTitle" class="page-title">
-      <div class="pt-name">{{ pageTitle }}</div>
+      <div class="pt-name">
+        <!-- ⚠️ 2026-10-31 (第十五轮): 能力身份条**并进标题行** ——
+             原来它在页面内容区第一行, 跟这里的标题**重复**(两边都写"插件·技能·连接"),
+             还多占一整行. 现在合成一行: 图标 + 名称 + 版本 + 角色·分类 + 状态徽标. -->
+        <span v-if="capIdent" class="pt-icon">{{ capIdent.icon }}</span>
+        <span class="pt-txt">{{ pageTitle }}</span>
+        <span v-if="capIdent?.version" class="pt-ver">{{ capIdent.version }}</span>
+        <template v-if="capIdent">
+          <span class="pt-sep">·</span>
+          <span class="pt-kind">{{ kindMeta(capIdent.kind).icon }} {{ kindMeta(capIdent.kind).label }}</span>
+          <span class="pt-sep">·</span>
+          <span class="pt-cat">{{ categoryLabel(capIdent.category) }}</span>
+          <span class="pt-badge" :class="`st-${capIdent.status}`">
+            <span class="dot"></span>{{ statusLabel(capIdent.kind, capIdent.status) }}
+          </span>
+        </template>
+      </div>
       <div v-if="pageLede" class="pt-lede">{{ pageLede }}</div>
     </div>
     <!-- 通用滚动通知栏 (匿名访问 / 系统公告等, 跨页面共享).
@@ -15,6 +31,10 @@
          这里只需要提供 notices 列表即可, 不必监听 dismiss 事件. -->
     <NoticeBar :notices="notices" class="tm-notice" @navigate="onNoticeNavigate" />
     <div class="right">
+      <!-- ⚠️ 2026-10-31 (第十五轮): 页面自己的操作区 (看板的时间窗/刷新等)
+           也搬到这里 —— 身份条并进页头后, 页面内容区第一行就空出来了,
+           操作区跟着身份走更顺 (都在页头这一行). -->
+      <component :is="capActs" v-if="capActs" class="cap-actions" />
       <ThemeSwitcher />
       <UserMenu />
     </div>
@@ -29,11 +49,21 @@ import ThemeSwitcher from './ThemeSwitcher.vue';
 import UserMenu from './UserMenu.vue';
 import NoticeBar, { type NoticeItem } from './NoticeBar.vue';
 import { useUserStore } from '@/stores/user';
+import { capActions, capIdentity } from '@/stores/capShell';
+import { categoryLabel, kindMeta, statusLabel } from '@/constants/capabilityKinds';
 import { getBackendVersion } from '@/api/settings';
 
 const route = useRoute();
 const pageTitle = computed(() => (route.meta?.title as string) || '');
 const pageLede = computed(() => (route.meta?.lede as string) || '');
+
+/**
+ * 能力身份条 (2026-10-31 第十五轮) —— 由页面通过 `CapabilityShell` 写进来.
+ *
+ * ⚠️ 没有身份 (首页 / 设置页 / 登录页等) → 这一行就只显示普通标题, 不多占位.
+ */
+const capIdent = computed(() => capIdentity.value);
+const capActs = computed(() => capActions.value);
 
 /**
  * 后端版本号 —— 真源在后端, 前端不再写死.
@@ -129,7 +159,44 @@ const notices = computed<NoticeItem[]>(() => {
   color: var(--ink-900);
   line-height: 1.2;
   letter-spacing: -0.2px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
+/* 能力图标 —— 小方块渐变, 跟首页能力墙的卡片图标同一套语言 */
+.pt-icon {
+  width: 26px; height: 26px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  box-shadow: var(--primary-shadow);
+}
+.pt-txt { white-space: nowrap; }
+.pt-ver { font-size: 12px; font-weight: 600; color: var(--ink-500); font-family: var(--font-mono); }
+.pt-sep { opacity: .4; font-weight: 400; }
+/* 角色 (说"这张卡扮演什么") —— 比分类更重要, 跟首页卡片一致 */
+.pt-kind { font-size: 12px; color: var(--primary-2); font-weight: 600; white-space: nowrap; }
+.pt-cat { font-size: 12px; color: var(--ink-500); font-family: var(--font-mono); white-space: nowrap; }
+.pt-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: var(--radius-pill);
+  font-size: 10.5px; font-weight: 600;
+  background: var(--surface-sunken); color: var(--ink-700);
+  flex-shrink: 0;
+}
+.pt-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.st-stable { background: rgba(16, 185, 129, 0.12); color: var(--ok); }
+.st-beta { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
+.st-alpha { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
+.st-draft { background: var(--surface-sunken); color: var(--ink-500); }
+.st-deprecated { background: rgba(239, 68, 68, 0.10); color: var(--err); }
+
+/* 页面自己的操作区 (看板的时间窗等) —— 跟着身份条一起进页头 */
+.cap-actions { display: inline-flex; align-items: center; gap: 8px; }
 .pt-lede {
   font-size: 12px;
   color: var(--ink-500);

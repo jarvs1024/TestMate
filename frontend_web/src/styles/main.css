@@ -102,6 +102,43 @@ html, html[data-theme] {
   padding: 22px;
 }
 
+/* ------------------------------------------------------------
+ * 资产卡片 (.asset-card) —— **插件·技能·连接** + **软件库** 共用
+ *
+ * ⚠️ 2026-10-31 (第十五轮): 以前这两个页面的卡片是**扁平列表卡**
+ *    (无白底/无圆角/无阴影, 靠一条虚线分隔), 跟首页能力墙的
+ *    "白底浮动大卡片" 完全是两套语言 —— 用户要求"对齐首页能力墙的样式".
+ *    现在: **容器**跟首页一致 (白底 + 圆角 + 阴影 + 悬停上浮 + 蓝色光环),
+ *    但**尺寸更紧凑** (padding 14px vs 首页 22px) —— 市场和软件库
+ *    一屏要放下更多条目, 大卡会太占地方.
+ *
+ * ⚠️ 为什么放全局: AssetCard.vue 和 SoftwareCard.vue 原来**各抄了一份**
+ *    .asset-card 的样式, 改一处忘另一处就会漂移 (已经发生过).
+ *    子元素 (.ac-hd / .ac-icon / .ac-tags …) 仍留在各自组件里 ——
+ *    它们本来就只在各自的组件里用, 提到全局反而容易撞名.
+ * ------------------------------------------------------------ */
+.asset-card {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 148px;
+  padding: 14px;                /* 比首页 .card 的 22px 紧凑 */
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+/* 悬停: 跟首页能力墙卡片**同一套反馈** —— 上浮 + 蓝边 + 光环 */
+.asset-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--primary);
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.12), 0 0 0 3px var(--primary-soft);
+}
+/* 键盘选中: 焦点环 —— 跟首页一致 (不要 outline, 用光环) */
+.asset-card:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
 /* ============================================================
  * 全局控件样式 (C 版 · 毛玻璃 + 简约 · 单层 focus ring)
  * ============================================================ */

@@ -1,5 +1,7 @@
 <template>
-  <div class="asset-card"
+  <!-- ⚠️ 2026-10-31 (第十五轮): 加上全局 `card` —— 白底/圆角/阴影跟首页能力墙一致.
+       容器样式在 styles/main.css 的 .asset-card, 跟「插件·技能·连接」共用一份. -->
+  <div class="card asset-card"
        role="button" :tabindex="0"
        @click="emit('open', item)"
        @keydown.enter="emit('open', item)"
@@ -39,10 +41,14 @@
       <span v-for="t in (item.tags || []).slice(0, 3)" :key="t" class="tag">#{{ t }}</span>
     </div>
 
-    <div class="ac-meta">
-      <span class="meta-item" :title="`已下载 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
-      <span class="meta-item">{{ item.author || '未知' }}</span>
-      <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
+    <!-- ⚠️ 2026-10-31 (第十五轮): 底部跟首页能力墙卡**同一个结构** (指标 + CTA 箭头) -->
+    <div class="ac-foot">
+      <div class="ac-meta">
+        <span class="meta-item" :title="`已下载 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
+        <span class="meta-item">{{ item.author || '未知' }}</span>
+        <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
+      </div>
+      <div class="ac-cta">查看详情<span class="cta-arrow">›</span></div>
     </div>
   </div>
 </template>
@@ -78,25 +84,10 @@ function platformIcon(p: string): string {
 <style scoped>
 /* ⚠️ 卡片样式**跟「插件·技能·连接」共用同一套类名与视觉** (asset-card / ac-hd /
    ac-summary / ac-tags / ac-meta) —— 两个页面要看起来是一套东西, 不是两个系统.
-   差异只在软件特有的字段 (平台 / 功能清单). */
-.asset-card {
-  cursor: pointer;
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  min-height: 150px;
-}
-.asset-card:hover {
-  /* ⚠️ 刻意**不抬升** (没有 translateY) —— 能力墙卡片是浮起来的, 这里保持"列表感" */
-  border-color: var(--primary);
-  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.10);
-}
-.asset-card:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-
+   差异只在软件特有的字段 (平台 / 功能清单).
+   ⚠️ 容器样式 (.asset-card) 在 2026-10-31 (第十五轮) 挪到 styles/main.css ——
+   跟首页能力墙的白底卡片对齐 (圆角/阴影/悬停上浮/蓝色光环), 但尺寸更紧凑.
+   以前这里是**抄的一份** —— 改一处忘另一处就会漂移 (已经发生过). */
 .ac-hd { display: flex; align-items: flex-start; gap: 10px; }
 .ac-icon {
   width: 34px; height: 34px;
@@ -167,13 +158,25 @@ function platformIcon(p: string): string {
   font-family: var(--font-mono);
 }
 
-.ac-meta {
-  display: flex; gap: 5px; flex-wrap: wrap;
+/* 底部: 指标 + CTA —— 跟首页能力墙卡 (.cc-foot) 同一个结构 */
+.ac-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding-top: 8px;
   border-top: 1px dashed var(--border);
+}
+.ac-meta {
+  display: flex; gap: 5px; flex-wrap: wrap;
   font-size: 10px;
   color: var(--ink-500);
   font-family: var(--font-mono);
+  min-width: 0;
 }
+.ac-cta {
+  font-size: 12px; font-weight: 600; color: var(--primary);
+  white-space: nowrap; flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 2px;
+}
+.cta-arrow { font-size: 14px; line-height: 1; }
+.asset-card:hover .ac-cta { color: var(--primary-2); }
 .meta-item { display: inline-flex; align-items: center; gap: 3px; }
 </style>

@@ -1,5 +1,8 @@
 <template>
-  <div class="asset-card"
+  <!-- ⚠️ 2026-10-31 (第十五轮): 加上全局 `card` —— 白底/圆角/阴影跟首页能力墙一致.
+       容器样式 (含 hover 上浮 + 蓝色光环) 已挪到 styles/main.css 的 .asset-card,
+       软件库那张卡共用同一份 —— 不再各抄一份, 免得改一处忘另一处。 -->
+  <div class="card asset-card"
        role="button" :tabindex="0"
        @click="emit('open', item)"
        @keydown.enter="emit('open', item)"
@@ -47,15 +50,16 @@
            permissions 字段后端仍保留 —— 只是不展示了. -->
     </div>
 
-    <div class="ac-meta">
-      <!-- ⚠️ 2026-10-31 (第十四轮): **连接器 (mcp) 没有安装包** ——
-           它是一段 MCP 配置, 后端下载接口直接 400 (「连接器没有安装包」),
-           所以卡片上**不能**显示下载计数 —— 显示个永远 0 的 ⬇0 只会让人以为坏了.
-           技能/插件/连接器在页签上是分开的, 这里按 kind 判断即可. -->
-      <span v-if="item.kind !== 'mcp'" class="meta-item"
-            :title="`已下载 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
-      <span class="meta-item">{{ item.author || '未知' }}</span>
-      <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
+    <!-- ⚠️ 2026-10-31 (第十五轮): 底部跟首页能力墙卡**同一个结构** ——
+         左边指标 + 右边 CTA 箭头. 以前只有一行指标, 看着像"列表行"不像"卡片". -->
+    <div class="ac-foot">
+      <div class="ac-meta">
+        <span v-if="item.kind !== 'mcp'" class="meta-item"
+              :title="`已下载 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
+        <span class="meta-item">{{ item.author || '未知' }}</span>
+        <span class="meta-item">· {{ shortDate(item.updated_at) }}</span>
+      </div>
+      <div class="ac-cta">查看详情<span class="cta-arrow">›</span></div>
     </div>
   </div>
 </template>
@@ -75,26 +79,10 @@ function shortDate(iso: string | null): string {
 </script>
 
 <style scoped>
-/* ⚠️ 市场页的卡片是**扁平紧凑列表卡** (4 列) ——
-   跟首页能力墙的"白底浮动大卡片" (3 列, 全局 .card) 拉开密度差, 一眼能分清两个页面. */
-.asset-card {
-  cursor: pointer;
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  min-height: 150px;
-}
-.asset-card:hover {
-  /* ⚠️ 刻意**不抬升** (没有 translateY) —— 能力墙卡片是浮起来的, 这里保持"列表感" */
-  border-color: var(--primary);
-  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.10);
-}
-.asset-card:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-
+/* ⚠️ 容器样式 (.asset-card) 在 2026-10-31 (第十五轮) 挪到 styles/main.css ——
+   跟首页能力墙的白底卡片对齐 (圆角/阴影/悬停上浮/蓝色光环),
+   但尺寸更紧凑 (padding 14px vs 首页 22px) —— 市场和软件库一屏要放下更多条目.
+   这里只留**这张卡自己特有**的子元素样式. */
 .ac-hd { display: flex; align-items: flex-start; gap: 10px; }
 .ac-icon {
   width: 34px; height: 34px;
@@ -161,14 +149,26 @@ function shortDate(iso: string | null): string {
   font-family: var(--font-mono);
 }
 
-.ac-meta {
-  display: flex; gap: 5px; flex-wrap: wrap;
+/* 底部: 指标 + CTA —— 跟首页能力墙卡 (.cc-foot) 同一个结构 */
+.ac-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding-top: 8px;
   border-top: 1px dashed var(--border);
+}
+.ac-meta {
+  display: flex; gap: 5px; flex-wrap: wrap;
   font-size: 10px;
   color: var(--ink-500);
   font-family: var(--font-mono);
+  min-width: 0;
 }
+.ac-cta {
+  font-size: 12px; font-weight: 600; color: var(--primary);
+  white-space: nowrap; flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 2px;
+}
+.cta-arrow { font-size: 14px; line-height: 1; }
+.asset-card:hover .ac-cta { color: var(--primary-2); }
 .meta-item { display: inline-flex; align-items: center; gap: 3px; }
 .meta-item.ok { color: var(--ok); }
 </style>
