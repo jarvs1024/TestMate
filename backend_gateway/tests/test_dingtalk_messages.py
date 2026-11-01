@@ -82,7 +82,7 @@ async def test_publish_message_has_summary_and_market_link(monkeypatch):
         _fake_get({"dingtalk.notify_base_url": "http://127.0.0.1:8081"}),
     )
     r = await dingtalk.preview_market_message(
-        "publish", name="代码检视流水线", version="1.0.0", actor="zhangsan",
+        "publish", name="代码检视流水线", version="1.0.0", author="zhangsan",
         kind="plugin", category="流程规范", code="dml-code-review",
         summary="一键串联: 取 MR diff → 送检视 → 回写评论 → 汇总结果",
     )
@@ -91,12 +91,71 @@ async def test_publish_message_has_summary_and_market_link(monkeypatch):
     assert "插件" in text, "要说明这是插件"
     assert "流程规范" in text, "要带分类"
     assert "1.0.0" in text
-    assert "zhangsan" in text, "要说明是谁干的"
+    assert "作者: zhangsan" in text, "要说明是谁的资产"
     # ⚠️ 上架 → 标签是「说明」, 内容是简介
     assert "说明: 一键串联" in text
     # ⚠️ 链接指向市场
     assert "http://127.0.0.1:8081/market" in text
     assert "去市场看看" in text
+
+
+async def test_publish_message_shows_author_not_approver(monkeypatch):
+    """审核通过后的上架通知 → 显示**作者**, 不显示「操作人: 审核人」.
+
+    ⚠️ 2026-11-01: 操作人是点通过的 admin, 群里看到会以为是 admin 做的资产;
+       说明也该是资产的简介, 不是「审核通过, 已上架」.
+    """
+    monkeypatch.setattr(dingtalk, "get", _fake_get({}))
+    r = await dingtalk.preview_market_message(
+        "publish", name="插件创建器", version="0.1.2",
+        actor="admin", author="zhangsan",
+        kind="skill", category="效率工具", code="dml-create-plugin",
+        summary="一句话创建一个插件",
+        detail="审核通过, 已上架",
+    )
+    text = r["text"]
+    assert "作者: zhangsan" in text, text
+    assert "操作人" not in text, text
+    assert "说明: 一句话创建一个插件" in text, text
+    assert "审核通过" not in text, text
+    assert "@所有人" in text, text
+
+
+async def test_notify_asset_prefers_asset_summary(monkeypatch):
+    """notify_asset 从资产对象/字典里取简介 —— 审核通过那条也得带上."""
+    from app.core import market_notify
+
+    captured: dict = {}
+
+    async def fake_notify(event, **kw):
+        captured["event"] = event
+        captured.update(kw)
+        return True
+
+    monkeypatch.setattr(market_notify, "notify_market", fake_notify)
+    await market_notify.notify_asset(
+        "publish", {"name": "插件创建器", "summary": "一句话创建一个插件"},
+        actor="admin", detail="审核通过, 已上架",
+    )
+    assert captured["summary"] == "一句话创建一个插件"
+
+
+async def test_notify_asset_blank_summary_keeps_detail(monkeypatch):
+    """显式传 summary="" → 用 detail (驳回/下架说的是"发生了什么", 不是简介)."""
+    from app.core import market_notify
+
+    captured: dict = {}
+
+    async def fake_notify(event, **kw):
+        captured.update(kw)
+        return True
+
+    monkeypatch.setattr(market_notify, "notify_market", fake_notify)
+    await market_notify.notify_asset(
+        "reject", {"name": "某技能", "summary": "这玩意儿是干嘛的"},
+        actor="admin", detail="权限声明不完整", summary="",
+    )
+    assert captured["summary"] == ""
 
 
 async def test_update_message_label_is_update(monkeypatch):

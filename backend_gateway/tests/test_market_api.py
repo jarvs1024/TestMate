@@ -277,6 +277,44 @@ async def test_review_flow_approve(client, auth, ws, restore_git_config,  # noqa
     assert r2.json()["publish_status"] == "published"
 
 
+async def test_approve_notification_carries_asset_summary_and_author(
+    client, auth, ws, restore_git_config,  # noqa: ARG001
+    publisher_user, monkeypatch,
+):
+    """审核通过的上架通知要带**资产的简介与作者** —— 不是审核人, 也不是「审核通过, 已上架」.
+
+    ⚠️ 2026-11-01: 通知里显示「操作人: admin」(点通过的审核人), 说明是套话;
+       用户要求显示作者 + 一句话描述.
+    """
+    from app.api import marketplace as mk_api
+    from tests.conftest import set_setting
+
+    await set_setting("marketplace.review.enabled", "true")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="notify-approve")
+
+    captured: list[tuple[str, dict, dict]] = []
+
+    async def fake_notify(event, asset=None, **kw):
+        captured.append((event, asset or {}, kw))
+        return True
+
+    monkeypatch.setattr(mk_api.market_notify, "notify_asset", fake_notify)
+
+    r = await client.post(
+        f"{API}/notify-approve/review",
+        data={"decision": "approve", "comment": "ok"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+    assert [e for e, _, _ in captured] == ["publish"], captured
+    _, asset, kw = captured[0]
+    assert asset["summary"] == "摘要", asset
+    assert asset["author"] == publisher_user["username"], asset
+    assert kw["actor"] == "admin_t", "审核人是 admin_t, 但通知要展示作者"
+
+
 async def test_review_flow_reject_then_resubmit(client, auth, ws,  # noqa: ARG001
                                                  restore_git_config, publisher_user):
     """驳回 → rejected + 理由写进资产 → 重新提交 → pending → 通过 → published."""

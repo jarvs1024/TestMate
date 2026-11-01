@@ -87,6 +87,13 @@
       <button class="sb-btn ghost" @click="loadSyncStatus">重试</button>
     </div>
 
+    <!-- 规则不可用时上传/编辑统一停用; 抽屉内也复用同一状态提供重试. -->
+    <div v-if="marketRulesError" class="sync-bar err market-rules-error">
+      <span class="sb-icon">⚠️</span>
+      <span class="sb-text">市场规则加载失败: {{ marketRulesError }}。上传和编辑已暂停，请重试。</span>
+      <button class="sb-btn ghost" @click="loadMarketRules">重试</button>
+    </div>
+
     <!-- ===== 我提交但还没过审的资产: 给个显眼入口, 免得被埋在列表里 ===== -->
     <div v-if="sync.my_review_count > 0" class="my-review-bar">
       <span>📋 你有 <b>{{ sync.my_review_count }}</b> 个资产需要处理 (在等审核或被驳回)</span>
@@ -271,6 +278,7 @@ import {
   type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
 } from '@/api/assets';
 import { isAuthor } from './identity';
+import { loadMarketRules, marketRulesError } from './assetForm';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 /**
@@ -1062,7 +1070,10 @@ function onVisibilityChange() {
 let timer: number | null = null;
 let autoTimer: number | null = null;
 onMounted(async () => {
-  await Promise.all([load(), loadKindCounts(), loadSyncStatus(), loadCategories(), loadProjects(), loadMarketConfig()]);
+  await Promise.all([
+    load(), loadKindCounts(), loadSyncStatus(), loadCategories(), loadProjects(),
+    loadMarketConfig(), loadMarketRules(),
+  ]);
   timer = window.setInterval(pollJobs, 5000);
   autoTimer = window.setInterval(autoRefresh, AUTO_REFRESH_MS);
   document.addEventListener('visibilitychange', onVisibilityChange);

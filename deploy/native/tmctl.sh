@@ -201,6 +201,16 @@ cfg() {
   if [[ -z "$v" ]]; then printf '%s' "$def"; else printf '%s' "$v"; fi
 }
 
+require_single_worker() {
+  local workers
+  workers="$(cfg BACKEND_WORKERS 1)"
+  if [[ "$workers" != "1" ]]; then
+    warn "BACKEND_WORKERS=$workers —— MCP 与进程内后台队列都要求单 worker:"
+    warn "  多 worker 各自持有 MCP session manager 与资产任务队列, 会导致会话/任务状态不一致."
+    die "MCP 启用时 BACKEND_WORKERS 必须为 1; 请修改 .env 后重试."
+  fi
+}
+
 need_root() {
   local what="${1:-这个操作}"
   is_root || die "$what 要 root: sudo $0 ${2:-}"
@@ -830,7 +840,7 @@ ensure_market_ssh() {
 # ---- 生成应用配置 (backend.env + nginx.conf) ----
 # systemd 与 local 两种 driver **共用这一份** —— 差别只在"谁来起进程".
 render_app_configs() {
-  local runtime run_user run_group be_port fe_port bind_addr workers
+  local runtime run_user run_group be_port fe_port bind_addr
   local backend_env nginx_conf nginx_prefix nginx_bin
   runtime="$RUNTIME_DIR"
   run_user="$(cfg RUN_USER testmate)"
@@ -838,14 +848,7 @@ render_app_configs() {
   be_port="$(cfg BACKEND_PORT 8000)"
   fe_port="$(cfg FRONTEND_PORT 8080)"
   bind_addr="$(cfg BIND_ADDR 127.0.0.1)"
-  workers="$(cfg BACKEND_WORKERS 1)"
-  if [[ "$workers" != "1" ]]; then
-    warn "BACKEND_WORKERS=$workers —— ⚠️ **大于 1 会出大问题**:"
-    warn "  后端的后台任务(资产市场 job 消费者 / 反向同步)走**进程内**队列, 不跨进程."
-    warn "  多 worker = 每个进程一份队列, 且每个进程启动都 recover_pending_jobs()"
-    warn "  → 同一个 job 被多个进程抢 → git 的 index.lock 冲突 / 重复推 GitLab."
-    warn "  要提吞吐请加机器, 不要加 worker. 已按你填的值继续, 改回来改 .env 的 BACKEND_WORKERS."
-  fi
+  require_single_worker
 
   mkdir -p "$runtime"/{config,logs,run,data,frontend,market}
   # ⚠️ MARKET_DIR 也得建 —— systemd 的 ReadWritePaths 指向的路径不存在时,
@@ -1220,6 +1223,7 @@ local_nginx_bin() { command -v nginx || echo /usr/local/bin/nginx; }
 
 # 起后端
 local_start_backend() {
+  require_single_worker
   local venv="$RUNTIME_DIR/venv/bin/uvicorn"
   if [[ ! -x "$venv" ]]; then
     warn "venv 没建好 —— 先跑: $0 local install"
@@ -1502,6 +1506,7 @@ cmd_ssh() {
 }
 
 local_do_start() {
+  require_single_worker
   # 两条路径都要提醒 (launchd 接管 / PID 模式) —— 端口用错是本地部署最容易踩的坑
   warn_docker_frontend
   if local_launchd_loaded; then
@@ -1540,6 +1545,7 @@ local_do_stop() {
 }
 
 local_do_restart() {
+  require_single_worker
   if local_launchd_loaded; then
     log "重启服务 (launchd)"
     launchctl kickstart -k "$(launchd_domain)/com.testmate.backend" >/dev/null 2>&1 || true
@@ -2083,6 +2089,7 @@ cmd_install() {
   fi
 
   log "启动服务"
+  require_single_worker
   systemctl restart "$BACKEND_UNIT" || die "后端起不来 —— 看日志: $0 logs $BACKEND_UNIT"
   systemctl restart "$FRONTEND_UNIT" || warn "前端起不来 —— 看日志: $0 logs $FRONTEND_UNIT"
 
@@ -2113,6 +2120,7 @@ cmd_start() {
   need_root "启动服务"
   log "启动服务"
   # 后端先起 —— 前端起来但后端没起的话, 页面会是一片 502
+  require_single_worker
   systemctl start "$BACKEND_UNIT"
   systemctl start "$FRONTEND_UNIT"
   wait_healthy
@@ -2132,6 +2140,7 @@ cmd_restart() {
   need_systemd
   need_root "重启服务"
   log "重启服务"
+  require_single_worker
   systemctl restart "$BACKEND_UNIT" "$FRONTEND_UNIT"
   wait_healthy
 }
@@ -2315,6 +2324,7 @@ cmd_update() {
 
   log "4/5 重启服务"
   render_app_configs
+  require_single_worker
   systemctl restart "$BACKEND_UNIT" "$FRONTEND_UNIT"
 
   log "5/5 健康校验"
@@ -2472,6 +2482,7 @@ cmd_restore() {
   fi
 
   log "起服务"
+  require_single_worker
   if [[ "$DRIVER" == "local" ]]; then
     local_do_start
   else
@@ -2544,6 +2555,7 @@ cmd_db_import() {
   rm -f "$defaults"
 
   log "起后端"
+  require_single_worker
   if [[ "$DRIVER" == "local" ]]; then
     if launchd_loaded "com.testmate.backend"; then
       launchd_load "$(launchd_plist_path "com.testmate.backend")" \

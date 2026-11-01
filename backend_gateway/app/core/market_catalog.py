@@ -44,6 +44,8 @@ from app.core.market_categories import (  # noqa: E402
 #   (前后端各写一份正则, 改一处就会漂移: 以前后端收 "dml--x", 前端拒)
 # ⚠️ 后端**不要求 dml- 前缀** —— 存量 14 个资产的 code 没有前缀, 强制会锁死它们的更新.
 #    前端只在**新建**时要求前缀 (那是团队命名约定, 不是技术限制).
+CODE_PREFIX = "dml-"
+CODE_EXAMPLE = "dml-ssd-log-doctor"
 CODE_RE = re.compile(r"^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 MAX_FILES = 200

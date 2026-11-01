@@ -5,9 +5,13 @@
  *         改完才知道表单会换成 JSON 配置 —— 选类型这一步被藏起来了。
  * 改之后: 入口先选形态 → 直接进对应表单; 抽屉里也能随时换回去。
  */
-import { describe, expect, it, vi } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { flushPromises, mount } from '@vue/test-utils';
 import AssetUploadDialog from '../AssetUploadDialog.vue';
+
+const { requestGet } = vi.hoisted(() => ({ requestGet: vi.fn() }));
+
+vi.mock('@/utils/request', () => ({ default: { get: requestGet } }));
 
 // 抽屉一打开就会去拉分类表 / 现有资产图标 —— 这里把接口打桩
 vi.mock('@/api/assets', () => ({
@@ -31,6 +35,43 @@ vi.mock('@/api/assets', () => ({
   uploadAsset: vi.fn(async () => ({})),
   updateAsset: vi.fn(async () => ({})),
 }));
+
+const rulesPayload = {
+  code: {
+    prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
+    example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+  },
+  segment: {
+    pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
+  },
+  package: { suffixes: ['.zip', '.tar.gz', '.tgz'] },
+  required: {
+    create: {
+      common: ['code', 'name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    update: {
+      common: ['name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    edit: ['name', 'summary', 'category'],
+  },
+  categories: [{ name: '其他', slug: 'misc', desc: '', order: 99 }],
+  projects: ['6100'],
+  enforcement: {
+    require_code_prefix_on_create: true,
+    require_code_prefix_on_update: false,
+    code_must_match_package: true,
+    code_must_match_mcp_server: true,
+    unknown_category: '其他',
+    unknown_project: '',
+  },
+};
+
+beforeEach(() => {
+  requestGet.mockReset();
+  requestGet.mockResolvedValue(rulesPayload);
+});
 
 /** element-plus 组件打桩 —— 只留结构, 不关心内部实现 */
 const stubs = {
@@ -60,6 +101,7 @@ async function open(props: Record<string, any> = {}, opts: { attach?: boolean } 
   });
   // 抽屉是 modelValue 从 false → true 时才初始化的 (watch)
   await w.setProps({ modelValue: true });
+  await flushPromises();
   await w.vm.$nextTick();
   return w;
 }
@@ -199,6 +241,22 @@ describe('上传抽屉: 表单内容', () => {
     expect(req).toContain('技能包要求');
     expect(req).toContain('dml-');
     expect(req).toContain('SKILL.md');
+  });
+
+  it('文件 accept 和命名提示使用当前服务端规则', async () => {
+    requestGet.mockResolvedValue({
+      ...rulesPayload,
+      code: {
+        prefix: 'team-', pattern: '^team-[a-z0-9]+$', example: 'team-demo',
+        min_length: 3, max_length: 64,
+      },
+      package: { suffixes: ['.bundle', '.tar.zst'] },
+    });
+    const w = await open({ initialKind: 'skill' });
+    expect(w.find('.file-input').attributes('accept')).toBe('.bundle,.tar.zst');
+    expect(w.find('.pkg-req').text()).toContain('team-');
+    expect(w.find('.pkg-req').text()).toContain('team-demo');
+    expect(w.find('.pkg-req').text()).not.toContain('dml-');
   });
 
   it('插件形态的要求与技能不同', async () => {

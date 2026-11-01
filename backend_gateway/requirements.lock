@@ -32,6 +32,7 @@ python-multipart==0.0.32
 paramiko==5.0.0
 structlog==26.1.0
 alembic==1.20.0
+mcp==1.29.1
 
 # ---- 传递依赖 (由上面拉进来, 固定版本防止上游漂移) ----
 annotated-doc==0.0.5

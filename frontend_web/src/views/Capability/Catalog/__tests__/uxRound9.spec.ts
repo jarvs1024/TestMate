@@ -2,7 +2,7 @@
  * 第 9 轮 UX 整改的回归测试 (2026-10-30).
  *
  * 锁住这六件事 (每一件都是"用户看不到/点不动"的毛病):
- *  1. 上传抽屉的分类接口失败 → 必须说清楚 + 给「重试」, 不能静默地把「上架」按钮卡死;
+ *  1. 上传抽屉的市场规则接口失败 → 必须说清楚 + 给「重试」, 且禁止提交;
  *  2. 列表加载超时 → 必须出现「加载超时」提示条 (以前永远渲染不出来);
  *  3. 分类 chip 上的数字 → 必须来自**当前列表**, 不是后端的 by_kind;
  *  4. 「重新上架」按钮 → 必须有 loading 绑定 (不然连点两次发两次请求);
@@ -23,6 +23,10 @@ import AssetCard from '../AssetCard.vue';
  * ⚠️ 接口全部打桩 —— 跟 assetUploadFlow.spec.ts 一个写法 (vi.mock 整个模块).
  *    这里用 hoisted 的可变对象, 便于不同用例给不同的返回/失败.
  */
+const { requestGet } = vi.hoisted(() => ({ requestGet: vi.fn() }));
+
+vi.mock('@/utils/request', () => ({ default: { get: requestGet } }));
+
 const api = vi.hoisted(() => ({
   listAssets: vi.fn(),
   listCategories: vi.fn(),
@@ -105,7 +109,44 @@ async function mountMarket(opts: { fake?: boolean } = {}) {
   return w;
 }
 
+const rulesPayload = {
+  code: {
+    prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
+    example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+  },
+  segment: {
+    pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
+  },
+  package: { suffixes: ['.zip', '.tar.gz', '.tgz'] },
+  required: {
+    create: {
+      common: ['code', 'name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    update: {
+      common: ['name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    edit: ['name', 'summary', 'category'],
+  },
+  categories: [
+    { name: '质量保障', slug: 'quality', desc: '兜住质量', order: 10 },
+    { name: '其他', slug: 'misc', desc: '归不到上面任何一类', order: 99 },
+  ],
+  projects: [],
+  enforcement: {
+    require_code_prefix_on_create: true,
+    require_code_prefix_on_update: false,
+    code_must_match_package: true,
+    code_must_match_mcp_server: true,
+    unknown_category: '其他',
+    unknown_project: '',
+  },
+};
+
 beforeEach(() => {
+  requestGet.mockReset();
+  requestGet.mockResolvedValue(rulesPayload);
   api.listAssets.mockReset();
   api.listCategories.mockReset();
   api.listProjects.mockReset();
@@ -132,9 +173,9 @@ afterEach(() => {
 });
 
 // ===================================================================
-// ① P0 · 上传抽屉: 分类接口失败不能把「上架」按钮永久卡死
+// ① P0 · 上传抽屉: 市场规则失败必须可见、可重试且禁止提交
 // ===================================================================
-describe('上传抽屉 · 分类加载失败', () => {
+describe('上传抽屉 · 市场规则加载失败', () => {
   async function openDialog() {
     const w = mount(AssetUploadDialog, {
       props: { modelValue: false, mode: 'create', initialKind: 'skill' },
@@ -146,57 +187,48 @@ describe('上传抽屉 · 分类加载失败', () => {
     return w;
   }
 
-  it('分类接口失败 → 抽屉里说清楚「分类列表加载失败」, 并给一个「重试」', async () => {
-    api.listCategories.mockRejectedValue({
-      response: { status: 500, data: { detail: '分类表读取失败' } },
+  it('规则接口失败 → 抽屉里说清楚「市场规则加载失败」, 并给一个「重试」', async () => {
+    requestGet.mockRejectedValue({
+      response: { status: 500, data: { detail: '规则读取失败' } },
     });
     const w = await openDialog();
     const err = w.find('.cat-err');
     expect(err.exists()).toBe(true);
-    expect(err.text()).toContain('分类列表加载失败');
-    expect(err.text()).toContain('分类表读取失败');
-    // ⚠️ 必须能重试 —— 以前失败后这个按钮永远灰着, 只能关掉抽屉重开
+    expect(err.text()).toContain('市场规则加载失败');
+    expect(err.text()).toContain('规则读取失败');
     expect(w.find('.cat-retry').exists()).toBe(true);
   });
 
-  it('点「重试」→ 会真的再发一次分类请求', async () => {
-    api.listCategories.mockRejectedValue({ response: { status: 500, data: { detail: 'boom' } } });
+  it('点「重试」→ 会真的再发一次规则请求', async () => {
+    requestGet.mockRejectedValue({ response: { status: 500, data: { detail: 'boom' } } });
     const w = await openDialog();
-    const before = api.listCategories.mock.calls.length;
+    const before = requestGet.mock.calls.length;
     await w.find('.cat-retry').trigger('click');
     await flushPromises();
-    expect(api.listCategories.mock.calls.length).toBe(before + 1);
+    expect(requestGet.mock.calls.length).toBe(before + 1);
   });
 
-  it('失败时下拉里注入兜底项「其他」→ 下拉永不为空, 按钮不会永久卡死', async () => {
-    api.listCategories.mockRejectedValue({ response: { status: 500, data: { detail: 'boom' } } });
+  it('失败时不能靠分类兜底项恢复提交', async () => {
+    requestGet.mockRejectedValue({ response: { status: 500, data: { detail: 'boom' } } });
     const w = await openDialog();
-    // ⚠️ 第一个 el-select 是「分类」 (row-2 的顺序: 分类 → 适用项目)
-    const catSelect = w.findAll('.el-select')[0];
-    const labels = catSelect.findAll('option').map((o) => o.text());
-    expect(labels.join('|')).toContain('其他');
+    expect(w.find('.foot-right button:last-child').attributes('disabled')).toBeDefined();
+    expect(w.find('.foot-warn').text()).toContain('市场规则');
   });
 
-  it('缺项提示说清是「加载失败」, 而不是「你没选」', async () => {
-    api.listCategories.mockRejectedValue({ response: { status: 500, data: { detail: 'boom' } } });
+  it('缺项提示说清是「市场规则加载失败」, 而不是「你没选分类」', async () => {
+    requestGet.mockRejectedValue({ response: { status: 500, data: { detail: 'boom' } } });
     const w = await openDialog();
     const warn = w.find('.foot-warn');
     expect(warn.exists()).toBe(true);
-    expect(warn.text()).toContain('分类');
+    expect(warn.text()).toContain('市场规则');
     expect(warn.text()).toContain('加载失败');
   });
 
-  it('正常返回时**不**注入兜底项 (表里本来就有分类)', async () => {
-    api.listCategories.mockResolvedValue({
-      items: [
-        { name: '质量保障', slug: 'quality', desc: '兜住质量', by_kind: {}, total: 1 },
-        { name: '其他', slug: 'misc', desc: '归不到上面任何一类', by_kind: {}, total: 0 },
-      ],
-    });
+  it('正常返回时使用规则中的分类, 不重复注入「其他」', async () => {
+    requestGet.mockResolvedValue(rulesPayload);
     const w = await openDialog();
     expect(w.find('.cat-err').exists()).toBe(false);
     const labels = w.findAll('.el-select')[0].findAll('option').map((o) => o.text());
-    // 「其他」只有一个 (不是注入的那一个)
     expect(labels.filter((l) => l.includes('其他')).length).toBe(1);
   });
 });

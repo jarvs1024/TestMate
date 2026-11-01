@@ -169,6 +169,40 @@ const CATEGORIES = [
   { name: 'MISC', slug: 'misc', desc: '归不到上面任何一类' },
 ];
 
+const { requestGet } = vi.hoisted(() => ({ requestGet: vi.fn() }));
+vi.mock('@/utils/request', () => ({ default: { get: requestGet } }));
+requestGet.mockResolvedValue({
+  code: {
+    prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
+    example: 'dml-demo', min_length: 3, max_length: 64,
+  },
+  segment: {
+    pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
+  },
+  package: { suffixes: ['.zip', '.tar.gz', '.tgz'] },
+  required: {
+    create: {
+      common: ['code', 'name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    update: {
+      common: ['name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    edit: ['name', 'summary', 'category'],
+  },
+  categories: CATEGORIES,
+  projects: ['general'],
+  enforcement: {
+    require_code_prefix_on_create: true,
+    require_code_prefix_on_update: false,
+    code_must_match_package: true,
+    code_must_match_mcp_server: true,
+    unknown_category: 'MISC',
+    unknown_project: '',
+  },
+});
+
 vi.mock('@/api/assets', () => ({
   listAssets: vi.fn(async () => ({ items: [] })),
   listCategories: vi.fn(async () => ({ items: CATEGORIES })),

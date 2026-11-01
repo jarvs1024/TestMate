@@ -4,7 +4,7 @@
  * 前端只是**提前提示** (别让用户填完一整张表单才被 422 拦下),
  * 真正的拦截在后端 —— 两边规则要一样, 不然会出现"前端说行、后端说不行".
  */
-import { CODE_PATTERN, SEGMENT_PATTERN } from './assetForm';
+import { CODE_PATTERN, SEGMENT_PATTERN, marketRules } from './assetForm';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 export interface McpParseOk {
   ok: true;
@@ -67,21 +67,23 @@ export function parseMcpConfig(
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
       return { ok: false, error: `连接器「${name}」的配置必须是一个对象` };
     }
-    // ⚠️ 连接器名 = 资产 code 的约定: dml- 开头 + 小写字母/数字/连字符.
+    // ⚠️ 连接器名 = 资产 code 的约定: 当前市场前缀 + 小写字母/数字/连字符.
     //    详情页会**原样展示**这份配置, 用户照着加进自己的 MCP 配置里 ——
     //    名字起得像 "xx-xxx" 会跟市场里的资产对不上, 也分不清是谁。
+    const rules = marketRules.value;
+    if (!rules) return { ok: false, error: '市场规则尚未加载, 请重试' };
     if (requirePrefix) {
       if (!CODE_PATTERN.test(name)) {
         return {
           ok: false,
-          error: `连接器「${name}」的名字必须以 dml- 开头, 且只能用小写字母/数字/连字符 (如 dml-my-connector)`,
+          error: `连接器「${name}」的名字必须以 ${rules.code.prefix} 开头, 且只能用小写字母/数字/连字符 (如 ${rules.code.example})`,
         };
       }
     } else if (!SEGMENT_PATTERN.test(name)) {
-      // ⚠️ 不要求前缀时, 也要守住"分段 + 字符集" —— 只是不强制 dml- 开头
+      // ⚠️ 不要求前缀时, 也要守住"分段 + 字符集" —— 只是不强制当前市场前缀
       return {
         ok: false,
-        error: `连接器「${name}」的名字只能用小写字母/数字/连字符 (如 my-connector)`,
+        error: `连接器「${name}」的名字只能用小写字母/数字/连字符`,
       };
     }
     const { command, url, args } = spec as Record<string, any>;
@@ -123,11 +125,13 @@ export function formatMcpConfig(text: string): string {
   return JSON.stringify(r.config, null, 2);
 }
 
-/** 新建连接器的配置模板 —— 照着改比从零想快 */
-export const MCP_TEMPLATE = `{
-  "mcpServers": {
-    "dml-xxx": {
-      "url": "http://host.docker.internal:5050/mcp"
-    }
-  }
-}`;
+/** 新建连接器的配置模板 —— 连接器名始终采用当前市场示例. */
+export function mcpConfigTemplate(): string {
+  const example = marketRules.value?.code.example;
+  if (!example) return '';
+  return JSON.stringify({
+    mcpServers: {
+      [example]: { url: 'http://host.docker.internal:5050/mcp' },
+    },
+  }, null, 2);
+}

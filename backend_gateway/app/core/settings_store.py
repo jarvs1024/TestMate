@@ -721,6 +721,19 @@ SETTING_SCHEMA: list[dict] = [
         ),
         "is_secret": False,
     },
+    # ===== MCP =====
+    {
+        "key": "mcp.allowed_hosts",
+        "category": "mcp",
+        "value_type": "string",
+        "default": "",
+        "description": (
+            "MCP 额外允许的 Host 请求头 (逗号分隔). 裸 host 与 host:port 都接受; "
+            "marketplace.public_base_url 的 host 和回环地址会自动加入"
+        ),
+        "is_secret": False,
+        "admin_only": True,
+    },
 ]
 
 # 已废弃的设置项 —— 从 SCHEMA 移除后, DB 里的残留行在启动时一并清掉.

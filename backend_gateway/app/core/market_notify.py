@@ -32,7 +32,7 @@ async def notify_asset(
     link: str = "",
     author: str | None = None,
     title_override: str = "",
-    summary: str = "",
+    summary: str | None = None,
     release_notes: str = "",
 ) -> bool:
     """按资产统一发一条市场通知.
@@ -50,6 +50,8 @@ async def notify_asset(
     ⚠️ title_override 只改标题文案, 事件 key 不变 (开关映射靠 key).
     ⚠️ summary / release_notes (2026-10-30 加) —— 通知正文里"这玩意儿是干嘛的"那一行:
        传了 summary (资产的简介) 或 release_notes (这次改了啥) 就**取代** detail.
+    ⚠️ summary 传 None = 从资产里取; 显式传 "" = **不用简介**, 退回 detail
+       (驳回/下架说的是"发生了什么", 把简介塞进去就跑题了).
     """
     return await notify_market(
         event,
@@ -64,6 +66,6 @@ async def notify_asset(
         project=_get(asset, "project"),
         author=author if author is not None else _get(asset, "author"),
         title_override=title_override,
-        summary=summary or _get(asset, "summary"),
+        summary=summary if summary is not None else _get(asset, "summary"),
         release_notes=release_notes,
     )

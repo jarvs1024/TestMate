@@ -9,14 +9,19 @@ from fastapi.responses import JSONResponse, Response
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, review_agent, marketplace, software, platform
+from app.api import mcp as mcp_api
 from app.api.agents import seed_agents
 from app.core.settings_store import seed_defaults
 from app.db.session import init_db
+from app.mcp.common import oauth_routes
+from app.mcp.common.server import build_dispatcher, run_mcp_lifespan
+from app.mcp.skill.server import build_skill_server
 
 # 入口模块最顶端调用:配置 JSON 结构化日志
 setup_logging(level="INFO" if not settings.DEBUG else "DEBUG")
 import structlog
 log = structlog.get_logger("testmate.main")
+mcp_dispatcher = build_dispatcher()
 
 
 @asynccontextmanager
@@ -26,51 +31,67 @@ async def lifespan(app: FastAPI):
     await init_db()
     await seed_agents()
     await seed_defaults()  # 把 .env 里的值首次落库, 后续 UI 改 DB
-    # 资产市场: 启动后台同步 worker, 并把上次没推完的任务重新入队
-    from app.core import git_sync
-    from app.core.asset_jobs import recover_pending_jobs, start_worker
-    from app.core.dingtalk import start_aggregate_worker, start_retry_worker
-    from app.core.settings_store import get as _get_setting
-    from app.core.sync_puller import start_puller
-    start_worker()
-    # 钉钉通知失败重试 (回执在 asset_notifications 表里)
-    start_retry_worker()
-    # ⚠️ 审核类通知的**窗口合并**: 窗口到期要把攒着的发成一条汇总 ——
-    #    没有这个 worker, 攒着的通知就永远发不出去 (窗口末没人再触发事件).
-    start_aggregate_worker()
-    # 市场的仓库地址/分支: **设置页改的值为准**, env 只是初值
-    git_sync.set_git_config(
-        remote=await _get_setting("marketplace.git.remote", ""),
-        branch=await _get_setting("marketplace.git.branch", ""),
-    )
-    log.info("startup.git_config", remote=git_sync.git_remote(), branch=git_sync.git_branch())
-    requeued = await recover_pending_jobs()
-    # 反向同步: 定期从 GitLab 拉取远端变更, 对齐本地工作区与 DB 镜像
-    interval = int(os.environ.get("MARKET_SYNC_INTERVAL_SECONDS", "30") or 30)
-    await start_puller(interval)
-    # 软件库存放目录体检 —— ⚠️ 存储根不可写是**部署**问题 (容器没挂卷 /
-    #    systemd 没放行 ReadWritePaths), 等到用户传文件才报"存储目录不可写",
-    #    运维一头雾水. 启动时就喊出来.
-    try:
-        from app.core import software_store
-        from app.core.settings_store import get as _get_sw_setting
 
-        _sw_root = software_store.resolve_root(await _get_sw_setting("software.storage_path", ""))
-        _sw_info = software_store.probe_storage(_sw_root)
-        if _sw_info.get("exists") and _sw_info.get("writable"):
-            log.info("startup.software_storage", root=_sw_info["root"],
-                     free_bytes=_sw_info["free_bytes"])
-        else:
-            log.warning(
-                "startup.software_storage 不可用 —— 软件包传不上来",
-                root=_sw_info["root"], reason=_sw_info.get("error", "目录不存在"),
-            )
-    except Exception as e:  # noqa: BLE001
-        log.warning("startup.software_storage 体检失败", error=str(e))
-    log.info("startup.complete", requeued_asset_jobs=requeued,
-             sync_interval_seconds=interval)
-    yield
-    log.info("shutdown")
+    # MCP 必须读取 seed 之后的 DB 设置, 并与 FastAPI 共用同一个 lifespan.
+    from app.core.settings_store import get as _get_setting
+
+    public_base_url = str(
+        await _get_setting("marketplace.public_base_url", "") or ""
+    ).strip().rstrip("/")
+    if not public_base_url:
+        public_base_url = f"http://127.0.0.1:{settings.PORT}"
+    mcp_dispatcher.configure({
+        "skill": build_skill_server(
+            public_base_url=public_base_url,
+            allowed_hosts=await _get_setting("mcp.allowed_hosts", ""),
+        )
+    })
+
+    async with run_mcp_lifespan(mcp_dispatcher):
+        # 资产市场: 启动后台同步 worker, 并把上次没推完的任务重新入队
+        from app.core import git_sync
+        from app.core.asset_jobs import recover_pending_jobs, start_worker
+        from app.core.dingtalk import start_aggregate_worker, start_retry_worker
+        from app.core.sync_puller import start_puller
+        start_worker()
+        # 钉钉通知失败重试 (回执在 asset_notifications 表里)
+        start_retry_worker()
+        # ⚠️ 审核类通知的**窗口合并**: 窗口到期要把攒着的发成一条汇总 ——
+        #    没有这个 worker, 攒着的通知就永远发不出去 (窗口末没人再触发事件).
+        start_aggregate_worker()
+        # 市场的仓库地址/分支: **设置页改的值为准**, env 只是初值
+        git_sync.set_git_config(
+            remote=await _get_setting("marketplace.git.remote", ""),
+            branch=await _get_setting("marketplace.git.branch", ""),
+        )
+        log.info("startup.git_config", remote=git_sync.git_remote(), branch=git_sync.git_branch())
+        requeued = await recover_pending_jobs()
+        # 反向同步: 定期从 GitLab 拉取远端变更, 对齐本地工作区与 DB 镜像
+        interval = int(os.environ.get("MARKET_SYNC_INTERVAL_SECONDS", "30") or 30)
+        await start_puller(interval)
+        # 软件库存放目录体检 —— ⚠️ 存储根不可写是**部署**问题 (容器没挂卷 /
+        #    systemd 没放行 ReadWritePaths), 等到用户传文件才报"存储目录不可写",
+        #    运维一头雾水. 启动时就喊出来.
+        try:
+            from app.core import software_store
+            from app.core.settings_store import get as _get_sw_setting
+
+            _sw_root = software_store.resolve_root(await _get_sw_setting("software.storage_path", ""))
+            _sw_info = software_store.probe_storage(_sw_root)
+            if _sw_info.get("exists") and _sw_info.get("writable"):
+                log.info("startup.software_storage", root=_sw_info["root"],
+                         free_bytes=_sw_info["free_bytes"])
+            else:
+                log.warning(
+                    "startup.software_storage 不可用 —— 软件包传不上来",
+                    root=_sw_info["root"], reason=_sw_info.get("error", "目录不存在"),
+                )
+        except Exception as e:  # noqa: BLE001
+            log.warning("startup.software_storage 体检失败", error=str(e))
+        log.info("startup.complete", requeued_asset_jobs=requeued,
+                 sync_interval_seconds=interval)
+        yield
+        log.info("shutdown")
 
 
 app = FastAPI(
@@ -137,6 +158,9 @@ app.include_router(review_agent.router, prefix="/api/v1/review-agent", tags=["re
 app.include_router(marketplace.router, prefix="/api/v1/assets", tags=["marketplace"])
 # 软件库 —— 与「插件·技能·连接」完全分家: 那边真身在 GitLab, 这边真身在服务端磁盘.
 app.include_router(software.router, prefix="/api/v1/software", tags=["software"])
+app.include_router(mcp_api.router, prefix="/api/v1/mcp", tags=["mcp"])
+app.include_router(oauth_routes.router, tags=["mcp-oauth"])
+app.mount("/mcp", mcp_dispatcher, name="mcp")
 
 
 @app.get("/marketplace.json", include_in_schema=False)

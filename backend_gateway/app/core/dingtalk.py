@@ -44,6 +44,11 @@ MAX_ATTEMPTS = 5
 RETRY_BASE_SEC = 30
 # 重试扫描间隔 (秒)
 RETRY_SCAN_SEC = 30
+# pending 回执的"宽限期" (秒) —— 调用方刚落库、正在发的这条, 重试 worker 不许抢.
+# ⚠️ 2026-11-01 事故: 审核通过的上架通知发了**两遍** —— notify_market 先落 pending
+#    回执再发送, 重试 worker 恰好扫到这条 pending, 两边各发了一次.
+#    宽限期过后仍 pending = 发送途中进程崩了 → 由重试 worker 补发.
+PENDING_GRACE_SEC = 90
 
 # ---------- 「平台是从哪个地址被访问的」 (2026-10-31 · 第十三轮) ----------
 #
@@ -311,13 +316,18 @@ _KIND_LABEL = {
 # ⚠️ 2026-10-31 (第十六轮): **不再 @ 具体的人** —— 平台只有账号名, 钉钉要 userid,
 #    映射表那套 (dingtalk.userid_map) 整个删掉了 (见上面那段说明).
 #    「审核不通过」改为在正文里写「发布人: xxx」, 不再 @.
+# ⚠️ 2026-11-01: 上架通知的「操作人」是**点通过的审核人** (admin), 不是资产作者 ——
+#    show_actor=False + show_author=True, 让群里看到「作者: xxx」.
 _EVENT_AT = {
     "review": {"at_all": False, "show_author": False},
     "unpublish_request": {"at_all": False, "show_author": False},
-    "publish": {"at_all": True, "show_author": False},
+    "publish": {
+        "at_all": True, "show_author": True,
+        "show_actor": False, "author_label": "作者",
+    },
     "update": {"at_all": True, "show_author": False},
     "unpublish": {"at_all": True, "show_author": False},
-    "reject": {"at_all": False, "show_author": True},
+    "reject": {"at_all": False, "show_author": True, "author_label": "发布人"},
     "delete": {"at_all": True, "show_author": False},
     # ⚠️ 2026-10-31 (第十三轮): 软件库三个事件**都 @所有人** ——
     #    用户原话「软件上架要@所有人的, 下架软件也要通知@所有人」.
@@ -609,6 +619,7 @@ async def _render_market_body(
     # ⚠️ 标题可覆盖 (如「重新上架」别写成「新资产上架」), 但事件 key 不变 ——
     #    开关映射 (dingtalk.notify_on_publish 等) 靠 key, 改了会关掉/打开错开关.
     event_text = title_override or _EVENT_TEXT.get(event, "通知")
+    at_rule = _EVENT_AT.get(event, {"at_all": False, "show_author": False})
     lines = [f"### {event_text} · {name}"]
     body_bits: list[str] = []
     # 类型要说清楚 —— 收到通知的人得知道这是个技能还是插件 (还是软件包)
@@ -626,9 +637,15 @@ async def _render_market_body(
     if version:
         lines.append(f"- 版本: `{version}`")
         body_bits.append(f"v{version}")
-    if actor:
+    if actor and at_rule.get("show_actor", True):
         lines.append(f"- 操作人: {actor}")
         body_bits.append(f"操作人 {actor}")
+    # ⚠️ 2026-11-01: 作者的说明位置进"资产属性"这一块 (跟着类型/版本走).
+    #    上架时"操作人"是审核人, 换成「作者」才说得清这资产是谁做的.
+    if at_rule.get("show_author") and author:
+        label = at_rule.get("author_label", "发布人")
+        lines.append(f"- {label}: {author}")
+        body_bits.append(f"{label} {author}")
     # ⚠️ 2026-10-30 (第十一轮): 「这玩意儿是干嘛的 / 这次改了啥」——
     #    有简介或更新说明时**取代** detail (detail 只是"发生了什么"的套话,
     #    跟标题重复), 并且**标签按事件分**:
@@ -676,12 +693,6 @@ async def _render_market_body(
     do_at_all = at_rule["at_all"] if at_all is None else at_all
     if do_at_all:
         lines.append("@所有人")
-    if at_rule["show_author"] and author:
-        # ⚠️ 2026-10-31 (第十六轮): **不再 @ 具体的人** ——
-        #    平台只有账号名, 钉钉要 userid (映射表那套已整个删掉).
-        #    这里只**说清这条是关于谁的**, 不带 "@" —— 正文挂个 @xxx 却 @ 不到人,
-        #    只会让人以为提醒已经发出去了.
-        lines.append(f"- 发布人: {author}")
     return lines, body_bits, event_text
 
 
@@ -998,9 +1009,17 @@ async def retry_failed_notifications() -> int:
                 .limit(20)
             )
         ).scalars().all()
+        # ⚠️ pending 有宽限期 —— 调用方落完回执**紧接着**就发, 这段时间不归重试 worker.
+        #    不加这个判断, 同一条消息会被两边各发一次 (2026-11-01 上架通知发了两遍).
+        #    过了宽限期还是 pending = 发送途中崩了, 这时才该补发.
+        grace_cutoff = now - timedelta(seconds=PENDING_GRACE_SEC)
         due = [
             r for r in rows
-            if r.next_retry_at is None or r.next_retry_at <= now
+            if (r.next_retry_at is None or r.next_retry_at <= now)
+            and (
+                r.status != "pending"
+                or (r.created_at or grace_cutoff) <= grace_cutoff
+            )
         ]
 
     if not due:

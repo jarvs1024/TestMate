@@ -45,6 +45,11 @@ export const routes: RouteRecordRaw[] = [
         //    所以只说「放什么 + 拿来干什么」, 不列表单字段 (那是详情页的事).
         { path: 'software', name: 'software', meta: { title: '软件库', lede: '公司内部软件的统一入口 —— 自研工具与基于开源改造的版本都在这儿, 找到就能下, 也能发新版本' }, component: () => import('@/views/Software/index.vue') },
 
+        // MCP OAuth 同意与授权管理都保留完整 OAuth query，未登录时由通用守卫带回登录后的 fullPath。
+        { path: 'connect/authorize', name: 'mcp-authorize', meta: { title: '连接授权', lede: '核对 MCP 客户端身份，只授予你明确选择的资产权限' }, component: () => import('@/views/Connect/Authorize.vue') },
+        { path: 'connect/grants', name: 'mcp-grants', meta: { title: '授权管理', lede: '查看 MCP 客户端权限，撤销不再需要的连接' }, component: () => import('@/views/Connect/Grants.vue') },
+        { path: 'profile', name: 'profile', meta: { title: '个人中心', lede: '管理授权与访问令牌' }, component: () => import('@/views/Profile/index.vue') },
+
         // ⚠️ **adminOnly** (2026-10-28): 设置页整个只给管理员.
         //    设置项里全是平台级配置 (存储路径 / 仓库地址 / 审核白名单 / 账号管理),
         //    非管理员进来既改不了, 又会看到一堆"看得见摸不着"的只读项 —— 纯干扰.

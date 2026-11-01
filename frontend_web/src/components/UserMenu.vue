@@ -24,7 +24,8 @@
         <!-- ⚠️ 「设置」只给 admin (2026-10-28) —— 设置页整个是 adminOnly.
              非管理员进来既改不了, 又是一堆只读项, 纯干扰. 路由守卫也会拦一道
              (手敲地址 / 旧书签都进不去) —— 这里是把**入口**藏掉. -->
-        <el-dropdown-item v-if="loggedIn && isAdmin" divided command="settings">设置</el-dropdown-item>
+        <el-dropdown-item v-if="loggedIn" divided command="profile">个人中心</el-dropdown-item>
+        <el-dropdown-item v-if="loggedIn && isAdmin" command="settings">设置</el-dropdown-item>
         <el-dropdown-item v-if="loggedIn" command="logout">退出登录</el-dropdown-item>
         <el-dropdown-item v-else divided command="login">登录</el-dropdown-item>
       </el-dropdown-menu>
@@ -77,6 +78,8 @@ function onCommand(cmd: string) {
     userStore.logout();
     ElMessage.success('已退出登录');
     router.push('/login');
+  } else if (cmd === 'profile') {
+    router.push('/profile');
   } else if (cmd === 'settings') {
     router.push('/settings');
   } else if (cmd === 'login') {

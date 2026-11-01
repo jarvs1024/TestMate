@@ -4,10 +4,14 @@
  * 以前它们埋在组件里, 靠 watch 串起来 —— 只能靠 e2e 兜, 于是出过
  * "发布新版本时图标被悄悄改掉"「新资产不再自动分配图标」这类问题.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import { useAssetUploadForm } from '../useAssetUploadForm';
+import { marketRules, marketRulesError, marketRulesLoading } from '../assetForm';
 
+const { requestGet } = vi.hoisted(() => ({ requestGet: vi.fn() }));
+
+vi.mock('@/utils/request', () => ({ default: { get: requestGet } }));
 vi.mock('@/api/assets', () => ({
   listAssets: vi.fn(async () => ({ items: [] })),
   listCategories: vi.fn(async () => ({ items: [] })),
@@ -20,6 +24,49 @@ vi.mock('@/api/assets', () => ({
   previewPackage: vi.fn(async () => ({})),
 }));
 
+const rulesPayload = {
+  code: {
+    prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
+    example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+  },
+  segment: {
+    pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
+  },
+  package: { suffixes: ['.zip', '.tar.gz', '.tgz'] },
+  required: {
+    create: {
+      common: ['code', 'name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    update: {
+      common: ['name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    edit: ['name', 'summary', 'category'],
+  },
+  categories: [
+    { name: '质量保障', slug: 'quality', desc: '', order: 10 },
+    { name: '其他', slug: 'misc', desc: '', order: 99 },
+  ],
+  projects: ['6100'],
+  enforcement: {
+    require_code_prefix_on_create: true,
+    require_code_prefix_on_update: false,
+    code_must_match_package: true,
+    code_must_match_mcp_server: true,
+    unknown_category: '其他',
+    unknown_project: '',
+  },
+};
+
+beforeEach(() => {
+  requestGet.mockReset();
+  requestGet.mockResolvedValue(rulesPayload);
+  marketRules.value = rulesPayload;
+  marketRulesError.value = '';
+  marketRulesLoading.value = false;
+});
+
 function makeForm(over: Partial<Parameters<typeof useAssetUploadForm>[0]> = {}) {
   const opts = {
     mode: () => 'create' as const,
@@ -28,8 +75,12 @@ function makeForm(over: Partial<Parameters<typeof useAssetUploadForm>[0]> = {}) 
     open: () => true,
     ...over,
   };
+  const loadedRules = marketRules.value;
   const f = useAssetUploadForm(opts as any);
   f.reset();
+  // 非加载用例从已加载快照开始; 加载/刷新用例会显式等待真实请求状态.
+  marketRules.value = loadedRules;
+  marketRulesLoading.value = false;
   return f;
 }
 
@@ -81,6 +132,61 @@ describe('上传表单: 缺项清单', () => {
   });
 });
 
+describe('上传表单: 市场规则加载', () => {
+  it('加载失败禁止提交, 重试成功后恢复', async () => {
+    requestGet.mockRejectedValueOnce({ response: { data: { detail: 'rules unavailable' } } });
+    const asset: any = {
+      code: 'dml-x', kind: 'skill', name: '老资产', version: '1.0.0',
+      summary: '摘要', description: '', use_when: '', not_for: '', category: '其他',
+      icon: '🔍', project: '', featured: false, tags: [], keywords: [],
+      install_steps: [], permissions: {},
+    };
+    const f = makeForm({ mode: () => 'edit' as const, asset: () => asset });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(f.canSubmit.value).toBe(false);
+    expect(f.rulesError.value).toContain('rules unavailable');
+    expect(f.missing.value).toContain('市场规则 (加载失败, 请重试)');
+
+    requestGet.mockResolvedValueOnce(rulesPayload);
+    await f.loadRules();
+
+    expect(f.rulesError.value).toBe('');
+    expect(f.canSubmit.value).toBe(true);
+  });
+
+  it('后续刷新立即作废旧规则, 合并的请求完成前禁止提交', async () => {
+    const asset: any = {
+      code: 'dml-x', kind: 'skill', name: '老资产', version: '1.0.0',
+      summary: '摘要', description: '', use_when: '', not_for: '', category: '其他',
+      icon: '🔍', project: '', featured: false, tags: [], keywords: [],
+      install_steps: [], permissions: {},
+    };
+    const f = makeForm({ mode: () => 'edit' as const, asset: () => asset });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.canSubmit.value).toBe(true);
+
+    let resolveRefresh!: (rules: any) => void;
+    requestGet.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    const refreshing = f.loadRules();
+    const coalesced = f.loadRules();
+
+    expect(f.rulesLoading.value).toBe(true);
+    expect(f.rules.value).toBe(null);
+    expect(f.missing.value).toContain('市场规则 (加载中)');
+    expect(f.canSubmit.value).toBe(false);
+    expect(requestGet).toHaveBeenCalledTimes(2);
+
+    resolveRefresh(rulesPayload);
+    await Promise.all([refreshing, coalesced]);
+    expect(f.rulesLoading.value).toBe(false);
+    expect(f.rules.value).toEqual(rulesPayload);
+    expect(f.canSubmit.value).toBe(true);
+  });
+});
+
 describe('上传表单: code 与包名/连接器名一致', () => {
   it('包名与 code 不一致 → 报错 + 不让上架', () => {
     const f = makeForm({ initialKind: () => 'skill' as const });
@@ -98,13 +204,28 @@ describe('上传表单: code 与包名/连接器名一致', () => {
     expect(f.codeSyncError.value).toBe('');
   });
 
-  it('更新连接器时跳过一致性 (code 不可改, 改了也改不动)', () => {
+  it('更新安装包与 code 不一致 → 保留错误并禁止提交', () => {
+    const asset: any = { code: 'dml-x', kind: 'skill', name: 'x', version: '1.0.0',
+      summary: 's', description: '', use_when: '', not_for: '', category: '其他',
+      icon: '🔍', project: '', featured: false, tags: [], keywords: [],
+      install_steps: [], permissions: {} };
+    const f = makeForm({ mode: () => 'update' as const, asset: () => asset });
+    f.pkgFile.value = new File(['x'], 'dml-other.zip');
+    expect(f.codeSyncError.value).toContain('安装包名');
+    expect(f.missing.value).toContain('code 与名称一致');
+    expect(f.canSubmit.value).toBe(false);
+  });
+
+  it('更新连接器与 code 不一致 → 保留错误并禁止提交', () => {
     const asset: any = { code: 'dml-x', kind: 'mcp', name: 'x', version: '1.0.0',
       summary: 's', description: '', use_when: '', not_for: '', category: '其他',
       icon: '🔌', project: '', featured: false, tags: [], keywords: [],
-      install_steps: [], permissions: {}, mcp_config: { mcpServers: { 'dml-other': {} } } };
+      install_steps: [], permissions: {},
+      mcp_config: { mcpServers: { 'dml-other': { url: 'http://h/mcp' } } } };
     const f = makeForm({ mode: () => 'update' as const, asset: () => asset });
-    expect(f.codeSyncError.value).toBe('');
+    expect(f.codeSyncError.value).toContain('连接器名');
+    expect(f.missing.value).toContain('code 与名称一致');
+    expect(f.canSubmit.value).toBe(false);
   });
 });
 
@@ -200,6 +321,21 @@ describe('上传表单: MCP 配置栏的状态', () => {
     f.mcpConfigText.value = '{"mcpServers": {"review-agent-board": {"url": "http://h/mcp"}}}';
     expect(f.mcpConfigError.value).toContain('dml-');
     expect(f.missing.value).toContain('MCP 配置');
+  });
+
+  it('用模板采用当前规则的连接器示例', () => {
+    marketRules.value = {
+      ...rulesPayload,
+      code: {
+        prefix: 'team-', pattern: '^team-[a-z0-9]+$', example: 'team-demo',
+        min_length: 3, max_length: 64,
+      },
+    };
+    const f = makeForm({ initialKind: () => 'mcp' as const });
+    f.useMcpTemplate();
+    expect(f.mcpConfigText.value).toContain('"team-demo"');
+    expect(f.mcpConfigText.value).not.toContain('dml-');
+    expect(f.mcpConfigError.value).toBe('');
   });
 });
 

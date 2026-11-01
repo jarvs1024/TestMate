@@ -40,6 +40,10 @@ import app.models  # noqa: E402,F401  —— 让 Base.metadata 认识所有表
 
 # 需要清空的表 (外键顺序无关, 这里是自关联/无外键)
 _TABLES = (
+    "mcp_tool_calls",
+    "mcp_api_tokens",
+    "mcp_oauth_grants",
+    "mcp_oauth_clients",
     "asset_audits",
     "asset_notifications",
     "asset_jobs",

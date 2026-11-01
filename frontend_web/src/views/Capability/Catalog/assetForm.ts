@@ -1,93 +1,161 @@
-/**
- * 上传表单的**取值规则** —— 抽出来是为了能单测 (界面逻辑不��写死在组件里).
- *
- * 两条约定:
- *  1. 资产 code = 包名 = 插件名 → 必须英文, 且统一以 "dml-" 开头
- *  2. 图标自动分配, 且**不能跟现有资产重复** (重复的图标在卡片上根本分不清)
- */
+/** 上传表单规则与纯函数; 命名/分类/项目规则只从后端 /assets/rules 获取. */
+import { ref } from 'vue';
+import request from '@/utils/request';
+import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
-/** 资产 code 的统一前缀 */
+export interface MarketRequiredRules {
+  common: string[];
+  skill: string[];
+  plugin: string[];
+  mcp: string[];
+}
+
+export interface MarketRules {
+  code: {
+    prefix: string;
+    pattern: string;
+    example: string;
+    min_length: number;
+    max_length: number;
+  };
+  segment: { pattern: string; min_length: number; max_length: number };
+  package: { suffixes: string[] };
+  required: {
+    create: MarketRequiredRules;
+    update: MarketRequiredRules;
+    edit: string[];
+  };
+  categories: { name: string; slug: string; desc?: string; order?: number }[];
+  projects: string[];
+  enforcement: {
+    require_code_prefix_on_create: boolean;
+    require_code_prefix_on_update: boolean;
+    code_must_match_package: boolean;
+    code_must_match_mcp_server: boolean;
+    unknown_category: string;
+    unknown_project: string;
+  };
+}
+
+/** 当前市场上下文共享的规则状态; 页面错误条与上传抽屉看到同一次加载结果. */
+export const marketRules = ref<MarketRules | null>(null);
+export const marketRulesError = ref('');
+export const marketRulesLoading = ref(false);
+let rulesRequest: Promise<void> | null = null;
+
+/** 加载或重试规则; 失败时清空旧规则, 绝不回退到前端硬编码校验. */
+export async function loadMarketRules(): Promise<void> {
+  if (rulesRequest) return rulesRequest;
+  marketRulesLoading.value = true;
+  marketRules.value = null;
+  marketRulesError.value = '';
+  rulesRequest = (async () => {
+    try {
+      marketRules.value = (await request.get('/assets/rules')) as unknown as MarketRules;
+      marketRulesError.value = '';
+    } catch (e: any) {
+      marketRules.value = null;
+      marketRulesError.value = httpErrorText(errorStatus(e), errorDetail(e), '未知错误');
+    } finally {
+      marketRulesLoading.value = false;
+      rulesRequest = null;
+    }
+  })();
+  return rulesRequest;
+}
+
+/** 仅用于新建空白表单的初始占位, 不参与校验. */
 export const CODE_PREFIX = 'dml-';
-
-/**
- * 资产 code 的合法格式 (新建时): dml- 开头 + 小写字母/数字/连字符分段.
- *
- * ⚠️ 与「不带前缀的分段规则」是两回事:
- *   更新**存量**资产时, 它的 code 可能就没有 dml- 前缀 (存量 14 个资产),
- *   那时不能拿这条正则去卡包名 —— 否则那批资产永远更新不了.
- */
-export const CODE_PATTERN = /^dml-[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-/** 不要求前缀的"分段"规则 (存量资产的 code / 包名) */
-export const SEGMENT_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-/** 示例 code (表单 placeholder / 报错提示用) */
 export const CODE_EXAMPLE = 'dml-ssd-log-doctor';
 
-/** 安装包允许的扩展名 */
-export const PACKAGE_EXT_RE = /\.(zip|tar\.gz|tgz)$/i;
+function activePattern(source: string | undefined): { test(value: string): boolean } {
+  return {
+    test(value: string): boolean {
+      return source ? new RegExp(source).test(value) : false;
+    },
+  };
+}
 
-/**
- * 校验**安装包文件名**, 返回空串 = 通过, 否则是给用户看的原因.
- *
- * 约定: 包名 = 资产 code = 插件名 —— 统一 dml- 开头 + 英文.
- * (包名会进 GitLab 目录和安装路径, 空格/中文会到处出问题)
- *
- * ⚠️ `requirePrefix` 只是**团队命名约定** (dml- 开头), 不是技术限制:
- *   新建资产要遵守 (requirePrefix=true, 默认);
- *   更新**存量**资产时不能强制 —— 存量的 code 本身就没有 dml- 前缀,
- *   强制的话那些资产永远更新不了 (后端也是这么分的, 见 market_naming)。
- */
+/** mcpConfig 沿用这两个入口, 但实际表达式始终来自当前后端规则. */
+export const CODE_PATTERN = {
+  test(value: string): boolean {
+    return activePattern(marketRules.value?.code.pattern).test(value);
+  },
+};
+export const SEGMENT_PATTERN = {
+  test(value: string): boolean {
+    return activePattern(marketRules.value?.segment.pattern).test(value);
+  },
+};
+
+function packagePattern(rules: MarketRules): RegExp {
+  const suffixes = rules.package.suffixes
+    .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  return new RegExp(`(?:${suffixes})$`, 'i');
+}
+
+/** 校验安装包文件名; 没有后端规则时明确失败, 不使用本地兜底. */
 export function validatePackageName(
   filename: string,
-  opts: { requirePrefix?: boolean } = {},
+  opts: { requirePrefix?: boolean; rules?: MarketRules | null } = {},
 ): string {
+  const rules = opts.rules === undefined ? marketRules.value : opts.rules;
   const requirePrefix = opts.requirePrefix !== false;
   const name = (filename || '').trim();
   if (!name) return '请选择安装包';
-  if (!PACKAGE_EXT_RE.test(name)) {
-    return '安装包只支持 .zip / .tar.gz / .tgz';
-  }
-  const base = name.replace(PACKAGE_EXT_RE, '');
+  if (!rules) return '市场规则尚未加载, 请重试';
+  const ext = packagePattern(rules);
+  if (!ext.test(name)) return `安装包只支持 ${rules.package.suffixes.join(' / ')}`;
+  const base = name.replace(ext, '');
+  const example = rules.code.example;
   if (requirePrefix) {
-    if (!base.startsWith(CODE_PREFIX)) {
-      return `安装包名必须以 "${CODE_PREFIX}" 开头 (如 ${CODE_EXAMPLE}.zip)`;
+    if (!base.startsWith(rules.code.prefix)) {
+      return `安装包名必须以 "${rules.code.prefix}" 开头 (如 ${example}.zip)`;
     }
-    if (!CODE_PATTERN.test(base)) {
-      return `安装包名只能用小写字母/数字/连字符, 如 ${CODE_EXAMPLE}.zip`;
+    if (base.length < rules.code.min_length || base.length > rules.code.max_length) {
+      return `安装包名长度要在 ${rules.code.min_length}-${rules.code.max_length} 个字符之间 (现在 ${base.length} 个)`;
     }
-  } else if (!SEGMENT_PATTERN.test(base)) {
-    // ⚠️ 不要求前缀时, 也要守住"分段 + 字符集" —— 只是不强制 dml- 开头
-    return `安装包名只能用小写字母/数字/连字符, 如 ${CODE_EXAMPLE}.zip`;
-  }
-  if (base.length < 3 || base.length > 64) {
-    return `安装包名长度要在 3-64 个字符之间 (现在 ${base.length} 个)`;
+    if (!new RegExp(rules.code.pattern).test(base)) {
+      return `安装包名只能用小写字母/数字/连字符, 如 ${example}.zip`;
+    }
+  } else {
+    if (base.length < rules.segment.min_length || base.length > rules.segment.max_length) {
+      return `安装包名长度要在 ${rules.segment.min_length}-${rules.segment.max_length} 个字符之间 (现在 ${base.length} 个)`;
+    }
+    if (!new RegExp(rules.segment.pattern).test(base)) {
+      return `安装包名只能用小写字母/数字/连字符, 如 ${example}.zip`;
+    }
   }
   return '';
 }
 
-/** 从安装包文件名推导出资产 code (包名 = code) */
-export function codeFromPackageName(filename: string): string {
+/** 从安装包文件名推导出资产 code; 未加载规则时不猜测后缀. */
+export function codeFromPackageName(
+  filename: string,
+  rules: MarketRules | null = marketRules.value,
+): string {
   const name = (filename || '').trim();
-  if (!name) return '';
-  return name.replace(PACKAGE_EXT_RE, '');
+  if (!name || !rules) return '';
+  return name.replace(packagePattern(rules), '');
 }
 
-/**
- * 校验资产 code, 返回空串 = 通过, 否则是给用户看的原因.
- */
-export function validateCode(code: string): string {
+/** 校验资产 code, 返回空串 = 通过. */
+export function validateCode(
+  code: string,
+  rules: MarketRules | null = marketRules.value,
+): string {
   const c = (code || '').trim();
   if (!c) return '资产 code 必填';
-  if (!c.startsWith(CODE_PREFIX)) {
-    return `资产 code 必须以 "${CODE_PREFIX}" 开头 (如 ${CODE_EXAMPLE})`;
+  if (!rules) return '市场规则尚未加载, 请重试';
+  if (!c.startsWith(rules.code.prefix)) {
+    return `资产 code 必须以 "${rules.code.prefix}" 开头 (如 ${rules.code.example})`;
   }
-  if (!CODE_PATTERN.test(c)) {
-    return '只能用小写字母/数字/连字符, 如 ' + CODE_EXAMPLE;
+  if (c.length < rules.code.min_length || c.length > rules.code.max_length) {
+    return `资产 code 长度要在 ${rules.code.min_length}-${rules.code.max_length} 个字符之间 (现在 ${c.length} 个)`;
   }
-  // ⚠️ 长度与后端一致 (3-64) —— 前端不拦的话, 后端会 422, 用户只看到一句没头没尾的报错
-  if (c.length < 3 || c.length > 64) {
-    return `资产 code 长度要在 3-64 个字符之间 (现在 ${c.length} 个)`;
+  if (!new RegExp(rules.code.pattern).test(c)) {
+    return '只能用小写字母/数字/连字符, 如 ' + rules.code.example;
   }
   return '';
 }

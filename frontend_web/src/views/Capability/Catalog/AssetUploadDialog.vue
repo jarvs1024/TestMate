@@ -55,7 +55,7 @@
           <!-- ⚠️ 错误只在下面的 mcp-bar 里显示一处 (以前 form-item 和 mcp-bar 各显示一遍) -->
           <el-form-item label="">
             <el-input v-model="mcpConfigText" type="textarea" :rows="11" class="mcp-json"
-                      :placeholder="MCP_TEMPLATE" />
+                      :placeholder="mcpTemplate" />
           </el-form-item>
           <div class="mcp-bar">
             <button type="button" class="mini-btn" @click="formatMcp">格式化</button>
@@ -74,13 +74,14 @@
           <div v-if="mode !== 'edit'" class="pkg-req">
             <span class="pr-ic">🔌</span>
             <span class="pr-txt">
-              <!-- ⚠️ dml- 前缀只在**新建**时要求 (团队命名约定) ——
-                   存量连接器的老名字没前缀, 更新时照样能改 -->
+              <!-- 前缀只在服务端规则要求时强制; 存量连接器更新不新增前缀门槛. -->
               <template v-if="mode === 'create'">
-                <b>连接器名</b>必须以 <code>dml-</code> 开头。
+                <b>连接器名</b>必须以 <code>{{ rules?.code.prefix }}</code> 开头
+                (如 {{ rules?.code.example }})。
               </template>
               <template v-else>
-                <b>连接器名</b>只能用小写字母/数字/连字符（新建时还要 <code>dml-</code> 开头）。
+                <b>连接器名</b>只能用小写字母/数字/连字符（新建时还要
+                <code>{{ rules?.code.prefix }}</code> 开头）。
               </template>
             </span>
             <span class="pr-code">
@@ -101,7 +102,7 @@
                ⚠️ 文件名只显示一次 —— 原生 input 旁边那个是重复的. -->
           <div class="file-pick">
             <input ref="fileInput" type="file" class="file-input"
-                   accept=".zip,.tar.gz,.tgz" @change="onPickPackage" />
+                   :accept="packageAccept" @change="onPickPackage" />
             <button type="button" class="pick-btn" @click="fileInput?.click()">
               <span class="pb-ic">📦</span>选择安装包
             </button>
@@ -123,7 +124,11 @@
             <span class="pr-ic">📦</span>
             <span class="pr-txt">
               <b>{{ kind.label }}包要求</b>:
-              包名以 <code>dml-</code> 开头 (如 dml-weekly-report.zip);
+              <template v-if="packagePrefixRequired">
+                包名以 <code>{{ rules?.code.prefix }}</code> 开头
+                (如 {{ rules?.code.example }}{{ rules?.package.suffixes[0] }});
+              </template>
+              <template v-else>包名使用小写字母/数字/连字符分段, 并与资产 code 一致;</template>
               <template v-if="kind.pkgNeed">{{ kind.pkgNeed }}。</template>
               压缩包会在服务端解压后推送到 GitLab。
             </span>
@@ -202,7 +207,7 @@
                    「上架」按钮**永久置灰**, 而且看不出为什么 (同一个接口在市场页是有红字的,
                    只有这个抽屉是静默的). 现在: 红字说明 + 「重试」按钮 + 兜底分类项. -->
               <div v-if="categoriesError" class="cat-err">
-                <span>分类列表加载失败：{{ categoriesError }}。请检查后端服务后点「重试」</span>
+                <span>{{ categoriesError }}。请检查后端服务后点「重试」</span>
                 <button type="button" class="cat-retry" @click="loadCategories">重试</button>
               </div>
               <el-select v-model="form.category" class="sel-category" style="width:100%" filterable
@@ -374,7 +379,6 @@ import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
 import { getAsset, getJob, retryJob, uploadAsset, updateAsset, updateAssetMeta, type AssetItem, type AssetJob, type MarketKind } from '@/api/assets';
 import { KIND_META } from './kindMeta';
-import { MCP_TEMPLATE } from './mcpConfig';
 import { useAssetUploadForm } from './useAssetUploadForm';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
@@ -434,8 +438,8 @@ const advOpen = ref(false);
 const {
   form, tagsText, keywordsText, mcpConfigText, step, hasSource,
   fileInput, pkgFile, preview, previewing, iconPanel,
-  categories, categoriesError, categoriesLoading, projectOptions,
-  isMcp, isEdit, kind, mcpHint, mcpHintState, codeFieldError,
+  categories, categoriesError, categoriesLoading, projectOptions, rules,
+  isMcp, isEdit, kind, mcpHint, mcpHintState, mcpTemplate, codeFieldError,
   versionError, pkgNameError,
   previewBad, previewIssues, iconChoices, missing, canSubmit,
   formatMcp, useMcpTemplate, loadCategories,
@@ -456,6 +460,14 @@ const {
  */
 const basicNo = computed(() => (isEdit.value && !isMcp.value ? 1 : 2));
 const advNo = computed(() => basicNo.value + 1);
+const packageAccept = computed(() => rules.value?.package.suffixes.join(',') || '');
+const packagePrefixRequired = computed(() => {
+  const enforcement = rules.value?.enforcement;
+  if (!enforcement) return false;
+  return props.mode === 'create'
+    ? enforcement.require_code_prefix_on_create
+    : enforcement.require_code_prefix_on_update;
+});
 
 /**
  * 分类表里有没有「其他」—— 用来决定失败时**要不要**再注入一个兜底项.

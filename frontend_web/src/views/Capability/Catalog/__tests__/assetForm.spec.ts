@@ -5,7 +5,7 @@
  *  1. code = 包名 = 插件名 → 英文, 且统一以 "dml-" 开头
  *  2. 图标自动分配, 且**不能跟现有资产重复** (重复图标在卡片上分不清谁是谁)
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   CODE_PREFIX,
   FALLBACK_ICONS,
@@ -13,10 +13,24 @@ import {
   ICON_POOLS,
   checkCodeSync,
   codeFromPackageName,
+  marketRules,
   pickIcon,
   validateCode,
   validatePackageName,
 } from '../assetForm';
+
+beforeEach(() => {
+  marketRules.value = {
+    code: {
+      prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
+      example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+    },
+    segment: {
+      pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
+    },
+    package: { suffixes: ['.zip', '.tar.gz', '.tgz'] },
+  } as any;
+});
 
 describe('安装包名规则', () => {
   it('必须是 dml- 开头', () => {
@@ -47,6 +61,20 @@ describe('安装包名规则', () => {
 });
 
 describe('资产 code 命名约定', () => {
+  it('使用后端下发的规则, 不在前端保留独立命名兜底', () => {
+    const rules: any = {
+      code: {
+        prefix: 'team-', pattern: '^team-[a-z0-9]+$', example: 'team-demo',
+        min_length: 3, max_length: 64,
+      },
+      segment: { pattern: '^[a-z0-9]+$', min_length: 3, max_length: 64 },
+      package: { suffixes: ['.zip'] },
+    };
+    expect(validateCode('team-demo', rules)).toBe('');
+    expect(validateCode('dml-demo', rules)).toContain('team-');
+    expect(validatePackageName('team-demo.zip', { rules })).toBe('');
+  });
+
   it('必须以 dml- 开头', () => {
     expect(validateCode('dml-ssd-log-doctor')).toBe('');
     expect(validateCode('ssd-log-doctor')).toContain('dml-');

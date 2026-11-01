@@ -92,3 +92,43 @@ def decode_download_ticket(ticket: str) -> dict[str, Any] | None:
     if payload.get("typ") != DOWNLOAD_TICKET_TYPE:
         return None
     return payload
+
+
+# ===== 资产市场下载票据 =====
+
+ASSET_DOWNLOAD_TICKET_TYPE = "asset-dl"
+ASSET_DOWNLOAD_TICKET_TTL = 600
+
+
+def create_asset_download_ticket(
+    *, user_id: int, code: str, version: str, ttl_seconds: int = ASSET_DOWNLOAD_TICKET_TTL
+) -> tuple[str, int]:
+    """签发绑定用户、资产与精确版本的短时下载票。"""
+    expire = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+    payload: dict[str, Any] = {
+        "typ": ASSET_DOWNLOAD_TICKET_TYPE,
+        "uid": int(user_id),
+        "code": code,
+        "ver": version,
+        "exp": expire,
+    }
+    ticket = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    return ticket, ttl_seconds
+
+
+def decode_asset_download_ticket(ticket: str) -> dict[str, Any] | None:
+    """只接受签名有效、未过期且类型为 asset-dl 的票据。"""
+    if not ticket:
+        return None
+    try:
+        payload = jwt.decode(
+            ticket,
+            settings.JWT_SECRET,
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"require_exp": True},
+        )
+    except JWTError:
+        return None
+    if payload.get("typ") != ASSET_DOWNLOAD_TICKET_TYPE:
+        return None
+    return payload

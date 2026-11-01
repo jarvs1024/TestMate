@@ -14,9 +14,12 @@ import { describe, expect, it, beforeAll } from 'vitest';
 import { createRouter, createMemoryHistory } from 'vue-router';
 import { createPinia, setActivePinia } from 'pinia';
 import { useUserStore } from '@/stores/user';
-import { routes } from '../index';
+import appRouter, { routes } from '../index';
 
 const router = createRouter({ history: createMemoryHistory(), routes });
+
+const OAUTH_AUTHORIZE_PATH = '/connect/authorize?client_id=client%2Fci&redirect_uri=https%3A%2F%2Fclient.example%2Fcb%3Fa%3D1%26b%3Dtwo&response_type=code&scope=market%3Aread%20market%3Awrite&code_challenge=a-%2B%2F%3D&code_challenge_method=S256&state=x%20%26%3D%2B%2F%25';
+const LOGIN_REDIRECT_PATH = '/login?redirect=/connect/authorize?client_id=client%252Fci%26redirect_uri=https%253A%252F%252Fclient.example%252Fcb%253Fa%253D1%2526b%253Dtwo%26response_type=code%26scope=market%253Aread%2520market%253Awrite%26code_challenge=a-%252B%252F%253D%26code_challenge_method=S256%26state=x%2520%2526%253D%252B%252F%2525';
 
 beforeAll(() => {
   // 登录态 —— 否则守卫会把受保护页面踢去 /login, 断言就测不到跳转本身
@@ -71,8 +74,46 @@ describe('路由表', () => {
   });
 
   it('除首页和代码检视外, 其余都要登录', () => {
-    for (const p of ['/market', '/kb-manage', '/software', '/settings', '/c/log-analysis']) {
+    for (const p of ['/market', '/kb-manage', '/software', '/settings', '/c/log-analysis', '/connect/authorize', '/connect/grants', '/profile']) {
       expect(metaOf(p).publicRead).toBeFalsy();
+      expect(metaOf(p).requiresAuth).toBe(true);
+    }
+  });
+
+  it('MCP 同意页与授权管理位于 MainLayout 的 /connect 下', () => {
+    for (const p of ['/connect/authorize', '/connect/grants']) {
+      const resolved = router.resolve(p);
+      expect(resolved.matched).toHaveLength(2);
+      expect(resolved.matched[0].path).toBe('/');
+      expect(resolved.meta.requiresAuth).toBe(true);
+    }
+  });
+
+  it('个人中心位于 MainLayout 下并承载授权与令牌', () => {
+    const resolved = router.resolve('/profile');
+    expect(resolved.name).toBe('profile');
+    expect(resolved.meta.title).toBe('个人中心');
+    expect(resolved.meta.lede).toBe('管理授权与访问令牌');
+    expect(resolved.matched[0].path).toBe('/');
+    expect(resolved.meta.requiresAuth).toBe(true);
+  });
+
+  it('未登录真实导航保留完整 OAuth query，登录后按 redirect 返回原地址', async () => {
+    const userStore = useUserStore();
+    userStore.token = '';
+    try {
+      await appRouter.push(OAUTH_AUTHORIZE_PATH);
+
+      expect(appRouter.currentRoute.value.name).toBe('login');
+      expect(appRouter.currentRoute.value.fullPath).toBe(LOGIN_REDIRECT_PATH);
+      expect(appRouter.currentRoute.value.query.redirect).toBe(OAUTH_AUTHORIZE_PATH);
+
+      userStore.token = 'test-token';
+      await appRouter.push(appRouter.currentRoute.value.query.redirect as string);
+      expect(appRouter.currentRoute.value.name).toBe('mcp-authorize');
+      expect(appRouter.currentRoute.value.fullPath).toBe(OAUTH_AUTHORIZE_PATH);
+    } finally {
+      userStore.token = 'test-token';
     }
   });
 

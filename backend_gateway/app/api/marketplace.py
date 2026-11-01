@@ -22,6 +22,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import ValidationError
@@ -42,10 +43,12 @@ from app.core import (
     market_naming,
     market_policy,
     market_projects,
+    market_rules,
     market_state,
 )
 from app.core.identity import author_forms
 from app.core.market_visibility import assert_visible, apply_visibility
+from app.core.security import decode_asset_download_ticket
 from app.core.market_catalog import (
     CATEGORY_SLUGS,
     INDEX_PATH,
@@ -878,7 +881,9 @@ _PREVIEW_SCENES: list[dict[str, Any]] = [
         "event": "publish",
         "label": "市场 · 上架新资产 (插件)",
         "kw": {
-            "name": "代码检视流水线", "version": "1.0.0", "actor": "zhangsan",
+            # 审核通过的真实场景: 操作人 = 审核人, 作者 = 提交人
+            "name": "代码检视流水线", "version": "1.0.0", "actor": "admin",
+            "author": "zhangsan",
             "kind": "plugin", "category": "流程规范", "code": "dml-code-review",
             "summary": "一键串联: 取 MR diff → 送检视 → 回写评论 → 汇总结果",
         },
@@ -1010,6 +1015,12 @@ async def get_market_config(user: User = Depends(get_current_user)) -> MarketCon
         #    「申请下架」还是「下架」, 以及确认框里怎么措辞.
         review_enabled=await _setting_bool("marketplace.review.enabled", True),
     )
+
+
+@router.get("/rules")
+async def get_market_rules(_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """上传/编辑表单与 MCP 共用的当前市场规则."""
+    return await market_rules.rules_payload()
 
 
 @router.get("/{code}", response_model=AssetOut)
@@ -1223,6 +1234,102 @@ async def download_package(
         media_type="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{name}"',
+            "X-Content-Sha256": pkg.sha256_bytes(data),
+        },
+    )
+
+
+def _find_exact_stored_package(base: Path, version: str) -> Path | None:
+    """只找精确版本的普通文件包；缺失、目录符号链接与包符号链接均不返回。"""
+    package_dir = base / "package"
+    if package_dir.is_symlink() or not package_dir.is_dir():
+        return None
+    expected_names = {f"{version}{suffix}" for suffix in market_naming.PACKAGE_SUFFIXES}
+    candidates = sorted(
+        (
+            item
+            for item in package_dir.iterdir()
+            if item.name in expected_names and not item.is_symlink() and item.is_file()
+        ),
+        key=lambda item: item.name,
+    )
+    return candidates[0] if candidates else None
+
+
+def _ticket_content_disposition(filename: str) -> str:
+    """Use an ASCII quoted fallback and preserve the real name with RFC 5987."""
+    ascii_name = filename.encode("ascii", "ignore").decode("ascii")
+    ascii_name = re.sub(r'[\x00-\x1f\x7f"\\]', "_", ascii_name).strip()
+    if not ascii_name:
+        ascii_name = "package.zip"
+    return (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
+
+
+@router.get("/{code}/versions/{version}/ticket-download")
+async def download_package_by_asset_ticket(
+    code: str, version: str, ticket: str = Query("")
+) -> Response:
+    """用 asset-dl 票兑换精确版本包，并重新检查用户状态与资产可见性。"""
+    payload = decode_asset_download_ticket(ticket)
+    if not payload:
+        raise HTTPException(status_code=401, detail="下载票据无效或已过期")
+
+    uid = payload.get("uid")
+    ticket_code = payload.get("code")
+    ticket_version = payload.get("ver")
+    if (
+        isinstance(uid, bool)
+        or not isinstance(uid, int)
+        or uid <= 0
+        or not isinstance(ticket_code, str)
+        or not ticket_code
+        or not isinstance(ticket_version, str)
+        or not ticket_version
+    ):
+        raise HTTPException(status_code=401, detail="下载票据内容不完整")
+    if ticket_code != code or ticket_version != version:
+        raise HTTPException(status_code=403, detail="下载票据与资产或版本不匹配")
+
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, uid)
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=401, detail="票据用户不存在或已停用")
+        asset = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+
+    if asset is None:
+        raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+    assert_visible(
+        asset,
+        username=user.username or "",
+        is_reviewer=await _is_reviewer(user),
+        is_admin=market_policy.is_admin(user),
+    )
+    if asset.kind == "mcp":
+        raise HTTPException(status_code=400, detail="连接器没有安装包")
+
+    stored = _find_exact_stored_package(_asset_dir(asset), version)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="请求版本的安装包不存在")
+    data = stored.read_bytes()
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            update(Asset)
+            .where(Asset.code == code)
+            .values(download_count=Asset.download_count + 1)
+        )
+        await session.commit()
+
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": _ticket_content_disposition(stored.name),
             "X-Content-Sha256": pkg.sha256_bytes(data),
         },
     )
@@ -1456,6 +1563,7 @@ async def _set_publish_state(
             name, version = a.name, a.version
             kind, category, author = a.kind, a.category, a.author
             project = a.project or ""
+            summary = a.summary or ""
 
     enqueue(job_id)
     return {
@@ -1463,6 +1571,9 @@ async def _set_publish_state(
         "changed": True, "job_id": job_id, "name": name, "version": version,
         # 通知要用: 资产类型 (技能包/插件/连接器) / 分类 / 作者 (不通过时要 @他) / 适用项目
         "kind": kind, "category": category, "author": author, "project": project,
+        # ⚠️ 2026-11-01: 审核通过那条要带**一句话简介** —— 之前漏了 summary,
+        #    正文只能退回 detail ("审核通过, 已上架"), 群里看不出这资产是干嘛的.
+        "summary": summary,
         # ⚠️ 2026-10-30 (第十二轮): 改之前在等什么审核 (new/update/meta) ——
         #    审核端点靠它区分"包变了"还是"只改了信息".
         "pending_action": prev_pending_action,
@@ -1520,6 +1631,8 @@ async def unpublish_asset(
                 "unpublish", out,
                 actor=user.username,
                 detail=comment or "作者自助下架 (免审核), 文件保留, 可重新上架",
+                # 下架说的是"发生了什么", 别用资产简介顶掉它
+                summary="",
                 # ⚠️ 事件 key 仍是 unpublish (开关映射靠 key, 不能乱换),
                 #    只换标题 —— 免审下架**不是**彻底删除, 标题别再写 🗑.
                 title_override="📦 资产已下架 (文件保留)",
@@ -1540,6 +1653,7 @@ async def unpublish_asset(
             "unpublish_request", out,
             actor=user.username,
             detail=comment or "有人申请下架, 等管理员确认",
+            summary="",
         )
     return {
         "ok": True, "code": code, "publish_status": "unpublish_pending",
@@ -1679,6 +1793,8 @@ async def review_asset(
     if out.get("changed"):
         await market_notify.notify_asset(
             "reject", out, actor=_user.username, detail=note,
+            # 驳回要显示**理由**, 不是资产简介
+            summary="",
         )
     return out
 
@@ -1714,6 +1830,8 @@ async def submit_for_review(
         await market_notify.notify_asset(
             "review", out, actor=_user.username,
             detail=comment or "提交审核",
+            # 审核通知说的是"要你处理什么", 不用资产简介顶掉它
+            summary="",
         )
     return out
 
@@ -2055,6 +2173,18 @@ def _cleanup_staged_dir(base: str) -> None:
         git_sync.clean_path(base)
     except Exception as e:  # noqa: BLE001
         logger.warning("清理落盘目录失败 (clean) base=%s err=%s", base, e)
+    try:
+        # git clean 不会删除空目录; 只逐级移除空目录, 遇到非空目录即停止.
+        path = git_sync.resolve_in_workspace(base)
+        workspace = git_sync.WORKSPACE.resolve()
+        while path is not None and path != workspace:
+            try:
+                path.rmdir()
+            except FileNotFoundError:
+                pass
+            path = path.parent
+    except Exception as e:  # noqa: BLE001
+        logger.warning("清理落空目录失败 base=%s err=%s", base, e)
 
 
 def _snapshot_asset(a: Asset | None) -> dict:

@@ -13,15 +13,16 @@
  */
 import { computed, reactive, ref, watch } from 'vue';
 import {
-  listAssets, listCategories, listProjects, previewPackage,
+  listAssets, previewPackage,
   type AssetItem, type MarketKind, type PackagePreview,
 } from '@/api/assets';
 import {
   CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
-  checkCodeSync, codeFromPackageName, pickIcon, validateCode, validatePackageName,
+  checkCodeSync, codeFromPackageName, loadMarketRules, marketRules,
+  marketRulesError, marketRulesLoading, pickIcon, validateCode, validatePackageName,
 } from './assetForm';
 import { kindMeta } from './kindMeta';
-import { MCP_TEMPLATE, formatMcpConfig, parseMcpConfig } from './mcpConfig';
+import { formatMcpConfig, mcpConfigTemplate, parseMcpConfig } from './mcpConfig';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 export interface UseAssetUploadFormOptions {
@@ -113,8 +114,11 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    *    (团队命名约定); 更新**存量**连接器时不强制 (那 4 个老名字没前缀,
    *    硬拦等于把它们锁死 —— 连发个新版本都提交不了).
    */
-  const mcpParsed = computed(() =>
-    parseMcpConfig(mcpConfigText.value, { requirePrefix: mode() === 'create' }));
+  const mcpParsed = computed(() => parseMcpConfig(mcpConfigText.value, {
+    requirePrefix: mode() === 'create'
+      ? marketRules.value?.enforcement.require_code_prefix_on_create !== false
+      : marketRules.value?.enforcement.require_code_prefix_on_update === true,
+  }));
   const mcpConfigError = computed(() => {
     if (!isMcp.value) return '';
     return mcpParsed.value.ok ? '' : mcpParsed.value.error;
@@ -136,11 +140,12 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     if (!mcpConfigText.value.trim()) return 'idle';
     return mcpConfigError.value ? 'bad' : 'ok';
   });
+  const mcpTemplate = computed(() => mcpConfigTemplate());
   function formatMcp() {
     mcpConfigText.value = formatMcpConfig(mcpConfigText.value);
   }
   function useMcpTemplate() {
-    mcpConfigText.value = MCP_TEMPLATE;
+    mcpConfigText.value = mcpTemplate.value;
   }
 
   // ---------- 校验 ----------
@@ -164,8 +169,8 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     if (mode() === 'update' || isEdit.value) return '';
     // ⚠️ 还没选包 / 没填配置时, code 还是初始的 "dml-" —— 那不是错误,
     //    是"还没派生出来". 提前标红会让人以为填错了.
-    if (!hasSource.value) return '';
-    return validateCode(form.code);
+    if (!hasSource.value || !marketRules.value) return '';
+    return validateCode(form.code, marketRules.value);
   });
   const versionError = computed(() => {
     const v = (form.version || '').trim();
@@ -179,7 +184,8 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * ⚠️ 这里**没有** "请选择安装包" 这种缺项提示 —— 还没选包是缺项,
    *    底部「还缺」清单会列出来, 不是错误, 别一上来就标红.
    */
-  const pkgBaseName = computed(() => codeFromPackageName(pkgFile.value?.name || ''));
+  const pkgBaseName = computed(() =>
+    codeFromPackageName(pkgFile.value?.name || '', marketRules.value));
   /**
    * code 与「包名 / MCP 连接器名」不一致时的报错 (空串 = 一致 / 还不用管).
    *
@@ -188,16 +194,17 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    *   连接器     → code = MCP 配置里的连接器名
    * 不一致 → 报错 + 不让上架 (免得装出来/抄下来对不上)。
    *
-   * ⚠️ 更新**连接器**时跳过: code 不可改, 用户改了 MCP 配置里的名字也没法同步 code
-   *    → 硬拦等于死锁 (后端也只在 create 时强制这条, 见 market_naming)。
+   * 更新也必须保持一致: code 不可改时, 需要调整新包或 MCP 配置里的名字后再提交.
    */
   const codeSyncError = computed(() => {
-    if (mode() === 'update' && isMcp.value) return '';
+    if (!marketRules.value) return '';
     if (isMcp.value) {
+      if (!marketRules.value.enforcement.code_must_match_mcp_server) return '';
       const p = mcpParsed.value;
       const names = p.ok ? Object.keys((p.config as any)?.mcpServers || {}) : [];
       return checkCodeSync(form.code, { isMcp: true, mcpNames: names });
     }
+    if (!marketRules.value.enforcement.code_must_match_package) return '';
     return checkCodeSync(form.code, { pkgBase: pkgBaseName.value });
   });
 
@@ -212,9 +219,12 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    */
   const pkgNameError = computed(() => {
     // ⚠️ 编辑模式没有安装包 —— 别拿"包名不合规"吓人
-    if (isEdit.value) return '';
+    if (isEdit.value || !marketRules.value) return '';
+    const requirePrefix = mode() === 'create'
+      ? marketRules.value.enforcement.require_code_prefix_on_create
+      : marketRules.value.enforcement.require_code_prefix_on_update;
     return pkgFile.value
-      ? validatePackageName(pkgFile.value.name, { requirePrefix: mode() === 'create' })
+      ? validatePackageName(pkgFile.value.name, { requirePrefix, rules: marketRules.value })
       : '';
   });
 
@@ -257,85 +267,64 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     });
   });
 
-  /** 缺什么 —— 一次说清, 别让人点一次报一个 */
+  /** 缺什么由后端 required 规则驱动; 规则不可用时首先阻止提交. */
   const missing = computed(() => {
     const out: string[] = [];
-    // ⚠️ 「只改元信息」模式: **不用安装包 / 不用版本 / 不用 code** ——
-    //    那些东西都已经在仓库里了, 这条路只改说明文字.
-    if (isEdit.value) {
-      if (!form.name.trim()) out.push('名称');
-      if (!form.summary.trim()) out.push('一句话简介');
-      if (!form.category) {
-        out.push(categoriesError.value ? '分类 (列表加载失败, 可先选「其他」)' : '分类');
-      }
+    const rules = marketRules.value;
+    if (marketRulesLoading.value || !rules) {
+      out.push(!marketRulesLoading.value && marketRulesError.value
+        ? '市场规则 (加载失败, 请重试)'
+        : '市场规则 (加载中)');
       return out;
     }
-    if (isMcp.value) {
-      // 连接器: 要配置, 不要包
-      if (mcpConfigError.value) out.push('MCP 配置');
-    } else if (!pkgFile.value) {
-      out.push('安装包');
+    const required = isEdit.value
+      ? rules.required.edit
+      : [
+          ...rules.required[mode() as 'create' | 'update'].common,
+          ...rules.required[mode() as 'create' | 'update'][form.kind],
+        ];
+    for (const field of required) {
+      if (field === 'package' && !pkgFile.value) out.push('安装包');
+      if (field === 'mcp_config' && mcpConfigError.value) out.push('MCP 配置');
+      if (field === 'name' && !form.name.trim()) out.push('名称');
+      if (field === 'summary' && !form.summary.trim()) out.push('一句话简介');
+      if (field === 'category' && !form.category) out.push('分类');
+      if (field === 'version' && versionError.value) out.push('版本');
+      if (field === 'code' && mode() === 'create' && hasSource.value) {
+        if (validateCode(form.code, rules)) out.push('资产 code');
+      }
     }
-    if (!form.name.trim()) out.push('名称');
-    if (!form.summary.trim()) out.push('一句话简介');
-    if (mode() === 'create' && hasSource.value) {
-      // ⚠️ 只有**已经有来源** (选了包 / 填了 MCP 配置) 才校验 code ——
-      //    否则 code 还是初始的 "dml-", 报了名儿用户也改不了 (它是派生值)
-      const c = validateCode(form.code);
-      if (c) out.push('资产 code');
-      // code 必须跟包名 / MCP 连接器名一致 —— 不一致不让上架
-      if (codeSyncError.value) out.push('code 与名称一致');
+    if (!isEdit.value && hasSource.value && codeSyncError.value) {
+      out.push('code 与名称一致');
     }
-    if (!form.category) {
-      // ⚠️ 分类表加载失败时, 「还缺: 分类」是**误导** ——
-      //    用户会以为自己没选 (其实下拉是空的, 选不了).
-      //    说清是"列表加载失败", 并给出还能走的路 (兜底分类「其他」).
-      out.push(categoriesError.value ? '分类 (列表加载失败, 可先选「其他」)' : '分类');
-    }
-    if (versionError.value) out.push('版本');
-    if (pkgNameError.value) out.push('安装包名');
-    return out;
+    if (!isEdit.value && pkgNameError.value) out.push('安装包名');
+    return Array.from(new Set(out));
   });
   const canSubmit = computed(() =>
-    missing.value.length === 0
+    !!marketRules.value && !marketRulesLoading.value && !marketRulesError.value
+    && missing.value.length === 0
     && (isEdit.value || isMcp.value || (!previewBad.value && !pkgNameError.value)));
 
   // ---------- 加载 ----------
-  async function loadCategories() {
-    // ⚠️ 原来 `if (categories.value.length) return` —— 失败过一次之后**再也刷不进来**
-    //    (旧列表还留着 → 直接 return → 永远重试不了). 失败时必须允许重试.
-    if (categories.value.length && !categoriesError.value) return;
+  async function loadRules() {
     categoriesLoading.value = true;
-    try {
-      const r = await listCategories();
-      categories.value = (r?.items || []) as typeof categories.value;
-      categoriesError.value = '';
-    } catch (e: any) {
-      // ⚠️ 原来这里是空 catch —— 失败被吞成空数组, 「上架」按钮**永久置灰**且无任何说明.
-      //    现在把原因记下来: 界面会显示「分类列表加载失败」+ 一个「重试」按钮.
-      categoriesError.value = httpErrorText(errorStatus(e), errorDetail(e), '未知错误');
-    } finally {
-      categoriesLoading.value = false;
-    }
+    await loadMarketRules();
+    const rules = marketRules.value;
+    categories.value = (rules?.categories || []).map((c) => ({ ...c, total: 0 }));
+    projectOptions.value = [...(rules?.projects || [])];
+    // 复用抽屉已有的可见错误与重试区; 规则失败时分类/项目也不能另走兜底接口.
+    categoriesError.value = marketRulesError.value
+      ? `市场规则加载失败: ${marketRulesError.value}`
+      : '';
+    categoriesLoading.value = false;
   }
 
-  /**
-   * 拉项目列表 (设置项 marketplace.projects) —— 适用项目的下拉选项.
-   *
-   * ⚠️ **不缓存** —— 管理员在设置里加了项目, 用户不刷新页面也得能选到.
-   *    (以前只拉一次, 新项目在下拉里根本不出现)
-   */
+  async function loadCategories() {
+    await loadRules();
+  }
+
   async function loadProjects() {
-    try {
-      const r = await listProjects();
-      projectOptions.value = (r?.items || [])
-        // ⚠️ 过滤掉「通用」(is_general) —— 它是默认选项, 不是某个项目
-        .filter((i: { is_general?: boolean }) => !i.is_general)
-        .map((i: { code: string }) => (i.code || '').trim())
-        .filter(Boolean);
-    } catch {
-      /* 拿不到就退回空列表 —— 只剩「通用」可选, 不影响上架 */
-    }
+    await loadRules();
   }
 
   /** 拉现有资产的图标 —— 自动分配时避开重复 */
@@ -430,8 +419,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   // ---------- 生命周期 ----------
   /** 打开抽屉时初始化 / 重置 —— 每次都是干净的一份 */
   function reset() {
-    loadCategories();
-    loadProjects();
+    loadRules();
     loadUsedIcons();
     pkgFile.value = null;
     preview.value = null;
@@ -484,9 +472,9 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * ⚠️ 放在 watch 里而不是 onPickPackage 里 —— 这样**任何**途径换包都会同步
    *    (也才好单测); code 是派生值, 用户改不了它.
    */
-  watch(() => pkgFile.value, (f) => {
+  watch([() => pkgFile.value, () => marketRules.value], ([f]) => {
     if (mode() !== 'create') return;
-    const derived = codeFromPackageName(f?.name || '');
+    const derived = codeFromPackageName(f?.name || '', marketRules.value);
     if (derived) form.code = derived;
   });
 
@@ -506,7 +494,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * ⚠️ 只在**新建**时同步 —— 更新时 code 不可改 (后端也只允许改配置, 不改 code).
    *    连接器名在新建时得是 dml- 开头 (配置校验会拦), 这里原样带成 code, 不另做加工.
    */
-  watch(() => mcpConfigText.value, () => {
+  watch([() => mcpConfigText.value, () => marketRules.value], () => {
     if (mode() !== 'create' || !isMcp.value) return;
     const p = mcpParsed.value;
     if (!p.ok) return;
@@ -521,13 +509,14 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     form, tagsText, keywordsText, mcpConfigText, step, hasSource,
     fileInput, pkgFile, preview, previewing, iconPanel, usedIcons, iconTouched,
     categories, categoriesError, categoriesLoading, projectOptions,
+    rules: marketRules, rulesError: marketRulesError, rulesLoading: marketRulesLoading,
     // 派生
-    isMcp, isEdit, kind, mcpParsed, mcpConfigError, mcpHint, mcpHintState,
+    isMcp, isEdit, kind, mcpParsed, mcpConfigError, mcpHint, mcpHintState, mcpTemplate,
     codeError, codeFieldError,
     codeSyncError, versionError, pkgNameError, pkgBaseName,
     previewBad, previewIssues, iconChoices, missing, canSubmit,
     // 动作
-    formatMcp, useMcpTemplate, loadCategories, loadProjects, loadUsedIcons,
+    formatMcp, useMcpTemplate, loadRules, loadCategories, loadProjects, loadUsedIcons,
     autoIcon, onCategoryChange, chooseIcon, clearPackage, onPickPackage,
     runPreview, chooseKind, reset,
   };

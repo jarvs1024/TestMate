@@ -4,11 +4,24 @@
  * 覆盖: 长度/字符边界、规则在 create 与 update 下的差异、
  *       池子用尽时的兜底、空数据不崩.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
-  checkCodeSync, codeFromPackageName, pickIcon, validateCode, validatePackageName,
+  checkCodeSync, codeFromPackageName, marketRules, pickIcon, validateCode, validatePackageName,
 } from '../assetForm';
+
+beforeEach(() => {
+  marketRules.value = {
+    code: {
+      prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
+      example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+    },
+    segment: {
+      pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
+    },
+    package: { suffixes: ['.zip', '.tar.gz', '.tgz'] },
+  } as any;
+});
 
 describe('code 校验: 边界', () => {
   it('长度 3-64 (与后端一致)', () => {

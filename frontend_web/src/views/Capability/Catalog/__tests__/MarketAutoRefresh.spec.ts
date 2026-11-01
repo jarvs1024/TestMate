@@ -11,12 +11,15 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { useUserStore } from '@/stores/user';
 
-const { listAssets, listJobs, syncStatus } = vi.hoisted(() => ({
+const { listAssets, listJobs, requestGet, syncStatus } = vi.hoisted(() => ({
   listAssets: vi.fn(),
   listJobs: vi.fn(),
+  requestGet: vi.fn(),
   // ⚠️ 可变 —— 管理员待审提示条要靠它 (不同用例给不同的数)
   syncStatus: {} as Record<string, number>,
 }));
+
+vi.mock('@/utils/request', () => ({ default: { get: requestGet } }));
 
 vi.mock('@/api/assets', () => ({
   listAssets: (...a: any[]) => listAssets(...a),
@@ -75,8 +78,42 @@ async function mountMarket(opts: { role?: 'admin' | 'tester' } = {}) {
   return w;
 }
 
+const rulesPayload = {
+  code: {
+    prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
+    example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+  },
+  segment: {
+    pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
+  },
+  package: { suffixes: ['.zip', '.tar.gz', '.tgz'] },
+  required: {
+    create: {
+      common: ['code', 'name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    update: {
+      common: ['name', 'summary', 'category', 'version'],
+      skill: ['package'], plugin: ['package'], mcp: ['mcp_config'],
+    },
+    edit: ['name', 'summary', 'category'],
+  },
+  categories: [{ name: '其他', slug: 'misc', desc: '', order: 99 }],
+  projects: [],
+  enforcement: {
+    require_code_prefix_on_create: true,
+    require_code_prefix_on_update: false,
+    code_must_match_package: true,
+    code_must_match_mcp_server: true,
+    unknown_category: '其他',
+    unknown_project: '',
+  },
+};
+
 beforeEach(() => {
   vi.useFakeTimers();
+  requestGet.mockReset();
+  requestGet.mockResolvedValue(rulesPayload);
   listAssets.mockReset();
   listAssets.mockResolvedValue({ items: [], total: 0 });
   listJobs.mockReset();

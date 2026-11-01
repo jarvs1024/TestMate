@@ -4,8 +4,21 @@
  * 前端只是提前提示 (别让用户填完一整张表单才被 422 拦下),
  * 真正的拦截在后端 —— 两边规则不一样就会出现"前端说行、后端说不行".
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { marketRules } from '../assetForm';
 import { formatMcpConfig, parseMcpConfig } from '../mcpConfig';
+
+beforeEach(() => {
+  marketRules.value = {
+    code: {
+      prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
+      example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+    },
+    segment: {
+      pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
+    },
+  } as any;
+});
 
 describe('MCP 配置解析', () => {
   it('进程型配置合法', () => {
@@ -76,6 +89,23 @@ describe('MCP 配置解析', () => {
     const r = parseMcpConfig('{"mcpServers": {"xx-xxx": {"url": "http://h/mcp"}}}');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('dml-');
+  });
+
+  it('命名校验消息使用当前规则的前缀和示例', () => {
+    marketRules.value = {
+      ...marketRules.value!,
+      code: {
+        prefix: 'team-', pattern: '^team-[a-z0-9]+$', example: 'team-demo',
+        min_length: 3, max_length: 64,
+      },
+    };
+    const r = parseMcpConfig('{"mcpServers": {"wrong": {"url": "http://h/mcp"}}}');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain('team-');
+      expect(r.error).toContain('team-demo');
+      expect(r.error).not.toContain('dml-');
+    }
   });
 
   it('更新存量连接器时不强制 dml- 前缀 (老名字得能改得动)', () => {

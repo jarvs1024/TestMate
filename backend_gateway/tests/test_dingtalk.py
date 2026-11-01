@@ -372,6 +372,72 @@ async def test_retry_respects_max_attempts(monkeypatch):
     assert not called
 
 
+async def test_retry_does_not_steal_fresh_pending_receipt(monkeypatch):
+    """刚建出来、调用方**正在发送**的 pending 回执, 重试 worker 不能抢发.
+
+    ⚠️ 2026-11-01 线上事故: 审核通过后的「新资产上架」发了**两遍**.
+       notify_market 先落 pending 回执再发送; 重试 worker 恰好扫到这条 pending,
+       两边各发了一次 (日志里一条 review 请求对应两次钉钉 POST).
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+
+    async with AsyncSessionLocal() as s:
+        s.add(AssetNotification(
+            event="publish", code="in-flight", asset_name="正在发送",
+            status="pending", attempts=0, error="",
+            title="t", text="x", next_retry_at=None,
+        ))
+        await s.commit()
+
+    called = []
+
+    async def fake_send(*a, **kw):
+        called.append(1)
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get({
+        "dingtalk.market_webhook": "http://x/hook",
+        "dingtalk.notify_on_publish": "true",
+    }))
+
+    assert await dingtalk.retry_failed_notifications() == 0
+    assert not called, "重试 worker 抢发了调用方正在发的通知"
+
+
+async def test_retry_recovers_stale_pending_receipt(monkeypatch):
+    """发送途中进程崩了 → 过了宽限期的 pending 回执要补发 (别永远漏掉)."""
+    from datetime import datetime, timedelta
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+
+    stale = datetime.utcnow() - timedelta(seconds=dingtalk.PENDING_GRACE_SEC + 5)
+    async with AsyncSessionLocal() as s:
+        s.add(AssetNotification(
+            event="publish", code="crashed", asset_name="崩了没发出去",
+            status="pending", attempts=0, error="",
+            title="t", text="x", next_retry_at=None, created_at=stale,
+        ))
+        await s.commit()
+
+    called = []
+
+    async def fake_send(*a, **kw):
+        called.append(1)
+        return {"errcode": 0}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(dingtalk, "get", _fake_get({
+        "dingtalk.market_webhook": "http://x/hook",
+        "dingtalk.notify_on_publish": "true",
+    }))
+
+    assert await dingtalk.retry_failed_notifications() == 1
+    assert called, "过了宽限期的 pending 回执没人补发"
+
+
 async def test_retry_skips_not_yet_due(monkeypatch):
     """还没到重试时间的不动."""
     from datetime import datetime, timedelta

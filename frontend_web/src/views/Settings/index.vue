@@ -56,7 +56,7 @@
                @click="onPickTop(s.id)">
             <span class="toc-ic">{{ s.icon }}</span>
             <span class="toc-lb">{{ s.label }}</span>
-            <span v-if="!s.children?.length" class="toc-cnt">{{ s.count }}</span>
+            <span v-if="!s.children?.length && s.count !== undefined" class="toc-cnt">{{ s.count }}</span>
           </div>
           <ul v-if="s.children && s.children.length" class="toc-sub">
             <li v-for="c in s.children" :key="c.id"
@@ -706,7 +706,7 @@ function itemsByCategory(cat: string): SettingItem[] {
 //   能力墙 → 资产 → 插件·技能·连接
 //   (第一层 children 是能力角色, 第二层 children 是该角色下的具体能力)
 interface TocItem { id: string; label: string; count: number; children?: TocItem[] }
-interface TocSection { id: string; icon: string; label: string; count: number; children: TocItem[] }
+interface TocSection { id: string; icon: string; label: string; count?: number; children: TocItem[] }
 
 // ⚠️ 「👥 用户」只在 admin 的目录里出现 —— 非 admin 连目录项都看不到
 //    (账号管理是 admin 的活, 普通用户点进去只会撞一堵 403 墙).
