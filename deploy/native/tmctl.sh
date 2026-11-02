@@ -220,8 +220,29 @@ fi
 # ==================== 通用工具 ====================
 
 cfg() {
-  local key="$1" def="${2:-}" v
+  local key="$1" def="${2:-}" v legacy
   v="$(env_get "$ENV_FILE" "$key" || true)"
+  # ⚠️ 兼容旧变量名 (2026-11-02) ——
+  #    扩展市场从 MARKET_* 改名成 EXTENSIONS_* 之后, 老的 .env 里还是 MARKET_*,
+  #    cfg EXTENSIONS_GIT_REMOTE 会读到空 → backend.env 里 EXTENSIONS_GIT_REMOTE 也是空
+  #    → 后端启动时 git_sync 只能退回 DEFAULT_GIT_REMOTE (指向不存在的本机 gitlab),
+  #    资产上架就永远推不出去。
+  #    这里: 新名读不到 → 试旧名 → 都没有才用默认值。
+  if [[ -z "$v" ]]; then
+    case "$key" in
+      EXTENSIONS_DIR)                 legacy="MARKET_DIR" ;;
+      EXTENSIONS_GIT_REMOTE)          legacy="MARKET_GIT_REMOTE" ;;
+      EXTENSIONS_GIT_BRANCH)          legacy="MARKET_GIT_BRANCH" ;;
+      EXTENSIONS_SYNC_INTERVAL_SECONDS) legacy="MARKET_SYNC_INTERVAL_SECONDS" ;;
+      EXTENSIONS_SSH_KEY)             legacy="MARKET_SSH_KEY" ;;
+      EXTENSIONS_SSH_KNOWN_HOSTS)     legacy="MARKET_SSH_KNOWN_HOSTS" ;;
+      *)                              legacy="" ;;
+    esac
+    if [[ -n "$legacy" ]]; then
+      v="$(env_get "$ENV_FILE" "$legacy" || true)"
+      [[ -n "$v" ]] && warn "配置项 $key 为空 —— 已回退用旧名 $legacy 的值 (建议把 .env 里的 $legacy 改成 $key)"
+    fi
+  fi
   if [[ -z "$v" ]]; then printf '%s' "$def"; else printf '%s' "$v"; fi
 }
 

@@ -249,16 +249,36 @@ _FileLock = file_lock
 # ===== 工作区准备 =====
 
 def _sync_remote_url() -> None:
-    """把本地仓库的 origin 指向当前配置的远端."""
+    """把本地仓库的 origin 指向当前配置的远端.
+
+    ⚠️ **远端地址为空时必须原样不动** (2026-11-02 实测踩过) ——
+       `git remote set-url origin ""` 会把 URL **清空**, 之后所有 git 命令
+       (fetch / push) 都报:
+           fatal: no path specified; see 'git help pull' for valid url syntax
+       —— 因为 git 把 "origin main" 当成两个**路径**而不是"remote + refspec"。
+       而且这个报错在 stderr 里, 会被归类成 unknown, 报给用户的是
+       "git 失败 (rc=1): " (空消息), 完全看不出原因。
+
+       远端地址为空的情况: EXTENSIONS_GIT_REMOTE 没配 **且** DB 里的
+       extensions.git.remote 也是空 (设置页还没填过)。此时**宁可不动**,
+       也不能把已有的正确 URL 清掉。
+    """
+    remote = git_remote().strip()
+    if not remote:
+        logger.warning(
+            "git_sync: 远端地址为空 —— 跳过 origin 同步 (保留现有 URL)。"
+            "请在设置页填 extensions.git.remote, 或在 .env 里配 EXTENSIONS_GIT_REMOTE",
+        )
+        return
     rc, so, _ = _run_git(["remote", "get-url", "origin"], cwd=WORKSPACE)
     if rc != 0:
-        _run_git(["remote", "add", "origin", git_remote()], cwd=WORKSPACE)
+        _run_git(["remote", "add", "origin", remote], cwd=WORKSPACE)
         return
-    if so.strip() != git_remote().strip():
+    if so.strip() != remote:
         logger.info(
-            "git_sync 更新 origin: %s → %s", so.strip(), git_remote(),
+            "git_sync 更新 origin: %s → %s", so.strip(), remote,
         )
-        _run_git(["remote", "set-url", "origin", git_remote()], cwd=WORKSPACE)
+        _run_git(["remote", "set-url", "origin", remote], cwd=WORKSPACE)
 
 
 def ensure_workspace() -> Path:
@@ -513,6 +533,18 @@ def _ahead_of_remote() -> int:
 
 def _push() -> str:
     """push 到远端. 远端有新提交时先 rebase, 冲突则放弃并报需人工处理."""
+    # ⚠️ 远端地址为空 → 报错要**说人话** (2026-11-02 实测踩过) ——
+    #    空地址时 git 会报 "fatal: no path specified; see 'git help pull'",
+    #    跟"仓库不存在"完全不像, 用户根本猜不到是地址没配。
+    if not git_remote().strip():
+        raise SyncError(
+            "GitLab 仓库地址未配置",
+            "repo",
+            hint=(
+                "在设置页填 extensions.git.remote (SSH 地址), "
+                "或在 deploy/native/.env 里配 EXTENSIONS_GIT_REMOTE"
+            ),
+        )
     rc, so, se = _run_git(["fetch", "origin", git_branch()], cwd=WORKSPACE, timeout=120)
     if rc != 0:
         low = (se or "").lower()
