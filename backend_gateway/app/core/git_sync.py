@@ -1,4 +1,4 @@
-"""资产市场 — 本地 git 工作区 + GitLab SSH 同步层.
+"""扩展 — 本地 git 工作区 + GitLab SSH 同步层.
 
 设计 (方案 A):
     读路径 (同步, 快)  前端 → 后端 → 本地工作区 (git working copy)
@@ -38,16 +38,16 @@ from app.core.settings_store import _in_container
 logger = logging.getLogger(__name__)
 
 # ===== 配置 =====
-WORKSPACE = Path(os.environ.get("MARKET_WORKSPACE", "/workspace"))
+WORKSPACE = Path(os.environ.get("EXTENSIONS_WORKSPACE", "/workspace"))
 # 远端与分支是**运行时配置** —— 设置页可以改, 改完立即生效.
 # 为什么不是直接读 settings_store: 这里是**同步**代码, 而 settings_store.get 是 async.
 # 折中: 设置变更时 (settings API) 调 set_git_config() 更新内存值,
 #       进程启动时再从 DB 装载一次 (见 app/main.py 的 lifespan).
 # env 只作初值 —— 改了设置页的值, env 就该让位.
-DEFAULT_GIT_REMOTE = "ssh://git@host.docker.internal:8922/root/testmate-market.git"
+DEFAULT_GIT_REMOTE = "ssh://git@host.docker.internal:8922/root/testmate-extensions.git"
 _git_cfg: dict[str, str] = {
-    "remote": os.environ.get("MARKET_GIT_REMOTE", DEFAULT_GIT_REMOTE),
-    "branch": os.environ.get("MARKET_GIT_BRANCH", "main"),
+    "remote": os.environ.get("EXTENSIONS_GIT_REMOTE", DEFAULT_GIT_REMOTE),
+    "branch": os.environ.get("EXTENSIONS_GIT_BRANCH", "main"),
 }
 
 
@@ -222,7 +222,7 @@ def _classify(stderr: str, rc: int) -> SyncError:
         return SyncError("远端没有这个分支", "repo",
                          hint="在 GitLab 上创建该分支, 或改设置里的分支名")
     if "does not appear to be a git repository" in s or "not a git repository" in s:
-        return SyncError("工作区不是 git 仓库", "repo", hint="检查 MARKET_WORKSPACE 挂载")
+        return SyncError("工作区不是 git 仓库", "repo", hint="检查 EXTENSIONS_WORKSPACE 挂载")
     if "could not read from remote repository" in s or "repository not found" in s:
         return SyncError("远端仓库不存在或无访问权限", "repo")
     if "no space left" in s or "disk" in s and "full" in s:
@@ -707,7 +707,7 @@ def probe_remote() -> tuple[bool, str]:
     """
     remote, branch = git_remote(), git_branch()
     if not remote:
-        return False, "未配置 GitLab 仓库地址 (marketplace.git.remote)"
+        return False, "未配置 GitLab 仓库地址 (extensions.git.remote)"
     rc, so, se = _run_git(
         ["ls-remote", "--heads", remote], cwd=WORKSPACE, timeout=15,
     )

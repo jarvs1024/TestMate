@@ -25,7 +25,7 @@ const TOKEN = {
   name: 'CI deploy',
   user_id: 2,
   username: 'publisher@example.com',
-  scopes: ['market:read', 'market:write'],
+  scopes: ['extensions:read', 'extensions:write'],
   expires_at: '2099-01-02T03:04:00.000Z',
   revoked_at: null,
   last_used_at: null,
@@ -54,7 +54,7 @@ beforeEach(() => {
   api.createMcpToken.mockReset();
   api.deleteMcpToken.mockReset();
   api.listMcpTokens.mockResolvedValue({ items: [] });
-  api.listMcpTokenScopes.mockResolvedValue({ scopes: ['market:read', 'market:write'] });
+  api.listMcpTokenScopes.mockResolvedValue({ scopes: ['extensions:read', 'extensions:write'] });
   api.createMcpToken.mockResolvedValue(TOKEN);
   api.deleteMcpToken.mockResolvedValue(undefined);
   vi.mocked(ElMessageBox.confirm).mockReset();
@@ -79,14 +79,14 @@ describe('个人中心 · 访问令牌', () => {
     const w = await mountTokens();
 
     await w.get('input[aria-label="令牌名称"]').setValue('CI deploy');
-    await w.get('input[type="checkbox"][value="market:write"]').setValue(true);
+    await w.get('input[type="checkbox"][value="extensions:write"]').setValue(true);
     await w.get('input[aria-label="过期时间（可选）"]').setValue('2099-01-02T03:04');
     await button(w, '创建令牌').trigger('click');
     await flushPromises();
 
     expect(api.createMcpToken).toHaveBeenCalledWith({
       name: 'CI deploy',
-      scopes: ['market:read', 'market:write'],
+      scopes: ['extensions:read', 'extensions:write'],
       expires_at: new Date('2099-01-02T03:04').toISOString(),
     });
     expect(api.listMcpTokens).toHaveBeenCalledTimes(2);
@@ -100,10 +100,10 @@ describe('个人中心 · 访问令牌', () => {
   });
 
   it('只读账号不能勾选管理资产，也不会提交越权 scope', async () => {
-    api.listMcpTokenScopes.mockResolvedValue({ scopes: ['market:read'] });
+    api.listMcpTokenScopes.mockResolvedValue({ scopes: ['extensions:read'] });
     const w = await mountTokens();
 
-    const write = w.get('input[type="checkbox"][value="market:write"]').element as HTMLInputElement;
+    const write = w.get('input[type="checkbox"][value="extensions:write"]').element as HTMLInputElement;
     expect(write.disabled).toBe(true);
     await w.get('input[aria-label="令牌名称"]').setValue('readonly');
     await button(w, '创建令牌').trigger('click');
@@ -111,7 +111,7 @@ describe('个人中心 · 访问令牌', () => {
 
     expect(api.createMcpToken).toHaveBeenCalledWith({
       name: 'readonly',
-      scopes: ['market:read'],
+      scopes: ['extensions:read'],
     });
     w.unmount();
   });

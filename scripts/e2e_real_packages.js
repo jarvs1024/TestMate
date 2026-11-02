@@ -216,7 +216,7 @@ async function uploadPackage(token, pkg, over = {}, filename) {
   const form = new FormData();
   for (const [k, v] of Object.entries(uploadForm(pkg, over))) form.append(k, v);
   form.append('package', new Blob([buf]), filename || path.basename(pkg.zip));
-  const r = await api('/api/v1/assets/upload', { method: 'POST', token, form });
+  const r = await api('/api/v1/extensions/upload', { method: 'POST', token, form });
   return r;
 }
 
@@ -229,7 +229,7 @@ async function updatePackage(token, pkg, over = {}) {
   const form = new FormData();
   for (const [k, v] of Object.entries(uploadForm(pkg, over))) form.append(k, v);
   form.append('package', new Blob([buf]), path.basename(pkg.zip));
-  const r = await api(`/api/v1/assets/${pkg.code}`, { method: 'PUT', token, form });
+  const r = await api(`/api/v1/extensions/${pkg.code}`, { method: 'PUT', token, form });
   return r;
 }
 
@@ -238,7 +238,7 @@ async function waitJob(token, jobId, timeoutMs = 60000) {
   const t0 = Date.now();
   let last = null;
   while (Date.now() - t0 < timeoutMs) {
-    const r = await api(`/api/v1/assets/jobs/${jobId}`, { token });
+    const r = await api(`/api/v1/extensions/jobs/${jobId}`, { token });
     last = r.json;
     if (last && ['pushed', 'failed'].includes(last.status)) return last;
     await sleep(700);
@@ -266,7 +266,7 @@ function expectedLayout(files) {
  *    (前端那一步写盘是纯文件复制, 由前端单测覆盖)
  */
 async function compareViaBundle(token, pkg, code) {
-  const r = await api(`/api/v1/assets/${code}/bundle`, { token });
+  const r = await api(`/api/v1/extensions/${code}/bundle`, { token });
   if (r.status !== 200 || !r.json || !r.json.files) {
     return {
       ok: false, count: 0, got: {}, missing: ['(bundle 请求失败)'],
@@ -306,7 +306,7 @@ async function compareViaBundle(token, pkg, code) {
  * @param {string} tag 检查项前缀 (便于在结果里区分)
  */
 async function runLifecycle(pkg, token, pubToken, tag) {
-  const A = `/api/v1/assets/${pkg.code}`;
+  const A = `/api/v1/extensions/${pkg.code}`;
 
   // 预清理: 上一次跑崩了可能留下同名资产 (脚本必须能重复运行)
   const pre = await api(A, { method: 'DELETE', token });
@@ -314,7 +314,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
 
   // ① 上传前体检
   const buf = fs.readFileSync(pkg.zip);
-  const pv = await api('/api/v1/assets/preview-package', {
+  const pv = await api('/api/v1/extensions/preview-package', {
     method: 'POST', token,
     form: (() => {
       const f = new FormData();
@@ -392,7 +392,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
     `publish_status=${det.json && det.json.publish_status}`);
 
   // ⑫ 列表可见
-  const list = await api(`/api/v1/assets?kind=${pkg.kind}&limit=100`, { token });
+  const list = await api(`/api/v1/extensions?kind=${pkg.kind}&limit=100`, { token });
   const hit = (list.json.items || []).find((i) => i.code === pkg.code);
   check(`${tag} ⑫ 列表里可见`, !!hit,
     hit ? `${hit.name} ${hit.version} ${hit.publish_status}` : '没找到');
@@ -468,7 +468,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
 
   // ㉖c 历史版本下载 —— 更新前的那个包还留在 package/ 里, 应该还能下
   const dl = await fetch(
-    `${API}/api/v1/assets/${pkg.code}/versions/${pkg.version}/download`,
+    `${API}/api/v1/extensions/${pkg.code}/versions/${pkg.version}/download`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   const dlBuf = Buffer.from(await dl.arrayBuffer());
@@ -503,7 +503,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
   check(`${tag} ㉗ 申请下架成功`, unpub.status === 200, `status=${unpub.status}`);
   // 申请后资产**仍在市场可见** —— 管理员确认前它还在被用 (只是挂个待审徽标).
   const listAfter = await api(
-    `/api/v1/assets?kind=${pkg.kind}&limit=100&client_id=e2e-real`, { token: pubToken },
+    `/api/v1/extensions?kind=${pkg.kind}&limit=100&client_id=e2e-real`, { token: pubToken },
   );
   const still = (listAfter.json.items || []).find((i) => i.code === pkg.code);
   check(`${tag} ㉘ 待下架审核期间资产仍在市场可见`,
@@ -526,7 +526,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
 
   // ㉛b 安装包 (zip) 能下载 —— 「下载安装包」这条路要用
   const zdl = await fetch(
-    `${API}/api/v1/assets/${pkg.code}/versions/${newVersion}/download`,
+    `${API}/api/v1/extensions/${pkg.code}/versions/${newVersion}/download`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   const zbuf = Buffer.from(await zdl.arrayBuffer());
@@ -537,14 +537,14 @@ async function runLifecycle(pkg, token, pubToken, tag) {
 
   // ㉘ 从工作区 index.json 回灌 DB (模拟 DB 记录丢失)
   const before = await api(A, { token });
-  const dbRows = (await api(`/api/v1/assets?kind=${pkg.kind}&limit=200&status=all`, { token }))
+  const dbRows = (await api(`/api/v1/extensions?kind=${pkg.kind}&limit=200&status=all`, { token }))
     .json.items || [];
   const row = dbRows.find((i) => i.code === pkg.code);
   if (row) {
     deleteAssetRow(pkg.code);
     const goneDb = await api(A, { token });
     check(`${tag} ㉘ 模拟 DB 记录丢失`, goneDb.status === 404, `status=${goneDb.status}`);
-    const sync = await api('/api/v1/assets/sync', { method: 'POST', token });
+    const sync = await api('/api/v1/extensions/sync', { method: 'POST', token });
     check(`${tag} ㉘ /sync 从 index.json 回灌成功`,
       sync.status === 200 && sync.json.ok === true,
       `status=${sync.status} added=${sync.json && sync.json.added} updated=${sync.json && sync.json.updated}`);
@@ -561,7 +561,7 @@ async function runLifecycle(pkg, token, pubToken, tag) {
   check(`${tag} ㉝ 彻底删除成功`, del.status === 200, `status=${del.status} ${del.text.slice(0, 100)}`);
   const gone = await api(A, { token });
   check(`${tag} ㉞ 删除后不可查`, gone.status === 404, `status=${gone.status}`);
-  const listGone = await api(`/api/v1/assets?kind=${pkg.kind}&limit=100`, { token });
+  const listGone = await api(`/api/v1/extensions?kind=${pkg.kind}&limit=100`, { token });
   check(`${tag} ㉟ 删除后不在列表里`,
     !(listGone.json.items || []).some((i) => i.code === pkg.code));
 
@@ -576,14 +576,14 @@ async function runLifecycle(pkg, token, pubToken, tag) {
  * 资产永远推不上去, 卡在本地. 这里端到端复验.
  */
 async function runRetryScenario(adminToken, pubToken, pkg) {
-  const cfg = await api('/api/v1/assets/config', { token: adminToken });
+  const cfg = await api('/api/v1/extensions/config', { token: adminToken });
   const goodRemote = cfg.json.remote;
   const BAD = 'ssh://git@127.0.0.1:1/definitely-unreachable.git';
   const CODE = 'retry-demo';
 
   try {
     // 1) 把远端指到不可达地址
-    await setSetting(adminToken, 'marketplace.git.remote', BAD);
+    await setSetting(adminToken, 'extensions.git.remote', BAD);
 
     // 2) 上传 → 提交成功但推送失败
     // ⚠️ 包名必须跟 code 一致 (命名契约) —— 这里 code 换了, 包名也得换
@@ -596,22 +596,22 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
     if (!job || job.status !== 'failed') return;
 
     // 3) 恢复远端 → 重试
-    await setSetting(adminToken, 'marketplace.git.remote', goodRemote);
-    const rt = await api(`/api/v1/assets/jobs/${job.id}/retry`, { method: 'POST', token: adminToken });
+    await setSetting(adminToken, 'extensions.git.remote', goodRemote);
+    const rt = await api(`/api/v1/extensions/jobs/${job.id}/retry`, { method: 'POST', token: adminToken });
     check('R3 重试接口受理', rt.status === 200, `status=${rt.status}`);
     const job2 = await waitJob(adminToken, job.id, 90000);
     check('R4 重试后推送成功', job2 && job2.status === 'pushed',
       `status=${job2 && job2.status} sha=${job2 && String(job2.commit_sha || '').slice(0, 10)}`);
 
     // 4) 资产应当也能查到
-    const det = await api(`/api/v1/assets/${CODE}`, { token: adminToken });
+    const det = await api(`/api/v1/extensions/${CODE}`, { token: adminToken });
     check('R5 重试后资产可查', det.status === 200, `status=${det.status}`);
   } finally {
     // 无论成败都必须把远端改回去
-    try { await setSetting(adminToken, 'marketplace.git.remote', goodRemote); } catch (e) { /* 尽力而为 */ }
+    try { await setSetting(adminToken, 'extensions.git.remote', goodRemote); } catch (e) { /* 尽力而为 */ }
     // 清理这个临时资产
     try {
-      await api(`/api/v1/assets/${CODE}?comment=重试场景清理`, { method: 'DELETE', token: adminToken });
+      await api(`/api/v1/extensions/${CODE}?comment=重试场景清理`, { method: 'DELETE', token: adminToken });
     } catch (e) { /* 尽力而为 */ }
     // ⚠️ 测试回执也别留在生产的通知记录里 (管理员看的回执列表会被测试条目刷屏)
     try { mysql(`DELETE FROM asset_notifications WHERE code = '${CODE}';`); } catch (e) { /* 尽力而为 */ }
@@ -630,8 +630,8 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
   check('P0 发布者账号就绪', !!pubToken);
 
   const TOUCHED = [
-    'marketplace.review.enabled', 'marketplace.publisher_usernames',
-    'marketplace.git.remote',
+    'extensions.review.enabled', 'extensions.publisher_usernames',
+    'extensions.git.remote',
     'dingtalk.notify_on_publish', 'dingtalk.notify_on_update',
     'dingtalk.notify_on_unpublish', 'dingtalk.notify_on_delete',
   ];
@@ -643,8 +643,8 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
     // ⚠️ 改生产设置必须**在 try 里** —— 否则中途抛错(比如浏览器起不来)
     //    就永远还原不了, 把真实配置留在静音/白名单改掉的状态
     // 开审核 + 加白名单 + 静音钉钉 (测试不该往真实群刷屏)
-    await setSetting(adminToken, 'marketplace.review.enabled', 'true');
-    await setSetting(adminToken, 'marketplace.publisher_usernames', PUBLISHER.username);
+    await setSetting(adminToken, 'extensions.review.enabled', 'true');
+    await setSetting(adminToken, 'extensions.publisher_usernames', PUBLISHER.username);
     for (const k of TOUCHED.filter((x) => x.startsWith('dingtalk.'))) {
       await setSetting(adminToken, k, 'false');
     }
@@ -671,12 +671,12 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
     await runRetryScenario(adminToken, pubToken, pkgs.skill);
 
     // ===== 其余市场端点 =====
-    const cats = await api('/api/v1/assets/categories', { token: adminToken });
+    const cats = await api('/api/v1/extensions/categories', { token: adminToken });
     check('X1 分类接口可读',
       cats.status === 200 && (cats.json.items || cats.json.categories || []).length > 0,
       JSON.stringify(cats.json).slice(0, 120));
 
-    const cfg = await api('/api/v1/assets/config', { token: adminToken });
+    const cfg = await api('/api/v1/extensions/config', { token: adminToken });
     check('X2 市场配置接口可读',
       cfg.status === 200 && cfg.json.install_enabled !== undefined
       && cfg.json.skill_dir && cfg.json.plugin_dir,
@@ -684,28 +684,28 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
       `skill_dir=${cfg.json && cfg.json.skill_dir} ` +
       `plugin_dir=${cfg.json && cfg.json.plugin_dir}`);
 
-    const jobs = await api('/api/v1/assets/jobs?limit=20', { token: adminToken });
+    const jobs = await api('/api/v1/extensions/jobs?limit=20', { token: adminToken });
     check('X3 任务列表可读', jobs.status === 200 && Array.isArray(jobs.json.items),
       `${(jobs.json.items || []).length} 条任务`);
 
-    const audits = await api('/api/v1/assets/audits?limit=50', { token: adminToken });
+    const audits = await api('/api/v1/extensions/audits?limit=50', { token: adminToken });
     check('X4 审计留痕可读', audits.status === 200 && (audits.json.items || []).length > 0,
       `${(audits.json.items || []).length} 条审计`);
 
-    const notif = await api('/api/v1/assets/notifications?limit=50', { token: adminToken });
+    const notif = await api('/api/v1/extensions/notifications?limit=50', { token: adminToken });
     check('X5 通知回执可读', notif.status === 200, `${(notif.json.items || []).length} 条回执`);
 
-    const sync = await api('/api/v1/assets/sync-status?client_id=e2e-real', { token: adminToken });
+    const sync = await api('/api/v1/extensions/sync-status?client_id=e2e-real', { token: adminToken });
     check('X6 同步状态可读',
       sync.status === 200 && sync.json.pending_count >= 0 && sync.json.failed_count >= 0,
       `pending=${sync.json && sync.json.pending_count} failed=${sync.json && sync.json.failed_count}`);
 
-    const probe = await api('/api/v1/assets/probe/gitlab', { token: adminToken });
+    const probe = await api('/api/v1/extensions/probe/gitlab', { token: adminToken });
     check('X7 GitLab 连通探测', probe.status === 200 && probe.json.ok === true,
       `ok=${probe.json && probe.json.ok} ${(probe.json && probe.json.message || '').slice(0, 80)}`);
 
     // ===== 前端页面真实渲染 =====
-    await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.asset-card, .empty-state', { timeout: 15000 });
     await sleep(1500);
     const cards = await page.evaluate(() => document.querySelectorAll('.asset-card').length);

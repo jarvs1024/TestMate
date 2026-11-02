@@ -37,7 +37,7 @@ class AgentCategory(str, enum.Enum):
     ssd_report = "ssd-report"         # 测试报告 / 周报
     ssd_ops = "ssd-ops"               # 机台/环境运维
     auto_code = "auto-code"           # 自动化代码 (代码检视 / PR-Agent / 静态分析等)
-    ai_market = "ai-market"           # 插件/技能/连接器市场入口 (跳 /market 页)
+    ai_market = "ai-market"           # 插件/技能/连接器扩展入口 (跳 /market 页)
     ssd_kb = "ssd-kb"                 # 知识库 (RAGFlow 数据集 / 文档 / 检索)
     sw_library = "sw-library"         # 软件库 (公司内部软件: 功能 / 详情 / 适用 / 更新说明)
 
@@ -47,7 +47,7 @@ class AgentKind(str, enum.Enum):
 
     2026-10-25 定稿 (第二版): 原来是四种"形态" (tool / board / catalog / library),
     但那两个名字都在**泄漏实现** —— "目录"说的是目录结构, "知识"说的是内容形态,
-    跟用户脑子里的"这东西能干嘛"对不上. 实际资产市场里三种资产形态的官方说明
+    跟用户脑子里的"这东西能干嘛"对不上. 实际扩展里三种资产形态的官方说明
     写得很清楚: "一段可复用的方法与知识, 装进 Agent 后直接照着做" /
     "让 Agent 连到外部服务" —— 资产本来就是**装进 Agent 的扩展**;
     知识库则是 RAGFlow 的数据集/分段, 是**检索语料**.

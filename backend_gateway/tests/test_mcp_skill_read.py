@@ -26,15 +26,15 @@ ADMIN_TOKEN = "skill-read-admin-token"
 OTHER_TOKEN = "skill-read-other-token"
 NO_SCOPE_TOKEN = "skill-read-no-scope-token"
 TOOL_NAMES = {
-    "skill_search",
-    "skill_get",
-    "skill_read_doc",
-    "skill_list_files",
-    "skill_read_file",
-    "skill_package_info",
-    "skill_categories",
-    "skill_projects",
-    "skill_job_status",
+    "extension_search",
+    "extension_get",
+    "extension_read_doc",
+    "extension_list_files",
+    "extension_read_file",
+    "extension_package_info",
+    "extension_categories",
+    "extension_projects",
+    "extension_job_status",
 }
 
 
@@ -74,7 +74,7 @@ async def principals():
             await session.refresh(user)
         owner, admin, other = users
 
-    def principal(user: User, scopes=frozenset({"market:read"})) -> Principal:
+    def principal(user: User, scopes=frozenset({"extensions:read"})) -> Principal:
         return Principal(user=user, client_id="skill-read-tests", scopes=scopes)
 
     return {
@@ -93,7 +93,7 @@ async def _client(principals):
         redis_client=_FakeRedis(),
     )
     server._token_verifier = _ReadTokenVerifier(principals)
-    dispatcher = build_dispatcher({"skill": server})
+    dispatcher = build_dispatcher({"extensions": server})
     app = Starlette(routes=[Mount("/mcp", app=dispatcher)])
     async with run_mcp_lifespan(dispatcher):
         async with AsyncClient(
@@ -190,30 +190,30 @@ async def test_tools_list_keeps_nine_accurate_read_schemas(principals):
         tool["name"]: tool for tool in result["tools"] if tool["name"] in TOOL_NAMES
     }
     assert set(tools) == TOOL_NAMES
-    assert tools["skill_search"]["inputSchema"]["required"] == []
-    assert tools["skill_get"]["inputSchema"]["required"] == ["code"]
-    assert tools["skill_read_doc"]["inputSchema"]["required"] == ["code"]
-    assert tools["skill_list_files"]["inputSchema"]["required"] == ["code"]
-    assert tools["skill_read_file"]["inputSchema"]["required"] == ["code", "path"]
-    assert tools["skill_package_info"]["inputSchema"]["required"] == ["code"]
-    assert tools["skill_categories"]["inputSchema"]["additionalProperties"] is False
-    assert tools["skill_projects"]["inputSchema"]["additionalProperties"] is False
-    assert tools["skill_job_status"]["inputSchema"]["required"] == ["job_id"]
+    assert tools["extension_search"]["inputSchema"]["required"] == []
+    assert tools["extension_get"]["inputSchema"]["required"] == ["code"]
+    assert tools["extension_read_doc"]["inputSchema"]["required"] == ["code"]
+    assert tools["extension_list_files"]["inputSchema"]["required"] == ["code"]
+    assert tools["extension_read_file"]["inputSchema"]["required"] == ["code", "path"]
+    assert tools["extension_package_info"]["inputSchema"]["required"] == ["code"]
+    assert tools["extension_categories"]["inputSchema"]["additionalProperties"] is False
+    assert tools["extension_projects"]["inputSchema"]["additionalProperties"] is False
+    assert tools["extension_job_status"]["inputSchema"]["required"] == ["job_id"]
     assert all(tool["inputSchema"]["additionalProperties"] is False for tool in tools.values())
 
 
 @pytest.mark.parametrize(
     ("tool_name", "arguments"),
     [
-        ("skill_search", {}),
-        ("skill_get", {"code": "unused"}),
-        ("skill_read_doc", {"code": "unused"}),
-        ("skill_list_files", {"code": "unused"}),
-        ("skill_read_file", {"code": "unused", "path": "SKILL.md"}),
-        ("skill_package_info", {"code": "unused"}),
-        ("skill_categories", {}),
-        ("skill_projects", {}),
-        ("skill_job_status", {"job_id": 1}),
+        ("extension_search", {}),
+        ("extension_get", {"code": "unused"}),
+        ("extension_read_doc", {"code": "unused"}),
+        ("extension_list_files", {"code": "unused"}),
+        ("extension_read_file", {"code": "unused", "path": "SKILL.md"}),
+        ("extension_package_info", {"code": "unused"}),
+        ("extension_categories", {}),
+        ("extension_projects", {}),
+        ("extension_job_status", {"job_id": 1}),
     ],
 )
 async def test_every_read_tool_requires_market_read_scope(
@@ -233,15 +233,15 @@ async def test_search_uses_published_default_and_unified_pagination(
 
     async with _client(principals) as client:
         first = await _call(
-            client, OWNER_TOKEN, "skill_search", page=1, page_size=2
+            client, OWNER_TOKEN, "extension_search", page=1, page_size=2
         )
         second = await _call(
-            client, OWNER_TOKEN, "skill_search", page=2, page_size=2
+            client, OWNER_TOKEN, "extension_search", page=2, page_size=2
         )
         included = await _call(
             client,
             OWNER_TOKEN,
-            "skill_search",
+            "extension_search",
             include_unpublished=True,
             page=1,
             page_size=20,
@@ -249,7 +249,7 @@ async def test_search_uses_published_default_and_unified_pagination(
         stranger = await _call(
             client,
             OTHER_TOKEN,
-            "skill_search",
+            "extension_search",
             include_unpublished=True,
             page=1,
             page_size=20,
@@ -270,12 +270,12 @@ async def test_search_tag_and_author_are_exact_filters(principals, asset_workspa
 
     async with _client(principals) as client:
         tagged = await _call(
-            client, OTHER_TOKEN, "skill_search", tag="wanted", page=1, page_size=20
+            client, OTHER_TOKEN, "extension_search", tag="wanted", page=1, page_size=20
         )
         authored = await _call(
             client,
             OTHER_TOKEN,
-            "skill_search",
+            "extension_search",
             author="author-two",
             page=1,
             page_size=20,
@@ -296,13 +296,13 @@ async def test_invisible_and_missing_assets_have_identical_safe_not_found(
 
     async with _client(principals) as client:
         invisible = await call_tool(
-            client, OTHER_TOKEN, "skill_get", {"code": "dml-private-pending"}
+            client, OTHER_TOKEN, "extension_get", {"code": "dml-private-pending"}
         )
         missing = await call_tool(
-            client, OTHER_TOKEN, "skill_get", {"code": "dml-does-not-exist"}
+            client, OTHER_TOKEN, "extension_get", {"code": "dml-does-not-exist"}
         )
         owner = await _call(
-            client, OWNER_TOKEN, "skill_get", code="dml-private-pending"
+            client, OWNER_TOKEN, "extension_get", code="dml-private-pending"
         )
 
     assert _error(invisible) == _error(missing) == "Tool request failed (HTTP 404)."
@@ -323,13 +323,13 @@ async def test_get_doc_files_and_exact_text_file_use_existing_market_data(
     )
 
     async with _client(principals) as client:
-        detail = await _call(client, ADMIN_TOKEN, "skill_get", code=asset.code)
-        doc = await _call(client, OTHER_TOKEN, "skill_read_doc", code=asset.code)
-        files = await _call(client, OTHER_TOKEN, "skill_list_files", code=asset.code)
+        detail = await _call(client, ADMIN_TOKEN, "extension_get", code=asset.code)
+        doc = await _call(client, OTHER_TOKEN, "extension_read_doc", code=asset.code)
+        files = await _call(client, OTHER_TOKEN, "extension_list_files", code=asset.code)
         text = await _call(
             client,
             OTHER_TOKEN,
-            "skill_read_file",
+            "extension_read_file",
             code=asset.code,
             path="docs/note.txt",
         )
@@ -382,7 +382,7 @@ async def test_read_file_rejects_traversal_absolute_missing_and_binary(
         result = await call_tool(
             client,
             OTHER_TOKEN,
-            "skill_read_file",
+            "extension_read_file",
             {"code": asset.code, "path": path},
         )
 
@@ -406,11 +406,11 @@ async def test_read_file_rejects_valid_utf8_binary_but_preserves_unicode_text(
         binary = await call_tool(
             client,
             OTHER_TOKEN,
-            "skill_read_file",
+            "extension_read_file",
             {"code": asset.code, "path": "valid-utf8.bin"},
         )
         text = await _call(
-            client, OTHER_TOKEN, "skill_read_file", code=asset.code, path="unicode.txt"
+            client, OTHER_TOKEN, "extension_read_file", code=asset.code, path="unicode.txt"
         )
 
     assert _error(binary) == "Tool request failed (HTTP 422)."
@@ -421,7 +421,7 @@ async def test_package_info_hashes_real_bytes_and_never_falls_back_to_another_ve
     principals, asset_workspace
 ):
     await set_setting(
-        "marketplace.public_base_url", "https://public.example.test:8443/"
+        "extensions.public_base_url", "https://public.example.test:8443/"
     )
     asset = await _seed_asset("dml-package-info", version="2.0.0")
     package_bytes = b"actual package bytes for version one\x00\xff"
@@ -433,23 +433,23 @@ async def test_package_info_hashes_real_bytes_and_never_falls_back_to_another_ve
         info = await _call(
             client,
             OTHER_TOKEN,
-            "skill_package_info",
+            "extension_package_info",
             code=asset.code,
             version="1.0.0",
         )
         current_missing = await call_tool(
-            client, OTHER_TOKEN, "skill_package_info", {"code": asset.code}
+            client, OTHER_TOKEN, "extension_package_info", {"code": asset.code}
         )
         explicit_missing = await call_tool(
             client,
             OTHER_TOKEN,
-            "skill_package_info",
+            "extension_package_info",
             {"code": asset.code, "version": "3.0.0"},
         )
         traversal = await call_tool(
             client,
             OTHER_TOKEN,
-            "skill_package_info",
+            "extension_package_info",
             {"code": asset.code, "version": "../outside"},
         )
 
@@ -463,7 +463,7 @@ async def test_package_info_hashes_real_bytes_and_never_falls_back_to_another_ve
     }
     assert download_url.startswith(
         "https://public.example.test:8443"
-        f"/api/v1/assets/{asset.code}/versions/1.0.0/ticket-download?ticket="
+        f"/api/v1/extensions/{asset.code}/versions/1.0.0/ticket-download?ticket="
     )
     assert _error(current_missing) == "Tool request failed (HTTP 404)."
     assert _error(explicit_missing) == "Tool request failed (HTTP 404)."
@@ -484,7 +484,7 @@ async def test_package_info_rejects_package_symlink_to_outside_target(
         result = await call_tool(
             client,
             OTHER_TOKEN,
-            "skill_package_info",
+            "extension_package_info",
             {"code": asset.code, "version": "1.0.0"},
         )
 
@@ -495,8 +495,8 @@ async def test_categories_and_projects_come_from_current_single_rule_source(prin
     await set_setting(market_projects.SETTINGS_KEY, "7000, 7100")
 
     async with _client(principals) as client:
-        categories = await _call(client, OTHER_TOKEN, "skill_categories")
-        projects = await _call(client, OTHER_TOKEN, "skill_projects")
+        categories = await _call(client, OTHER_TOKEN, "extension_categories")
+        projects = await _call(client, OTHER_TOKEN, "extension_projects")
 
     assert categories == {"items": market_categories.table()}
     assert projects == {"items": ["7000", "7100"]}
@@ -524,12 +524,12 @@ async def test_job_status_exposes_real_state_to_owner_and_admin_only(
         job_id = job.id
 
     async with _client(principals) as client:
-        owned = await _call(client, OWNER_TOKEN, "skill_job_status", job_id=job_id)
+        owned = await _call(client, OWNER_TOKEN, "extension_job_status", job_id=job_id)
         administered = await _call(
-            client, ADMIN_TOKEN, "skill_job_status", job_id=job_id
+            client, ADMIN_TOKEN, "extension_job_status", job_id=job_id
         )
         denied = await call_tool(
-            client, OTHER_TOKEN, "skill_job_status", {"job_id": job_id}
+            client, OTHER_TOKEN, "extension_job_status", {"job_id": job_id}
         )
 
     assert owned["id"] == job_id and owned["status"] == status

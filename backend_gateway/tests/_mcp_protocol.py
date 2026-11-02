@@ -7,7 +7,7 @@ from typing import Any
 from httpx import AsyncClient
 from mcp.types import LATEST_PROTOCOL_VERSION
 
-_ENDPOINT = "/mcp/skill"
+_ENDPOINT = "/mcp/extensions"
 
 
 def _headers(token: str) -> dict[str, str]:

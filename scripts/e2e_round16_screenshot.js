@@ -12,7 +12,7 @@
  *      `jiakejiang`, 不再显示 `jiakejiang@twsc.com.cn`.
  *
  * ⚠️ 本脚本**只读 + 截图**, 不改任何数据.
- * ⚠️ 通知预览走后端 `GET /api/v1/assets/notifications/preview` (只渲染不发送) ——
+ * ⚠️ 通知预览走后端 `GET /api/v1/extensions/notifications/preview` (只渲染不发送) ——
  *    **绝对不往公司真实钉钉群发消息**.
  *
  * 用法 (native 端口):

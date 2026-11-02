@@ -1,4 +1,4 @@
-"""资产市场 Pydantic schemas."""
+"""扩展 Pydantic schemas."""
 from datetime import datetime
 from typing import Any
 
@@ -32,7 +32,7 @@ class AssetOut(UTCModel):
     bindings: dict[str, Any] = {}
     git_path: str = ""
     git_commit_sha: str = ""
-    # 资产在 GitLab 上的网页地址 (由 marketplace.git.web_url 拼出; 没配就为空)
+    # 资产在 GitLab 上的网页地址 (由 extensions.git.web_url 拼出; 没配就为空)
     git_web_url: str = ""
     # 下载次数 (热门度) —— 与"是否安装"无关
     download_count: int = 0
@@ -140,7 +140,7 @@ class PackagePreviewOut(BaseModel):
 
 
 class MarketConfigOut(BaseModel):
-    """市场当前**生效**的配置 (只读) —— 设置页用来展示"仓库在哪 / 装到哪 / 谁能发"."""
+    """扩展当前**生效**的配置 (只读) —— 设置页用来展示"仓库在哪 / 装到哪 / 谁能发"."""
 
     workspace: str = ""
     remote: str = ""
@@ -261,7 +261,7 @@ class UploadAssetIn(BaseModel):
     use_when: str = ""
     not_for: str = ""
     category: str = ""
-    # 适用项目: 空 = 通用; "6100" = 6100 项目特有 (列表见设置项 marketplace.projects)
+    # 适用项目: 空 = 通用; "6100" = 6100 项目特有 (列表见设置项 extensions.projects)
     project: str = ""
     icon: str = "🧩"
     tags: list[str] = []

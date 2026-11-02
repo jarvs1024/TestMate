@@ -76,7 +76,7 @@ async def principal():
         return Principal(
             user=user,
             client_id="client-runtime-test",
-            scopes=frozenset({"market:read", "market:write"}),
+            scopes=frozenset({"extensions:read", "extensions:write"}),
         )
 
 
@@ -111,7 +111,7 @@ def _spec(handler, **overrides) -> ToolSpec:
             "required": ["code"],
             "additionalProperties": False,
         },
-        "scope": "market:read",
+        "scope": "extensions:read",
         "read_only": True,
         "handler": handler,
     }
@@ -121,13 +121,13 @@ def _spec(handler, **overrides) -> ToolSpec:
 
 def _register(spec: ToolSpec, redis, principal: Principal) -> FastMCP:
     server = build_mcp(
-        "skill",
+        "extensions",
         public_base_url="http://test",
         allowed_hosts=["test"],
         redis_client=redis,
     )
     server._token_verifier = _PrincipalTokenVerifier(principal)
-    register_tool(server, "skill", spec, redis_client=redis)
+    register_tool(server, "extensions", spec, redis_client=redis)
     return server
 
 
@@ -145,9 +145,9 @@ async def _client_session(server: FastMCP):
             follow_redirects=True,
         )
 
-    async with run_mcp_lifespan({"skill": server}):
+    async with run_mcp_lifespan({"extensions": server}):
         async with streamablehttp_client(
-            "http://test/skill",
+            "http://test/extensions",
             headers={"Authorization": "Bearer runtime-test-token"},
             httpx_client_factory=client_factory,
         ) as (read_stream, write_stream, _):
@@ -215,7 +215,7 @@ async def test_insufficient_scope_returns_safe_error_and_is_audited(principal):
         client_id=principal.client_id,
         scopes=frozenset(),
     )
-    server = _register(_spec(handler, scope="market:write"), FakeRedis(), limited)
+    server = _register(_spec(handler, scope="extensions:write"), FakeRedis(), limited)
 
     result = await _call(server, code="sensitive-code")
 
@@ -227,7 +227,7 @@ async def test_insufficient_scope_returns_safe_error_and_is_audited(principal):
     audit = await _only_audit()
     assert audit.success is False
     assert audit.error == "insufficient_scope"
-    assert audit.domain == "skill"
+    assert audit.domain == "extensions"
     assert audit.tool == "runtime_probe"
     assert audit.args_summary == {"code": "sensitive-code"}
 
@@ -602,21 +602,64 @@ async def test_unconfigured_dispatcher_returns_503():
 
 async def test_dispatcher_uses_exact_streamable_route_and_sse_mount(principal):
     domain = build_mcp(
-        "skill",
+        "extensions",
         public_base_url="http://test:8081",
         allowed_hosts=["test", "test:8081"],
     )
-    dispatcher = build_dispatcher({"skill": domain})
+    dispatcher = build_dispatcher({"extensions": domain})
 
-    assert len(dispatcher.routes) == 2
+    assert len(dispatcher.routes) == 4
     assert isinstance(dispatcher.routes[0], Route)
-    assert dispatcher.routes[0].path == "/skill"
+    assert dispatcher.routes[0].path == "/extensions"
     assert isinstance(dispatcher.routes[1], Mount)
-    assert dispatcher.routes[1].path == "/skill"
-    assert domain.settings.streamable_http_path == "/skill"
-    assert domain.settings.mount_path == "/"  # Outer mounts provide /mcp/skill.
+    assert dispatcher.routes[1].path == "/extensions"
+    assert dispatcher.routes[2].path == "/skill"  # Legacy alias route.
+    assert dispatcher.routes[3].path == "/skill"  # Legacy alias SSE mount.
+    assert domain.settings.streamable_http_path == "/extensions"
+    assert domain.settings.mount_path == "/"  # Outer mounts provide /mcp/extensions.
     assert domain.settings.stateless_http is True
     assert domain.settings.json_response is True
+
+
+class _RecordingAsgiApp:
+    def __init__(self) -> None:
+        self.paths: list[str] = []
+
+    async def __call__(self, scope, receive, send) -> None:
+        from starlette.responses import JSONResponse
+
+        self.paths.append(scope["path"])
+        await JSONResponse({"path": scope["path"], "method": scope["method"]})(
+            scope, receive, send
+        )
+
+
+class _FakeDomain:
+    def __init__(self, app: _RecordingAsgiApp) -> None:
+        self._app = app
+
+    def streamable_http_app(self):
+        return self._app
+
+    def sse_app(self):
+        return self._app
+
+
+async def test_legacy_skill_alias_forwards_post_to_extensions():
+    from fastapi import FastAPI
+
+    app = _RecordingAsgiApp()
+    dispatcher = build_dispatcher({"extensions": _FakeDomain(app)})
+    outer = FastAPI()
+    outer.mount("/mcp", dispatcher)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=outer), base_url="http://test"
+    ) as client:
+        response = await client.post("/mcp/skill")
+
+    assert response.status_code == 200
+    assert response.json() == {"path": "/mcp/extensions", "method": "POST"}
 
 
 async def test_lifespan_enters_and_exits_every_domain_symmetrically():

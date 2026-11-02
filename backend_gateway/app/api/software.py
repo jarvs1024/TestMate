@@ -1,7 +1,7 @@
 """软件库 API —— /api/v1/software/*.
 
-⚠️ 与「插件·技能·连接」(/api/v1/assets) 的分工:
-    资产市场存的是**装进 Agent 的文本包**, 真身在 GitLab; 软件库存的是
+⚠️ 与「扩展」(/api/v1/extensions) 的分工:
+    扩展存的是**装进 Agent 的文本包**, 真身在 GitLab; 软件库存的是
     **给人用的内部软件** (任意格式二进制), 真身在**服务端磁盘**.
     两者在存储 / 权限 / 审核三个维度都不同, 所以各有各的命名空间.
 
@@ -33,7 +33,7 @@ from sqlalchemy import cast, func, or_, select, update, Text
 from app.api.auth import get_current_user, get_optional_user
 from app.core import market_policy, software_store
 from app.core.asset_locks import code_lock
-from app.core.dingtalk import notify_market
+from app.core.dingtalk import notify_extensions
 from app.core.identity import author_forms
 from app.core.security import create_download_ticket as sign_download_ticket
 from app.core.security import decode_download_ticket
@@ -146,10 +146,10 @@ async def _keep_versions() -> int:
 
 
 async def require_publisher(user: User = Depends(get_current_user)) -> User:
-    """谁能往软件库传东西 —— **复用市场的发布权判定**, 不另造一套.
+    """谁能往软件库传东西 —— **复用扩展的发布权判定**, 不另造一套.
 
     ⚠️ 为什么不新设一个设置项: 同一批人 (测试工程 + 白名单), 少一套配置少一处
-       "两边不一致" 的坑 —— 用户在市场上能发, 在软件库里发不了, 只会觉得是 bug.
+       "两边不一致" 的坑 —— 用户在扩展中能发, 在软件库里发不了, 只会觉得是 bug.
     """
     if not await market_policy.can_publish(user):
         role = market_policy.role_of(user)
@@ -1051,7 +1051,7 @@ async def _notify_software_published(
             author = item.author or ""
             release_notes = (ver.release_notes if ver is not None else "") or ""
         event = "software_update" if was_published else "software_publish"
-        await notify_market(
+        await notify_extensions(
             event,
             name=name,
             version=version,
@@ -1089,7 +1089,7 @@ async def _notify_software_unpublished(
        那一行已经没了, 再查就查不到, 通知会静默丢掉.
     """
     try:
-        await notify_market(
+        await notify_extensions(
             "software_unpublish",
             name=name,
             version=version,
@@ -1624,7 +1624,7 @@ async def create_download_ticket(
 async def delete_software(
     code: str, user: User = Depends(require_publisher)
 ) -> SoftwareDeleteOut:
-    """软删条目 —— 文件**留在磁盘上** (跟市场"下架申请 → 管理员确认"一个口径).
+    """软删条目 —— 文件**留在磁盘上** (跟扩展"下架申请 → 管理员确认"一个口径).
 
     ⚠️ 磁盘不释放是**故意的**: 删错了还能找回来. 管理员可以在详情页做
        「彻底清理」把文件和记录一起删掉.
@@ -1712,7 +1712,7 @@ async def purge_software(
         await session.commit()
     # ⚠️ 所有候选根都删 —— 换过存储根目录时, 老文件在旧根 (2026-10-28)
     software_store.remove_item_dir_anywhere(roots, code)
-    # ⚠️ 2026-10-31 (第十三轮): **下架也要通知钉钉** (市场群, @所有人) ——
+    # ⚠️ 2026-10-31 (第十三轮): **下架也要通知钉钉** (扩展群, @所有人) ——
     #    之前是静默下架, 那个软件从库里没了, 谁都不知道.
     #    通知放在**删完之后** —— 通知说的就是"它已经没了"这个既成事实.
     await _notify_software_unpublished(

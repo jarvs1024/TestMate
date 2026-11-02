@@ -34,17 +34,17 @@ def on_host(monkeypatch):
     "raw,expected",
     [
         (
-            "ssh://git@host.docker.internal:8922/root/testmate-market.git",
-            "ssh://git@127.0.0.1:8922/root/testmate-market.git",
+            "ssh://git@host.docker.internal:8922/root/testmate-extensions.git",
+            "ssh://git@127.0.0.1:8922/root/testmate-extensions.git",
         ),
         (
-            "ssh://git@host.docker.internal/root/testmate-market.git",
-            "ssh://git@127.0.0.1/root/testmate-market.git",
+            "ssh://git@host.docker.internal/root/testmate-extensions.git",
+            "ssh://git@127.0.0.1/root/testmate-extensions.git",
         ),
         # 没有 user@ 的写法也要改
         (
-            "ssh://host.docker.internal:8922/root/testmate-market.git",
-            "ssh://127.0.0.1:8922/root/testmate-market.git",
+            "ssh://host.docker.internal:8922/root/testmate-extensions.git",
+            "ssh://127.0.0.1:8922/root/testmate-extensions.git",
         ),
     ],
 )
@@ -59,12 +59,12 @@ def test_宿主上_host_docker_internal_换成_127_0_0_1(raw, expected, on_host)
     "raw,expected",
     [
         (
-            "ssh://git@127.0.0.1:8922/root/testmate-market.git",
-            "ssh://git@host.docker.internal:8922/root/testmate-market.git",
+            "ssh://git@127.0.0.1:8922/root/testmate-extensions.git",
+            "ssh://git@host.docker.internal:8922/root/testmate-extensions.git",
         ),
         (
-            "ssh://git@localhost:8922/root/testmate-market.git",
-            "ssh://git@host.docker.internal:8922/root/testmate-market.git",
+            "ssh://git@localhost:8922/root/testmate-extensions.git",
+            "ssh://git@host.docker.internal:8922/root/testmate-extensions.git",
         ),
     ],
 )
@@ -78,8 +78,8 @@ def test_容器里_127_0_0_1_换成_host_docker_internal(raw, expected, in_conta
 @pytest.mark.parametrize(
     "raw",
     [
-        "ssh://git@gitlab.example.com:8922/root/testmate-market.git",
-        "ssh://git@10.0.0.5:8922/root/testmate-market.git",
+        "ssh://git@gitlab.example.com:8922/root/testmate-extensions.git",
+        "ssh://git@10.0.0.5:8922/root/testmate-extensions.git",
         "file:///Users/jarvs/testmate-data/market-remote.git",
         "",
     ],
@@ -94,6 +94,6 @@ def test_git_remote_返回改写后的地址(on_host, monkeypatch):
     """git_remote() 是对外口径 —— 必须已经改写过 (fetch/push 都用它)."""
     monkeypatch.setitem(
         git_sync._git_cfg, "remote",
-        "ssh://git@host.docker.internal:8922/root/testmate-market.git",
+        "ssh://git@host.docker.internal:8922/root/testmate-extensions.git",
     )
-    assert git_sync.git_remote() == "ssh://git@127.0.0.1:8922/root/testmate-market.git"
+    assert git_sync.git_remote() == "ssh://git@127.0.0.1:8922/root/testmate-extensions.git"

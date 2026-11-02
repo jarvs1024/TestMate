@@ -20,14 +20,14 @@ from tests.conftest import set_setting
 
 PUBLIC_BASE = "http://127.0.0.1:8081/"
 AUDIENCE = "http://127.0.0.1:8081/mcp"
-ALL_SCOPES = ["market:read", "market:write"]
+ALL_SCOPES = ["extensions:read", "extensions:write"]
 DELETE = object()
 
 
 @pytest.fixture(autouse=True)
 async def _auth_settings():
-    await set_setting("marketplace.public_base_url", PUBLIC_BASE)
-    await set_setting("marketplace.publisher_roles", "tester")
+    await set_setting("extensions.public_base_url", PUBLIC_BASE)
+    await set_setting("extensions.publisher_roles", "tester")
 
 
 async def _user(
@@ -209,8 +209,8 @@ async def test_oauth_rejects_invalid_audience_type_or_signature(mutation: str):
         ("grant_id", "1"),
         ("grant_version", True),
         ("token_version", 1.5),
-        ("scopes", "market:read"),
-        ("scopes", ["market:read", 3]),
+        ("scopes", "extensions:read"),
+        ("scopes", ["extensions:read", 3]),
     ],
 )
 async def test_oauth_rejects_missing_or_malformed_required_claims(claim, value):
@@ -284,25 +284,25 @@ async def test_oauth_uses_current_db_role_and_intersects_current_capabilities():
     result = await auth.McpTokenVerifier().verify_token(token)
 
     assert result is not None
-    assert result.scopes == ["market:read"]
+    assert result.scopes == ["extensions:read"]
     principal = result.claims["principal"]
     assert principal.user.role == UserRole.viewer
-    assert principal.scopes == frozenset({"market:read"})
+    assert principal.scopes == frozenset({"extensions:read"})
 
 
 async def test_oauth_intersects_token_scopes_with_current_grant_scopes():
     token, grant, _ = await _oauth_credential()
-    await _update_grant(grant.id, scopes=["market:read"])
+    await _update_grant(grant.id, scopes=["extensions:read"])
 
     result = await auth.McpTokenVerifier().verify_token(token)
 
     assert result is not None
-    assert result.scopes == ["market:read"]
-    assert result.claims["principal"].scopes == frozenset({"market:read"})
+    assert result.scopes == ["extensions:read"]
+    assert result.claims["principal"].scopes == frozenset({"extensions:read"})
 
 
 async def test_write_only_oauth_token_is_rejected_after_write_capability_is_lost():
-    token, _, user = await _oauth_credential(scopes=["market:write"])
+    token, _, user = await _oauth_credential(scopes=["extensions:write"])
     await _update_user(user.id, role=UserRole.viewer)
 
     assert await auth.McpTokenVerifier().verify_token(token) is None
@@ -381,8 +381,8 @@ async def test_static_intersects_db_scopes_with_current_capabilities_and_updates
     result = await auth.McpTokenVerifier().verify_token(token)
 
     assert result is not None
-    assert result.scopes == ["market:read"]
-    assert result.claims["principal"].scopes == frozenset({"market:read"})
+    assert result.scopes == ["extensions:read"]
+    assert result.claims["principal"].scopes == frozenset({"extensions:read"})
     async with AsyncSessionLocal() as session:
         stored = await session.get(McpApiToken, record.id)
         assert stored is not None

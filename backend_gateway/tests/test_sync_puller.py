@@ -49,7 +49,7 @@ async def test_upload_writes_publish_status_into_manifest(
     """
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="man-demo")
@@ -69,7 +69,7 @@ async def test_upload_manifest_publish_status_matches_db(
     from sqlalchemy import select as _sel
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="man-ok")

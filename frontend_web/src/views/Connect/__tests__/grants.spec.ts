@@ -23,7 +23,7 @@ const ACTIVE_GRANT = {
   id: 7,
   client_id: 'client-123',
   client_name: 'CI Assistant',
-  scopes: ['market:read', 'market:write'],
+  scopes: ['extensions:read', 'extensions:write'],
   version: 2,
   revoked_at: null,
   created_at: '2026-10-30T08:00:00Z',

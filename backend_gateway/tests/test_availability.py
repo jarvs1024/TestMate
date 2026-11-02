@@ -12,7 +12,7 @@ import pytest
 from app.core import asset_jobs, git_sync, pkg
 from tests.conftest import make_skill_zip
 
-API = "/api/v1/assets"
+API = "/api/v1/extensions"
 
 
 # ---------- 并发: 同一个 code 并发上传 ----------
@@ -26,8 +26,8 @@ async def test_concurrent_upload_same_code_does_not_mix_files(client, auth, ws,
     """
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.publisher_usernames", publisher_user["username"])
+    await set_setting("extensions.review.enabled", "false")
+    await set_setting("extensions.publisher_usernames", publisher_user["username"])
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
 
     def _pkg(marker: str):
@@ -165,10 +165,10 @@ async def test_notification_failure_does_not_break_publish(monkeypatch):
     monkeypatch.setattr(
         dingtalk, "get",
         # 开关得打开 —— 不然压根不会走到"发不出去"这一步, 就测不到降级了
-        _fake_get({"dingtalk.market_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
+        _fake_get({"dingtalk.extensions_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
     )
-    # notify_market 内部已经吞掉了异常 → 返回 False 而不是抛出
-    assert await dingtalk.notify_market("publish", name="x", code="y") is False
+    # notify_extensions 内部已经吞掉了异常 → 返回 False 而不是抛出
+    assert await dingtalk.notify_extensions("publish", name="x", code="y") is False
 
 
 def _fake_get(values: dict[str, str]):

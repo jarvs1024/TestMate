@@ -72,7 +72,7 @@ async def test_marketplace_structure_and_sha(ws_files, restore_git_config):  # n
     assert set(p) >= {"name", "description", "version", "author", "source"}
     assert p["source"]["source"] == "archive"
     assert p["source"]["url"].endswith(
-        "/api/v1/assets/sha-demo/versions/1.0.0/download"
+        "/api/v1/extensions/sha-demo/versions/1.0.0/download"
     )
     # 现算一次包字节, sha 必须一致
     data = pkg.build_zip(base / "files")

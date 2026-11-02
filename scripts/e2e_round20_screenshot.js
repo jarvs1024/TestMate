@@ -80,12 +80,12 @@ async function shot(page, name, desc) {
   }, token, me);
 
   // ================= 接口层: cat_counts =================
-  console.log('\n── ① GET /api/v1/assets 的 cat_counts ──');
+  console.log('\n── ① GET /api/v1/extensions 的 cat_counts ──');
   const api0 = await (await fetch(
-    API + '/api/v1/assets?kind=skill&limit=500', { headers: { Authorization: 'Bearer ' + token } },
+    API + '/api/v1/extensions?kind=skill&limit=500', { headers: { Authorization: 'Bearer ' + token } },
   )).json();
   const api1 = await (await fetch(
-    API + '/api/v1/assets?kind=skill&category=' + encodeURIComponent('质量保障') + '&limit=500',
+    API + '/api/v1/extensions?kind=skill&category=' + encodeURIComponent('质量保障') + '&limit=500',
     { headers: { Authorization: 'Bearer ' + token } },
   )).json();
   report.api = { before: api0.cat_counts, after: api1.cat_counts };

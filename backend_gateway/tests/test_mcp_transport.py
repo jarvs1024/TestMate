@@ -27,7 +27,7 @@ class _TransportTokenVerifier(TokenVerifier):
         return AccessToken(
             token=token,
             client_id="transport-test-client",
-            scopes=["market:read"],
+            scopes=["extensions:read"],
             subject="1",
         )
 
@@ -48,12 +48,13 @@ def _initialize_payload() -> dict[str, Any]:
 @asynccontextmanager
 async def _mcp_app():
     server = build_mcp(
-        "skill",
+        "extensions",
         public_base_url="http://test",
         allowed_hosts=["test"],
+        server_name="testmate-extensions",
     )
     server._token_verifier = _TransportTokenVerifier()
-    dispatcher = build_dispatcher({"skill": server})
+    dispatcher = build_dispatcher({"extensions": server})
     app = Starlette(routes=[Mount("/mcp", app=dispatcher)])
     async with run_mcp_lifespan(dispatcher):
         yield app
@@ -74,7 +75,7 @@ def _json_rpc_response(content_type: str, content: str) -> Response:
         200,
         headers={"Content-Type": content_type},
         content=content,
-        request=Request("POST", "http://test/mcp/skill"),
+        request=Request("POST", "http://test/mcp/extensions"),
     )
 
 
@@ -121,7 +122,7 @@ def test_result_bounds_and_sanitizes_json_rpc_errors(content_type):
 async def test_unauthenticated_streamable_post_returns_401():
     async with _mcp_client() as client:
         response = await client.post(
-            "/mcp/skill",
+            "/mcp/extensions",
             json=_initialize_payload(),
             headers={"Accept": "application/json, text/event-stream"},
         )
@@ -134,7 +135,7 @@ async def test_authenticated_streamable_post_initializes_mcp():
         result = await initialize(client, TOKEN)
 
     assert result["protocolVersion"] == LATEST_PROTOCOL_VERSION
-    assert result["serverInfo"]["name"] == "testmate-skill"
+    assert result["serverInfo"]["name"] == "testmate-extensions"
 
 
 async def test_sse_first_endpoint_event_preserves_mounted_root_path():
@@ -150,8 +151,8 @@ async def test_sse_first_endpoint_event_preserves_mounted_root_path():
             "http_version": "1.1",
             "method": "GET",
             "scheme": "http",
-            "path": "/mcp/skill/sse",
-            "raw_path": b"/mcp/skill/sse",
+            "path": "/mcp/extensions/sse",
+            "raw_path": b"/mcp/extensions/sse",
             "query_string": b"",
             "root_path": "",
             "headers": [
@@ -194,7 +195,7 @@ async def test_sse_first_endpoint_event_preserves_mounted_root_path():
         first_frame = body[: frame_end.start()].decode()
         match = re.fullmatch(
             r"event: endpoint\r?\ndata: "
-            r"/mcp/skill/messages/\?session_id=[0-9a-f]{32}",
+            r"/mcp/extensions/messages/\?session_id=[0-9a-f]{32}",
             first_frame,
         )
         assert match is not None
@@ -203,7 +204,7 @@ async def test_sse_first_endpoint_event_preserves_mounted_root_path():
 async def test_invalid_host_is_rejected_with_421():
     async with _mcp_client() as client:
         response = await client.post(
-            "/mcp/skill",
+            "/mcp/extensions",
             json=_initialize_payload(),
             headers={
                 "Authorization": f"Bearer {TOKEN}",

@@ -77,7 +77,7 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 function scopeText(scope: McpScope): string {
-  return scope === 'market:write' ? '管理资产' : '读取资产';
+  return scope === 'extensions:write' ? '管理资产' : '读取资产';
 }
 
 function formatTime(value: string | null): string {

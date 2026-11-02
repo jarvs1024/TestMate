@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-API = "/api/v1/assets"
+API = "/api/v1/extensions"
 
 # 一个"存量资产": author 是短名, 而登录用户名是邮箱式
 LEGACY_AUTHOR = "legacyuser"

@@ -79,13 +79,13 @@ function check(name, ok, detail) {
   const keys = await page.evaluate(() =>
     [...document.querySelectorAll('#sec-capability code')].map((c) => c.textContent.trim()));
   const expect = [
-    'marketplace.git.remote', 'marketplace.git.branch', 'marketplace.git.web_url',
-    'marketplace.publisher_ids',
-    'marketplace.sync.interval_seconds', 'marketplace.max_package_mb',
-    'marketplace.marketplace_name', 'marketplace.public_base_url',
-    'marketplace.projects',   // 项目列表 (资产的适用项目)
+    'extensions.git.remote', 'extensions.git.branch', 'extensions.git.web_url',
+    'extensions.publisher_ids',
+    'extensions.sync.interval_seconds', 'extensions.max_package_mb',
+    'extensions.name', 'extensions.public_base_url',
+    'extensions.projects',   // 项目列表 (资产的适用项目)
     // 2026-10-26: 新增的权限/暴露策略项 (admin only —— 非管理员的 schema 里没有)
-    'marketplace.publisher_roles', 'marketplace.public_download',
+    'extensions.publisher_roles', 'extensions.public_download',
   ];
   const missing = expect.filter((k) => !keys.includes(k));
   check('A2 资产市场配置项全部渲染出来', missing.length === 0,
@@ -93,8 +93,8 @@ function check(name, ok, detail) {
 
   // ⚠️ 服务端写盘通道下线 → 安装目录不再可配, 这三项必须**消失**
   const removed = [
-    'marketplace.install.skill_dir', 'marketplace.install.plugin_dir',
-    'marketplace.install.enabled',
+    'extensions.install.skill_dir', 'extensions.install.plugin_dir',
+    'extensions.install.enabled',
   ];
   const stillThere = removed.filter((k) => keys.includes(k));
   check('A2b 安装目录配置项已移除',
@@ -140,7 +140,7 @@ function check(name, ok, detail) {
   });
   check('C1 详情抽屉有「在 GitLab 查看」链接', !!link, link ? `${link.text} → ${link.href}` : '(无)');
   check('C2 链接指向配置的 GitLab 地址',
-    !!link && /^https?:\/\/.+\/root\/testmate-market\/-\/tree\/.+/.test(link.href || ''),
+    !!link && /^https?:\/\/.+\/root\/testmate-extensions\/-\/tree\/.+/.test(link.href || ''),
     link ? link.href : '(无)');
   await page.screenshot({ path: path.join(OUT_DIR, '10-gitlab-link.png'), fullPage: false });
 

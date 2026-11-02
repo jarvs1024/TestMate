@@ -227,10 +227,10 @@ async def test_real_app_lifespan_configures_after_seed_and_runs_mcp_manager(
         seeded = True
 
     settings = {
-        "marketplace.public_base_url": "http://test:8081",
+        "extensions.public_base_url": "http://test:8081",
         "mcp.allowed_hosts": "test,test:8081",
-        "marketplace.git.remote": "",
-        "marketplace.git.branch": "main",
+        "extensions.git.remote": "",
+        "extensions.git.branch": "main",
         "software.storage_path": "",
     }
 
@@ -267,8 +267,8 @@ async def test_real_app_lifespan_configures_after_seed_and_runs_mcp_manager(
 
     async with main.app.router.lifespan_context(main.app):
         assert managed == [dispatcher]
-        assert set(dispatcher.domains) == {"skill"}
+        assert set(dispatcher.domains) == {"extensions"}
         allowed = set(
-            dispatcher.domains["skill"].settings.transport_security.allowed_hosts
+            dispatcher.domains["extensions"].settings.transport_security.allowed_hosts
         )
         assert {"test", "test:8081"} <= allowed

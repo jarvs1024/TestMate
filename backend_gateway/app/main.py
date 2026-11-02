@@ -36,19 +36,19 @@ async def lifespan(app: FastAPI):
     from app.core.settings_store import get as _get_setting
 
     public_base_url = str(
-        await _get_setting("marketplace.public_base_url", "") or ""
+        await _get_setting("extensions.public_base_url", "") or ""
     ).strip().rstrip("/")
     if not public_base_url:
         public_base_url = f"http://127.0.0.1:{settings.PORT}"
     mcp_dispatcher.configure({
-        "skill": build_skill_server(
+        "extensions": build_skill_server(
             public_base_url=public_base_url,
             allowed_hosts=await _get_setting("mcp.allowed_hosts", ""),
         )
     })
 
     async with run_mcp_lifespan(mcp_dispatcher):
-        # 资产市场: 启动后台同步 worker, 并把上次没推完的任务重新入队
+        # 扩展: 启动后台同步 worker, 并把上次没推完的任务重新入队
         from app.core import git_sync
         from app.core.asset_jobs import recover_pending_jobs, start_worker
         from app.core.dingtalk import start_aggregate_worker, start_retry_worker
@@ -59,15 +59,15 @@ async def lifespan(app: FastAPI):
         # ⚠️ 审核类通知的**窗口合并**: 窗口到期要把攒着的发成一条汇总 ——
         #    没有这个 worker, 攒着的通知就永远发不出去 (窗口末没人再触发事件).
         start_aggregate_worker()
-        # 市场的仓库地址/分支: **设置页改的值为准**, env 只是初值
+        # 扩展的仓库地址/分支: **设置页改的值为准**, env 只是初值
         git_sync.set_git_config(
-            remote=await _get_setting("marketplace.git.remote", ""),
-            branch=await _get_setting("marketplace.git.branch", ""),
+            remote=await _get_setting("extensions.git.remote", ""),
+            branch=await _get_setting("extensions.git.branch", ""),
         )
         log.info("startup.git_config", remote=git_sync.git_remote(), branch=git_sync.git_branch())
         requeued = await recover_pending_jobs()
         # 反向同步: 定期从 GitLab 拉取远端变更, 对齐本地工作区与 DB 镜像
-        interval = int(os.environ.get("MARKET_SYNC_INTERVAL_SECONDS", "30") or 30)
+        interval = int(os.environ.get("EXTENSIONS_SYNC_INTERVAL_SECONDS", "30") or 30)
         await start_puller(interval)
         # 软件库存放目录体检 —— ⚠️ 存储根不可写是**部署**问题 (容器没挂卷 /
         #    systemd 没放行 ReadWritePaths), 等到用户传文件才报"存储目录不可写",
@@ -155,8 +155,8 @@ app.include_router(settings_api.router, prefix="/api/v1/settings", tags=["settin
 # ⚠️ 平台信息 (副标题 / 版本号) —— **公开可读**: 页头在匿名状态下也显示, 登录页更是.
 app.include_router(platform.router, prefix="/api/v1/platform", tags=["platform"])
 app.include_router(review_agent.router, prefix="/api/v1/review-agent", tags=["review-agent"])
-app.include_router(marketplace.router, prefix="/api/v1/assets", tags=["marketplace"])
-# 软件库 —— 与「插件·技能·连接」完全分家: 那边真身在 GitLab, 这边真身在服务端磁盘.
+app.include_router(marketplace.router, prefix="/api/v1/extensions", tags=["extensions"])
+# 软件库 —— 与「扩展」完全分家: 那边真身在 GitLab, 这边真身在服务端磁盘.
 app.include_router(software.router, prefix="/api/v1/software", tags=["software"])
 app.include_router(mcp_api.router, prefix="/api/v1/mcp", tags=["mcp"])
 app.include_router(oauth_routes.router, tags=["mcp-oauth"])
@@ -173,16 +173,16 @@ async def qoder_marketplace(request: Request):
     from app.core.qoder_marketplace import build_marketplace, render
     from app.core.settings_store import get, to_bool
 
-    configured = (await get("marketplace.public_base_url", "")) or ""
+    configured = (await get("extensions.public_base_url", "")) or ""
     base = configured.rstrip("/") or str(request.base_url).rstrip("/")
-    name = (await get("marketplace.marketplace_name", "testmate")) or "testmate"
+    name = (await get("extensions.name", "testmate")) or "testmate"
     manifest = await build_marketplace(base, name=name)
     # ⚠️ 清单是**公开**的, 但里面的下载 URL 默认要登录 —— Qoder 自带安装器带不了
-    #    TestMate 的 token, 不开「marketplace.public_download」的话它下载必然 401.
+    #    TestMate 的 token, 不开「extensions.public_download」的话它下载必然 401.
     #    记一条日志: 免得管理员配了 public_base_url 就以为"原生安装器已经通了".
-    if manifest.get("plugins") and not to_bool(await get("marketplace.public_download", "false"), False):
+    if manifest.get("plugins") and not to_bool(await get("extensions.public_download", "false"), False):
         log.warning(
-            "marketplace.json 已生成, 但「marketplace.public_download」是关的 —— "
+            "marketplace.json 已生成, 但「extensions.public_download」是关的 —— "
             "Qoder 原生安装器下载安装包会 401",
             plugins=len(manifest["plugins"]),
         )

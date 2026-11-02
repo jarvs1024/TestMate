@@ -219,7 +219,7 @@ async def test_publisher_whitelist_accepts_both_forms(client, whitelist):
     """设置页里手填的白名单, 短名和全邮箱都得认."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.publisher_usernames", whitelist)
+    await set_setting("extensions.publisher_usernames", whitelist)
     await _make_user("zhangsan@twsc.com.cn", None)
     r = await client.post("/api/v1/auth/login", json={"username": "zhangsan"})
     token = r.json()["access_token"]

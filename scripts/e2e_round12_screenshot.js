@@ -10,7 +10,7 @@
  *      **一条都不发** (绝不能往公司真实群发测试消息).
  *
  * ⚠️ **只读 + 截图** —— 不做任何写操作, **绝对不往真实钉钉群发消息**.
- *    预览走的是后端 `GET /api/v1/assets/notifications/preview` (只渲染不发送).
+ *    预览走的是后端 `GET /api/v1/extensions/notifications/preview` (只渲染不发送).
  * ⚠️ 本脚本**不改仓库任何代码**.
  *
  * 用法 (native 端口):
@@ -76,7 +76,7 @@ async function closeOverlays(page) {
 
 /** 直接问后端要通知回执条数 (用来证明"预览一条都没发") */
 async function receiptCount(token) {
-  const r = await fetch(API + '/api/v1/assets/notifications?limit=200', {
+  const r = await fetch(API + '/api/v1/extensions/notifications?limit=200', {
     headers: { Authorization: 'Bearer ' + token },
   });
   if (!r.ok) return null;

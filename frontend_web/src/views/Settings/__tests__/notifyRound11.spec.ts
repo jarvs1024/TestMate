@@ -41,7 +41,7 @@ describe('③ 设置页: 通知区要有「预览消息」入口 (不发送)', (
   });
 
   it('前端调的是只读的预览接口', () => {
-    expect(assetsApi).toMatch(/apiGet<NotifyPreview\[\]>\('\/assets\/notifications\/preview'\)/);
+    expect(assetsApi).toMatch(/apiGet<NotifyPreview\[\]>\('\/extensions\/notifications\/preview'\)/);
   });
 });
 

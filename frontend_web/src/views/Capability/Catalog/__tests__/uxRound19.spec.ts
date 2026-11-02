@@ -28,7 +28,7 @@ vi.mock('@/api/assets', () => ({
   listJobs: vi.fn(async () => ({ items: [] })),
   listProjects: vi.fn(async () => ({ items: [] })),
   getSyncStatus: vi.fn(async () => ({})),
-  getMarketConfig: vi.fn(async () => ({ remote: 'root/testmate-market.git', review_enabled: true })),
+  getMarketConfig: vi.fn(async () => ({ remote: 'root/testmate-extensions.git', review_enabled: true })),
   retryJob: vi.fn(async () => ({})),
   syncFromGit: vi.fn(async () => ({ added: 0, updated: 0 })),
 }));

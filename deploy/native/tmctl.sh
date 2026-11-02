@@ -311,7 +311,7 @@ ensure_env_file() {
   if [[ -f "$ENV_FILE" ]]; then
     if [[ $OPT_FORCE -eq 1 ]]; then
       # --force = **重置所有口令**, 其它配置(端口 / 仓库地址 / 时区)原样保留.
-      # 不做"整个文件重生成" —— 那会把用户改过的 MARKET_GIT_REMOTE 之类冲掉.
+      # 不做"整个文件重生成" —— 那会把用户改过的 EXTENSIONS_GIT_REMOTE 之类冲掉.
       log "--force: 重置所有口令 (其它配置保留)"
       env_set "$ENV_FILE" "JWT_SECRET"     "$(gen_secret 32)"
       env_set "$ENV_FILE" "MYSQL_PASSWORD"  "$(gen_secret 18)"
@@ -805,8 +805,8 @@ build_frontend() {
 # ---- SSH key ----
 ensure_market_ssh() {
   local key known key_dest known_dest
-  key="$(cfg MARKET_SSH_KEY)"
-  known="$(cfg MARKET_SSH_KNOWN_HOSTS)"
+  key="$(cfg EXTENSIONS_SSH_KEY)"
+  known="$(cfg EXTENSIONS_SSH_KNOWN_HOSTS)"
   key_dest="$RUNTIME_DIR/ssh/id_ed25519"
   known_dest="$RUNTIME_DIR/ssh/known_hosts"
 
@@ -820,7 +820,7 @@ ensure_market_ssh() {
     done
   fi
   if [[ -z "$key" || ! -f "$key" ]]; then
-    warn "没找到资产市场用的 SSH 私钥 —— 上架/推送会失败; 装好后填 .env 的 MARKET_SSH_KEY"
+    warn "没找到资产市场用的 SSH 私钥 —— 上架/推送会失败; 装好后填 .env 的 EXTENSIONS_SSH_KEY"
     echo "" > "$known_dest"
     return 0
   fi
@@ -851,10 +851,10 @@ render_app_configs() {
   require_single_worker
 
   mkdir -p "$runtime"/{config,logs,run,data,frontend,market}
-  # ⚠️ MARKET_DIR 也得建 —— systemd 的 ReadWritePaths 指向的路径不存在时,
+  # ⚠️ EXTENSIONS_DIR 也得建 —— systemd 的 ReadWritePaths 指向的路径不存在时,
   #    单元会直接起不来 (Failed to set up mount namespacing)
   local market_dir
-  market_dir="$(cfg MARKET_DIR "$runtime/market")"
+  market_dir="$(cfg EXTENSIONS_DIR "$runtime/market")"
   mkdir -p "$market_dir"
   backend_env="$runtime/config/backend.env"
   nginx_conf="$runtime/config/nginx.conf"
@@ -914,10 +914,10 @@ emit_env() {
     echo
     emit_env CORS_ORIGINS "[\"http://localhost:${fe_port}\",\"http://127.0.0.1:${fe_port}\"]"
     echo
-    emit_env MARKET_WORKSPACE "$(cfg MARKET_DIR "$runtime/market")"
-    emit_env MARKET_GIT_REMOTE "$(cfg MARKET_GIT_REMOTE)"
-    emit_env MARKET_GIT_BRANCH "$(cfg MARKET_GIT_BRANCH main)"
-    emit_env MARKET_SYNC_INTERVAL_SECONDS "$(cfg MARKET_SYNC_INTERVAL_SECONDS 30)"
+    emit_env EXTENSIONS_WORKSPACE "$(cfg EXTENSIONS_DIR "$runtime/market")"
+    emit_env EXTENSIONS_GIT_REMOTE "$(cfg EXTENSIONS_GIT_REMOTE)"
+    emit_env EXTENSIONS_GIT_BRANCH "$(cfg EXTENSIONS_GIT_BRANCH main)"
+    emit_env EXTENSIONS_SYNC_INTERVAL_SECONDS "$(cfg EXTENSIONS_SYNC_INTERVAL_SECONDS 30)"
     # 软件库存放根目录 (软件包本体落这儿, 最多 5G/个).
     # ⚠️ 默认在 runtime/data/software —— 跟 market 工作区一样属于"运行时数据",
     #    **不进** backup (体积太大), 要备份得单独拷这个目录.
@@ -970,7 +970,7 @@ render_systemd_configs() {
   nginx_conf="$runtime/config/nginx.conf"
   nginx_prefix="$runtime"
   nginx_bin="$(command -v nginx || echo /usr/sbin/nginx)"
-  market_dir="$(cfg MARKET_DIR "$runtime/market")"
+  market_dir="$(cfg EXTENSIONS_DIR "$runtime/market")"
 
   # ---- systemd 单元 ----
   need_root
@@ -992,7 +992,7 @@ render_systemd_configs() {
     "RUNTIME_DIR" "$runtime" \
     "DATA_DIR" "$runtime/data" \
     "LOG_DIR" "$runtime/logs" \
-    "MARKET_DIR" "$market_dir" \
+    "EXTENSIONS_DIR" "$market_dir" \
     "SOFTWARE_DIR" "$(cfg SOFTWARE_STORAGE_PATH "$runtime/data/software")" \
     "RUN_DIR" "$runtime/run"
 
@@ -1009,7 +1009,7 @@ render_systemd_configs() {
 
   # 目录归属给服务用户
   chown -R "$run_user:$run_group" "$runtime" 2>/dev/null || true
-  # ⚠️ MARKET_DIR 可能在 runtime 之外 (用户自定义路径) —— 上面的 chown -R 覆盖不到,
+  # ⚠️ EXTENSIONS_DIR 可能在 runtime 之外 (用户自定义路径) —— 上面的 chown -R 覆盖不到,
   #    而它是资产市场 git 工作区, 服务用户必须能写 (后端会自己 init + fetch 建仓库,
   #    写不了的话上传/推送全挂).
   [[ "$market_dir" != "$runtime"/* ]] && chown -R "$run_user:$run_group" "$market_dir" 2>/dev/null || true

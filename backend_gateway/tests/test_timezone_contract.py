@@ -24,7 +24,7 @@ from datetime import datetime
 
 from app.schemas.base import UTCModel, to_utc_iso
 
-API = "/api/v1/assets"
+API = "/api/v1/extensions"
 
 # ISO 串 + 结尾的 Z (或 ±HH:MM)
 ISO_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")

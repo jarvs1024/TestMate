@@ -4,7 +4,7 @@
     以前"谁能看"这件事**没有测试** —— 后端多个端点只挂了 `get_current_user`,
     于是普通用户能读到:
       · 钉钉 webhook 的完整 URL (里面就是机器人的 access_token → 拿到就能
-        绕过本系统直接往公司市场群/审核群发消息)
+        绕过本系统直接往公司扩展群/审核群发消息)
       · 全部操作记录 (谁上架/下架/驳回/删了哪个资产, 带备注)
       · 全部通知回执 (真正发到群里去的内容)
       · 工作区绝对路径 + Git 远端地址
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-API = "/api/v1/assets"
+API = "/api/v1/extensions"
 SETTINGS = "/api/v1/settings"
 
 
@@ -44,16 +44,16 @@ async def test_normal_user_cannot_read_credentials(client, stranger_user):
     assert r.status_code == 200, r.text
     keys = _schema_keys(r)
     for k in (
-        "dingtalk.market_webhook",     # URL 里带 access_token
+        "dingtalk.extensions_webhook",     # URL 里带 access_token
         "dingtalk.review_webhook",
         "ragflow.api_key",
         "review_agent.api_token",
-        "dingtalk.market_secret",
+        "dingtalk.extensions_secret",
         "dingtalk.review_secret",
         # 权限白名单 —— 谁能上架/谁能审核, 是管理员的配置
-        "marketplace.publisher_ids",
-        "marketplace.publisher_usernames",
-        "marketplace.review.reviewer_usernames",
+        "extensions.publisher_ids",
+        "extensions.publisher_usernames",
+        "extensions.review.reviewer_usernames",
     ):
         assert k not in keys, f"普通用户不该看到 {k}: {sorted(keys)}"
 
@@ -72,7 +72,7 @@ async def test_admin_still_sees_credentials(client, admin_user):
     r = await client.get(f"{SETTINGS}/schema", headers=_admin_headers(admin_user))
     assert r.status_code == 200, r.text
     keys = _schema_keys(r)
-    assert "dingtalk.market_webhook" in keys
+    assert "dingtalk.extensions_webhook" in keys
     assert "dingtalk.review_webhook" in keys
     assert "ragflow.api_key" in keys
 

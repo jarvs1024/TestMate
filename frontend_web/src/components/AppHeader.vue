@@ -12,7 +12,7 @@
     <div v-if="pageTitle" class="page-title">
       <div class="pt-name">
         <!-- ⚠️ 2026-10-31 (第十五轮): 能力身份条**并进标题行** ——
-             原来它在页面内容区第一行, 跟这里的标题**重复**(两边都写"插件·技能·连接"),
+             原来它在页面内容区第一行, 跟这里的标题**重复**(两边都写"扩展"),
              还多占一整行. 现在合成一行: 图标 + 名称 + 版本 + 角色·分类 + 状态徽标. -->
         <span v-if="capIdent" class="pt-icon">{{ capIdent.icon }}</span>
         <span class="pt-txt">{{ pageTitle }}</span>

@@ -12,7 +12,7 @@
     <!-- ===== 动作条: 分类 Tab + 搜索 + 排序 + 上架 (2026-10-31 第十六轮: 两行融合成一行) =====
          ⚠️ 以前是**两行**: 第一行「搜索 + 排序 + 上架」, 第二行「全部 / 我的 / 分类 chip」.
             两行之间还夹着一条分隔, 页面顶部看着散. 用户要求融合成一行,
-            并且左边的分类 tab 跟「插件·技能·连接」那一页的 tab **同一个长相**
+            并且左边的分类 tab 跟「扩展」那一页的 tab **同一个长相**
             (.kind-tab / .kind-tab.active / 渐变计数徽标 —— 样式在 styles/main.css). -->
     <div class="mk-actions">
       <div class="kind-tabs">
@@ -459,14 +459,14 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* ⚠️ 版式与「插件·技能·连接」那一页保持一致 (mk-actions / kind-tabs / grid /
+/* ⚠️ 版式与「扩展」那一页保持一致 (mk-actions / kind-tabs / grid /
    state) —— 两个页面要看起来是一套东西.
    ⚠️ 2026-10-31 (第十七轮): 间距也统一了 —— 那边是 `.market { gap: 14px }`
    让**子元素自己排**, 这边以前是每个元素各写各的 margin-bottom —— 改一处漏一处. */
 .software { display: flex; flex-direction: column; gap: 14px; }
 
 /* ⚠️ 顶部动作条 (.mk-actions / .ma-right / .search) 2026-10-31 (第十七轮) 提到
-   styles/main.css (全局) —— 软件库这一行要跟「插件·技能·连接」那行**同一个面板**
+   styles/main.css (全局) —— 软件库这一行要跟「扩展」那行**同一个面板**
    (白底圆角 + 粘顶), 别再各写各的.
    这里只留这个页面特有的: 排序下拉 (那边用的是「全部项目 · 热门」那个菜单按钮). */
 .sort-sel {

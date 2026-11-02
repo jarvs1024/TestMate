@@ -34,7 +34,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "chat":       "💬 知识对话",
     "code-review": "🧪 代码检视 (pr-agent)",
     "data-source": "📡 数据源",
-    "marketplace": "🏪 插件·技能·连接",
+    "extensions": "🏪 扩展",
     "software": "🧰 软件库",
 }
 
@@ -59,11 +59,11 @@ def _is_default(value: Any, default: Any, value_type: str) -> bool:
 
 # ⚠️ **非管理员看不到的条目** —— 里面是"拿到就能直接用"的东西:
 #   · 钉钉 webhook 的 URL 里就带着机器人的 access_token → 拿到就能绕过本系统
-#     直接往公司市场群/审核群发消息 (实测: 以前普通用户读 schema 能拿到完整 URL)
+#     直接往公司扩展群/审核群发消息 (实测: 以前普通用户读 schema 能拿到完整 URL)
 #   · api_key / api_token / 加签密钥 = 凭据本身
 #   · publisher_ids / publisher_usernames / reviewer_usernames = 权限白名单
 #     (谁能上架/谁能审核 —— 这是管理员的配置, 普通用户该问管理员, 不该自己看)
-#   · marketplace.git.remote = SSH 地址 + 仓库路径 (拿到就能知道资产仓库在哪,
+#   · extensions.git.remote = SSH 地址 + 仓库路径 (拿到就能知道资产仓库在哪,
 #     配合 git.branch 就能拼出完整的目标); publisher_roles = 谁能发布的策略
 #
 # ⚠️ 为什么是**整条不返回**而不是打个码: 掩码后的字符串照样进了 JS,
@@ -169,8 +169,8 @@ async def update_setting(
             row.updated_by = user.id
         await session.commit()
         await session.refresh(row)
-    # 市场的仓库地址/分支是**运行时配置** —— 改完立即生效, 不用重启后端
-    if key in ("marketplace.git.remote", "marketplace.git.branch"):
+    # 扩展的仓库地址/分支是**运行时配置** —— 改完立即生效, 不用重启后端
+    if key in ("extensions.git.remote", "extensions.git.branch"):
         from app.core import git_sync
 
         git_sync.set_git_config(
@@ -313,7 +313,7 @@ async def test_gitlab(_user: User = Depends(get_current_user)) -> SettingTestOut
 
 @router.post("/test/dingtalk", response_model=SettingTestOut)
 async def test_dingtalk(
-    channel: str = Query("market", pattern="^(market|review)$"),
+    channel: str = Query("extensions", pattern="^(extensions|review)$"),
     _user: User = Depends(get_current_user),
 ) -> SettingTestOut:
     """用当前 DB 的钉钉配置真发一条消息.
@@ -322,13 +322,13 @@ async def test_dingtalk(
       - 配对了 → 群里立刻收到一条自检消息
       - 配错了 → 返回钉钉的原始 errcode 与原因 (比如「关键词不匹配」)
 
-    ⚠️ 两个频道各配各的 (市场群 / 审核群), 所以要分别自检 —— channel 参数选群.
+    ⚠️ 两个频道各配各的 (扩展群 / 审核群), 所以要分别自检 —— channel 参数选群.
     """
     if _user.role.value != "admin":
         raise HTTPException(status_code=403, detail="admin only")
-    from app.core.dingtalk import send_test_market_message
+    from app.core.dingtalk import send_test_extensions_message
 
-    ok, message, detail = await send_test_market_message(channel)
+    ok, message, detail = await send_test_extensions_message(channel)
     return SettingTestOut(
         ok=ok, status="ok" if ok else "warn", message=message, detail=detail,
     )

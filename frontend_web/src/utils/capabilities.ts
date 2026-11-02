@@ -46,7 +46,11 @@ export function matchesKeyword(c: Capability, keyword: string): boolean {
  * 空则走工具型的运行页.
  */
 export function capabilityRouteName(c: Capability): string {
-  if (c.route && c.route.startsWith('page:')) return c.route.slice('page:'.length);
+  if (c.route && c.route.startsWith('page:')) {
+    const name = c.route.slice('page:'.length);
+    // 旧能力行可能还存着 page:market (DB 迁移前的数据), 统一落到新路由名.
+    return name === 'market' ? 'extensions' : name;
+  }
   return 'tool-runner';
 }
 
@@ -54,7 +58,7 @@ export function capabilityRouteName(c: Capability): string {
  * 卡片动作词 —— **每张卡自带** (后端 cta 字段), 空则回落到角色默认词.
  *
  * 为什么 CTA 不能由角色决定: 资产组里几张卡的动法完全不同 ——
- * 插件·技能·连接是"浏览资产", 知识库是"检索语料", 软件库是"浏览软件".
+ * 扩展是"浏览资产", 知识库是"检索语料", 软件库是"浏览软件".
  * 角色只说"扮演什么", 说不出"点下去干嘛".
  */
 export function capabilityCta(c: { kind: string; cta?: string | null }): string {

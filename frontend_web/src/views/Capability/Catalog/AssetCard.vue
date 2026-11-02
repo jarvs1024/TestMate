@@ -25,13 +25,13 @@
              只改了信息的 (pending_action === 'meta') 换个措辞, 顺带标出优先级低. -->
         <span v-if="item.publish_status === 'pending' && item.pending_action === 'meta'"
               class="ac-badge meta"
-              title="只改了信息, 包没变 —— 管理员审核通过后不会通知市场群">📝 信息待审</span>
+              title="只改了信息, 包没变 —— 管理员审核通过后不会通知扩展群">📝 信息待审</span>
         <span v-else-if="item.publish_status === 'pending'" class="ac-badge pending"
-              title="已提交, 等待管理员审核; 通过后才在市场里可见">📋 待审核</span>
+              title="已提交, 等待管理员审核; 通过后才在扩展里可见">📋 待审核</span>
         <span v-else-if="item.publish_status === 'rejected'" class="ac-badge rejected"
               :title="item.review_note || '审核未通过'">❌ 已驳回</span>
         <span v-else-if="item.publish_status === 'unpublished'" class="ac-badge off"
-              title="已从市场下架, 文件仍保留">⚠️ 已下架</span>
+              title="已从扩展下架, 文件仍保留">⚠️ 已下架</span>
         <span v-else-if="item.publish_status === 'unpublish_pending'" class="ac-badge unp"
               title="已申请下架, 等管理员确认; 确认后资产会被彻底删除">⏳ 待下架审核</span>
         <span v-if="item.sync_status === 'staged'" class="ac-badge staged"
@@ -84,7 +84,7 @@ function shortDate(iso: string | null): string {
 <style scoped>
 /* ⚠️ 容器样式 (.asset-card) 在 2026-10-31 (第十五轮) 挪到 styles/main.css ——
    跟首页能力墙的白底卡片对齐 (圆角/阴影/悬停上浮/蓝色光环),
-   但尺寸更紧凑 (padding 14px vs 首页 22px) —— 市场和软件库一屏要放下更多条目.
+   但尺寸更紧凑 (padding 14px vs 首页 22px) —— 扩展和软件库一屏要放下更多条目.
    这里只留**这张卡自己特有**的子元素样式. */
 .ac-hd { display: flex; align-items: flex-start; gap: 10px; }
 .ac-icon {

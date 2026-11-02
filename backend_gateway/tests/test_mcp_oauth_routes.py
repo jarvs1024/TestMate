@@ -31,8 +31,8 @@ def _challenge() -> str:
 
 @pytest.fixture(autouse=True)
 async def _oauth_settings():
-    await set_setting("marketplace.public_base_url", PUBLIC_BASE)
-    await set_setting("marketplace.publisher_roles", "tester")
+    await set_setting("extensions.public_base_url", PUBLIC_BASE)
+    await set_setting("extensions.publisher_roles", "tester")
 
 
 async def _register(client, **overrides) -> dict:
@@ -54,7 +54,7 @@ def _authorization_params(client_metadata: dict, **overrides) -> dict:
         "client_id": client_metadata["client_id"],
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
-        "scope": "market:read market:write",
+        "scope": "extensions:read extensions:write",
         "code_challenge": _challenge(),
         "code_challenge_method": "S256",
         "state": "state with spaces/&",
@@ -123,7 +123,7 @@ async def test_authorization_server_metadata_advertises_internal_http_issuer(cli
         "token_endpoint": f"{ISSUER}/oauth/token",
         "registration_endpoint": f"{ISSUER}/oauth/register",
         "revocation_endpoint": f"{ISSUER}/oauth/revoke",
-        "scopes_supported": ["market:read", "market:write"],
+        "scopes_supported": ["extensions:read", "extensions:write"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "token_endpoint_auth_methods_supported": ["none"],
@@ -132,13 +132,13 @@ async def test_authorization_server_metadata_advertises_internal_http_issuer(cli
 
 
 async def test_protected_resource_metadata_targets_mcp_skill(client):
-    response = await client.get("/.well-known/oauth-protected-resource/mcp/skill")
+    response = await client.get("/.well-known/oauth-protected-resource/mcp/extensions")
 
     assert response.status_code == 200
     assert response.json() == {
-        "resource": f"{ISSUER}/mcp/skill",
+        "resource": f"{ISSUER}/mcp/extensions",
         "authorization_servers": [ISSUER],
-        "scopes_supported": ["market:read", "market:write"],
+        "scopes_supported": ["extensions:read", "extensions:write"],
         "bearer_methods_supported": ["header"],
     }
 
@@ -154,7 +154,7 @@ async def test_register_returns_task2_client_metadata_with_201(client):
         "token_endpoint_auth_method": "none",
         "grant_types": ["authorization_code"],
         "response_types": ["code"],
-        "scope": "market:read market:write",
+        "scope": "extensions:read extensions:write",
     }
     assert "client_secret" not in registered
 
@@ -219,7 +219,7 @@ async def test_token_exchanges_real_form_authorization_code(client):
     payload = response.json()
     assert set(payload) == {"access_token", "token_type", "scope"}
     assert payload["token_type"] == "bearer"
-    assert payload["scope"] == "market:read market:write"
+    assert payload["scope"] == "extensions:read extensions:write"
     claims = jwt.decode(
         payload["access_token"],
         settings.JWT_SECRET,

@@ -1,6 +1,6 @@
 <template>
   <el-drawer :model-value="modelValue" size="680px" direction="rtl"
-             title="市场操作记录" @update:model-value="emit('update:modelValue', $event)">
+             title="扩展操作记录" @update:model-value="emit('update:modelValue', $event)">
     <el-tabs v-model="tab" class="ad-tabs">
       <!-- ===== 操作审计 ===== -->
       <el-tab-pane label="操作审计" name="audit">

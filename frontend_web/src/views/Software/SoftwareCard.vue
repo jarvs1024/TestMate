@@ -1,6 +1,6 @@
 <template>
   <!-- ⚠️ 2026-10-31 (第十五轮): 加上全局 `card` —— 白底/圆角/阴影跟首页能力墙一致.
-       容器样式在 styles/main.css 的 .asset-card, 跟「插件·技能·连接」共用一份. -->
+       容器样式在 styles/main.css 的 .asset-card, 跟「扩展」共用一份. -->
   <div class="card asset-card"
        role="button" :tabindex="0"
        @click="emit('open', item)"
@@ -85,7 +85,7 @@ function platformIcon(p: string): string {
 </script>
 
 <style scoped>
-/* ⚠️ 卡片样式**跟「插件·技能·连接」共用同一套类名与视觉** (asset-card / ac-hd /
+/* ⚠️ 卡片样式**跟「扩展」共用同一套类名与视觉** (asset-card / ac-hd /
    ac-summary / ac-tags / ac-meta) —— 两个页面要看起来是一套东西, 不是两个系统.
    差异只在软件特有的字段 (平台 / 功能清单).
    ⚠️ 容器样式 (.asset-card) 在 2026-10-31 (第十五轮) 挪到 styles/main.css ——

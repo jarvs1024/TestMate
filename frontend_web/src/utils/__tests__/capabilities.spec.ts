@@ -78,7 +78,7 @@ describe('能力工具函数', () => {
 
   it('路由解析: page: 前缀走自定义页, 其余走工具型运行页', () => {
     expect(capabilityRouteName(cap({ route: 'page:code-review' }))).toBe('code-review');
-    expect(capabilityRouteName(cap({ route: 'page:market' }))).toBe('market');
+    expect(capabilityRouteName(cap({ route: 'page:extensions' }))).toBe('extensions');
     expect(capabilityRouteName(cap({ route: null }))).toBe('tool-runner');
     expect(capabilityRouteName(cap({ route: '' }))).toBe('tool-runner');
   });
@@ -102,7 +102,7 @@ describe('能力工具函数', () => {
     expect(capabilityCta({ kind: 'board' })).toBe('查看看板');
   });
 
-  it('资产取数来源: 插件·技能·连接数资产, 知识库数语料', () => {
+  it('资产取数来源: 扩展数资产, 知识库数语料', () => {
     expect(PLATFORM_META_SOURCE['agent-market']).toBe('assets');
     expect(PLATFORM_META_SOURCE['kb-inventory']).toBe('kb');
   });

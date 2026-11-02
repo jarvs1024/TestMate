@@ -5,7 +5,7 @@
  *   ① software.* 那 4 项后端一直有, 前端**从来没渲染过** —— 现在补上;
  *   ② 设置页整个只给管理员 —— 非管理员进来一个配置项都不该看到;
  *   ③ 设置页的分类要跟**首页能力墙**对齐: 📦 资产 / 🛠 工具 / 📊 看板,
- *      资产下面才是插件·技能·连接 / 知识库 / 软件库 三张卡;
+ *      资产下面才是扩展 / 知识库 / 软件库 三张卡;
  *   ④ 数据源各归各家 —— RAGFlow 跟知识库, ReviewAgent 跟代码检视看板.
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -56,8 +56,8 @@ function schema(withSoftware = true) {
       { key: 'chat.app_url', value: 'http://x/chat', value_type: 'string',
         description: '知识对话页地址', is_secret: false, is_default: true, default: '' },
     ] },
-    { category: 'marketplace', label: '🧩 资产市场', items: [
-      { key: 'marketplace.git.branch', value: 'main', value_type: 'string',
+    { category: 'extensions', label: '🧩 资产市场', items: [
+      { key: 'extensions.git.branch', value: 'main', value_type: 'string',
         description: 'Git 分支', is_secret: false, is_default: true, default: 'main' },
     ] },
     // ⚠️ 数据源 —— 现在要按能力分家 (RAGFlow→知识库, ReviewAgent→看板)
@@ -135,10 +135,10 @@ describe('设置页 · 能力墙的分类结构 (对齐首页能力墙)', () => 
     expect(texts.some((t) => t.includes('看板'))).toBe(true);
   });
 
-  it('资产下面挂三张卡: 插件·技能·连接 / 知识库 / 软件库', async () => {
+  it('资产下面挂三张卡: 扩展 / 知识库 / 软件库', async () => {
     const { w } = await mountPage();
     const texts = tocTexts(w);
-    expect(texts.some((t) => t.includes('插件·技能·连接'))).toBe(true);
+    expect(texts.some((t) => t.includes('扩展'))).toBe(true);
     expect(texts.some((t) => t.includes('知识库'))).toBe(true);
     expect(texts.some((t) => t.includes('软件库'))).toBe(true);
   });

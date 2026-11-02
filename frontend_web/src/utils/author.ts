@@ -15,7 +15,7 @@
  *
  * ⚠️ 2026-10-30: 从 `views/Capability/Catalog/identity.ts` **上移**到这里 ——
  *    软件库 (views/Software) 也要用同一套判定, 但不该反过来去 import
- *    资产市场的目录 (跨模块反向依赖, 以后拆目录就断链).
+ *    扩展的目录 (跨模块反向依赖, 以后拆目录就断链).
  *    Catalog/identity.ts 保留为 re-export, 老的 import 路径照常能用.
  */
 

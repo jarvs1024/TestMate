@@ -145,7 +145,7 @@ async function uploadSkill(token, code) {
   fd.append('install_steps', '[]');
   fd.append('bindings', '{}');
   fd.append('package', new Blob([fs.readFileSync(zipPath)]), `${code}.zip`);
-  const r = await fetch(`${API}/api/v1/assets/upload`, {
+  const r = await fetch(`${API}/api/v1/extensions/upload`, {
     method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: fd,
   });
   return r.status;
@@ -181,24 +181,24 @@ async function uploadSkill(token, code) {
   // ⚠️ 原值先存 —— webhook 是 secret, 只能从库里读
   const origWebhook = readSettingRaw(WEBHOOK_KEY);
   const saved = {};
-  for (const k of ['marketplace.review.enabled', 'marketplace.publisher_usernames',
+  for (const k of ['extensions.review.enabled', 'extensions.publisher_usernames',
     'dingtalk.notify_on_review', 'dingtalk.aggregate_window_seconds',
-    // ⚠️ 市场群的 webhook 指向**真实群** —— 这几个开关必须静音,
+    // ⚠️ 扩展群的 webhook 指向**真实群** —— 这几个开关必须静音,
     //    否则测试过程里任何一次上架/删除都会往公司群里发真消息.
     'dingtalk.notify_on_publish', 'dingtalk.notify_on_update',
     'dingtalk.notify_on_unpublish', 'dingtalk.notify_on_delete',
     'dingtalk.notify_on_reject']) {
     saved[k] = await getSetting(adminToken, k);
   }
-  console.log('审核总开关原值:', saved['marketplace.review.enabled']);
+  console.log('审核总开关原值:', saved['extensions.review.enabled']);
 
   let browser = null;
   const codes = [`${PREFIX}-a`, `${PREFIX}-b`, `${PREFIX}-c`];
   try {
     // ---------- 准备 ----------
     await ensureUser(adminToken, PUB, PUB_PW, 'tester');
-    await setSetting(adminToken, 'marketplace.review.enabled', 'true');
-    await setSetting(adminToken, 'marketplace.publisher_usernames', PUB);
+    await setSetting(adminToken, 'extensions.review.enabled', 'true');
+    await setSetting(adminToken, 'extensions.publisher_usernames', PUB);
     await setSetting(adminToken, WEBHOOK_KEY, fakeWebhook);
     await setSetting(adminToken, 'dingtalk.notify_on_review', 'true');
     await setSetting(adminToken, 'dingtalk.aggregate_window_seconds', String(WINDOW_SEC));
@@ -231,7 +231,7 @@ async function uploadSkill(token, code) {
     // 回执状态: 第一条 sent, 后两条 aggregated
     // ⚠️ 只看**本次运行**的 —— 上一轮跑剩的回执还在库里 (同一个 code 前缀),
     //    不按时间过滤会把两轮混在一起数.
-    const rec = await api('/api/v1/assets/notifications?limit=50', {
+    const rec = await api('/api/v1/extensions/notifications?limit=50', {
       headers: { Authorization: 'Bearer ' + adminToken },
     });
     const rows = (rec.json?.items || []).filter((r) =>
@@ -283,7 +283,7 @@ async function uploadSkill(token, code) {
 
     // ⚠️ 期望值从接口取 —— 生产库里**本来就可能有别的待审资产**
     //    (管理员自己上传过、或别人传了没审的), 写死 3 会对不上.
-    const ss = await api('/api/v1/assets/sync-status', {
+    const ss = await api('/api/v1/extensions/sync-status', {
       headers: { Authorization: 'Bearer ' + adminToken },
     });
     const expectCount = Math.max(0,
@@ -324,7 +324,7 @@ async function uploadSkill(token, code) {
     }
     console.log('[清理] 设置已还原');
     for (const c of codes) {
-      await api(`/api/v1/assets/${c}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + adminToken } });
+      await api(`/api/v1/extensions/${c}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + adminToken } });
     }
     // 测试回执别留在生产的通知记录里 (管理员看的操作记录会被测试条目刷屏)
     // ⚠️ **汇总回执的 code 是空的** (它一次盖住好几个资产, 没有单一 code) ——

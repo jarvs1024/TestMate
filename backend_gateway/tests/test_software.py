@@ -500,7 +500,7 @@ async def test_software_upload_triggers_dingtalk_notification(client, sw_auth, s
         calls.append((event, kw))
         return True
 
-    monkeypatch.setattr(sw_api, "notify_market", fake_notify)
+    monkeypatch.setattr(sw_api, "notify_extensions", fake_notify)
 
     await _create(client, sw_auth)
     assert calls == [], "只建条目(还没传包)不该通知 —— 别人根本下不了"
@@ -528,7 +528,7 @@ async def test_software_new_version_notifies_update(client, sw_auth, sw_root, mo
         calls.append((event, kw))
         return True
 
-    monkeypatch.setattr(sw_api, "notify_market", fake_notify)
+    monkeypatch.setattr(sw_api, "notify_extensions", fake_notify)
 
     await _create(client, sw_auth)
     await _upload(client, sw_auth, "demo-sw", b"hello")
@@ -570,7 +570,7 @@ async def test_software_unpublish_notifies_dingtalk(client, sw_auth, sw_root, mo
         calls.append((event, kw))
         return True
 
-    monkeypatch.setattr(sw_api, "notify_market", fake_notify)
+    monkeypatch.setattr(sw_api, "notify_extensions", fake_notify)
 
     await _create(client, sw_auth)
     await _upload(client, sw_auth, "demo-sw", b"hello")
@@ -598,7 +598,7 @@ async def test_software_soft_delete_also_notifies(client, sw_auth, sw_root, monk
         calls.append((event, kw))
         return True
 
-    monkeypatch.setattr(sw_api, "notify_market", fake_notify)
+    monkeypatch.setattr(sw_api, "notify_extensions", fake_notify)
 
     await _create(client, sw_auth)
     await _upload(client, sw_auth, "demo-sw", b"hello")
@@ -1392,7 +1392,7 @@ async def test_replace_version_by_author_allowed(client, sw_root, publisher_user
     """作者本人可以覆盖自己的版本."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.publisher_usernames", publisher_user["username"])
+    await set_setting("extensions.publisher_usernames", publisher_user["username"])
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     r = await client.post(
         "/api/v1/software",

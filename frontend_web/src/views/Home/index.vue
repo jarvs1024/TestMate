@@ -95,7 +95,7 @@ interface Todo {
   icon: string;
   text: string;
   tone: 'warn' | 'err' | 'info';
-  /** ⚠️ 带 query 的要去审核列表 (市场页读 ?status=pending 直接落在待审上) */
+  /** ⚠️ 带 query 的要去审核列表 (扩展页读 ?status=pending 直接落在待审上) */
   to: { name: string; query?: Record<string, string> };
 }
 
@@ -274,7 +274,7 @@ async function loadTodos() {
       to: { name: 'kb-manage' },
     });
   }
-  // 资产市场的待办需要登录态 (接口要鉴权)
+  // 扩展的待办需要登录态 (接口要鉴权)
   if (loggedIn.value) {
     try {
       // ⚠️ silent: 首页把这几个接口的失败都当"降级"处理 (卡片显示兜底文案),
@@ -286,7 +286,7 @@ async function loadTodos() {
           icon: '📋',
           text: `${s.my_review_count} 个资产等你处理 (待审核 / 被驳回)`,
           tone: 'warn',
-          to: { name: 'market' },
+          to: { name: 'extensions' },
         });
       }
       // ⚠️ 管理员视角: **别人**上传的资产在等审核 —— 这条以前没有.
@@ -307,7 +307,7 @@ async function loadTodos() {
             icon: '📦',
             text: `${othersNew} 个新资产等你审核 (别人提交的)`,
             tone: 'warn',
-            to: { name: 'market', query: { status: 'pending' } },
+            to: { name: 'extensions', query: { status: 'pending' } },
           });
         }
         if (othersMeta > 0) {
@@ -316,7 +316,7 @@ async function loadTodos() {
             icon: '📝',
             text: `${othersMeta} 个资产只改了信息, 等你审核 (包没变)`,
             tone: 'info',
-            to: { name: 'market', query: { status: 'pending' } },
+            to: { name: 'extensions', query: { status: 'pending' } },
           });
         }
       }
@@ -326,7 +326,7 @@ async function loadTodos() {
           icon: '❌',
           text: `${s.failed_count} 个资产同步失败`,
           tone: 'err',
-          to: { name: 'market' },
+          to: { name: 'extensions' },
         });
       }
       if (s.unpublish_pending_count > 0) {
@@ -335,7 +335,7 @@ async function loadTodos() {
           icon: '🗑',
           text: `${s.unpublish_pending_count} 个下架申请等确认`,
           tone: 'info',
-          to: { name: 'market' },
+          to: { name: 'extensions' },
         });
       }
     } catch (e: any) {
@@ -346,7 +346,7 @@ async function loadTodos() {
         icon: '⚠️',
         text: `资产状态读取失败: ${errText(e, '未知错误')}`,
         tone: 'err',
-        to: { name: 'market' },
+        to: { name: 'extensions' },
       });
     }
   }
@@ -378,14 +378,14 @@ async function loadMetas() {
     /* ReviewAgent 没配 / 挂了 → 保持降级文案 */
   }
   if (!loggedIn.value) return;
-  // 资产 · 插件·技能·连接: 资产数 (接口要鉴权)
+  // 资产 · 扩展: 资产数 (接口要鉴权)
   try {
     const assets = await listAssets({ limit: 200 }, { silent: true });
     catalogMeta.value = [{ icon: '🗂', text: `${assets.total ?? assets.items?.length ?? 0} 个资产` }];
   } catch {
     /* 同上 */
   }
-  // 资产 · 软件库: 软件数 (跟插件·技能·连接一样, 卡片上给真实数字)
+  // 资产 · 软件库: 软件数 (跟扩展一样, 卡片上给真实数字)
   // ⚠️ 只取 total → limit=1 就够, 不用把整个列表拉回来.
   try {
     const sw = await listSoftware({ limit: 1 }, { silent: true });

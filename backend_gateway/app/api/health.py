@@ -85,7 +85,7 @@ async def health_ready(response: Response) -> dict:
     docker compose healthcheck / k8s readinessProbe 用这个:
     "要不要把流量路由到这台",不通就先剔出去等修。
 
-    市场链路 (GitLab / 同步积压) 只**观测**不参与 503 判定 ——
+    扩展链路 (GitLab / 同步积压) 只**观测**不参与 503 判定 ——
     GitLab 挂了不该让整个 TestMate (知识库 / 代码检视) 一起下线.
     """
     mysql_ok, mysql_err = await _check_mysql()
@@ -105,23 +105,23 @@ async def health_ready(response: Response) -> dict:
         "checks": {
             "mysql": {"ok": mysql_ok, "error": mysql_err or None},
             "redis": {"ok": redis_ok, "error": redis_err or None},
-            "marketplace": market,
+            "extensions": market,
         },
     }
 
 
 def _sanitize_market(market: dict) -> dict:
-    """市场链路状态脱敏 (git 报错里有 SSH 仓库地址)."""
+    """扩展链路状态脱敏 (git 报错里有 SSH 仓库地址)."""
     out = dict(market)
     git = out.get("gitlab") or {}
     if git.get("error"):
         out["gitlab"] = {**git, "error": _public_error("GitLab", str(git["error"]))}
     if out.get("error"):
-        out["error"] = _public_error("市场状态", str(out["error"]))
+        out["error"] = _public_error("扩展状态", str(out["error"]))
     return out
 
 
-# ---------------- 市场链路 ----------------
+# ---------------- 扩展链路 ----------------
 
 # GitLab 探针走 SSH 握手, 不能每次健康检查都打 —— 缓存 30s
 _market_probe_cache: dict = {}
@@ -156,16 +156,16 @@ async def _probe_gitlab() -> Tuple[bool, str]:
 
 
 async def _check_marketplace() -> dict:
-    """市场链路状态: GitLab 可达性 + 同步任务积压.
+    """扩展链路状态: GitLab 可达性 + 同步任务积压.
 
-    ⚠️ **判定口径**: 市场链路"坏没坏"看的是 `failed_assets` ——
+    ⚠️ **判定口径**: 扩展链路"坏没坏"看的是 `failed_assets` ——
        资产表里 `sync_status='failed'` 的那几个, 也就是**还有活没推上去**。
        不是 `failed_jobs` (任务表里的历史失败条数)。
 
        为什么不能用 failed_jobs 判: 2026-10-22~26 GitLab 挂着那几天攒了 219 条
        failed job, 对应的资产**后来都被删了** —— 它们是纯历史残留, 没有一件
        待处理. 但 `failed_jobs == 0` 是**全量**计数 → 从那以后平台一直报
-       "市场链路不健康", 哪怕现在一切正常. 监控告警永远亮着, 真出故障时反而
+       "扩展链路不健康", 哪怕现在一切正常. 监控告警永远亮着, 真出故障时反而
        没人看 —— 这在生产上是致命的。
 
        历史那 219 条**一条不删** (那是审计线索: 谁在什么时候传了什么失败了),
@@ -224,7 +224,7 @@ async def _check_marketplace() -> dict:
         out["pending_jobs"] = int(pending)
         out["unpublished"] = int(unpublished)
     except Exception as e:  # noqa: BLE001
-        logger.warning("readiness: 市场统计查询失败: %s: %s", type(e).__name__, e)
+        logger.warning("readiness: 扩展统计查询失败: %s: %s", type(e).__name__, e)
         out["error"] = f"{type(e).__name__}: {e}"
 
     # ⚠️ 判定用 failed_assets (还有活没推上去), 不是 failed_jobs (历史残留) —— 见上面

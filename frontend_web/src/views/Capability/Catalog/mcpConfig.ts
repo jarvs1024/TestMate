@@ -21,7 +21,7 @@ export type McpParseResult = McpParseOk | McpParseErr;
  *
  * ⚠️ `requirePrefix` = 要不要强制连接器名带 `dml-` 前缀:
  *    · **新建**时要求 —— 那是团队命名约定 (跟安装包名 / 资产 code 一个待遇),
- *      新上架的连接器统一叫 dml-xxx, 市场里一眼能认出来;
+ *      新上架的连接器统一叫 dml-xxx, 扩展里一眼能认出来;
  *    · **更新**时不要求 —— 存量 4 个连接器 (review-agent-board 等) 本来就没前缀,
  *      一刀切等于把它们**锁死**: 连发个新版本都提交不了.
  *      (后端也只要求"小写字母/数字/连字符", 见 backend mcp_config.py)
@@ -67,11 +67,11 @@ export function parseMcpConfig(
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
       return { ok: false, error: `连接器「${name}」的配置必须是一个对象` };
     }
-    // ⚠️ 连接器名 = 资产 code 的约定: 当前市场前缀 + 小写字母/数字/连字符.
+    // ⚠️ 连接器名 = 资产 code 的约定: 当前扩展前缀 + 小写字母/数字/连字符.
     //    详情页会**原样展示**这份配置, 用户照着加进自己的 MCP 配置里 ——
-    //    名字起得像 "xx-xxx" 会跟市场里的资产对不上, 也分不清是谁。
+    //    名字起得像 "xx-xxx" 会跟扩展里的资产对不上, 也分不清是谁。
     const rules = marketRules.value;
-    if (!rules) return { ok: false, error: '市场规则尚未加载, 请重试' };
+    if (!rules) return { ok: false, error: '扩展规则尚未加载, 请重试' };
     if (requirePrefix) {
       if (!CODE_PATTERN.test(name)) {
         return {
@@ -80,7 +80,7 @@ export function parseMcpConfig(
         };
       }
     } else if (!SEGMENT_PATTERN.test(name)) {
-      // ⚠️ 不要求前缀时, 也要守住"分段 + 字符集" —— 只是不强制当前市场前缀
+      // ⚠️ 不要求前缀时, 也要守住"分段 + 字符集" —— 只是不强制当前扩展前缀
       return {
         ok: false,
         error: `连接器「${name}」的名字只能用小写字母/数字/连字符`,
@@ -125,7 +125,7 @@ export function formatMcpConfig(text: string): string {
   return JSON.stringify(r.config, null, 2);
 }
 
-/** 新建连接器的配置模板 —— 连接器名始终采用当前市场示例. */
+/** 新建连接器的配置模板 —— 连接器名始终采用当前扩展示例. */
 export function mcpConfigTemplate(): string {
   const example = marketRules.value?.code.example;
   if (!example) return '';

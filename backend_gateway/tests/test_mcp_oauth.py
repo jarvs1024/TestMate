@@ -42,7 +42,7 @@ def _decode(token: str) -> dict:
 
 @pytest.fixture(autouse=True)
 async def _public_base_url():
-    await set_setting("marketplace.public_base_url", PUBLIC_BASE)
+    await set_setting("extensions.public_base_url", PUBLIC_BASE)
 
 
 async def _user(*, role: UserRole = UserRole.tester, active: bool = True) -> User:
@@ -72,7 +72,7 @@ async def _register(**overrides) -> dict:
     return await oauth.register_client(metadata)
 
 
-def _params(client: dict, *, scopes: str = "market:read market:write") -> dict:
+def _params(client: dict, *, scopes: str = "extensions:read extensions:write") -> dict:
     return {
         "client_id": client["client_id"],
         "redirect_uri": client["redirect_uris"][0],
@@ -88,7 +88,7 @@ async def _create_code(
     user: User,
     client: dict,
     *,
-    scopes: str = "market:read market:write",
+    scopes: str = "extensions:read extensions:write",
 ) -> str:
     return await oauth.create_authorization_code(_params(client, scopes=scopes), user)
 
@@ -166,12 +166,12 @@ async def test_register_client_accepts_http_loopback_and_defaults_all_scopes(
 
     assert registered["token_endpoint_auth_method"] == "none"
     assert "client_secret" not in registered
-    assert registered["scope"] == "market:read market:write"
+    assert registered["scope"] == "extensions:read extensions:write"
     async with AsyncSessionLocal() as session:
         stored = await session.get(McpOAuthClient, registered["client_id"])
         assert stored is not None
         assert stored.redirect_uris == [redirect_uri]
-        assert stored.scopes == ["market:read", "market:write"]
+        assert stored.scopes == ["extensions:read", "extensions:write"]
 
 
 @pytest.mark.parametrize(
@@ -230,7 +230,7 @@ async def test_register_client_accepts_sdk_interactive_defaults():
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
             "application_type": "native",
-            "scope": "market:read market:write",
+            "scope": "extensions:read extensions:write",
         }
     )
 
@@ -240,7 +240,7 @@ async def test_register_client_accepts_sdk_interactive_defaults():
 
 async def test_register_client_rejects_unsupported_scope():
     with pytest.raises(OAuthError) as exc_info:
-        await _register(scope="market:read admin:write")
+        await _register(scope="extensions:read admin:write")
 
     assert exc_info.value.error == "invalid_scope"
 
@@ -252,7 +252,7 @@ async def test_validate_authorization_normalizes_registered_request():
 
     assert validated["client_id"] == client["client_id"]
     assert validated["redirect_uri"] == client["redirect_uris"][0]
-    assert validated["scopes"] == ["market:read", "market:write"]
+    assert validated["scopes"] == ["extensions:read", "extensions:write"]
     assert validated["code_challenge"] == _challenge()
     assert validated["code_challenge_method"] == "S256"
     assert validated["state"] == "state-123"
@@ -265,7 +265,7 @@ async def test_validate_authorization_normalizes_registered_request():
         {"code_challenge_method": "plain"},
         {"code_challenge": ""},
         {"response_type": "token"},
-        {"scope": "market:read unknown:scope"},
+        {"scope": "extensions:read unknown:scope"},
     ],
 )
 async def test_validate_authorization_rejects_unbound_or_non_s256_requests(
@@ -281,11 +281,11 @@ async def test_validate_authorization_rejects_unbound_or_non_s256_requests(
 
 async def test_allowed_scopes_uses_current_publish_policy_and_user_state():
     user = await _user()
-    await set_setting("marketplace.publisher_roles", "tester")
-    assert await oauth.allowed_scopes(user) == ["market:read", "market:write"]
+    await set_setting("extensions.publisher_roles", "tester")
+    assert await oauth.allowed_scopes(user) == ["extensions:read", "extensions:write"]
 
-    await set_setting("marketplace.publisher_roles", "")
-    assert await oauth.allowed_scopes(user) == ["market:read"]
+    await set_setting("extensions.publisher_roles", "")
+    assert await oauth.allowed_scopes(user) == ["extensions:read"]
 
     user.is_active = False
     assert await oauth.allowed_scopes(user) == []
@@ -294,10 +294,10 @@ async def test_allowed_scopes_uses_current_publish_policy_and_user_state():
 async def test_create_authorization_code_rejects_scope_user_cannot_publish():
     client = await _register()
     user = await _user(role=UserRole.viewer)
-    await set_setting("marketplace.publisher_roles", "")
+    await set_setting("extensions.publisher_roles", "")
 
     with pytest.raises(OAuthError) as exc_info:
-        await _create_code(user, client, scopes="market:read market:write")
+        await _create_code(user, client, scopes="extensions:read extensions:write")
 
     assert exc_info.value.error == "invalid_scope"
 
@@ -365,7 +365,7 @@ async def test_exchange_code_persists_grant_and_issues_no_exp_mcp_jwt():
     claims = _decode(result["access_token"])
 
     assert result["token_type"] == "bearer"
-    assert result["scope"] == "market:read market:write"
+    assert result["scope"] == "extensions:read extensions:write"
     assert "exp" not in claims
     assert claims == {
         "sub": str(user.id),
@@ -373,7 +373,7 @@ async def test_exchange_code_persists_grant_and_issues_no_exp_mcp_jwt():
         "grant_id": claims["grant_id"],
         "grant_version": 1,
         "token_version": 7,
-        "scopes": ["market:read", "market:write"],
+        "scopes": ["extensions:read", "extensions:write"],
         "aud": AUDIENCE,
         "typ": "mcp-oauth",
     }
@@ -383,7 +383,7 @@ async def test_exchange_code_persists_grant_and_issues_no_exp_mcp_jwt():
         assert grant is not None
         assert grant.user_id == user.id
         assert grant.client_id == client["client_id"]
-        assert grant.scopes == ["market:read", "market:write"]
+        assert grant.scopes == ["extensions:read", "extensions:write"]
         assert grant.version == 1
         assert grant.revoked_at is None
 
@@ -391,19 +391,19 @@ async def test_exchange_code_persists_grant_and_issues_no_exp_mcp_jwt():
 async def test_exchange_code_applies_publish_policy_again_before_issuing():
     client = await _register()
     user = await _user()
-    await set_setting("marketplace.publisher_roles", "tester")
+    await set_setting("extensions.publisher_roles", "tester")
     code = await _create_code(user, client)
-    await set_setting("marketplace.publisher_roles", "")
+    await set_setting("extensions.publisher_roles", "")
 
     result = await _exchange(code, client)
     claims = _decode(result["access_token"])
 
-    assert claims["scopes"] == ["market:read"]
-    assert result["scope"] == "market:read"
+    assert claims["scopes"] == ["extensions:read"]
+    assert result["scope"] == "extensions:read"
     async with AsyncSessionLocal() as session:
         grant = await session.get(McpOAuthGrant, claims["grant_id"])
         assert grant is not None
-        assert grant.scopes == ["market:read"]
+        assert grant.scopes == ["extensions:read"]
 
 
 async def test_reauthorization_increments_version_and_does_not_revive_old_token():

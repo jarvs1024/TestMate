@@ -9,7 +9,7 @@
  * 为什么改 (用户原话):
  *   「优化返回工作台那行的内容可以放到最上面和上面的可复用的扩展资产这行内容融合,
  *     同时, 去掉返回工作台这个按钮」
- *   —— 原来页头已经有"插件·技能·连接"了, 下面那条又写一遍, 同一句话说两遍.
+ *   —— 原来页头已经有"扩展"了, 下面那条又写一遍, 同一句话说两遍.
  *
  * 要盯住:
  *   ① 身份信息**完整**地交出去 (图标/名称/版本/角色/分类/状态);
@@ -31,12 +31,12 @@ describe('能力身份条 (2026-10-31 第十五轮)', () => {
   it('把身份信息交给页头 (图标 / 名称 / 版本 / 角色 / 分类 / 状态)', () => {
     mount(CapabilityShell, {
       props: {
-        name: '插件·技能·连接', icon: '🏪', kind: 'platform', status: 'beta',
+        name: '扩展', icon: '🏪', kind: 'platform', status: 'beta',
         version: 'v0.1.0', category: 'ai-market',
       },
     });
     expect(capIdentity.value).toEqual({
-      icon: '🏪', name: '插件·技能·连接', version: 'v0.1.0',
+      icon: '🏪', name: '扩展', version: 'v0.1.0',
       kind: 'platform', category: 'ai-market', status: 'beta',
     });
   });

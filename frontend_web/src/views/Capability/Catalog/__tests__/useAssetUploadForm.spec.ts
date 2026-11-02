@@ -132,7 +132,7 @@ describe('上传表单: 缺项清单', () => {
   });
 });
 
-describe('上传表单: 市场规则加载', () => {
+describe('上传表单: 扩展规则加载', () => {
   it('加载失败禁止提交, 重试成功后恢复', async () => {
     requestGet.mockRejectedValueOnce({ response: { data: { detail: 'rules unavailable' } } });
     const asset: any = {
@@ -146,7 +146,7 @@ describe('上传表单: 市场规则加载', () => {
 
     expect(f.canSubmit.value).toBe(false);
     expect(f.rulesError.value).toContain('rules unavailable');
-    expect(f.missing.value).toContain('市场规则 (加载失败, 请重试)');
+    expect(f.missing.value).toContain('扩展规则 (加载失败, 请重试)');
 
     requestGet.mockResolvedValueOnce(rulesPayload);
     await f.loadRules();
@@ -175,7 +175,7 @@ describe('上传表单: 市场规则加载', () => {
 
     expect(f.rulesLoading.value).toBe(true);
     expect(f.rules.value).toBe(null);
-    expect(f.missing.value).toContain('市场规则 (加载中)');
+    expect(f.missing.value).toContain('扩展规则 (加载中)');
     expect(f.canSubmit.value).toBe(false);
     expect(requestGet).toHaveBeenCalledTimes(2);
 

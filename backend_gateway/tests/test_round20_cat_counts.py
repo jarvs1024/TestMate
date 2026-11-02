@@ -66,7 +66,7 @@ async def test_cat_counts_sum_equals_all_total(client, admin_user):
     await _seed_asset("cc-2", author=me, category="质量保障")
     await _seed_asset("cc-3", author=me, category="效率工具")
 
-    r = await client.get("/api/v1/assets", headers=_auth(admin_user))
+    r = await client.get("/api/v1/extensions", headers=_auth(admin_user))
     body = r.json()
     counts = body["cat_counts"]
     assert counts.get("质量保障") == 2
@@ -81,14 +81,14 @@ async def test_cat_counts_do_not_change_when_category_selected(client, admin_use
     await _seed_asset("cc-b", author=me, category="效率工具")
     await _seed_asset("cc-c", author=me, category="效率工具")
 
-    r0 = await client.get("/api/v1/assets", headers=_auth(admin_user))
+    r0 = await client.get("/api/v1/extensions", headers=_auth(admin_user))
     before = r0.json()["cat_counts"]
     assert before.get("质量保障") == 1
     assert before.get("效率工具") == 2
 
     # 选「质量保障」→ 列表只剩 1 条, 但 cat_counts 必须**原样不动**
     r1 = await client.get(
-        "/api/v1/assets", params={"category": "质量保障"}, headers=_auth(admin_user)
+        "/api/v1/extensions", params={"category": "质量保障"}, headers=_auth(admin_user)
     )
     body1 = r1.json()
     assert body1["total"] == 1, "列表本身应该只剩这一类"
@@ -102,7 +102,7 @@ async def test_cat_counts_follow_kind_scope(client, admin_user):
     await _seed_asset("cc-sk", author=me, category="质量保障", kind="skill")
     await _seed_asset("cc-pl", author=me, category="质量保障", kind="plugin")
 
-    r = await client.get("/api/v1/assets", params={"kind": "skill"}, headers=_auth(admin_user))
+    r = await client.get("/api/v1/extensions", params={"kind": "skill"}, headers=_auth(admin_user))
     counts = r.json()["cat_counts"]
     assert counts.get("质量保障") == 1
     assert sum(counts.values()) == r.json()["all_total"]
@@ -114,7 +114,7 @@ async def test_cat_counts_follow_search_query(client, admin_user):
     await _seed_asset("cc-hit", author=me, category="质量保障", summary="命中关键词")
     await _seed_asset("cc-miss", author=me, category="效率工具", summary="不相关")
 
-    r = await client.get("/api/v1/assets", params={"q": "命中关键词"}, headers=_auth(admin_user))
+    r = await client.get("/api/v1/extensions", params={"q": "命中关键词"}, headers=_auth(admin_user))
     counts = r.json()["cat_counts"]
     assert counts.get("质量保障") == 1
     assert "效率工具" not in counts, "不相关的分类不该出现在计数里"
@@ -125,7 +125,7 @@ async def test_cat_counts_omits_categories_with_zero_items(client, admin_user):
     me = admin_user["username"]
     await _seed_asset("cc-only", author=me, category="质量保障")
 
-    r = await client.get("/api/v1/assets", headers=_auth(admin_user))
+    r = await client.get("/api/v1/extensions", headers=_auth(admin_user))
     counts = r.json()["cat_counts"]
     assert "效率工具" not in counts
     assert counts.get("质量保障") == 1
@@ -137,7 +137,7 @@ async def test_cat_counts_respect_visibility(client, admin_user, publisher_user)
         "cc-hidden", author=publisher_user["username"], category="效率工具",
         publish_status="pending",
     )
-    r = await client.get("/api/v1/assets", headers=_auth(publisher_user))
+    r = await client.get("/api/v1/extensions", headers=_auth(publisher_user))
     body = r.json()
     counts = body["cat_counts"]
     assert counts.get("效率工具") == 1, "自己提交的待审资产该算进来"

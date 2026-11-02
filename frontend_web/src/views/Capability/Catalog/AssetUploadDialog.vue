@@ -204,7 +204,7 @@
             <el-form-item label="分类" required>
               <!-- ⚠️ 分类接口失败时**必须说清楚** (2026-10-30):
                    以前 catch 把失败吞成空数组 → 下拉是空的 → 页脚挂着「还缺: 分类」→
-                   「上架」按钮**永久置灰**, 而且看不出为什么 (同一个接口在市场页是有红字的,
+                   「上架」按钮**永久置灰**, 而且看不出为什么 (同一个接口在扩展页是有红字的,
                    只有这个抽屉是静默的). 现在: 红字说明 + 「重试」按钮 + 兜底分类项. -->
               <div v-if="categoriesError" class="cat-err">
                 <span>{{ categoriesError }}。请检查后端服务后点「重试」</span>
@@ -322,7 +322,7 @@
             commit {{ job.commit_sha.slice(0, 12) }} · {{ job.git_path }}
           </div>
           <div v-if="job.status === 'pushed' && reviewState === 'pending'" class="job-sub">
-            文件已推送, 管理员审核通过后才会出现在市场里
+            文件已推送, 管理员审核通过后才会出现在扩展里
           </div>
           <div v-else-if="job.status === 'staged'" class="job-sub">
             文件已落到本地工作区, 后台正在 commit + push
@@ -392,7 +392,7 @@ const props = defineProps<{
    */
   mode: 'create' | 'update' | 'edit';
   asset?: AssetItem | null;
-  /** 入口选定的形态 (市场页下拉选完传进来) —— 空就先进第 ① 步让人选 */
+  /** 入口选定的形态 (扩展页下拉选完传进来) —— 空就先进第 ① 步让人选 */
   initialKind?: MarketKind | '';
 }>();
 const emit = defineEmits<{
@@ -519,7 +519,7 @@ function parseMcpOrNull(text: string): Record<string, unknown> | null {
 /**
  * 点图标面板**外面** → 收起面板.
  *
- * ⚠️ 跟市场页的形态菜单一个做法 (见 Market/index.vue 的 onDocClick):
+ * ⚠️ 跟扩展页的形态菜单一个做法 (见 Market/index.vue 的 onDocClick):
  *    面板连同按钮都在 .icon-pick 里, 点它不算"外面" ——
  *    不然点一下按钮会被"外面点击"和"按钮自己"各处理一次, 面板开了又关。
  *

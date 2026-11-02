@@ -1,4 +1,4 @@
-/** 上传表单规则与纯函数; 命名/分类/项目规则只从后端 /assets/rules 获取. */
+/** 上传表单规则与纯函数; 命名/分类/项目规则只从后端 /extensions/rules 获取. */
 import { ref } from 'vue';
 import request from '@/utils/request';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
@@ -37,7 +37,7 @@ export interface MarketRules {
   };
 }
 
-/** 当前市场上下文共享的规则状态; 页面错误条与上传抽屉看到同一次加载结果. */
+/** 当前扩展上传表单共享的规则状态; 页面错误条与上传抽屉看到同一次加载结果. */
 export const marketRules = ref<MarketRules | null>(null);
 export const marketRulesError = ref('');
 export const marketRulesLoading = ref(false);
@@ -51,7 +51,7 @@ export async function loadMarketRules(): Promise<void> {
   marketRulesError.value = '';
   rulesRequest = (async () => {
     try {
-      marketRules.value = (await request.get('/assets/rules')) as unknown as MarketRules;
+      marketRules.value = (await request.get('/extensions/rules')) as unknown as MarketRules;
       marketRulesError.value = '';
     } catch (e: any) {
       marketRules.value = null;
@@ -104,7 +104,7 @@ export function validatePackageName(
   const requirePrefix = opts.requirePrefix !== false;
   const name = (filename || '').trim();
   if (!name) return '请选择安装包';
-  if (!rules) return '市场规则尚未加载, 请重试';
+  if (!rules) return '扩展规则尚未加载, 请重试';
   const ext = packagePattern(rules);
   if (!ext.test(name)) return `安装包只支持 ${rules.package.suffixes.join(' / ')}`;
   const base = name.replace(ext, '');
@@ -147,7 +147,7 @@ export function validateCode(
 ): string {
   const c = (code || '').trim();
   if (!c) return '资产 code 必填';
-  if (!rules) return '市场规则尚未加载, 请重试';
+  if (!rules) return '扩展规则尚未加载, 请重试';
   if (!c.startsWith(rules.code.prefix)) {
     return `资产 code 必须以 "${rules.code.prefix}" 开头 (如 ${rules.code.example})`;
   }
@@ -168,7 +168,7 @@ export function validateCode(
  *   连接器      → code = MCP 配置里的**某一个**连接器名 (可能配了多个)
  *
  * 为什么这么严: 装出来 / 抄下来要对得上 ——
- *   包名决定装到哪, code 决定市场里的资产号; 两边对不上, 用的人一脸懵。
+ *   包名决定装到哪, code 决定扩展里的资产号; 两边对不上, 用的人一脸懵。
  *
  * @returns 错误文案 (空串 = 一致 / 还不用管)
  */

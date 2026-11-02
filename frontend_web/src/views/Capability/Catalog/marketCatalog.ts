@@ -1,8 +1,8 @@
 /**
- * 插件·技能·连接 (原「AI 资产市场」) — 前端常量。
+ * 扩展 (原「AI 扩展」) — 前端常量。
  *
- * ⚠️ 资产数据**不再写死在前端**: 真实数据存放在 GitLab 仓库 root/testmate-market,
- *    后端 /api/v1/assets 提供索引. 这里只保留纯展示用的类型枚举,
+ * ⚠️ 资产数据**不再写死在前端**: 真实数据存放在 GitLab 仓库 root/testmate-extensions,
+ *    后端 /api/v1/extensions 提供索引. 这里只保留纯展示用的类型枚举,
  *    以及类型再导出 (统一从 @/api/assets 引入, 避免两处定义漂移).
  *
  * ⚠️ 分类清单 (MARKET_CATEGORIES) 已经删掉了 —— 分类是后端下发的
@@ -18,7 +18,7 @@ export const MARKET_KINDS: { value: MarketKind; label: string }[] = [
 ];
 
 /**
- * 市场页的排序方式 —— 与后端 sort 参数一一对应
+ * 扩展页的排序方式 —— 与后端 sort 参数一一对应
  * (后端: marketplace.py list_assets 的 sort, pattern="^(hot|new|name)$")
  */
 export type MarketSort = 'hot' | 'new' | 'name';

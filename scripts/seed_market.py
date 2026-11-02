@@ -12,7 +12,7 @@
     python3 scripts/seed_market.py [--base http://localhost:18000] \
         [--user admin] [--password 'Admin@123']
 
-⚠️ 需要发布者权限 (admin 恒可发布, 其他用户要在 marketplace.publisher_ids 里).
+⚠️ 需要发布者权限 (admin 恒可发布, 其他用户要在 extensions.publisher_ids 里).
 """
 from __future__ import annotations
 
@@ -344,7 +344,7 @@ def main() -> int:
 
     job_ids: list[int] = []
     # 先取已有资产 —— 直接走对的动作 (新建/更新), 避免"先创建撞 409"把工作区写脏
-    st, existing = _req(f"{base}/api/v1/assets?limit=200", headers=H)
+    st, existing = _req(f"{base}/api/v1/extensions?limit=200", headers=H)
     known: set[str] = set()
     if isinstance(existing, dict):
         known = {i.get("code") for i in existing.get("items", []) if i.get("code")}
@@ -379,11 +379,11 @@ def main() -> int:
             )
         if a["code"] in known:
             raw, ct = _multipart({k: v for k, v in fields.items() if k != "code"}, pkg_files)
-            st, data = _req(f"{base}/api/v1/assets/{a['code']}", raw=raw,
+            st, data = _req(f"{base}/api/v1/extensions/{a['code']}", raw=raw,
                             headers=H, method="PUT", content_type=ct)
         else:
             raw, ct = _multipart(fields, pkg_files)
-            st, data = _req(f"{base}/api/v1/assets/upload", raw=raw,
+            st, data = _req(f"{base}/api/v1/extensions/upload", raw=raw,
                             headers=H, method="POST", content_type=ct)
         if st not in (200, 202):
             print(f"❌ {a['code']}: HTTP {st} {str(data)[:200]}")
@@ -398,7 +398,7 @@ def main() -> int:
     while pending and time.time() < deadline:
         time.sleep(2)
         for jid in list(pending):
-            st, d = _req(f"{base}/api/v1/assets/jobs/{jid}", headers=H)
+            st, d = _req(f"{base}/api/v1/extensions/jobs/{jid}", headers=H)
             if not isinstance(d, dict):
                 continue
             if d.get("status") == "pushed":
@@ -410,7 +410,7 @@ def main() -> int:
     if pending:
         print(f"  ⏳ 仍有 {len(pending)} 个任务未完成: {sorted(pending)}")
 
-    st, d = _req(f"{base}/api/v1/assets?limit=100", headers=H)
+    st, d = _req(f"{base}/api/v1/extensions?limit=100", headers=H)
     if isinstance(d, dict):
         print(f"\n📦 资产总数: {d.get('total')}")
         for it in d.get("items", []):

@@ -253,7 +253,7 @@ async function openUpload(page, kindLabel) {
   // ================= ④ 项目筛选到空结果 =================
   // ⚠️ 2026-10-25: 项目筛选从 chip 收进了**下拉菜单** (跟排序合并) —— 定位方式跟着改
   // ⚠️ 选「通用」而不是某个具体项目号 —— 项目列表是**配置**
-  //    (设置项 marketplace.projects), 生产上未必有某个号, 写死会误判.
+  //    (设置项 extensions.projects), 生产上未必有某个号, 写死会误判.
   await page.evaluate(() => {
     document.querySelector('.filter-trigger')?.click();
   });
@@ -297,7 +297,7 @@ async function openUpload(page, kindLabel) {
   makeZip(legacyZip, [['SKILL.md', '---\nname: legacy\ndescription: d\n---\n\n# legacy\n']]);
   {
     // ⚠️ 先清一次 —— 上次跑崩了会留下同名资产, 这次上传就 409 了 (用例要幂等)
-    await api(`/api/v1/assets/${legacyCode}`, {
+    await api(`/api/v1/extensions/${legacyCode}`, {
       method: 'DELETE', headers: { Authorization: 'Bearer ' + tk },
     });
     const fd = new FormData();
@@ -314,7 +314,7 @@ async function openUpload(page, kindLabel) {
     fd.append('install_steps', '[]');
     fd.append('bindings', '{}');
     fd.append('package', new Blob([fs.readFileSync(legacyZip)]), `${legacyCode}.zip`);
-    const up = await api('/api/v1/assets/upload', {
+    const up = await api('/api/v1/extensions/upload', {
       method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd,
     });
     check('E17 造一个无前缀的存量资产', up.status === 202, `status=${up.status}`);
@@ -322,7 +322,7 @@ async function openUpload(page, kindLabel) {
   // 等它落库并推上 GitLab
   for (let i = 0; i < 20; i++) {
     await sleep(700);
-    const st = await api(`/api/v1/assets/${legacyCode}`, { headers: { Authorization: 'Bearer ' + tk } });
+    const st = await api(`/api/v1/extensions/${legacyCode}`, { headers: { Authorization: 'Bearer ' + tk } });
     if (st.status === 200) break;
   }
 
@@ -384,7 +384,7 @@ async function openUpload(page, kindLabel) {
   });
   await sleep(800);
   {
-    const del = await api(`/api/v1/assets/${legacyCode}`, {
+    const del = await api(`/api/v1/extensions/${legacyCode}`, {
       method: 'DELETE', headers: { Authorization: 'Bearer ' + tk },
     });
     check('E22 清理临时存量资产', del.status === 200, `status=${del.status}`);
@@ -435,7 +435,7 @@ async function openUpload(page, kindLabel) {
   await anonPage.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
   await sleep(1200);
   const anonState = await anonPage.evaluate(async () => {
-    const r = await fetch('/api/v1/assets/definitely-not-exists', {
+    const r = await fetch('/api/v1/extensions/definitely-not-exists', {
       headers: localStorage.getItem('testmate:token') ? { Authorization: 'Bearer ' + localStorage.getItem('testmate:token') } : {},
     });
     return r.status;

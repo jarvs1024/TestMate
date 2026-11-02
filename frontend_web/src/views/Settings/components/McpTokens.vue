@@ -25,8 +25,8 @@
         </label>
         <fieldset class="scope-field" :disabled="creating">
           <legend>权限 <b>*</b></legend>
-          <label><input v-model="form.scopes" type="checkbox" value="market:read" /> 读取资产</label>
-          <label><input v-model="form.scopes" type="checkbox" value="market:write" :disabled="!canWrite" /> 管理资产</label>
+          <label><input v-model="form.scopes" type="checkbox" value="extensions:read" /> 读取资产</label>
+          <label><input v-model="form.scopes" type="checkbox" value="extensions:write" :disabled="!canWrite" /> 管理资产</label>
         </fieldset>
         <button type="button" class="mini-btn primary create-btn" :disabled="!canCreate" @click="create">
           {{ creating ? '创建中…' : '创建令牌' }}
@@ -103,7 +103,7 @@ import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { parseApiTime } from '@/utils/format';
 
 const tokens = ref<McpToken[]>([]);
-const allowedScopes = ref<McpScope[]>(['market:read']);
+const allowedScopes = ref<McpScope[]>(['extensions:read']);
 const loading = ref(false);
 const loadError = ref('');
 const scopesError = ref('');
@@ -116,11 +116,11 @@ let copiedTimer: number | undefined;
 
 const form = reactive<{ name: string; scopes: McpScope[]; expiresAt: string }>({
   name: '',
-  scopes: ['market:read'],
+  scopes: ['extensions:read'],
   expiresAt: '',
 });
 
-const canWrite = computed(() => allowedScopes.value.includes('market:write'));
+const canWrite = computed(() => allowedScopes.value.includes('extensions:write'));
 const canCreate = computed(() => (
   !creating.value
   && !!form.name.trim()
@@ -133,7 +133,7 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 function scopeText(scope: McpScope): string {
-  return scope === 'market:write' ? '管理资产' : '读取资产';
+  return scope === 'extensions:write' ? '管理资产' : '读取资产';
 }
 
 function formatTime(value: string | null): string {
@@ -163,7 +163,7 @@ async function loadScopes() {
     const result = await listMcpTokenScopes();
     allowedScopes.value = result.scopes;
   } catch {
-    allowedScopes.value = ['market:read'];
+    allowedScopes.value = ['extensions:read'];
     scopesError.value = '未能读取当前可用权限，暂时只能创建只读令牌。';
   }
   form.scopes = form.scopes.filter((scope) => allowedScopes.value.includes(scope));

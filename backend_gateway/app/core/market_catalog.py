@@ -256,7 +256,7 @@ def render_index_entries(entries: list[dict[str, Any]]) -> str:
     ordered = sorted(entries, key=lambda e: e.get("code", ""))
     payload = {
         "schema_version": INDEX_SCHEMA_VERSION,
-        "generated_by": "testmate-marketplace",
+        "generated_by": "testmate-extensions",
         "assets": ordered,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)

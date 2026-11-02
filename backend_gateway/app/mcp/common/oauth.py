@@ -24,9 +24,15 @@ from app.db.session import AsyncSessionLocal
 from app.models.mcp import McpOAuthClient, McpOAuthGrant
 from app.models.user import User
 
-SUPPORTED_SCOPES = frozenset({"market:read", "market:write"})
-_SCOPE_ORDER = ("market:read", "market:write")
+SUPPORTED_SCOPES = frozenset({"extensions:read", "extensions:write"})
+_SCOPE_ORDER = ("extensions:read", "extensions:write")
+_LEGACY_SCOPES = {"market:read": "extensions:read", "market:write": "extensions:write"}
 AUTHORIZATION_CODE_TTL_SECONDS = 300
+
+
+def normalize_scope(scope: str) -> str:
+    """Map pre-rename grants/scopes onto the current extensions namespace."""
+    return _LEGACY_SCOPES.get(scope, scope)
 
 
 class OAuthError(Exception):
@@ -82,7 +88,7 @@ def _is_loopback_redirect(uri: Any) -> bool:
 
 
 def _ordered_scopes(scopes: Sequence[str]) -> list[str]:
-    requested = set(scopes)
+    requested = {normalize_scope(scope) for scope in scopes}
     return [scope for scope in _SCOPE_ORDER if scope in requested]
 
 
@@ -100,7 +106,7 @@ def _parse_scopes(raw: Any, *, default: Sequence[str] | None = None) -> list[str
     else:
         raise OAuthError("invalid_scope", "scope 格式错误")
     if not values or any(scope not in SUPPORTED_SCOPES for scope in values):
-        raise OAuthError("invalid_scope", "scope 必须是 market:read market:write 的非空子集")
+        raise OAuthError("invalid_scope", "scope 必须是 extensions:read extensions:write 的非空子集")
     return _ordered_scopes(values)
 
 
@@ -221,9 +227,9 @@ async def allowed_scopes(user: User) -> list[str]:
     """Return scopes allowed by the user's current state and publisher policy."""
     if not getattr(user, "is_active", False):
         return []
-    scopes = ["market:read"]
+    scopes = ["extensions:read"]
     if await market_policy.can_publish(user):
-        scopes.append("market:write")
+        scopes.append("extensions:write")
     return scopes
 
 
@@ -256,10 +262,10 @@ async def issue_access_token(
 ) -> str:
     """Issue an OAuth JWT with no exp; grant and user versions provide revocation."""
     if public_base is None:
-        public_base = await get("marketplace.public_base_url", "")
+        public_base = await get("extensions.public_base_url", "")
     base = str(public_base or "").strip().rstrip("/")
     if not base:
-        raise OAuthError("invalid_request", "未配置 marketplace.public_base_url")
+        raise OAuthError("invalid_request", "未配置 extensions.public_base_url")
     payload = {
         "sub": str(user.id),
         "client_id": grant.client_id,

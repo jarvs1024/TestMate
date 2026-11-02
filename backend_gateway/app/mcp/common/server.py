@@ -11,7 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
+from starlette.routing import Mount, Route, get_route_path
 
 from app.core.config import settings
 from app.mcp.common.auth import McpTokenVerifier
@@ -60,11 +60,12 @@ def build_mcp(
     public_base_url: str,
     allowed_hosts: Any = (),
     redis_client: Any | None = None,
+    server_name: str | None = None,
 ) -> FastMCP:
     """Build one domain using the installed SDK's real auth interfaces."""
     base = public_base_url.rstrip("/")
     mcp = FastMCP(
-        f"testmate-{domain}",
+        server_name or f"testmate-{domain}",
         token_verifier=McpTokenVerifier(),
         auth=AuthSettings(
             issuer_url=base,
@@ -89,6 +90,31 @@ def build_mcp(
     return mcp
 
 
+class _LegacyPathAlias:
+    """ASGI class (not a function) so Starlette keeps every HTTP method."""
+
+    def __init__(self, app: Any, legacy: str, target: str) -> None:
+        self._app = app
+        self._legacy = legacy
+        self._target = target
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") == "http":
+            scope = dict(scope)
+            root_path = scope.get("root_path", "")
+            relative = get_route_path(scope)
+            if relative == self._legacy or relative.startswith(f"{self._legacy}/"):
+                scope["path"] = root_path + self._target + relative[len(self._legacy):]
+                scope["raw_path"] = scope["path"].encode()
+        await self._app(scope, receive, send)
+
+
+def _legacy_path_alias(app: Any, legacy: str, target: str) -> Any:
+    """Serve an old MCP path from the renamed domain without a second server."""
+
+    return _LegacyPathAlias(app, legacy, target)
+
+
 class McpDispatcher:
     """A mountable dispatcher that is unavailable until lifespan configuration."""
 
@@ -105,8 +131,15 @@ class McpDispatcher:
         routes: list[Route | Mount] = []
         for domain, mcp in domains.items():
             path = f"/{domain}"
-            routes.append(Route(path, endpoint=mcp.streamable_http_app()))
-            routes.append(Mount(path, app=mcp.sse_app()))
+            streamable = mcp.streamable_http_app()
+            sse = mcp.sse_app()
+            routes.append(Route(path, endpoint=streamable))
+            routes.append(Mount(path, app=sse))
+            if domain == "extensions":
+                routes.append(
+                    Route("/skill", endpoint=_legacy_path_alias(streamable, "/skill", path))
+                )
+                routes.append(Mount("/skill", app=sse))
         self._domains = dict(domains)
         self.routes = routes
         self._app = Starlette(routes=routes)

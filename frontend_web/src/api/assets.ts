@@ -1,10 +1,10 @@
-/** 插件·技能·连接 (原「AI 资产市场」) API —— 后端 /api/v1/assets/*.
+/** 扩展 (原「AI 扩展」) API —— 后端 /api/v1/extensions/*.
  *
  * ⚠️ 响应拦截器 (utils/request.ts) 返回的是**响应体本身**, axios 的类型声明
  *    仍是 Promise<AxiosResponse> —— 两者不一致, 所以统一走 apiGet/apiPost/apiPut
  *    三个 helper 做类型收敛.
  *
- * 真实资产存放在 GitLab 仓库 root/testmate-market, 后端只维护查询镜像.
+ * 真实资产存放在 GitLab 仓库 root/testmate-extensions, 后端只维护查询镜像.
  */
 import request from '@/utils/request';
 import { getClientId } from '@/utils/clientId';
@@ -42,7 +42,7 @@ export interface AssetItem {
   bindings: Record<string, any>;
   git_path: string;
   git_commit_sha: string;
-  /** 资产在 GitLab 上的网页地址 (由 marketplace.git.web_url 拼出; 没配就为空) */
+  /** 资产在 GitLab 上的网页地址 (由 extensions.git.web_url 拼出; 没配就为空) */
   git_web_url: string;
   /** 下载次数 (热门度) —— 不是"安装次数" */
   download_count: number;
@@ -173,7 +173,7 @@ export interface AssetNotification {
   created_at: string | null;
 }
 
-/** 市场当前生效的配置 (只读) —— 设置页展示用 */
+/** 扩展当前生效的配置 (只读) —— 设置页展示用 */
 export interface MarketConfig {
   workspace: string;
   remote: string;
@@ -281,19 +281,19 @@ export async function listAssets(params: {
    *  留空=默认可见性 */
   status?: string;
 } = {}, opts: { silent?: boolean } = {}): Promise<AssetListResp> {
-  // ⚠️ 后端 GET /assets 的 limit 上限是 500 —— 超过会 422.
+  // ⚠️ 后端 GET /extensions 的 limit 上限是 500 —— 超过会 422.
   //    前端先夹住 (调用方传了默认值也得夹), 别让一个越界参数换来一个 422.
   const query: Record<string, any> = { client_id: getClientId(), ...params };
   if (query.limit !== undefined && query.limit !== null) {
     query.limit = Math.min(query.limit, 500);
   }
   if (opts.silent) {
-    return (await request.get('/assets', {
+    return (await request.get('/extensions', {
       params: query,
       silent: true,
     })) as unknown as AssetListResp;
   }
-  return apiGet<AssetListResp>('/assets', query);
+  return apiGet<AssetListResp>('/extensions', query);
 }
 
 /**
@@ -310,11 +310,11 @@ export async function listCategories(status?: string): Promise<{
   }[];
   total?: number;
 }> {
-  return apiGet('/assets/categories', status ? { status } : undefined);
+  return apiGet('/extensions/categories', status ? { status } : undefined);
 }
 
 /**
- * 项目列表 + 每个项目的资产数 —— 上传表单的「适用项目」与市场页的筛选都用它.
+ * 项目列表 + 每个项目的资产数 —— 上传表单的「适用项目」与扩展页的筛选都用它.
  *
  * ⚠️ 通用 (code = "") 也在列表里 —— 它是"默认选项", 不是某个项目。
  */
@@ -322,23 +322,23 @@ export async function listProjects(): Promise<{
   items: { code: string; name: string; total: number; is_general?: boolean }[];
   total?: number;
 }> {
-  return apiGet('/assets/projects');
+  return apiGet('/extensions/projects');
 }
 
 export async function getAsset(code: string): Promise<AssetItem> {
-  return apiGet<AssetItem>(`/assets/${encodeURIComponent(code)}`, { client_id: getClientId() });
+  return apiGet<AssetItem>(`/extensions/${encodeURIComponent(code)}`, { client_id: getClientId() });
 }
 
 export async function getAssetDoc(code: string): Promise<AssetDoc> {
-  return apiGet<AssetDoc>(`/assets/${encodeURIComponent(code)}/doc`);
+  return apiGet<AssetDoc>(`/extensions/${encodeURIComponent(code)}/doc`);
 }
 
 export async function getAssetFiles(code: string): Promise<{ code: string; git_path: string; files: AssetFileNode[] }> {
-  return apiGet(`/assets/${encodeURIComponent(code)}/files`);
+  return apiGet(`/extensions/${encodeURIComponent(code)}/files`);
 }
 
 export async function getAssetBundle(code: string): Promise<AssetBundle> {
-  return apiGet<AssetBundle>(`/assets/${encodeURIComponent(code)}/bundle`);
+  return apiGet<AssetBundle>(`/extensions/${encodeURIComponent(code)}/bundle`);
 }
 
 /**
@@ -347,19 +347,19 @@ export async function getAssetBundle(code: string): Promise<AssetBundle> {
  * @param opts.silent 失败时不弹全局错误 (调用方自己在页面上提示)
  */
 export async function getSyncStatus(opts: { silent?: boolean } = {}): Promise<SyncStatus> {
-  return (await request.get('/assets/sync-status', {
+  return (await request.get('/extensions/sync-status', {
     params: { client_id: getClientId() },
     silent: opts.silent,
   })) as unknown as SyncStatus;
 }
 
 export async function listAudits(code?: string): Promise<{ items: AssetAudit[]; total: number }> {
-  return apiGet('/assets/audits', code ? { code, limit: 50 } : { limit: 50 });
+  return apiGet('/extensions/audits', code ? { code, limit: 50 } : { limit: 50 });
 }
 
 /** 钉钉通知送达回执 */
 export async function listNotifications(limit = 50): Promise<{ items: AssetNotification[]; total: number }> {
-  return apiGet('/assets/notifications', { limit });
+  return apiGet('/extensions/notifications', { limit });
 }
 
 /**
@@ -378,12 +378,12 @@ export interface NotifyPreview {
 }
 
 export async function previewNotifications(): Promise<NotifyPreview[]> {
-  return apiGet<NotifyPreview[]>('/assets/notifications/preview');
+  return apiGet<NotifyPreview[]>('/extensions/notifications/preview');
 }
 
-/** 市场当前生效的配置 (只读) */
+/** 扩展当前生效的配置 (只读) */
 export async function getMarketConfig(): Promise<MarketConfig> {
-  return apiGet<MarketConfig>('/assets/config');
+  return apiGet<MarketConfig>('/extensions/config');
 }
 
 /** 上传前体检: 这个包装不装得上 */
@@ -391,7 +391,7 @@ export async function previewPackage(file: File, kind: string): Promise<PackageP
   const fd = new FormData();
   fd.append('package', file, file.name);
   fd.append('kind', kind);
-  return (await request.post('/assets/preview-package', fd)) as unknown as PackagePreview;
+  return (await request.post('/extensions/preview-package', fd)) as unknown as PackagePreview;
 }
 
 /** 管理员审核上架: decision = approve | reject */
@@ -401,7 +401,7 @@ export async function reviewAsset(
   const fd = new FormData();
   fd.append('decision', decision);
   fd.append('comment', comment);
-  return (await request.post(`/assets/${encodeURIComponent(code)}/review`, fd)) as unknown as {
+  return (await request.post(`/extensions/${encodeURIComponent(code)}/review`, fd)) as unknown as {
     ok: boolean; code: string; publish_status: string; changed: boolean;
   };
 }
@@ -412,7 +412,7 @@ export async function submitForReview(
 ): Promise<{ ok: boolean; code: string; publish_status: string; changed: boolean }> {
   const fd = new FormData();
   fd.append('comment', comment);
-  return (await request.post(`/assets/${encodeURIComponent(code)}/submit`, fd)) as unknown as {
+  return (await request.post(`/extensions/${encodeURIComponent(code)}/submit`, fd)) as unknown as {
     ok: boolean; code: string; publish_status: string; changed: boolean;
   };
 }
@@ -427,11 +427,11 @@ export async function submitForReview(
 export async function deleteAsset(code: string, comment = ''): Promise<{
   ok: boolean; code: string; commit_sha: string;
 }> {
-  return apiDelete('/assets/' + encodeURIComponent(code), { comment });
+  return apiDelete('/extensions/' + encodeURIComponent(code), { comment });
 }
 
 /**
- * 下架 —— **走哪条路看审核总开关** (`marketplace.review.enabled`).
+ * 下架 —— **走哪条路看审核总开关** (`extensions.review.enabled`).
  *
  * · 开关**开** (默认) → 提交申请, 等管理员确认, 确认通过资产被**彻底删除**.
  * · 开关**关** (免审) → 立刻下架, **文件保留**, 可随时「重新上架」.
@@ -445,7 +445,7 @@ export async function unpublishAsset(
   const fd = new FormData();
   fd.append('confirm_code', confirmCode);
   fd.append('comment', comment);
-  return (await request.post(`/assets/${encodeURIComponent(code)}/unpublish`, fd)) as unknown as {
+  return (await request.post(`/extensions/${encodeURIComponent(code)}/unpublish`, fd)) as unknown as {
     ok: boolean; code: string; publish_status: string; changed: boolean; needs_review: boolean;
   };
 }
@@ -461,7 +461,7 @@ export async function reviewUnpublish(
   const fd = new FormData();
   fd.append('decision', decision);
   fd.append('comment', comment);
-  return (await request.post(`/assets/${encodeURIComponent(code)}/unpublish-review`, fd)) as unknown as {
+  return (await request.post(`/extensions/${encodeURIComponent(code)}/unpublish-review`, fd)) as unknown as {
     ok: boolean; code: string; decision: string; deleted?: boolean; publish_status?: string;
   };
 }
@@ -472,22 +472,22 @@ export async function cancelUnpublish(
 ): Promise<{ ok: boolean; code: string; publish_status: string; changed: boolean }> {
   const fd = new FormData();
   fd.append('comment', comment);
-  return (await request.post(`/assets/${encodeURIComponent(code)}/unpublish-cancel`, fd)) as unknown as {
+  return (await request.post(`/extensions/${encodeURIComponent(code)}/unpublish-cancel`, fd)) as unknown as {
     ok: boolean; code: string; publish_status: string; changed: boolean;
   };
 }
 
 export async function getJob(id: number): Promise<AssetJob> {
-  return apiGet<AssetJob>(`/assets/jobs/${id}`);
+  return apiGet<AssetJob>(`/extensions/jobs/${id}`);
 }
 
 export async function listJobs(limit = 20): Promise<{ items: AssetJob[]; total: number }> {
-  return apiGet<{ items: AssetJob[]; total: number }>('/assets/jobs', { limit });
+  return apiGet<{ items: AssetJob[]; total: number }>('/extensions/jobs', { limit });
 }
 
 /** 人工重试一个失败的同步任务 */
 export async function retryJob(id: number): Promise<AssetJob> {
-  return apiPost<AssetJob>(`/assets/jobs/${id}/retry`);
+  return apiPost<AssetJob>(`/extensions/jobs/${id}/retry`);
 }
 
 // ---------- 写 ----------
@@ -521,11 +521,11 @@ function toFormData(f: UploadForm, includeCode: boolean): FormData {
 }
 
 export async function uploadAsset(form: UploadForm): Promise<AssetJob> {
-  return apiPost<AssetJob>('/assets/upload', toFormData(form, true));
+  return apiPost<AssetJob>('/extensions/upload', toFormData(form, true));
 }
 
 export async function updateAsset(code: string, form: UploadForm): Promise<AssetJob> {
-  return apiPut<AssetJob>(`/assets/${encodeURIComponent(code)}`, toFormData(form, false));
+  return apiPut<AssetJob>(`/extensions/${encodeURIComponent(code)}`, toFormData(form, false));
 }
 
 /**
@@ -555,7 +555,7 @@ export interface AssetMetaForm {
 }
 
 export async function updateAssetMeta(code: string, form: AssetMetaForm): Promise<AssetJob> {
-  return apiPatch<AssetJob>(`/assets/${encodeURIComponent(code)}`, form);
+  return apiPatch<AssetJob>(`/extensions/${encodeURIComponent(code)}`, form);
 }
 
 /**
@@ -566,7 +566,7 @@ export async function updateAssetMeta(code: string, form: AssetMetaForm): Promis
  */
 export async function downloadAssetPackage(code: string, version: string): Promise<Blob> {
   const resp = await request.get(
-    `/assets/${encodeURIComponent(code)}/versions/${encodeURIComponent(version)}/download`,
+    `/extensions/${encodeURIComponent(code)}/versions/${encodeURIComponent(version)}/download`,
     { responseType: 'blob' },
   );
   return resp as unknown as Blob;
@@ -575,13 +575,13 @@ export async function downloadAssetPackage(code: string, version: string): Promi
 export async function publishAsset(code: string, comment = ''): Promise<void> {
   const fd = new FormData();
   fd.append('comment', comment);
-  await request.post(`/assets/${encodeURIComponent(code)}/publish`, fd);
+  await request.post(`/extensions/${encodeURIComponent(code)}/publish`, fd);
 }
 
 export async function syncFromGit(): Promise<{ ok: boolean; added: number; updated: number; index_present: boolean; gitlab: string }> {
-  return apiPost('/assets/sync');
+  return apiPost('/extensions/sync');
 }
 
 export async function probeGitLab(): Promise<{ ok: boolean; status: string; message: string }> {
-  return apiGet('/assets/probe/gitlab');
+  return apiGet('/extensions/probe/gitlab');
 }

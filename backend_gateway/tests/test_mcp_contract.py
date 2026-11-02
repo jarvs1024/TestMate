@@ -29,7 +29,7 @@ from app.schemas.asset import AssetJobOut, AssetMetaUpdateIn
 from tests._mcp_protocol import call_tool_data
 from tests.conftest import set_setting
 
-API = "/api/v1/assets"
+API = "/api/v1/extensions"
 PUBLIC_BASE = "http://test"
 SCENARIOS = ("publish", "update", "edit_meta", "submit_review", "unpublish_request")
 
@@ -60,9 +60,9 @@ def notifications(monkeypatch):
 
 @pytest.fixture
 async def credentials(publisher_user):
-    await set_setting("marketplace.public_base_url", PUBLIC_BASE)
-    await set_setting("marketplace.publisher_roles", "tester")
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.public_base_url", PUBLIC_BASE)
+    await set_setting("extensions.publisher_roles", "tester")
+    await set_setting("extensions.review.enabled", "true")
     async with AsyncSessionLocal() as session:
         user = await session.get(User, publisher_user["id"])
         assert user is not None
@@ -72,13 +72,13 @@ async def credentials(publisher_user):
                 client_id=client_id,
                 client_name="REST/MCP contract test client",
                 redirect_uris=["http://127.0.0.1:51234/callback"],
-                scopes=["market:read", "market:write"],
+                scopes=["extensions:read", "extensions:write"],
             )
         )
         grant = McpOAuthGrant(
             user_id=user.id,
             client_id=client_id,
-            scopes=["market:read", "market:write"],
+            scopes=["extensions:read", "extensions:write"],
             version=1,
         )
         session.add(grant)
@@ -102,7 +102,7 @@ async def _transport_client():
         redis_client=_FakeRedis(),
     )
     assert isinstance(server._token_verifier, McpTokenVerifier)
-    dispatcher = build_dispatcher({"skill": server})
+    dispatcher = build_dispatcher({"extensions": server})
     app = FastAPI()
     app.include_router(marketplace.router, prefix=API)
     app.mount("/mcp", dispatcher)
@@ -308,7 +308,7 @@ async def _execute_mcp(
         arguments = {"code": code, "comment": "Please review contract asset"}
     else:
         arguments = {"code": code, "reason": "Contract unpublish reason"}
-    return await call_tool_data(client, token, f"skill_{scenario}", arguments)
+    return await call_tool_data(client, token, f"extension_{scenario}", arguments)
 
 
 _GENERATED_ID_PATHS = {
@@ -672,7 +672,7 @@ def _mapping_context() -> tuple[McpContext, User]:
     user = User(username="mapping-user", password_hash="unused", role=UserRole.tester)
     user.id = 41
     principal = Principal(
-        user=user, client_id="mapping-tests", scopes=frozenset({"market:write"})
+        user=user, client_id="mapping-tests", scopes=frozenset({"extensions:write"})
     )
     return McpContext(principal=principal, session=None), user
 

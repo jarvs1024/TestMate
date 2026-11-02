@@ -1,11 +1,11 @@
 """软件库 数据模型 —— 公司内部软件的统一分发入口.
 
-跟「插件·技能·连接」(Asset) 的分工:
+跟「扩展」(Asset) 的分工:
   · Asset  —— 装进 Agent 的扩展 (文本包), 真身在 GitLab, 本表只是查询镜像
   · Software —— **给人用的内部软件** (任意格式二进制), 真身在**服务端磁盘**
 
 两个东西在存储 (GitLab 文本包 vs 本地磁盘二进制)、权限、审核三个维度都不同,
-所以独立建表 —— 混在一起会让现有市场逻辑复杂化, 而且二进制根本进不了 GitLab.
+所以独立建表 —— 混在一起会让现有扩展逻辑复杂化, 而且二进制根本进不了 GitLab.
 
 ⚠️ status 一律用 String + 应用层校验, 不用 MySQL ENUM (理由同 models/asset.py).
 """
@@ -39,7 +39,7 @@ class SoftwareItem(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # 展示功能 (用户在卡片/详情里看到的"这个软件能干什么"清单)
     features: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    # 适用场景 / 不适合的场景 —— 沿用市场那套"该用与不该用"的说法
+    # 适用场景 / 不适合的场景 —— 沿用扩展那套"该用与不该用"的说法
     use_when: Mapped[str] = mapped_column(Text, nullable=False, default="")
     not_for: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
@@ -60,7 +60,7 @@ class SoftwareItem(Base):
     # 生命周期: awaiting_file(信息填了没传文件) / published(可下载) / hidden(被隐藏)
     # ⚠️ **没有审核态** —— 软件库是"上架即上架", 有发布权的人传完就能下.
     publish_status: Mapped[str] = mapped_column(String(16), nullable=False, default="awaiting_file", index=True)
-    # 软删标记 —— 删条目不立刻删磁盘文件 (跟市场"下架申请 → 管理员确认"一个口径)
+    # 软删标记 —— 删条目不立刻删磁盘文件 (跟扩展"下架申请 → 管理员确认"一个口径)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

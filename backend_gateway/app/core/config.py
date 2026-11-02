@@ -63,10 +63,10 @@ class Settings(BaseSettings):
     # DingTalk
     DINGTALK_DEFAULT_WEBHOOK: str = ""
 
-    # ===== 插件·技能·连接 (本地 git 工作区 + GitLab SSH 同步) =====
-    MARKET_WORKSPACE: str = "/workspace"
-    MARKET_GIT_REMOTE: str = "ssh://git@host.docker.internal:8922/root/testmate-market.git"
-    MARKET_GIT_BRANCH: str = "main"
+    # ===== 扩展 (本地 git 工作区 + GitLab SSH 同步) =====
+    EXTENSIONS_WORKSPACE: str = "/workspace"
+    EXTENSIONS_GIT_REMOTE: str = "ssh://git@host.docker.internal:8922/root/testmate-extensions.git"
+    EXTENSIONS_GIT_BRANCH: str = "main"
 
     @property
     def mysql_async_dsn(self) -> str:

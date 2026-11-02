@@ -56,7 +56,7 @@ class _DownloadTokenVerifier(TokenVerifier):
 
 @pytest.fixture(autouse=True)
 async def _public_base_url():
-    await set_setting("marketplace.public_base_url", PUBLIC_BASE)
+    await set_setting("extensions.public_base_url", PUBLIC_BASE)
 
 
 @pytest.fixture
@@ -79,10 +79,10 @@ async def principals():
 
     return {
         OWNER_TOKEN: Principal(
-            user=owner, client_id="asset-download-tests", scopes=frozenset({"market:read"})
+            user=owner, client_id="asset-download-tests", scopes=frozenset({"extensions:read"})
         ),
         OTHER_TOKEN: Principal(
-            user=other, client_id="asset-download-tests", scopes=frozenset({"market:read"})
+            user=other, client_id="asset-download-tests", scopes=frozenset({"extensions:read"})
         ),
     }
 
@@ -95,7 +95,7 @@ async def _mcp_client(principals):
         redis_client=_FakeRedis(),
     )
     server._token_verifier = _DownloadTokenVerifier(principals)
-    dispatcher = build_dispatcher({"skill": server})
+    dispatcher = build_dispatcher({"extensions": server})
     app = Starlette(routes=[Mount("/mcp", app=dispatcher)])
     async with run_mcp_lifespan(dispatcher):
         async with AsyncClient(
@@ -171,7 +171,7 @@ async def _package_info(client, token: str, code: str, version: str | None = Non
     arguments = {"code": code}
     if version is not None:
         arguments["version"] = version
-    return _data(await call_tool(client, token, "skill_package_info", arguments))
+    return _data(await call_tool(client, token, "extension_package_info", arguments))
 
 
 def _asset_ticket(
@@ -200,7 +200,7 @@ def _asset_ticket(
 
 async def _exchange(client, code: str, version: str, ticket: str):
     return await client.get(
-        f"/api/v1/assets/{quote(code, safe='')}/versions/{quote(version, safe='')}/ticket-download",
+        f"/api/v1/extensions/{quote(code, safe='')}/versions/{quote(version, safe='')}/ticket-download",
         params={"ticket": ticket},
     )
 
@@ -234,7 +234,7 @@ async def test_package_info_ticket_downloads_exact_selected_bytes(
     assert parsed.scheme == "https"
     assert parsed.netloc == "public.example.test:8443"
     assert parsed.path == (
-        f"/api/v1/assets/{asset.code}/versions/{selected_version}/ticket-download"
+        f"/api/v1/extensions/{asset.code}/versions/{selected_version}/ticket-download"
     )
     assert "//" not in parsed.path
     ticket = parse_qs(parsed.query)["ticket"][0]
@@ -310,7 +310,7 @@ async def test_ticket_exchange_rechecks_visibility_without_bypass(
 
     async with _mcp_client(principals) as mcp:
         invisible = await call_tool(
-            mcp, OTHER_TOKEN, "skill_package_info", {"code": asset.code}
+            mcp, OTHER_TOKEN, "extension_package_info", {"code": asset.code}
         )
     assert _error(invisible) == "Tool request failed (HTTP 404)."
 
@@ -324,7 +324,7 @@ async def test_ticket_exchange_requires_ticket_and_active_bound_user(
     ticket = _asset_ticket(user_id=user_id, code=asset.code, version="2.0.0")
 
     anonymous = await client.get(
-        f"/api/v1/assets/{asset.code}/versions/2.0.0/ticket-download"
+        f"/api/v1/extensions/{asset.code}/versions/2.0.0/ticket-download"
     )
     async with AsyncSessionLocal() as session:
         user = await session.get(User, user_id)
@@ -404,7 +404,7 @@ async def test_package_info_rejects_symlinked_package_directory(
 
     async with _mcp_client(principals) as mcp:
         result = await call_tool(
-            mcp, OTHER_TOKEN, "skill_package_info", {"code": asset.code}
+            mcp, OTHER_TOKEN, "extension_package_info", {"code": asset.code}
         )
 
     assert _error(result) == "Tool request failed (HTTP 404)."

@@ -2125,7 +2125,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 /* ⚠️ 2026-10-31 (第十九轮): 「＋ 新建数据集」已改用**全局** .mini-btn.primary
    (跟软件库「＋ 上架软件」完全同一个 class), .ds-act 现在只剩「⬆ 上传文档」在用 —— 别删. */
 .ds-act { padding: 5px 13px; font-size: 12.5px; }
-/* 文档搜索框 —— 沿用「资产市场」那套 .search 样式 (放大镜 + 输入框) */
+/* 文档搜索框 —— 沿用「扩展」那套 .search 样式 (放大镜 + 输入框) */
 .search {
   display: flex; align-items: center; gap: 6px;
   background: var(--surface); border: 1px solid var(--border);

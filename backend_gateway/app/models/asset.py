@@ -1,11 +1,11 @@
-"""插件·技能·连接 数据模型 (原「AI 资产市场」)。
+"""扩展 数据模型 (原「AI 扩展」)。
 
 **GitLab 是资产的唯一真实来源 (source of truth)**: manifest / 源码 / README 全部
 以 commit 形式存在仓库里。本表只是**查询镜像**, 用来做列表筛选、搜索与本地态关联。
 
 镜像与 GitLab 的关系:
   - 上传成功后, 同一次请求里把 index.json + 资产文件写进 GitLab, 然后 upsert 本表
-  - GitLab 侧被人直接 push 改动时, 调 `POST /api/v1/assets/sync` 或等 webhook 回灌本表
+  - GitLab 侧被人直接 push 改动时, 调 `POST /api/v1/extensions/sync` 或等 webhook 回灌本表
   - 本表被清空也不影响真实资产, 重新 sync 即可恢复
 
 ⚠️ status 等字段一律用 String + 应用层校验, 不用 MySQL ENUM。
@@ -40,12 +40,12 @@ class Asset(Base):
 
     category: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
     # 适用项目: 空 = **通用** (所有项目都能用); "6100" = 6100 项目特有.
-    # 项目列表在设置项 marketplace.projects 里 —— 见 app/core/market_projects.py
+    # 项目列表在设置项 extensions.projects 里 —— 见 app/core/market_projects.py
     project: Mapped[str] = mapped_column(String(32), nullable=False, default="", index=True)
     tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     keywords: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
-    # 权限声明 — 市场区别于普通插件目录的核心, 也是审核重点
+    # 权限声明 — 扩展区别于普通插件目录的核心, 也是审核重点
     permissions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     install_steps: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     bindings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -80,8 +80,8 @@ class Asset(Base):
     #      update 新版本待审 (包变了)
     #      meta   **只改了信息**待审 (包没变)
     #    三者审核通过后的**通知**口径不同:
-    #      · new/update → 市场群发"上架/更新" (包真的变了)
-    #      · meta       → **不通知市场群** (包没变, 发那条是假消息)
+    #      · new/update → 扩展群发"上架/更新" (包真的变了)
+    #      · meta       → **不通知扩展群** (包没变, 发那条是假消息)
     #    空 = 没有待审项.
     pending_action: Mapped[str] = mapped_column(
         String(16), nullable=False, default="", index=True

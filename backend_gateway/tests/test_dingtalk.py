@@ -62,7 +62,7 @@ def test_build_signed_url_handles_no_query():
 
 # ---------- 消息拼装 ----------
 
-async def test_notify_market_records_receipt_on_success(monkeypatch):
+async def test_notify_extensions_records_receipt_on_success(monkeypatch):
     """发送成功 → 落一条 sent 回执."""
     sent: list[dict] = []
 
@@ -73,10 +73,10 @@ async def test_notify_market_records_receipt_on_success(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(
         dingtalk, "get",
-        _fake_get({"dingtalk.market_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
+        _fake_get({"dingtalk.extensions_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
     )
 
-    ok = await dingtalk.notify_market(
+    ok = await dingtalk.notify_extensions(
         "publish", name="演示资产", version="1.0.0", actor="admin",
         detail="摘要", code="demo",
     )
@@ -97,7 +97,7 @@ async def test_notify_market_records_receipt_on_success(monkeypatch):
     assert rows[0].attempts == 1
 
 
-async def test_notify_market_records_failure(monkeypatch):
+async def test_notify_extensions_records_failure(monkeypatch):
     """发送失败 → 落一条 failed 回执, 带错误原因和下次重试时间."""
     async def fake_send(*a, **kw):
         raise RuntimeError("HTTP 500: boom")
@@ -105,10 +105,10 @@ async def test_notify_market_records_failure(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(
         dingtalk, "get",
-        _fake_get({"dingtalk.market_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
+        _fake_get({"dingtalk.extensions_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
     )
 
-    ok = await dingtalk.notify_market("publish", name="失败用例", code="bad")
+    ok = await dingtalk.notify_extensions("publish", name="失败用例", code="bad")
     assert ok is False
 
     from app.db.session import AsyncSessionLocal
@@ -124,7 +124,7 @@ async def test_notify_market_records_failure(monkeypatch):
     assert rows[0].next_retry_at is not None, "失败后应安排重试"
 
 
-async def test_notify_market_prepends_keyword(monkeypatch):
+async def test_notify_extensions_prepends_keyword(monkeypatch):
     """关键词必须出现在消息里 —— 机器人校验不到就发不出去."""
     sent: list[dict] = []
 
@@ -136,19 +136,19 @@ async def test_notify_market_prepends_keyword(monkeypatch):
     monkeypatch.setattr(
         dingtalk, "get",
         _fake_get({
-            "dingtalk.market_webhook": "http://x/hook",
-            "dingtalk.market_keyword": "测试组",
+            "dingtalk.extensions_webhook": "http://x/hook",
+            "dingtalk.extensions_keyword": "测试组",
             "dingtalk.notify_on_publish": "true",
         }),
     )
 
-    await dingtalk.notify_market("publish", name="带关键词", code="kw")
+    await dingtalk.notify_extensions("publish", name="带关键词", code="kw")
     assert sent
     assert "测试组" in sent[0]["text"]
     assert "测试组" in sent[0]["title"]
 
 
-async def test_notify_market_skips_when_not_configured(monkeypatch):
+async def test_notify_extensions_skips_when_not_configured(monkeypatch):
     """没配 webhook → 静默跳过, 不落回执 (不是一次失败)."""
     async def fake_send(*a, **kw):  # pragma: no cover - 不该被调用
         raise AssertionError("不该发消息")
@@ -160,7 +160,7 @@ async def test_notify_market_skips_when_not_configured(monkeypatch):
         _fake_get({"dingtalk.notify_on_publish": "true"}),
     )
 
-    assert await dingtalk.notify_market("publish", name="没配", code="x") is False
+    assert await dingtalk.notify_extensions("publish", name="没配", code="x") is False
 
     from app.db.session import AsyncSessionLocal
     from app.models.asset import AssetNotification
@@ -171,7 +171,7 @@ async def test_notify_market_skips_when_not_configured(monkeypatch):
     assert not rows
 
 
-async def test_notify_market_default_is_off(monkeypatch):
+async def test_notify_extensions_default_is_off(monkeypatch):
     """⚠️ 默认**不通知** —— 开关没配 (老环境/新装) 时绝不能发消息.
 
     这条是"默认不通知"这条需求的护栏: 以前 switch 缺省是 true,
@@ -182,9 +182,9 @@ async def test_notify_market_default_is_off(monkeypatch):
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     # 只配了 webhook, 没配任何通知开关
-    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.market_webhook": "http://x/hook"}))
+    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.extensions_webhook": "http://x/hook"}))
 
-    assert await dingtalk.notify_market("publish", name="默认关", code="x") is False
+    assert await dingtalk.notify_extensions("publish", name="默认关", code="x") is False
 
     from app.db.session import AsyncSessionLocal
     from app.models.asset import AssetNotification
@@ -209,11 +209,11 @@ async def test_notify_switches_accept_bool_and_string(monkeypatch):
         monkeypatch.setattr(
             dingtalk, "get",
             _fake_get({
-                "dingtalk.market_webhook": "http://x/hook",
+                "dingtalk.extensions_webhook": "http://x/hook",
                 "dingtalk.notify_on_publish": raw,
             }),
         )
-        ok = await dingtalk.notify_market("publish", name="开", code="x")
+        ok = await dingtalk.notify_extensions("publish", name="开", code="x")
         assert ok is True, f"{raw!r} 应认成开"
         assert sent, f"{raw!r} 应真的发出去了"
 
@@ -222,16 +222,16 @@ async def test_notify_switches_accept_bool_and_string(monkeypatch):
         monkeypatch.setattr(
             dingtalk, "get",
             _fake_get({
-                "dingtalk.market_webhook": "http://x/hook",
+                "dingtalk.extensions_webhook": "http://x/hook",
                 "dingtalk.notify_on_publish": raw,
             }),
         )
-        ok = await dingtalk.notify_market("publish", name="关", code="x")
+        ok = await dingtalk.notify_extensions("publish", name="关", code="x")
         assert ok is False, f"{raw!r} 应认成关"
         assert not sent, f"{raw!r} 不该发出去"
 
 
-async def test_notify_market_respects_switch(monkeypatch):
+async def test_notify_extensions_respects_switch(monkeypatch):
     """开关关掉 → 不发."""
     async def fake_send(*a, **kw):  # pragma: no cover
         raise AssertionError("不该发消息")
@@ -240,19 +240,19 @@ async def test_notify_market_respects_switch(monkeypatch):
     monkeypatch.setattr(
         dingtalk, "get",
         _fake_get({
-            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.extensions_webhook": "http://x/hook",
             "dingtalk.notify_on_publish": "false",
         }),
     )
-    assert await dingtalk.notify_market("publish", name="关了", code="x") is False
+    assert await dingtalk.notify_extensions("publish", name="关了", code="x") is False
 
 
-async def test_notify_market_rejects_unknown_event(monkeypatch):
+async def test_notify_extensions_rejects_unknown_event(monkeypatch):
     async def fake_send(*a, **kw):  # pragma: no cover
         raise AssertionError("不该发消息")
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
-    assert await dingtalk.notify_market("nope", name="x") is False
+    assert await dingtalk.notify_extensions("nope", name="x") is False
 
 
 # ---------- 事件表 ----------
@@ -288,7 +288,7 @@ async def test_retry_failed_notifications(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(
         dingtalk, "get",
-        _fake_get({"dingtalk.market_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
+        _fake_get({"dingtalk.extensions_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
     )
 
     n = await dingtalk.retry_failed_notifications()
@@ -328,7 +328,7 @@ async def test_retry_skipped_when_switch_off(monkeypatch):
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     # 开关是关的 (默认)
-    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.market_webhook": "http://x/hook"}))
+    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.extensions_webhook": "http://x/hook"}))
 
     n = await dingtalk.retry_failed_notifications()
     assert n == 0
@@ -363,7 +363,7 @@ async def test_retry_respects_max_attempts(monkeypatch):
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get({
-        "dingtalk.market_webhook": "http://x/hook",
+        "dingtalk.extensions_webhook": "http://x/hook",
         "dingtalk.notify_on_publish": "true",
     }))
 
@@ -376,7 +376,7 @@ async def test_retry_does_not_steal_fresh_pending_receipt(monkeypatch):
     """刚建出来、调用方**正在发送**的 pending 回执, 重试 worker 不能抢发.
 
     ⚠️ 2026-11-01 线上事故: 审核通过后的「新资产上架」发了**两遍**.
-       notify_market 先落 pending 回执再发送; 重试 worker 恰好扫到这条 pending,
+       notify_extensions 先落 pending 回执再发送; 重试 worker 恰好扫到这条 pending,
        两边各发了一次 (日志里一条 review 请求对应两次钉钉 POST).
     """
     from app.db.session import AsyncSessionLocal
@@ -398,7 +398,7 @@ async def test_retry_does_not_steal_fresh_pending_receipt(monkeypatch):
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get({
-        "dingtalk.market_webhook": "http://x/hook",
+        "dingtalk.extensions_webhook": "http://x/hook",
         "dingtalk.notify_on_publish": "true",
     }))
 
@@ -430,7 +430,7 @@ async def test_retry_recovers_stale_pending_receipt(monkeypatch):
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get({
-        "dingtalk.market_webhook": "http://x/hook",
+        "dingtalk.extensions_webhook": "http://x/hook",
         "dingtalk.notify_on_publish": "true",
     }))
 
@@ -461,7 +461,7 @@ async def test_retry_skips_not_yet_due(monkeypatch):
         return {"errcode": 0}
 
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
-    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.market_webhook": "http://x/hook"}))
+    monkeypatch.setattr(dingtalk, "get", _fake_get({"dingtalk.extensions_webhook": "http://x/hook"}))
 
     assert await dingtalk.retry_failed_notifications() == 0
     assert not called
@@ -470,20 +470,20 @@ async def test_retry_skips_not_yet_due(monkeypatch):
 # ---------- 两个通知频道 (两个群) ----------
 
 def test_event_to_channel_mapping():
-    """审核群只收"要管理员处理"的事; 其余 (资产已经变了) 走市场群."""
+    """审核群只收"要管理员处理"的事; 其余 (资产已经变了) 走扩展群."""
     # 审核群: 需要管理员处理
     assert dingtalk._CHANNEL_OF_EVENT["review"] == "review"
     assert dingtalk._CHANNEL_OF_EVENT["unpublish_request"] == "review"
-    # 市场群: 资产已经变了
-    assert dingtalk._CHANNEL_OF_EVENT["publish"] == "market"
-    assert dingtalk._CHANNEL_OF_EVENT["update"] == "market"
-    assert dingtalk._CHANNEL_OF_EVENT["unpublish"] == "market"
-    assert dingtalk._CHANNEL_OF_EVENT["reject"] == "market"
-    assert dingtalk._CHANNEL_OF_EVENT["delete"] == "market"
+    # 扩展群: 资产已经变了
+    assert dingtalk._CHANNEL_OF_EVENT["publish"] == "extensions"
+    assert dingtalk._CHANNEL_OF_EVENT["update"] == "extensions"
+    assert dingtalk._CHANNEL_OF_EVENT["unpublish"] == "extensions"
+    assert dingtalk._CHANNEL_OF_EVENT["reject"] == "extensions"
+    assert dingtalk._CHANNEL_OF_EVENT["delete"] == "extensions"
 
 
 async def test_notify_uses_channel_webhook(monkeypatch):
-    """每个事件要发到**自己频道**的 webhook —— 审核通知不能跑到市场群去."""
+    """每个事件要发到**自己频道**的 webhook —— 审核通知不能跑到扩展群去."""
     sent: list[tuple[str, str]] = []
 
     async def fake_send(webhook, title, text, *, secret="", at_mobiles=None, at_user_ids=None, is_at_all=False):
@@ -496,20 +496,20 @@ async def test_notify_uses_channel_webhook(monkeypatch):
         return {
             "dingtalk.notify_on_publish": "true",
             "dingtalk.notify_on_review": "true",
-            "dingtalk.market_webhook": "http://market/hook",
+            "dingtalk.extensions_webhook": "http://extensions/hook",
             "dingtalk.review_webhook": "http://review/hook",
         }.get(key, default)
 
     monkeypatch.setattr(dingtalk, "get", _get)
 
-    await dingtalk.notify_market("publish", name="a", code="x")
-    await dingtalk.notify_market("review", name="b", code="y")
+    await dingtalk.notify_extensions("publish", name="a", code="x")
+    await dingtalk.notify_extensions("review", name="b", code="y")
 
     hooks = [h for h, _ in sent]
-    assert "http://market/hook" in hooks, hooks
+    assert "http://extensions/hook" in hooks, hooks
     assert "http://review/hook" in hooks, hooks
     # 两条分别去了各自的群 (不能都去同一个)
-    assert sent[0][0] == "http://market/hook", sent
+    assert sent[0][0] == "http://extensions/hook", sent
     assert sent[1][0] == "http://review/hook", sent
 
 
@@ -527,19 +527,19 @@ async def test_notify_skips_when_channel_webhook_missing(monkeypatch):
         return {
             "dingtalk.notify_on_publish": "true",
             "dingtalk.notify_on_review": "true",
-            "dingtalk.market_webhook": "http://market/hook",
+            "dingtalk.extensions_webhook": "http://extensions/hook",
             # 审核群没配
         }.get(key, default)
 
     monkeypatch.setattr(dingtalk, "get", _get)
 
-    assert await dingtalk.notify_market("publish", name="a", code="x") is True
-    assert await dingtalk.notify_market("review", name="b", code="y") is False
-    assert sent == ["http://market/hook"]
+    assert await dingtalk.notify_extensions("publish", name="a", code="x") is True
+    assert await dingtalk.notify_extensions("review", name="b", code="y") is False
+    assert sent == ["http://extensions/hook"]
 
 
 async def test_retry_uses_each_row_channel(monkeypatch):
-    """⚠️ 重试要**按事件**取频道 —— 审核类通知不能重试到市场群去."""
+    """⚠️ 重试要**按事件**取频道 —— 审核类通知不能重试到扩展群去."""
     from app.db.session import AsyncSessionLocal
     from app.models.asset import AssetNotification
     from sqlalchemy import select
@@ -556,7 +556,7 @@ async def test_retry_uses_each_row_channel(monkeypatch):
         return {
             "dingtalk.notify_on_review": "true",
             "dingtalk.review_webhook": "http://review/hook",
-            "dingtalk.market_webhook": "http://market/hook",
+            "dingtalk.extensions_webhook": "http://extensions/hook",
         }.get(key, default)
 
     monkeypatch.setattr(dingtalk, "get", _get)
@@ -595,12 +595,12 @@ async def test_publish_at_all_and_kind_in_text(monkeypatch):
     async def _get(key, default=None):
         return {
             "dingtalk.notify_on_publish": "true",
-            "dingtalk.market_webhook": "http://market/hook",
+            "dingtalk.extensions_webhook": "http://extensions/hook",
         }.get(key, default)
 
     monkeypatch.setattr(dingtalk, "get", _get)
 
-    ok = await dingtalk.notify_market(
+    ok = await dingtalk.notify_extensions(
         "publish", name="代码检视流水线", version="1.2.0", actor="jarvs",
         kind="plugin", category="自动代码", code="crp",
     )
@@ -628,12 +628,12 @@ async def test_skill_kind_label_matches_ui(monkeypatch):
     async def _get(key, default=None):
         return {
             "dingtalk.notify_on_publish": "true",
-            "dingtalk.market_webhook": "http://market/hook",
+            "dingtalk.extensions_webhook": "http://extensions/hook",
         }.get(key, default)
 
     monkeypatch.setattr(dingtalk, "get", _get)
 
-    await dingtalk.notify_market(
+    await dingtalk.notify_extensions(
         "publish", name="技能演示", kind="skill", category="质量保障", code="sk",
     )
     assert "类型: 技能" in sent[0]["text"], sent[0]["text"]
@@ -657,12 +657,12 @@ async def test_title_override_changes_heading_but_not_event_key(monkeypatch):
     async def _get(key, default=None):
         return {
             "dingtalk.notify_on_publish": "true",
-            "dingtalk.market_webhook": "http://market/hook",
+            "dingtalk.extensions_webhook": "http://extensions/hook",
         }.get(key, default)
 
     monkeypatch.setattr(dingtalk, "get", _get)
 
-    await dingtalk.notify_market(
+    await dingtalk.notify_extensions(
         "publish", name="老资产", code="old",
         detail="重新上架", title_override="🎉 资产重新上架",
     )
@@ -691,12 +691,12 @@ async def test_reject_shows_author_without_at(monkeypatch):
     async def _get(key, default=None):
         return {
             "dingtalk.notify_on_reject": "true",
-            "dingtalk.market_webhook": "http://market/hook",
+            "dingtalk.extensions_webhook": "http://extensions/hook",
         }.get(key, default)
 
     monkeypatch.setattr(dingtalk, "get", _get)
 
-    ok = await dingtalk.notify_market(
+    ok = await dingtalk.notify_extensions(
         "reject", name="某技能", actor="admin", author="jarvs",
         kind="skill", code="demo",
     )
@@ -724,7 +724,7 @@ def test_parse_mentions():
 # 做法: 首条照常发 (带详情), 窗口内的其余攒起来, 窗口末发一条汇总.
 #
 # ⚠️ 只合并**审核类** (review / unpublish_request):
-#    市场群那几类是「资产已经变了」的事实通告且 @所有人, 合并会让人漏看.
+#    扩展群那几类是「资产已经变了」的事实通告且 @所有人, 合并会让人漏看.
 
 def _review_settings(window: str = "60") -> dict[str, str]:
     return {
@@ -791,7 +791,7 @@ async def test_review_first_in_window_sends_normally(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
 
-    ok = await dingtalk.notify_market(
+    ok = await dingtalk.notify_extensions(
         "review", name="资产甲", code="a", kind="skill", category="效率工具",
     )
     assert ok is True
@@ -807,8 +807,8 @@ async def test_review_second_in_window_is_aggregated(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
 
-    await dingtalk.notify_market("review", name="资产甲", code="a")
-    await dingtalk.notify_market("review", name="资产乙", code="b")
+    await dingtalk.notify_extensions("review", name="资产甲", code="a")
+    await dingtalk.notify_extensions("review", name="资产乙", code="b")
 
     assert len(sent) == 1, f"窗口内不该发第二条: {sent}"
     rows = await _receipts()
@@ -822,9 +822,9 @@ async def test_aggregated_flush_sends_one_summary(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
 
-    await dingtalk.notify_market("review", name="甲", code="a")
-    await dingtalk.notify_market("review", name="乙", code="b")
-    await dingtalk.notify_market("review", name="丙", code="c")
+    await dingtalk.notify_extensions("review", name="甲", code="a")
+    await dingtalk.notify_extensions("review", name="乙", code="b")
+    await dingtalk.notify_extensions("review", name="丙", code="c")
     assert len(sent) == 1
 
     # 窗口还没到 → 不发汇总
@@ -848,20 +848,20 @@ async def test_aggregated_flush_sends_one_summary(monkeypatch):
 
 
 async def test_market_events_are_not_aggregated(monkeypatch):
-    """市场群的「资产已经变了」**不合并** —— 谁上架了什么都要看得见."""
+    """扩展群的「资产已经变了」**不合并** —— 谁上架了什么都要看得见."""
     sent, fake_send = _collector()
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(
         dingtalk, "get",
         _fake_get({
-            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.extensions_webhook": "http://x/hook",
             "dingtalk.notify_on_publish": "true",
             "dingtalk.aggregate_window_seconds": "60",
         }),
     )
 
-    await dingtalk.notify_market("publish", name="甲", code="a")
-    await dingtalk.notify_market("publish", name="乙", code="b")
+    await dingtalk.notify_extensions("publish", name="甲", code="a")
+    await dingtalk.notify_extensions("publish", name="乙", code="b")
     assert len(sent) == 2, f"市场通告不该被合并: {sent}"
 
 
@@ -871,8 +871,8 @@ async def test_aggregate_window_zero_disables_merging(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings("0")))
 
-    await dingtalk.notify_market("review", name="甲", code="a")
-    await dingtalk.notify_market("review", name="乙", code="b")
+    await dingtalk.notify_extensions("review", name="甲", code="a")
+    await dingtalk.notify_extensions("review", name="乙", code="b")
     assert len(sent) == 2, f"窗口=0 不该合并: {sent}"
 
 
@@ -882,8 +882,8 @@ async def test_review_and_unpublish_request_aggregate_separately(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
 
-    await dingtalk.notify_market("review", name="甲", code="a")
-    await dingtalk.notify_market("unpublish_request", name="乙", code="b")
+    await dingtalk.notify_extensions("review", name="甲", code="a")
+    await dingtalk.notify_extensions("unpublish_request", name="乙", code="b")
     assert len(sent) == 2, f"两类事件不该互相合并: {sent}"
     assert "甲" in sent[0]["title"] and "乙" in sent[1]["title"], sent
 
@@ -894,8 +894,8 @@ async def test_aggregated_rows_are_not_retried_as_pending(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
 
-    await dingtalk.notify_market("review", name="甲", code="a")
-    await dingtalk.notify_market("review", name="乙", code="b")
+    await dingtalk.notify_extensions("review", name="甲", code="a")
+    await dingtalk.notify_extensions("review", name="乙", code="b")
     await _backdate_last_sent(120)
     await dingtalk.flush_aggregated_notifications()
     n = len(sent)
@@ -939,8 +939,8 @@ async def test_failed_summary_is_reused_not_duplicated(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", flaky_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
 
-    await dingtalk.notify_market("review", name="甲", code="a")
-    await dingtalk.notify_market("review", name="乙", code="b")
+    await dingtalk.notify_extensions("review", name="甲", code="a")
+    await dingtalk.notify_extensions("review", name="乙", code="b")
     await _backdate_last_sent(120)
 
     # 第一次汇总 → 失败 (第 2 次调用抛异常)
@@ -970,8 +970,8 @@ async def test_retry_worker_does_not_send_summary_receipts(monkeypatch):
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
     monkeypatch.setattr(dingtalk, "get", _fake_get(_review_settings()))
 
-    await dingtalk.notify_market("review", name="甲", code="a")
-    await dingtalk.notify_market("review", name="乙", code="b")
+    await dingtalk.notify_extensions("review", name="甲", code="a")
+    await dingtalk.notify_extensions("review", name="乙", code="b")
     await _backdate_last_sent(120)
 
     # 汇总发送失败 → 回执留在 pending/failed

@@ -139,8 +139,8 @@ async def test_asset_files_404_when_git_path_escapes(client, admin_user):
         await s.commit()
 
     h = {"Authorization": f"Bearer {admin_user['token']}"}
-    r1 = await client.get(f"/api/v1/assets/dml-traversal/files", headers=h)
+    r1 = await client.get(f"/api/v1/extensions/dml-traversal/files", headers=h)
     assert r1.status_code == 404, r1.text
 
-    r2 = await client.get(f"/api/v1/assets/dml-traversal/bundle", headers=h)
+    r2 = await client.get(f"/api/v1/extensions/dml-traversal/bundle", headers=h)
     assert r2.status_code == 404, r2.text

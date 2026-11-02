@@ -26,7 +26,7 @@ import pytest
 
 from tests.conftest import set_setting
 
-API = "/api/v1/assets"
+API = "/api/v1/extensions"
 
 
 def _zip_bytes(files: dict[str, str], filename: str = "pkg.zip") -> tuple[str, bytes, str]:
@@ -57,7 +57,7 @@ async def _upload(client, auth, code="demo", kind="skill", **over):
 
 
 async def _enable_publisher(publisher_user):
-    await set_setting("marketplace.publisher_usernames", publisher_user["username"])
+    await set_setting("extensions.publisher_usernames", publisher_user["username"])
 
 
 def _manifest_path(ws: Path, code: str) -> Path:
@@ -71,7 +71,7 @@ def _manifest_path(ws: Path, code: str) -> Path:
 async def test_meta_edit_by_author_allowed(client, auth, ws, restore_git_config,  # noqa: ARG001
                                            publisher_user):
     """作者本人可以改自己资产的元信息."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="meta-own")
@@ -93,7 +93,7 @@ async def test_meta_edit_by_author_allowed(client, auth, ws, restore_git_config,
 async def test_meta_edit_denied_for_others(client, auth, ws, restore_git_config,  # noqa: ARG001
                                            publisher_user):
     """别人不能改你的资产 → 403 (有发布权也不行, 那只是"能往市场上放东西")."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="meta-guard")
@@ -110,7 +110,7 @@ async def test_meta_edit_denied_for_others(client, auth, ws, restore_git_config,
         await s.refresh(u)
         uid, uname = u.id, u.username
     token, _ = create_access_token(uid)
-    await set_setting("marketplace.publisher_usernames",
+    await set_setting("extensions.publisher_usernames",
                       f"{uname},{publisher_user['username']}")
 
     r = await client.patch(
@@ -124,7 +124,7 @@ async def test_meta_edit_denied_for_others(client, auth, ws, restore_git_config,
 async def test_meta_edit_by_admin_allowed(client, auth, ws, restore_git_config,  # noqa: ARG001
                                           publisher_user):
     """管理员可以改任何人的资产."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="meta-admin")
@@ -148,7 +148,7 @@ async def test_meta_edit_keeps_files_and_package(client, auth, ws, restore_git_c
 
     走错分支 (多文件文本上传那条) 会 `rmtree(files_dir)` —— 用户的包直接没了.
     """
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="meta-keep")
@@ -178,7 +178,7 @@ async def test_meta_edit_keeps_files_and_package(client, auth, ws, restore_git_c
 async def test_meta_edit_keeps_manifest_file_fields(client, auth, ws, restore_git_config,  # noqa: ARG001
                                                       publisher_user):
     """manifest 里的 files / doc_file / package_sha256 / package_name 原样保留."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="meta-fields")
@@ -209,7 +209,7 @@ async def test_meta_edit_keeps_manifest_file_fields(client, auth, ws, restore_gi
 async def test_meta_edit_keeps_author(client, auth, ws, restore_git_config,  # noqa: ARG001
                                       publisher_user):
     """管理员改别人的资产时, **不能把作者改成自己**."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="meta-author")
@@ -232,7 +232,7 @@ async def test_meta_edit_without_manifest_returns_409_and_keeps_workspace_clean(
     client, auth, ws, restore_git_config, publisher_user  # noqa: ARG001
 ):
     """工作区里找不到这个资产 → 409, **不能凭空造一个** (files/package 都不在)."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="meta-nomani")
@@ -272,7 +272,7 @@ async def test_meta_edit_unknown_asset_404(client, auth, ws, restore_git_config)
 async def test_meta_edit_rejects_empty_name(client, auth, ws, restore_git_config,  # noqa: ARG001
                                             publisher_user):
     """名字不能改成空 → 422."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="meta-bad")
@@ -284,17 +284,17 @@ async def test_meta_edit_rejects_empty_name(client, auth, ws, restore_git_config
     assert r.status_code == 422, r.text
 
 
-# ---------- 钉钉通知: 编辑信息 → **审核群**, 通过后**不通知市场群** ----------
+# ---------- 钉钉通知: 编辑信息 → **审核群**, 通过后**不通知扩展群** ----------
 # (2026-10-30 · 第十二轮 · 问题2)
 
 
 async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_git_config,  # noqa: ARG001
                                                      publisher_user, monkeypatch):
-    """⚠️ 用户原话「编辑信息 → 管理员审核, 通知到管理审核群; 审核通过**不通知市场群**」.
+    """⚠️ 用户原话「编辑信息 → 管理员审核, 通知到管理审核群; 审核通过**不通知扩展群**」.
 
     三步各盯一条:
       ① 提交编辑 → 通知发的是 **review** 事件 (→审核群), 不是 publish/update;
-      ② 审核通过 → **一条都不发** (包没变, 市场群那条是假消息);
+      ② 审核通过 → **一条都不发** (包没变, 扩展群那条是假消息);
       ③ 对照: 新资产上架 → 审核通过 → **要发** publish (包真的变了).
     """
     from app.api import marketplace as mk_api
@@ -309,7 +309,7 @@ async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_
     monkeypatch.setattr(mk_api.market_notify, "notify_asset", fake_notify)
 
     # ⚠️ 审核要**开着**, 否则压根不进审核流程 (也就没有审核通知)
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="meta-notify")
@@ -329,7 +329,7 @@ async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_
     _, kw = sent[0]
     assert "信息" in (kw.get("title_override") or ""), kw.get("title_override")
 
-    # ---- ② 审核通过 → **不通知市场群** ----
+    # ---- ② 审核通过 → **不通知扩展群** ----
     sent.clear()
     r = await client.post(
         f"{API}/meta-notify/review",
@@ -337,12 +337,12 @@ async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_
         headers=auth,
     )
     assert r.status_code == 200, r.text
-    assert sent == [], f"只改了信息, 审核通过**不该**通知市场群 (包没变): {sent}"
+    assert sent == [], f"只改了信息, 审核通过**不该**通知扩展群 (包没变): {sent}"
 
 
 async def test_new_asset_approve_still_notifies_market(client, auth, ws, restore_git_config,  # noqa: ARG001
                                                        publisher_user, monkeypatch):
-    """对照: **新资产**审核通过 → 市场群**照样**要发 publish (包真的变了)."""
+    """对照: **新资产**审核通过 → 扩展群**照样**要发 publish (包真的变了)."""
     from app.api import marketplace as mk_api
 
     sent: list[tuple[str, dict]] = []
@@ -354,7 +354,7 @@ async def test_new_asset_approve_still_notifies_market(client, auth, ws, restore
 
     monkeypatch.setattr(mk_api.market_notify, "notify_asset", fake_notify)
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="new-notify")
@@ -377,7 +377,7 @@ async def test_pending_action_recorded(client, auth, ws, restore_git_config,  # 
     from app.models.asset import Asset
     from sqlalchemy import select
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="pa-demo")
@@ -406,12 +406,12 @@ async def test_pending_action_recorded(client, auth, ws, restore_git_config,  # 
 async def test_reject_keeps_pending_action_for_resubmit(client, auth, ws, restore_git_config,  # noqa: ARG001
                                                         publisher_user):
     """驳回时要**留着** pending_action —— 否则「驳回 → 改了重新提交」这条路上,
-    重新提交就不知道是改信息还是改包了 (审核通过后要不要通知市场群就判错了)."""
+    重新提交就不知道是改信息还是改包了 (审核通过后要不要通知扩展群就判错了)."""
     from app.db.session import AsyncSessionLocal
     from app.models.asset import Asset
     from sqlalchemy import select
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="pa-reject")

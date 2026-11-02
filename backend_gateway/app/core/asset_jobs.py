@@ -33,18 +33,18 @@ from app.models.asset import Asset, AssetJob
 logger = logging.getLogger(__name__)
 
 # git 阶段的最大自动重试次数 (超过就不再自动重试, 留给人工)
-# 运行时可改 (设置页 marketplace.git.max_push_attempts) —— 这里只是默认值
+# 运行时可改 (设置页 extensions.git.max_push_attempts) —— 这里只是默认值
 MAX_GIT_ATTEMPTS = 3
 # 退避基数 (秒): 2s, 4s, 8s ...
 BACKOFF_BASE_SEC = 2
 
 
 async def _max_attempts() -> int:
-    """自动重试次数上限 —— 设置页可配 (marketplace.git.max_push_attempts)."""
+    """自动重试次数上限 —— 设置页可配 (extensions.git.max_push_attempts)."""
     try:
         from app.core.settings_store import get
 
-        raw = await get("marketplace.git.max_push_attempts", "")
+        raw = await get("extensions.git.max_push_attempts", "")
         n = int(str(raw).strip() or MAX_GIT_ATTEMPTS)
     except Exception:  # noqa: BLE001 — 读设置失败就用默认值
         n = MAX_GIT_ATTEMPTS
@@ -106,7 +106,7 @@ async def _process(job_id: int) -> None:
             m = re.match(r"^\s*(.*?)\s*<([^>]*)>\s*$", s)
             author = (m.group(1), m.group(2)) if m else ("testmate", "testmate@local")
         message = payload.get("commit_message") or (
-            f"{'chore(market): 更新资产' if job.action == 'update' else 'feat(market): 上架资产'}"
+            f"{'chore(extensions): 更新资产' if job.action == 'update' else 'feat(extensions): 上架资产'}"
             f" {job.asset_name} {payload.get('manifest', {}).get('version', '')}"
         )
         # 只提交本次资产目录 + index.json —— 绝不能 add -A

@@ -40,7 +40,7 @@ def _required(form: dict[str, Any], field: str) -> str:
 
 
 async def _public_base() -> str:
-    return str(await get("marketplace.public_base_url", "") or "").rstrip("/")
+    return str(await get("extensions.public_base_url", "") or "").rstrip("/")
 
 
 @router.post("/oauth/register", status_code=201)
@@ -104,7 +104,7 @@ async def authorization_server_metadata():
         "token_endpoint": f"{issuer}/oauth/token",
         "registration_endpoint": f"{issuer}/oauth/register",
         "revocation_endpoint": f"{issuer}/oauth/revoke",
-        "scopes_supported": ["market:read", "market:write"],
+        "scopes_supported": ["extensions:read", "extensions:write"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "token_endpoint_auth_methods_supported": ["none"],
@@ -112,12 +112,24 @@ async def authorization_server_metadata():
     }
 
 
-@router.get("/.well-known/oauth-protected-resource/mcp/skill")
+@router.get("/.well-known/oauth-protected-resource/mcp/extensions")
 async def protected_resource_metadata():
+    issuer = await _public_base()
+    return {
+        "resource": f"{issuer}/mcp/extensions",
+        "authorization_servers": [issuer],
+        "scopes_supported": ["extensions:read", "extensions:write"],
+        "bearer_methods_supported": ["header"],
+    }
+
+
+@router.get("/.well-known/oauth-protected-resource/mcp/skill")
+async def protected_resource_metadata_legacy():
+    """Keep the pre-rename Qoder connector working against /mcp/skill."""
     issuer = await _public_base()
     return {
         "resource": f"{issuer}/mcp/skill",
         "authorization_servers": [issuer],
-        "scopes_supported": ["market:read", "market:write"],
+        "scopes_supported": ["extensions:read", "extensions:write"],
         "bearer_methods_supported": ["header"],
     }

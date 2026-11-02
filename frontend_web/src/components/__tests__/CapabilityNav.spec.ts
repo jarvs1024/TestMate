@@ -32,7 +32,7 @@ function cap(over: Partial<Capability> = {}): Capability {
 const CAPS = [
   cap({ id: 1, code: 'log-analysis', name: '日志分析', kind: 'tool' }),
   cap({ id: 2, code: 'code-review', name: '代码检视', kind: 'board', icon: '🧬', route: 'page:code-review' }),
-  cap({ id: 3, code: 'agent-market', name: '插件·技能·连接', kind: 'platform', icon: '🏪', route: 'page:market' }),
+  cap({ id: 3, code: 'agent-market', name: '扩展', kind: 'platform', icon: '🏪', route: 'page:extensions' }),
   cap({ id: 4, code: 'kb-inventory', name: '知识库', kind: 'platform', icon: '📚', route: 'page:kb-manage' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', kind: 'tool', status: 'draft' }),
 ];
@@ -114,8 +114,8 @@ describe('侧栏能力导航器', () => {
   it('每项能力都列出来了', () => {
     const { w } = mountNav();
     const labels = w.findAll('.item .i-lb').map((i) => i.text());
-    // ⚠️ 资产组排前面 → 顺序跟着变; 「AI 资产市场」已改名「插件·技能·连接」
-    expect(labels).toEqual(['插件·技能·连接', '知识库', '日志分析', '文本用例生成', '代码检视']);
+    // ⚠️ 资产组排前面 → 顺序跟着变; 「AI 资产市场」已改名「扩展」
+    expect(labels).toEqual(['扩展', '知识库', '日志分析', '文本用例生成', '代码检视']);
     w.unmount();
   });
 
@@ -132,17 +132,17 @@ describe('侧栏能力导航器', () => {
     const hrefs = w.findAll('.item').map((i) => i.attributes('href'));
     expect(hrefs).toContain('/c/log-analysis');
     expect(hrefs).toContain('/code-review');
-    expect(hrefs).toContain('/market');
+    expect(hrefs).toContain('/extensions');
     expect(hrefs).toContain('/kb-manage');
     w.unmount();
   });
 
   it('当前所在的能力高亮', async () => {
-    await router.push('/market');
+    await router.push('/extensions');
     const { w } = mountNav();
-    expect(router.currentRoute.value.path).toBe('/market');
+    expect(router.currentRoute.value.path).toBe('/extensions');
     const active = w.findAll('.item').find((i) => i.classes().includes('active'));
-    expect(active?.text()).toContain('插件·技能·连接');
+    expect(active?.text()).toContain('扩展');
     w.unmount();
   });
 });

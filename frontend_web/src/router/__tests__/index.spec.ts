@@ -60,7 +60,7 @@ describe('路由表', () => {
   });
 
   it('目录型 / 知识型 各就各位', () => {
-    expect(router.resolve('/market').name).toBe('market');
+    expect(router.resolve('/extensions').name).toBe('extensions');
     expect(router.resolve('/kb-manage').name).toBe('kb-manage');
     expect(router.resolve('/kb-manage').meta.title).toBe('知识库');
   });
@@ -74,7 +74,7 @@ describe('路由表', () => {
   });
 
   it('除首页和代码检视外, 其余都要登录', () => {
-    for (const p of ['/market', '/kb-manage', '/software', '/settings', '/c/log-analysis', '/connect/authorize', '/connect/grants', '/profile']) {
+    for (const p of ['/extensions', '/kb-manage', '/software', '/settings', '/c/log-analysis', '/connect/authorize', '/connect/grants', '/profile']) {
       expect(metaOf(p).publicRead).toBeFalsy();
       expect(metaOf(p).requiresAuth).toBe(true);
     }
@@ -129,7 +129,7 @@ describe('路由表', () => {
   });
 
   it('别的页面不该被误标成 adminOnly', () => {
-    for (const p of ['/market', '/kb-manage', '/software', '/']) {
+    for (const p of ['/extensions', '/kb-manage', '/software', '/']) {
       expect(metaOf(p).adminOnly).toBeFalsy();
     }
   });

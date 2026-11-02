@@ -30,8 +30,10 @@ export const routes: RouteRecordRaw[] = [
         // 旧地址 (原 /agents/:code): 保留跳转
         { path: 'agents/:code', redirect: (to) => ({ name: 'tool-runner', params: to.params }) },
 
-        // ===== 资产型: 插件·技能·连接 =====
-        { path: 'market', name: 'market', meta: { title: '插件·技能·连接', lede: '可复用的扩展资产 —— 插件 / 技能 / 连接器, 挑一个装进你的 Agent' }, component: () => import('@/views/Capability/Catalog/index.vue') },
+        // ===== 资产型: 扩展 =====
+        { path: 'extensions', name: 'extensions', meta: { title: '扩展', lede: '可复用的扩展资产 —— 插件 / 技能 / 连接器, 挑一个装进你的 Agent' }, component: () => import('@/views/Capability/Catalog/index.vue') },
+        // 旧地址 (原 /market): 保留跳转, 免得旧书签 404
+        { path: 'market', redirect: { name: 'extensions' } },
 
         // ===== 资产型: 知识库 =====
         // 以前知识库是侧栏跟「广场」平级的顶级项, 现在它是能力墙上的一张卡.
@@ -40,7 +42,7 @@ export const routes: RouteRecordRaw[] = [
         // ===== 资产型: 软件库 =====
         // 内部软件的分发入口 —— 任意格式的软件包 (≤5G), 服务端磁盘存储.
         // ⚠️ 独立页面 (不塞进 /market 的 Tab): 软件包是二进制、落服务端磁盘,
-        //    跟「插件·技能·连接」(GitLab 里的文本包) 在存储/权限/审核三个维度都不同.
+        //    跟「扩展」(GitLab 里的文本包) 在存储/权限/审核三个维度都不同.
         // ⚠️ lede 是页头**一行**, max-width 600px + nowrap + 省略号 —— 写长了被截掉.
         //    所以只说「放什么 + 拿来干什么」, 不列表单字段 (那是详情页的事).
         { path: 'software', name: 'software', meta: { title: '软件库', lede: '公司内部软件的统一入口 —— 自研工具与基于开源改造的版本都在这儿, 找到就能下, 也能发新版本' }, component: () => import('@/views/Software/index.vue') },

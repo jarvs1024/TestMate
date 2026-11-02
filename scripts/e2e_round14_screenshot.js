@@ -49,7 +49,7 @@ async function apiLogin() {
 
 /** 直接问后端要某个资产的下载计数 */
 async function dlCount(token, code) {
-  const r = await fetch(API + '/api/v1/assets?limit=500', {
+  const r = await fetch(API + '/api/v1/extensions?limit=500', {
     headers: { Authorization: 'Bearer ' + token },
   }).then((x) => x.json()).catch(() => null);
   const items = (r && (r.items || r)) || [];
@@ -60,7 +60,7 @@ async function dlCount(token, code) {
 /** 真的下载一次资产包 (后端会 +1) */
 async function downloadOnce(token, code, version) {
   const r = await fetch(
-    `${API}/api/v1/assets/${encodeURIComponent(code)}/versions/${encodeURIComponent(version)}/download`,
+    `${API}/api/v1/extensions/${encodeURIComponent(code)}/versions/${encodeURIComponent(version)}/download`,
     { headers: { Authorization: 'Bearer ' + token } },
   );
   return { status: r.status, size: (await r.arrayBuffer()).byteLength };
@@ -114,7 +114,7 @@ async function switchKind(page, kind) {
   console.log('\n── ① 下载计数累计 (之前每次同步都被清零) ──');
 
   // 找一个能下载的技能/插件 (连接器没有安装包)
-  const listResp = await fetch(API + '/api/v1/assets?limit=500', {
+  const listResp = await fetch(API + '/api/v1/extensions?limit=500', {
     headers: { Authorization: 'Bearer ' + token },
   }).then((r) => r.json());
   const all = (listResp && (listResp.items || listResp)) || [];
@@ -131,7 +131,7 @@ async function switchKind(page, kind) {
     check('下载一次 → 计数 +1', after === before + 1, `${before} → ${after}`);
 
     // ⚠️ 关键: 触发一次同步 —— 以前这一步会把计数**清零**
-    const sync = await fetch(API + '/api/v1/assets/sync', {
+    const sync = await fetch(API + '/api/v1/extensions/sync', {
       method: 'POST', headers: { Authorization: 'Bearer ' + token },
     }).then((r) => r.json()).catch(() => null);
     check('触发了一次同步', !!(sync && sync.ok), JSON.stringify(sync || {}).slice(0, 80));
@@ -153,7 +153,7 @@ async function switchKind(page, kind) {
     localStorage.setItem('testmate:theme', 'light');
   }, token, me);
 
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(2600);
   await switchKind(page, '连接器');
   await shot(page, 'market-mcp-no-dl', '资产市场 · 连接器页签 (没有安装包, 不显示下载计数)');

@@ -2,7 +2,7 @@
   <div class="market">
     <!-- ===== 能力详情统一外壳 ===== -->
     <CapabilityShell
-      name="插件·技能·连接"
+      name="扩展"
       icon="🏪"
       kind="platform"
       status="beta"
@@ -32,7 +32,7 @@
                  @input="onSearch" />
         </div>
         <!-- ⚠️ 操作记录 = **运营数据** (谁在什么时候上架/下架/驳回/删了哪个资产,
-             钉钉通知回了什么) —— 只给管理员. 后端也收紧了 (GET /assets/audits
+             钉钉通知回了什么) —— 只给管理员. 后端也收紧了 (GET /extensions/audits
              改成 admin only), 前端同步隐藏, 免得点了只吃一个 403. -->
         <el-tooltip v-if="isAdmin"
                     content="谁在什么时候上架/下架/更新过, 以及钉钉通知送没送到" placement="bottom">
@@ -69,7 +69,7 @@
         <template v-else-if="sync.pending_count">{{ sync.pending_count }} 个资产待同步到 GitLab</template>
         <span class="sb-sub">{{ syncSubHint }}</span>
       </span>
-      <!-- ⚠️ 后端把 GET /assets/jobs 收紧了: 非管理员只能看到**自己**创建的任务.
+      <!-- ⚠️ 后端把 GET /extensions/jobs 收紧了: 非管理员只能看到**自己**创建的任务.
            所以文案不能说"全部" —— 说的应该是"我看得见的那些失败任务". -->
       <button v-if="sync.failed_count" class="sb-btn" :disabled="retrying" @click="retryFailed">
         {{ retrying ? '重试中…' : '重试失败任务' }}
@@ -90,7 +90,7 @@
     <!-- 规则不可用时上传/编辑统一停用; 抽屉内也复用同一状态提供重试. -->
     <div v-if="marketRulesError" class="sync-bar err market-rules-error">
       <span class="sb-icon">⚠️</span>
-      <span class="sb-text">市场规则加载失败: {{ marketRulesError }}。上传和编辑已暂停，请重试。</span>
+      <span class="sb-text">扩展规则加载失败: {{ marketRulesError }}。上传和编辑已暂停，请重试。</span>
       <button class="sb-btn ghost" @click="loadMarketRules">重试</button>
     </div>
 
@@ -106,9 +106,9 @@
          ⚠️ 这一条以前**没有** —— 下架申请有管理员视角的条, 上架审核却没有:
             管理员只能扫卡片上的「📋 待审核」徽标, 别人传了什么全靠眼睛找.
          ⚠️ 2026-10-30 (第十二轮): 拆成两条 —— 「包变了」和「只改了信息」要分开,
-            紧急程度不一样, 而且只有包变了的那条审核通过后才需要通知市场群. -->
+            紧急程度不一样, 而且只有包变了的那条审核通过后才需要通知扩展群. -->
     <div v-if="isAdmin && othersNewCount > 0" class="my-review-bar admin">
-      <span>📦 有 <b>{{ othersNewCount }}</b> 个资产在等上架审核 —— 通过后才出现在市场里</span>
+      <span>📦 有 <b>{{ othersNewCount }}</b> 个资产在等上架审核 —— 通过后才出现在扩展里</span>
       <button class="mrb-btn" @click="toggleOnlyMine('all-pending')">
         {{ onlyMine === 'all-pending' ? '显示全部' : '只看这些' }}
       </button>
@@ -151,7 +151,7 @@
              ⚠️ 2026-10-31 (第十九轮): 但它跟**分类维度互斥** —— 同一个 chip 行里
                 「我的」和「⭐精选」/某个分类不能同时亮 (两个维度打架, 筛选说不清). -->
         <button class="chip mine-chip" :class="{ active: mineOnly }"
-                title="只看我在市场上传的资产"
+                title="只看我在扩展中传的资产"
                 @click="selectMine()">
           👤 我的 <span class="count">{{ mineTotal }}</span>
         </button>
@@ -166,7 +166,7 @@
       </div>
 
       <!-- ⚠️ 分类 / 项目取不到 → 筛选维度会凭空消失 (只剩「全部 / ⭐精选」),
-           用户会以为市场里没有别的分类 —— 得说清楚是"读失败"不是"没有" -->
+           用户会以为扩展里没有别的分类 —— 得说清楚是"读失败"不是"没有" -->
       <div v-if="filterLoadError" class="filter-err">⚠️ {{ filterLoadError }}</div>
 
       <!-- ===== 项目 + 排序 (合成一个下拉) =====
@@ -236,7 +236,7 @@
       <!-- ⚠️ 页脚这两个按钮以前都叫「刷新」/「重新同步」, 但含义差很远:
            「刷新列表」只重读本地镜像 (快), 「从 GitLab 重新同步（慢）」会全量回灌.
            以前用户点哪个都一样 —— 现在把差别写进文案. -->
-      <button v-if="!syncing" class="link-btn" title="重新读一次市场数据 (不拉 GitLab, 快)"
+      <button v-if="!syncing" class="link-btn" title="重新读一次扩展数据 (不拉 GitLab, 快)"
               @click="manualRefresh">刷新列表</button>
       <!-- ⚠️ 「重新同步」= 从 GitLab 全量回灌 + 重新入队 → 后端已收紧成 **admin only**.
            非管理员点了只吃一个 403, 不如直接不显示. -->
@@ -282,7 +282,7 @@ import { loadMarketRules, marketRulesError } from './assetForm';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 /**
- * 从 Git 远端地址里取出**给人看的仓库路径** (如 root/testmate-market).
+ * 从 Git 远端地址里取出**给人看的仓库路径** (如 root/testmate-extensions).
  *
  * ⚠️ 别把整条 SSH 地址摊在页脚上 —— 那带���内网 host:port (host.docker.internal:8922),
  *    界面里没必要暴露部署拓扑; 管理员要看完整地址去设置页, 那儿是管理员专属页.
@@ -300,11 +300,11 @@ function repoPathOf(remote: string): string {
 }
 
 /**
- * 市场仓库的兜底路径 —— 只在**取不到后端配置**时用.
+ * 扩展仓库的兜底路径 —— 只在**取不到后端配置**时用.
  *
- * ⚠️ 真源是后端的 marketplace.git.remote (设置页可改), 前端写死只是兜底.
+ * ⚠️ 真源是后端的 extensions.git.remote (设置页可改), 前端写死只是兜底.
  */
-const GITLAB_PROJECT_FALLBACK = 'root/testmate-market';
+const GITLAB_PROJECT_FALLBACK = 'root/testmate-extensions';
 /** 列表加载超时 (ms) —— 超过就提示重试, 不让页面无限转圈 */
 const LOAD_TIMEOUT_MS = 15000;
 
@@ -312,7 +312,7 @@ const LOAD_TIMEOUT_MS = 15000;
  * 进入页面时默认停在哪个类型 tab (2026-10-31 第十九轮, 用户指定).
  *
  * ⚠️ 以前默认是「插件」—— 但库里**技能**最多 (插件 3 / 技能 7 / 连接器 5),
- *    一进来只看到空落落的 3 张卡, 看着像"市场没什么东西".
+ *    一进来只看到空落落的 3 张卡, 看着像"扩展没什么东西".
  *    现在默认「技能」, 进页面先看到内容最多的那一类.
  * ⚠️ 跟 `resetFilters()` 里的默认值必须**一致** —— "清空筛选"回到的就是初始态,
  *    两处不一样的话, 清完筛选 tab 会跳到另一个类型, 用户以为页面自己动了.
@@ -424,7 +424,7 @@ const mineTotalRaw = ref<number | undefined>(undefined);
 
 const allTotal = computed(() => {
   // ⚠️ 只信**正数** —— 后端的 schema 里 all_total 默认值是 0 (字段还没被填时也返回 0),
-  //    那种情况下直接用 0 会让「全部」显示 0, 用户以为市场空了.
+  //    那种情况下直接用 0 会让「全部」显示 0, 用户以为扩展空了.
   //    真·空的库 rawItems.length 也是 0 (后端的 all_total 恒 ≥ 当前列表条数),
   //    两条路殊途同归, 不会算错 —— 所以这个兜底只影响"后端还没填字段"那个窗口期.
   return (typeof allTotalRaw.value === 'number' && allTotalRaw.value > 0)
@@ -529,9 +529,9 @@ function errText(e: any, fallback: string): string {
 }
 
 /**
- * 自动刷新周期 (2026-10-25 用户要求: 市场首页要能自动更新).
+ * 自动刷新周期 (2026-10-25 用户要求: 扩展首页要能自动更新).
  *
- * ⚠️ 为什么是 20s: 后端从 GitLab 拉取的周期是 30s (设置项 marketplace.sync.interval_seconds),
+ * ⚠️ 为什么是 20s: 后端从 GitLab 拉取的周期是 30s (设置项 extensions.sync.interval_seconds),
  *    前端每 20s 读一次**本地镜像** → 端到端延迟 ≈ 30-50s.
  *    前端这一步只是查一次库, 成本很低.
  */
@@ -583,7 +583,7 @@ const projectFilter = ref('');
  * 分类 / 项目取数失败 —— 页面内提示用.
  *
  * ⚠️ 以前两个 catch 都是空注释: 后端 500 时分类只剩「全部 / ⭐精选」,
- *    项目菜单一个都没有 —— 用户以为市场里就这些, 筛选维度**凭空消失**了.
+ *    项目菜单一个都没有 —— 用户以为扩展里就这些, 筛选维度**凭空消失**了.
  */
 const filterLoadError = ref('');
 /** 分类 / 项目各自的失败原因 (两种都失败时合成一条显示) */
@@ -632,7 +632,7 @@ async function loadCategories(silent = false) {
 /**
  * Tab 上的计数取数失败 —— 页面内提示用.
  *
- * ⚠️ 以前 catch 是空注释, 计数留 0 —— 后端挂掉时用户以为市场是空的.
+ * ⚠️ 以前 catch 是空注释, 计数留 0 —— 后端挂掉时用户以为扩展是空的.
  *    现在显示 "?" 并在 title 里说明.
  */
 const kindCountsError = ref('');
@@ -695,7 +695,7 @@ function catCount(c: { name?: string }): number {
 }
 
 /**
- * 读一次市场列表.
+ * 读一次扩展列表.
  *
  * ⚠️ `silent` = **静默刷新** (自动刷新用):
  *    不置 loading (免得整页闪一下 spinner), 失败也**不动页面** ——
@@ -851,9 +851,9 @@ async function loadSyncStatus() {
 }
 
 /**
- * 市场当前生效的配置 —— 页脚显示的"数据源仓库"以它为准.
+ * 扩展当前生效的配置 —— 页脚显示的"数据源仓库"以它为准.
  *
- * ⚠️ 以前页脚写死 root/testmate-market, 后端换了仓库地址, 页脚还在说旧的.
+ * ⚠️ 以前页脚写死 root/testmate-extensions, 后端换了仓库地址, 页脚还在说旧的.
  *    取不到才回退常量; 还没取到时不渲染 (别先闪一个错的出来).
  * ⚠️ 非管理员拿不到 remote (后端按设计隐藏了仓库地址) → 也走同一个兜底常量,
  *    页脚**不能**渲染成空白 (那会让人以为数据源没配).
@@ -904,9 +904,9 @@ async function pollJobs() {
 /**
  * 重试**看得见的**失败任务.
  *
- * ⚠️ 后端把 GET /assets/jobs 收紧了: 非管理员只能拿到**自己**创建的任务,
+ * ⚠️ 后端把 GET /extensions/jobs 收紧了: 非管理员只能拿到**自己**创建的任务,
  *    所以这里重试的只是"我能看见的那些" —— 按钮文案也跟着说"重试失败任务",
- *    别写成"全部重试" (会让人以为是全市场的任务).
+ *    别写成"全部重试" (会让人以为是全部扩展的任务).
  */
 async function retryFailed() {
   retrying.value = true;

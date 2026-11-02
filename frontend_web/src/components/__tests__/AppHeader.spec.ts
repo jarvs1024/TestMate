@@ -4,7 +4,7 @@
  * ⚠️ 改版原因 (用户原话):
  *   「优化返回工作台那行的内容可以放到最上面和上面的可复用的扩展资产这行内容融合,
  *     同时, 去掉返回工作台这个按钮」
- *   —— 原来页头写一遍"插件·技能·连接", 下面那条身份条又写一遍, 重复且占行.
+ *   —— 原来页头写一遍"扩展", 下面那条身份条又写一遍, 重复且占行.
  *
  * 要盯住:
  *   ① 身份信息 (图标/版本/角色·分类/状态徽标) 渲染在**标题行**里;
@@ -37,7 +37,7 @@ function makeRouter() {
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'home', component: Stub, meta: { title: '工作台', lede: '测试伙伴能干的活都在这儿' } },
-      { path: '/market', name: 'market', component: Stub, meta: { title: '插件·技能·连接', lede: '可复用的扩展资产' } },
+      { path: '/extensions', name: 'extensions', component: Stub, meta: { title: '扩展', lede: '可复用的扩展资产' } },
     ],
   });
 }
@@ -69,13 +69,13 @@ beforeEach(() => {
 describe('页头 · 能力身份条', () => {
   it('身份信息渲染在**标题行**里 (图标 + 版本 + 角色·分类 + 状态)', async () => {
     setCapIdentity({
-      icon: '🏪', name: '插件·技能·连接', version: 'v0.1.0',
+      icon: '🏪', name: '扩展', version: 'v0.1.0',
       kind: 'platform', category: 'ai-market', status: 'beta',
     });
-    const { w } = await mountHeader('/market');
+    const { w } = await mountHeader('/extensions');
     const name = w.find('.pt-name');
     expect(name.exists()).toBe(true);
-    expect(name.text()).toContain('插件·技能·连接');
+    expect(name.text()).toContain('扩展');
     expect(name.text()).toContain('v0.1.0');
     // 角色 + 分类 + 状态徽标
     expect(w.find('.pt-kind').exists()).toBe(true);
@@ -88,9 +88,9 @@ describe('页头 · 能力身份条', () => {
 
   it('lede 仍在第二行 (页面级说明没丢)', async () => {
     setCapIdentity({
-      icon: '🏪', name: '插件·技能·连接', kind: 'platform', status: 'beta',
+      icon: '🏪', name: '扩展', kind: 'platform', status: 'beta',
     });
-    const { w } = await mountHeader('/market');
+    const { w } = await mountHeader('/extensions');
     expect(w.find('.pt-lede').text()).toContain('可复用的扩展资产');
     w.unmount();
   });
@@ -109,7 +109,7 @@ describe('页头 · 能力身份条', () => {
     capActions.value = defineComponent({
       render: () => h('button', { class: 'my-act' }, '刷新'),
     });
-    const { w } = await mountHeader('/market');
+    const { w } = await mountHeader('/extensions');
     // ⚠️ `class="cap-actions"` 挂在 <component> 上 → 落到**它自己渲染出的根元素**,
     //    所以是同一个元素带两个类, 不是父子关系
     const act = w.find('.my-act');
@@ -130,7 +130,7 @@ describe('页头 · 能力身份条', () => {
 describe('页头 · 平台名称/副标题/版本号走设置项', () => {
   it('副标题 + 版本号显示设置项里的值', async () => {
     setPlatformInfo({ version: '2.3.4', tagline: '资产协作平台' });
-    const { w } = await mountHeader('/market');
+    const { w } = await mountHeader('/extensions');
     await flushPromises();
     expect(w.find('.t2').text()).toContain('资产协作平台');
     expect(w.find('.t2').text()).toContain('v2.3.4');
@@ -139,7 +139,7 @@ describe('页头 · 平台名称/副标题/版本号走设置项', () => {
 
   it('平台显示名也走设置项', async () => {
     setPlatformInfo({ name: '质量助手' });
-    const { w } = await mountHeader('/market');
+    const { w } = await mountHeader('/extensions');
     await flushPromises();
     expect(w.find('.t1').text()).toBe('质量助手');
     w.unmount();
@@ -147,7 +147,7 @@ describe('页头 · 平台名称/副标题/版本号走设置项', () => {
 
   it('⚠️ 接口挂了 → 用兜底默认值, 不能显示空白 (更不能是"SSD 测试伙伴"那种旧文案)', async () => {
     // ⚠️ 兜底默认值 = 共享模块的初始值 (接口没回来时的样子)
-    const { w } = await mountHeader('/market');
+    const { w } = await mountHeader('/extensions');
     await flushPromises();
     const t2 = w.find('.t2').text();
     expect(t2).toContain('智能测试辅助平台');
@@ -167,9 +167,9 @@ describe('页头 · 平台名称/副标题/版本号走设置项', () => {
 describe('页头 · 状态徽标按语义色调上色', () => {
   it('资产的 beta 文案是「正常」→ class 是 st-ok (不是 st-beta)', async () => {
     setCapIdentity({
-      icon: '🏪', name: '插件·技能·连接', kind: 'platform', category: 'ai-market', status: 'beta',
+      icon: '🏪', name: '扩展', kind: 'platform', category: 'ai-market', status: 'beta',
     });
-    const { w } = await mountHeader('/market');
+    const { w } = await mountHeader('/extensions');
     const badge = w.find('.pt-badge');
     expect(badge.text()).toContain('正常');
     expect(badge.classes()).toContain('st-ok');
@@ -180,7 +180,7 @@ describe('页头 · 状态徽标按语义色调上色', () => {
 
   it('看板的 stable 也是绿色 st-ok —— 跟资产的 beta 同一个色调', async () => {
     setCapIdentity({ icon: '🧬', name: '代码检视', kind: 'board', status: 'stable' });
-    const { w } = await mountHeader('/market');
+    const { w } = await mountHeader('/extensions');
     const badge = w.find('.pt-badge');
     expect(badge.text()).toContain('正常');
     expect(badge.classes()).toContain('st-ok');
@@ -189,7 +189,7 @@ describe('页头 · 状态徽标按语义色调上色', () => {
 
   it('工具的 beta 是公测 → 橙色 st-warn', async () => {
     setCapIdentity({ icon: '🛠', name: '日志分析', kind: 'tool', status: 'beta' });
-    const { w } = await mountHeader('/market');
+    const { w } = await mountHeader('/extensions');
     const badge = w.find('.pt-badge');
     expect(badge.text()).toContain('公测');
     expect(badge.classes()).toContain('st-warn');

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 审核总开关 (`marketplace.review.enabled`) 端到端验收 (真实 Chrome).
+ * 审核总开关 (`extensions.review.enabled`) 端到端验收 (真实 Chrome).
  *
  * 这个开关**同时管上架审核与下架审核**:
  *   · 开 (默认) → 发布者上传要审核; 下架走申请制, 管理员通过 = 彻底删除
@@ -14,7 +14,7 @@
  *   ⑤ 开关改回去之后, 行为恢复成申请制
  *
  * ⚠️ **必须用非管理员账号上传**:
- *    `marketplace.review.admin_self_approve` (默认开) 让管理员自己的上传**免审核** ——
+ *    `extensions.review.admin_self_approve` (默认开) 让管理员自己的上传**免审核** ——
  *    拿 admin 测根本测不出开关的效果 (上传永远是 published).
  *    所以这里建一个普通发布者账号, 把它加进发布者白名单再上传.
  *
@@ -39,8 +39,8 @@ const ADMIN_PW = process.env.TESTMATE_PASSWORD || 'Admin@123';
 const PUB = process.env.REVIEW_TEST_USER || 'e2e_rvswitch';
 const PUB_PW = 'E2e@Test12345';
 const OUT_DIR = process.env.E2E_OUT_DIR || path.join(__dirname, '..', '.e2e-out');
-const SETTING_KEY = 'marketplace.review.enabled';
-const PUBLISHER_KEY = 'marketplace.publisher_usernames';
+const SETTING_KEY = 'extensions.review.enabled';
+const PUBLISHER_KEY = 'extensions.publisher_usernames';
 const CODE = 'e2e-rvswitch-demo';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -125,7 +125,7 @@ async function login(username, password) {
 async function waitSettled(token, code, timeoutMs = 30000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
-    const d = await api('/api/v1/assets/' + code, { headers: { Authorization: 'Bearer ' + token } });
+    const d = await api('/api/v1/extensions/' + code, { headers: { Authorization: 'Bearer ' + token } });
     if (d.status === 200 && d.json && d.json.publish_status) return d.json;
     await sleep(800);
   }
@@ -154,7 +154,7 @@ async function uploadSkill(token, code) {
   fd.append('install_steps', '[]');
   fd.append('bindings', '{}');
   fd.append('package', new Blob([fs.readFileSync(zipPath)]), `${code}.zip`);
-  const r = await fetch(`${API}/api/v1/assets/upload`, {
+  const r = await fetch(`${API}/api/v1/extensions/upload`, {
     method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: fd,
   });
   return r.status;
@@ -233,13 +233,13 @@ async function openDrawer(page, name, timeoutMs = 20000) {
     // ---------- ① 关掉开关 ----------
     const off = await writeSetting(adminToken, SETTING_KEY, false);
     check('S1 审核总开关能关掉', off.status === 200, `status=${off.status}`);
-    const cfg = await api('/api/v1/assets/config', { headers: AH });
+    const cfg = await api('/api/v1/extensions/config', { headers: AH });
     check('S2 /assets/config 回报 review_enabled=false',
       cfg.status === 200 && cfg.json && cfg.json.review_enabled === false,
       `review_enabled=${cfg.json && cfg.json.review_enabled}`);
 
     // ---------- ② 上传直接上架 (以**发布者**身份, 不是 admin) ----------
-    await api(`/api/v1/assets/${CODE}`, { method: 'DELETE', headers: AH });
+    await api(`/api/v1/extensions/${CODE}`, { method: 'DELETE', headers: AH });
     const up = await uploadSkill(pubToken, CODE);
     check('S3 上传受理', up === 202, `status=${up}`);
     const asset = await waitSettled(pubToken, CODE);
@@ -288,7 +288,7 @@ async function openDrawer(page, name, timeoutMs = 20000) {
     }, CODE);
     check('S6 点「下架」走完确认框', took.ok, took.why || '');
 
-    const after = await api('/api/v1/assets/' + CODE, { headers: PH });
+    const after = await api('/api/v1/extensions/' + CODE, { headers: PH });
     check('S7 免审下架后状态是「已下架」(unpublished), 不是待审核',
       after.status === 200 && after.json && after.json.publish_status === 'unpublished',
       `publish_status=${after.json && after.json.publish_status}`);
@@ -311,7 +311,7 @@ async function openDrawer(page, name, timeoutMs = 20000) {
     });
     check('S8b 点「重新上架」没报错', repub);
 
-    const re = await api('/api/v1/assets/' + CODE, { headers: PH });
+    const re = await api('/api/v1/extensions/' + CODE, { headers: PH });
     check('S8c 重新上架后回到「在架」(文件保留, 没被删)',
       re.status === 200 && re.json && re.json.publish_status === 'published',
       `status=${re.status} publish_status=${re.json && re.json.publish_status}`);
@@ -319,7 +319,7 @@ async function openDrawer(page, name, timeoutMs = 20000) {
     // ---------- ⑥ 开关打开 → 行为恢复申请制 ----------
     const on = await writeSetting(adminToken, SETTING_KEY, true);
     check('S9 审核总开关能开回来', on.status === 200, `status=${on.status}`);
-    const cfg2 = await api('/api/v1/assets/config', { headers: AH });
+    const cfg2 = await api('/api/v1/extensions/config', { headers: AH });
     check('S10 /assets/config 回报 review_enabled=true',
       cfg2.status === 200 && cfg2.json && cfg2.json.review_enabled === true,
       `review_enabled=${cfg2.json && cfg2.json.review_enabled}`);
@@ -337,8 +337,8 @@ async function openDrawer(page, name, timeoutMs = 20000) {
     const restore = await writeSetting(adminToken, SETTING_KEY, origValue);
     console.log(`[清理] 审核总开关已还原为 ${JSON.stringify(origValue)} (status=${restore.status})`);
     if (browser) { try { await browser.close(); } catch { /* ignore */ } }
-    await api(`/api/v1/assets/${CODE}`, { method: 'DELETE', headers: AH });
-    await api(`/api/v1/assets/${CODE}-b`, { method: 'DELETE', headers: AH });
+    await api(`/api/v1/extensions/${CODE}`, { method: 'DELETE', headers: AH });
+    await api(`/api/v1/extensions/${CODE}-b`, { method: 'DELETE', headers: AH });
     // 白名单还原 (不是清空 —— 清空会把管理员配好的真实白名单一起抹掉)
     if (savedPublisherSetting !== undefined) {
       await writeSetting(adminToken, PUBLISHER_KEY, String(savedPublisherSetting));

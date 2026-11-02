@@ -37,7 +37,7 @@ async def _upload(client, auth, code="wl-demo"):
         "featured": "false", "permissions": "{}", "install_steps": "[]", "bindings": "{}",
     }
     return await client.post(
-        "/api/v1/assets/upload", data=data,
+        "/api/v1/extensions/upload", data=data,
         files={"package": (pkg[0], pkg[1], pkg[2])},
         headers=auth,
     )
@@ -118,28 +118,28 @@ async def test_publisher_names_accepts_json_array_format():
     """用户名口径写成 JSON 数组 (照抄隔壁那项) 也要认."""
     from app.core.market_policy import publisher_names as _publisher_names
 
-    await set_setting("marketplace.publisher_usernames", '["ZhangSan","LiSi"]')
+    await set_setting("extensions.publisher_usernames", '["ZhangSan","LiSi"]')
     assert await _publisher_names() == {"zhangsan", "lisi"}
 
 
 async def test_publisher_names_accepts_comma_format():
     from app.core.market_policy import publisher_names as _publisher_names
 
-    await set_setting("marketplace.publisher_usernames", "ZhangSan,LiSi")
+    await set_setting("extensions.publisher_usernames", "ZhangSan,LiSi")
     assert await _publisher_names() == {"zhangsan", "lisi"}
 
 
 async def test_publisher_names_empty_gives_empty_set():
     from app.core.market_policy import publisher_names as _publisher_names
 
-    await set_setting("marketplace.publisher_usernames", "")
+    await set_setting("extensions.publisher_usernames", "")
     assert await _publisher_names() == set()
 
 
 async def test_publisher_ids_accepts_json_array_format():
     from app.core.market_policy import publisher_ids as _publisher_ids
 
-    await set_setting("marketplace.publisher_ids", "[1,2]")
+    await set_setting("extensions.publisher_ids", "[1,2]")
     assert await _publisher_ids() == {1, 2}
 
 
@@ -147,14 +147,14 @@ async def test_publisher_ids_accepts_comma_format():
     """ID 口径写成逗号分隔 (照抄隔壁那项) 也要认."""
     from app.core.market_policy import publisher_ids as _publisher_ids
 
-    await set_setting("marketplace.publisher_ids", "1,2")
+    await set_setting("extensions.publisher_ids", "1,2")
     assert await _publisher_ids() == {1, 2}
 
 
 async def test_publisher_ids_ignores_non_numeric():
     from app.core.market_policy import publisher_ids as _publisher_ids
 
-    await set_setting("marketplace.publisher_ids", "[1,abc]")
+    await set_setting("extensions.publisher_ids", "[1,abc]")
     assert await _publisher_ids() == {1}
 
 
@@ -165,7 +165,7 @@ async def test_upload_allowed_when_whitelist_written_as_json_array(
 ):
     """白名单写成 JSON 数组时, 白名单里的用户照样能上传 (以前会被静默拒绝)."""
     await set_setting(
-        "marketplace.publisher_usernames", f'["{publisher_user["username"]}"]'
+        "extensions.publisher_usernames", f'["{publisher_user["username"]}"]'
     )
     r = await _upload(client, _auth(publisher_user), code="wl-json")
     assert r.status_code == 202, r.text
@@ -175,7 +175,7 @@ async def test_upload_allowed_when_whitelist_written_as_comma(
     client, ws, restore_git_config, publisher_user  # noqa: ARG001
 ):
     await set_setting(
-        "marketplace.publisher_usernames", publisher_user["username"]
+        "extensions.publisher_usernames", publisher_user["username"]
     )
     r = await _upload(client, _auth(publisher_user), code="wl-comma")
     assert r.status_code == 202, r.text
@@ -185,8 +185,8 @@ async def test_upload_allowed_by_id_whitelist_written_as_comma(
     client, ws, restore_git_config, publisher_user  # noqa: ARG001
 ):
     """ID 口径写成逗号分隔也要认 —— 不然也是静默拒绝."""
-    await set_setting("marketplace.publisher_usernames", "")
-    await set_setting("marketplace.publisher_ids", str(publisher_user["id"]))
+    await set_setting("extensions.publisher_usernames", "")
+    await set_setting("extensions.publisher_ids", str(publisher_user["id"]))
     r = await _upload(client, _auth(publisher_user), code="wl-id-comma")
     assert r.status_code == 202, r.text
 
@@ -195,8 +195,8 @@ async def test_upload_denied_when_not_in_whitelist(
     client, ws, restore_git_config, stranger_user  # noqa: ARG001
 ):
     """角色不在可发布列表 + 也不在白名单 → 403, 且提示要说人话."""
-    await set_setting("marketplace.publisher_roles", "")
-    await set_setting("marketplace.publisher_usernames", '["someone_else"]')
+    await set_setting("extensions.publisher_roles", "")
+    await set_setting("extensions.publisher_usernames", '["someone_else"]')
     r = await _upload(client, _auth(stranger_user), code="wl-deny")
     assert r.status_code == 403, r.text
     assert "没有发布权限" in r.text
@@ -206,8 +206,8 @@ async def test_admin_can_publish_even_with_empty_whitelist(
     client, auth, ws, restore_git_config  # noqa: ARG001
 ):
     """admin 恒可发布, 与白名单无关."""
-    await set_setting("marketplace.publisher_roles", "")
-    await set_setting("marketplace.publisher_usernames", "")
+    await set_setting("extensions.publisher_roles", "")
+    await set_setting("extensions.publisher_usernames", "")
     r = await _upload(client, auth, code="wl-admin")
     assert r.status_code == 202, r.text
 
@@ -216,8 +216,8 @@ async def test_empty_whitelist_denies_viewer(
     client, ws, restore_git_config, stranger_user  # noqa: ARG001
 ):
     """白名单空 + 角色不可发布 → viewer 一律拒绝 (而不是放行所有人)."""
-    await set_setting("marketplace.publisher_roles", "")
-    await set_setting("marketplace.publisher_usernames", "")
+    await set_setting("extensions.publisher_roles", "")
+    await set_setting("extensions.publisher_usernames", "")
     r = await _upload(client, _auth(stranger_user), code="wl-empty")
     assert r.status_code == 403, r.text
 
@@ -228,9 +228,9 @@ async def test_tester_can_publish_without_whitelist(
     client, ws, restore_git_config, publisher_user  # noqa: ARG001
 ):
     """⚠️ 核心诉求: 测试工程 (tester) 要能直接往市场里上传/更新, 不必等管理员开白名单."""
-    await set_setting("marketplace.publisher_roles", "tester")
-    await set_setting("marketplace.publisher_usernames", "")
-    await set_setting("marketplace.publisher_ids", "[]")
+    await set_setting("extensions.publisher_roles", "tester")
+    await set_setting("extensions.publisher_usernames", "")
+    await set_setting("extensions.publisher_ids", "[]")
     r = await _upload(client, _auth(publisher_user), code="wl-role-tester")
     assert r.status_code == 202, r.text
 
@@ -239,7 +239,7 @@ async def test_default_publisher_roles_is_tester():
     """默认值就是 tester —— 不配也能发."""
     from app.core.market_policy import publisher_roles as _roles
 
-    await set_setting("marketplace.publisher_roles", "tester")
+    await set_setting("extensions.publisher_roles", "tester")
     assert await _roles() == {"tester"}
 
 
@@ -247,8 +247,8 @@ async def test_viewer_can_publish_when_whitelisted(
     client, ws, restore_git_config, stranger_user  # noqa: ARG001
 ):
     """白名单是给"角色不在列表里的人"开的额外口子."""
-    await set_setting("marketplace.publisher_roles", "tester")
-    await set_setting("marketplace.publisher_usernames", stranger_user["username"])
+    await set_setting("extensions.publisher_roles", "tester")
+    await set_setting("extensions.publisher_usernames", stranger_user["username"])
     r = await _upload(client, _auth(stranger_user), code="wl-viewer-ok")
     assert r.status_code == 202, r.text
 
@@ -257,8 +257,8 @@ async def test_clearing_publisher_roles_reverts_to_whitelist_only(
     client, ws, restore_git_config, publisher_user  # noqa: ARG001
 ):
     """清空角色列表 → 退回"只看白名单"的老行为 (管理员想收紧时用)."""
-    await set_setting("marketplace.publisher_roles", "")
-    await set_setting("marketplace.publisher_usernames", "")
+    await set_setting("extensions.publisher_roles", "")
+    await set_setting("extensions.publisher_usernames", "")
     r = await _upload(client, _auth(publisher_user), code="wl-role-off")
     assert r.status_code == 403, r.text
 
@@ -266,5 +266,5 @@ async def test_clearing_publisher_roles_reverts_to_whitelist_only(
 async def test_publisher_roles_accepts_multiple_roles():
     from app.core.market_policy import publisher_roles as _roles
 
-    await set_setting("marketplace.publisher_roles", "tester, viewer,admin")
+    await set_setting("extensions.publisher_roles", "tester, viewer,admin")
     assert await _roles() == {"tester", "viewer", "admin"}

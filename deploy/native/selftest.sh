@@ -71,7 +71,7 @@ render "$NATIVE_DIR/units/testmate-backend.service.tpl" "$OUT/testmate-backend.s
   "FORWARDED_ALLOW" "127.0.0.1" "TIMEZONE" "Asia/Shanghai" \
   "MEM_LIMIT" "2G" "CPU_QUOTA" "200%" \
   "RUNTIME_DIR" "$OUT" "DATA_DIR" "$OUT/data" "LOG_DIR" "$OUT/logs" \
-  "MARKET_DIR" "$OUT/market" "SOFTWARE_DIR" "$OUT/data/software" "RUN_DIR" "$OUT/run"
+  "EXTENSIONS_DIR" "$OUT/market" "SOFTWARE_DIR" "$OUT/data/software" "RUN_DIR" "$OUT/run"
 
 render "$NATIVE_DIR/units/testmate-frontend.service.tpl" "$OUT/testmate-frontend.service" \
   "REPO_ROOT" "/opt/testmate" "NGINX_BIN" "/usr/sbin/nginx" \

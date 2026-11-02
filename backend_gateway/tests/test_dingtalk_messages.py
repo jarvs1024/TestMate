@@ -42,7 +42,7 @@ def _fake_get(values: dict[str, str]):
 
 
 def test_software_events_registered():
-    """软件库的两个事件要在事件表里 (不然 notify_market 直接拒)."""
+    """软件库的两个事件要在事件表里 (不然 notify_extensions 直接拒)."""
     for ev in ("software_publish", "software_update"):
         assert ev in dingtalk._EVENT_TEXT, ev
         assert ev in dingtalk._SWITCH_KEY, ev
@@ -59,9 +59,9 @@ def test_software_events_share_one_switch():
 
 
 def test_software_events_go_to_market_channel():
-    """软件库的通知走**市场群** (同一个机器人) —— 用户原话「可以用市场的通知中配置的钉钉信息」."""
-    assert dingtalk._CHANNEL_OF_EVENT["software_publish"] == "market"
-    assert dingtalk._CHANNEL_OF_EVENT["software_update"] == "market"
+    """软件库的通知走**扩展群** (同一个机器人) —— 用户原话「可以用市场的通知中配置的钉钉信息」."""
+    assert dingtalk._CHANNEL_OF_EVENT["software_publish"] == "extensions"
+    assert dingtalk._CHANNEL_OF_EVENT["software_update"] == "extensions"
 
 
 def test_software_kind_label():
@@ -95,8 +95,8 @@ async def test_publish_message_has_summary_and_market_link(monkeypatch):
     # ⚠️ 上架 → 标签是「说明」, 内容是简介
     assert "说明: 一键串联" in text
     # ⚠️ 链接指向市场
-    assert "http://127.0.0.1:8081/market" in text
-    assert "去市场看看" in text
+    assert "http://127.0.0.1:8081/extensions" in text
+    assert "去扩展看看" in text
 
 
 async def test_publish_message_shows_author_not_approver(monkeypatch):
@@ -132,7 +132,7 @@ async def test_notify_asset_prefers_asset_summary(monkeypatch):
         captured.update(kw)
         return True
 
-    monkeypatch.setattr(market_notify, "notify_market", fake_notify)
+    monkeypatch.setattr(market_notify, "notify_extensions", fake_notify)
     await market_notify.notify_asset(
         "publish", {"name": "插件创建器", "summary": "一句话创建一个插件"},
         actor="admin", detail="审核通过, 已上架",
@@ -150,7 +150,7 @@ async def test_notify_asset_blank_summary_keeps_detail(monkeypatch):
         captured.update(kw)
         return True
 
-    monkeypatch.setattr(market_notify, "notify_market", fake_notify)
+    monkeypatch.setattr(market_notify, "notify_extensions", fake_notify)
     await market_notify.notify_asset(
         "reject", {"name": "某技能", "summary": "这玩意儿是干嘛的"},
         actor="admin", detail="权限声明不完整", summary="",
@@ -235,19 +235,19 @@ async def test_no_link_without_base_url(monkeypatch):
         "publish", name="X", version="1.0.0", kind="plugin", summary="简介",
     )
     assert "](http" not in r["text"]
-    assert "/market" not in r["text"]
+    assert "/extensions" not in r["text"]
 
 
 async def test_link_falls_back_to_public_base_url(monkeypatch):
-    """没配通知专用基地址 → 回落 `marketplace.public_base_url`."""
+    """没配通知专用基地址 → 回落 `extensions.public_base_url`."""
     monkeypatch.setattr(
         dingtalk, "get",
-        _fake_get({"marketplace.public_base_url": "http://public.example.com"}),
+        _fake_get({"extensions.public_base_url": "http://public.example.com"}),
     )
     r = await dingtalk.preview_market_message(
         "publish", name="X", version="1.0.0", kind="plugin", summary="简介",
     )
-    assert "http://public.example.com/market" in r["text"]
+    assert "http://public.example.com/extensions" in r["text"]
 
 
 async def test_explicit_link_wins(monkeypatch):
@@ -261,7 +261,7 @@ async def test_explicit_link_wins(monkeypatch):
         link="http://other/thing",
     )
     assert "http://other/thing" in r["text"]
-    assert "/market" not in r["text"]
+    assert "/extensions" not in r["text"]
 
 
 async def test_preview_does_not_send(monkeypatch):
@@ -293,13 +293,13 @@ async def test_software_switch_off_skips(monkeypatch):
     monkeypatch.setattr(
         dingtalk, "get",
         _fake_get({
-            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.extensions_webhook": "http://x/hook",
             "dingtalk.notify_on_software": "false",
         }),
     )
-    assert await dingtalk.notify_market(
+    assert await dingtalk.notify_extensions(
         "software_publish", name="A", version="1.0.0", kind="software") is False
-    assert await dingtalk.notify_market(
+    assert await dingtalk.notify_extensions(
         "software_update", name="A", version="1.1.0", kind="software") is False
     assert sent == [], "开关关着还发了消息"
 
@@ -316,13 +316,13 @@ async def test_software_switch_on_sends_both(monkeypatch):
     monkeypatch.setattr(
         dingtalk, "get",
         _fake_get({
-            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.extensions_webhook": "http://x/hook",
             "dingtalk.notify_on_software": "true",
         }),
     )
-    assert await dingtalk.notify_market(
+    assert await dingtalk.notify_extensions(
         "software_publish", name="A", version="1.0.0", kind="software") is True
-    assert await dingtalk.notify_market(
+    assert await dingtalk.notify_extensions(
         "software_update", name="A", version="1.1.0", kind="software") is True
     assert len(sent) == 2, sent
 
@@ -345,20 +345,20 @@ async def test_software_events_at_all(monkeypatch):
     monkeypatch.setattr(
         dingtalk, "get",
         _fake_get({
-            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.extensions_webhook": "http://x/hook",
             "dingtalk.notify_on_software": "true",
         }),
     )
     for ev, ver in (("software_publish", "1.0.0"), ("software_update", "1.1.0"),
                     ("software_unpublish", "1.0.0")):
-        await dingtalk.notify_market(ev, name="A", version=ver, kind="software")
+        await dingtalk.notify_extensions(ev, name="A", version=ver, kind="software")
     assert len(sent) == 3, sent
     for t in sent:
         assert "@所有人" in t, t
 
 
 async def test_software_unpublish_event_registered():
-    """软件下架事件要在事件表里 (不然 notify_market 直接拒)."""
+    """软件下架事件要在事件表里 (不然 notify_extensions 直接拒)."""
     for ev in ("software_publish", "software_update", "software_unpublish"):
         assert ev in dingtalk._EVENT_TEXT, ev
         assert ev in dingtalk._SWITCH_KEY, ev
@@ -400,7 +400,7 @@ async def test_base_url_is_dynamic_from_request(monkeypatch):
     try:
         r = await dingtalk.preview_market_message(
             "publish", name="X", version="1.0.0", kind="plugin", summary="简介")
-        assert "http://10.0.0.5:8081/market" in r["text"], r["text"]
+        assert "http://10.0.0.5:8081/extensions" in r["text"], r["text"]
     finally:
         dingtalk.reset_base_url_cache()
 
@@ -415,7 +415,7 @@ async def test_explicit_base_url_beats_dynamic(monkeypatch):
     try:
         r = await dingtalk.preview_market_message(
             "publish", name="X", version="1.0.0", kind="plugin", summary="简介")
-        assert "http://public.example.com/market" in r["text"], r["text"]
+        assert "http://public.example.com/extensions" in r["text"], r["text"]
     finally:
         dingtalk.reset_base_url_cache()
 
@@ -455,11 +455,11 @@ async def test_no_individual_at_user_ids(monkeypatch):
     monkeypatch.setattr(
         dingtalk, "get",
         _fake_get({
-            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.extensions_webhook": "http://x/hook",
             "dingtalk.notify_on_reject": "true",
         }),
     )
-    await dingtalk.notify_market(
+    await dingtalk.notify_extensions(
         "reject", name="A", version="1.0.0", kind="plugin",
         author="zhangsan", actor="admin", detail="简介写得太笼统",
     )
@@ -516,10 +516,10 @@ async def test_notify_does_not_double_at(monkeypatch):
     monkeypatch.setattr(
         dingtalk, "get",
         _fake_get({
-            "dingtalk.market_webhook": "http://x/hook",
+            "dingtalk.extensions_webhook": "http://x/hook",
             "dingtalk.notify_on_software": "true",
         }),
     )
-    await dingtalk.notify_market(
+    await dingtalk.notify_extensions(
         "software_publish", name="A", version="1.0.0", kind="software")
     assert sent and sent[0].count("@所有人") == 1, sent[0] if sent else ""

@@ -348,11 +348,11 @@ install 第一次跑自动生成 `.env`, 并把 `JWT_SECRET` / `MySQL_PASSWORD` 
 
 ### 6.6 资产市场工作区
 
-裸机模式下 `MARKET_DIR` (默认 `runtime/market`) 是**宿主机上的一个目录**, 后端启动时会自己 `git init + remote add + fetch + checkout` 建好仓库 —— 不用脚本预先 clone。
+裸机模式下 `EXTENSIONS_DIR` (默认 `runtime/market`) 是**宿主机上的一个目录**, 后端启动时会自己 `git init + remote add + fetch + checkout` 建好仓库 —— 不用脚本预先 clone。
 
 但 SSH 身份必须先备好: install 会把你 `~/.ssh/id_ed25519` 拷进 `runtime/ssh/` (权限 600) 并在 `backend.env` 里配好 `GIT_SSH_COMMAND`。没配 SSH 的话, 仓库能建起来但拉不到远端, 上传推送会失败 —— `tmctl.sh doctor` 能看出来。
 
-mac 上 install 会**优先把 `MARKET_DIR` 对齐到 Docker 模式那份**(同一个 `DATA_ROOT/market`), 这样切模式不用搬数据。
+mac 上 install 会**优先把 `EXTENSIONS_DIR` 对齐到 Docker 模式那份**(同一个 `DATA_ROOT/market`), 这样切模式不用搬数据。
 
 ### 6.8 软件库存放目录 (2026-10-28)
 
@@ -397,7 +397,7 @@ cd /opt/testmate/deploy/native
 
 # ③ 改远端地址 (二选一)
 #    改 .env 后要 tmctl.sh local update 让它生效:
-#      MARKET_GIT_REMOTE=ssh://git@gitlab.company.com/team/testmate-market.git
+#      EXTENSIONS_GIT_REMOTE=ssh://git@gitlab.company.com/team/testmate-extensions.git
 #    或者直接改设置项 (免重启, 立即生效):
 #      设置页 → 市场 → Git 仓库地址
 

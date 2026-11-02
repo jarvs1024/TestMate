@@ -141,8 +141,8 @@ function check(name, ok, detail) {
   check('S1 设置页能进入「通知」区', tocOk);
   const hasRows = await page.evaluate(() =>
     [...document.querySelectorAll('#sec-notification code')].map((c) => c.textContent.trim()));
-  check('S2 通知区渲染出钉钉配置项', hasRows.includes('dingtalk.market_webhook'), hasRows.join(', '));
-  check('S3 关键词配置项已就位', hasRows.includes('dingtalk.market_keyword'), hasRows.join(', '));
+  check('S2 通知区渲染出钉钉配置项', hasRows.includes('dingtalk.extensions_webhook'), hasRows.join(', '));
+  check('S3 关键词配置项已就位', hasRows.includes('dingtalk.extensions_keyword'), hasRows.join(', '));
 
   // ⚠️ 先复位, **再**读状态 —— 否则断言读到的还是上一轮留下的脏值
   await resetToDefaults();
@@ -198,13 +198,13 @@ function check(name, ok, detail) {
     //    列表有 limit 上限, 老的会被挤出去, 差值就乱了.
     //    改成按 **id 大于起点** 取"这次新产生的".
     const maxId = async () => {
-      const r = await fetch('/api/v1/assets/notifications?limit=1', { headers: H });
+      const r = await fetch('/api/v1/extensions/notifications?limit=1', { headers: H });
       const d = await r.json();
       return (d.items || [])[0]?.id || 0;
     };
     const base = await maxId();
     const events = async () => {
-      const r = await fetch('/api/v1/assets/notifications?limit=100', { headers: H });
+      const r = await fetch('/api/v1/extensions/notifications?limit=100', { headers: H });
       const d = await r.json();
       return (d.items || []).filter((n) => n.code === c && n.id > base).map((n) => n.event);
     };
@@ -224,25 +224,25 @@ function check(name, ok, detail) {
     fd.append('files', new Blob(['---\nname: ' + c + '\ndescription: 临时\n---\n\n# 临时\n'], { type: 'text/plain' }), 'SKILL.md');
     // 回执是**累积**的 (上一次跑同 code 的还在) —— 所以只取"这次新产生的那些".
     // 列表按 id 倒序 (新的在最前), 所以新增的 = 前面多出来的那几条.
-    const up = await fetch('/api/v1/assets/upload', { method: 'POST', headers: H, body: fd });
+    const up = await fetch('/api/v1/extensions/upload', { method: 'POST', headers: H, body: fd });
     await new Promise((r) => setTimeout(r, 7000));
     // 开了上架审核的话资产会停在「待审核」 —— 审一下, 保证它在架 (通知链路才跑得起来)
-    const st = await fetch(`/api/v1/assets/${c}`, { headers: H });
+    const st = await fetch(`/api/v1/extensions/${c}`, { headers: H });
     const stJson = await st.json();
     if (stJson.publish_status === 'pending') {
-      await post(`/api/v1/assets/${c}/review`, { decision: 'approve', comment: 'e2e 自审' });
+      await post(`/api/v1/extensions/${c}/review`, { decision: 'approve', comment: 'e2e 自审' });
       await new Promise((r) => setTimeout(r, 4000));
     }
     const afterUpload = await events();
     // 申请下架 —— 这一步**不该**通知
-    const un = await post(`/api/v1/assets/${c}/unpublish`, { confirm_code: c, comment: '通知时机验证' });
+    const un = await post(`/api/v1/extensions/${c}/unpublish`, { confirm_code: c, comment: '通知时机验证' });
     await new Promise((r) => setTimeout(r, 3000));
     const afterApply = await events();
     // 管理员通过 → 彻底下架 —— 这时候才通知
-    const ap = await post(`/api/v1/assets/${c}/unpublish-review`, { decision: 'approve', comment: '同意下架' });
+    const ap = await post(`/api/v1/extensions/${c}/unpublish-review`, { decision: 'approve', comment: '同意下架' });
     await new Promise((r) => setTimeout(r, 7000));
     const afterApprove = await events();
-    const gone = await fetch(`/api/v1/assets/${c}`, { headers: H });
+    const gone = await fetch(`/api/v1/extensions/${c}`, { headers: H });
     return {
       up: up.status, un, ap, gone: gone.status,
       // 每一段"新产生"的通知 (只看这次跑的)
@@ -283,7 +283,7 @@ function check(name, ok, detail) {
       setter.call(input, value);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       return true;
-    }, 'dingtalk.market_webhook', WEBHOOK);
+    }, 'dingtalk.extensions_webhook', WEBHOOK);
     await sleep(600);
     check('S4 webhook 填入输入框', filled);
 
@@ -296,7 +296,7 @@ function check(name, ok, detail) {
       if (btn.disabled) return 'unchanged';  // 值与 DB 一致 → 按钮本就该禁用 (不是失败)
       btn.click();
       return 'clicked';
-    }, 'dingtalk.market_webhook');
+    }, 'dingtalk.extensions_webhook');
     await sleep(2000);
     check('S5 点「保存」(值未变时按钮禁用属正常)', saved === 'clicked' || saved === 'unchanged', `状态=${saved}`);
 
@@ -310,7 +310,7 @@ function check(name, ok, detail) {
         }
       }
       return null;
-    }, 'dingtalk.market_webhook');
+    }, 'dingtalk.extensions_webhook');
     check('S6 保存后 DB 里确实是这个 webhook',
       !!stored && String(stored.value).includes('access_token='),
       stored ? String(stored.value).slice(0, 60) + '…' : 'null');
@@ -326,19 +326,19 @@ function check(name, ok, detail) {
       setter.call(input, value);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       return true;
-    }, 'dingtalk.market_keyword', KEYWORD);
+    }, 'dingtalk.extensions_keyword', KEYWORD);
     await sleep(600);
     await page.evaluate((key) => {
       const rows = [...document.querySelectorAll('#sec-notification .row')];
       const row = rows.find((r) => (r.querySelector('code') || {}).textContent === key);
       const btn = [...row.querySelectorAll('button')].find((b) => b.textContent.includes('保存'));
       if (btn && !btn.disabled) btn.click();
-    }, 'dingtalk.market_keyword');
+    }, 'dingtalk.extensions_keyword');
     await sleep(2000);
     check('S7 关键词已通过 UI 保存', filled);
   }
 
-  // 点「测试发送」—— 两个频道各测各的 (市场群 / 审核群)
+  // 点「测试发送」—— 两个频道各测各的 (扩展群 / 审核群)
   const clickTest = async (label) => page.evaluate((t) => {
     const b = [...document.querySelectorAll('#sec-notification button')]
       .find((x) => x.textContent.includes(t));
@@ -347,7 +347,7 @@ function check(name, ok, detail) {
     return true;
   }, label);
 
-  const clicked = await clickTest('测试市场群');
+  const clicked = await clickTest('测试扩展群');
   await sleep(4000);
   const readResult = async () => page.evaluate(() => {
     const el = document.querySelector('#sec-notification .test-result');
@@ -358,7 +358,7 @@ function check(name, ok, detail) {
     };
   });
   const result = await readResult();
-  check('S8 「测试市场群」有结果', clicked && !!result, result ? result.msg : '(无结果)');
+  check('S8 「测试扩展群」有结果', clicked && !!result, result ? result.msg : '(无结果)');
   const isOk = !!result && /s-ok/.test(result.cls);
   check('S9 测试发送成功 (钉钉已接收)', isOk, result ? result.msg : '(无结果)');
 

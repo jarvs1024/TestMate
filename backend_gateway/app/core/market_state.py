@@ -29,7 +29,7 @@ ALL_STATES: tuple[str, ...] = (
     PENDING, PUBLISHED, REJECTED, UNPUBLISHED, UNPUBLISH_PENDING,
 )
 
-# 在架 = 用户能在市场里正常看到 (unpublish_pending 也算在架:
+# 在架 = 用户能在扩展里正常看到 (unpublish_pending 也算在架:
 # 管理员确认前它还在被用, 不能从列表里消失, 只是标个待审徽标)
 ON_SHELF_STATES: tuple[str, ...] = (PUBLISHED, UNPUBLISH_PENDING)
 
@@ -55,7 +55,7 @@ _ACTIONS: dict[str, tuple[tuple[str, ...], str, str]] = {
     # ---- 免审核自助下架 (保留文件) ----
     # ⚠️ 这是「审核总开关关掉」时走的路: 作者自己就能把资产从货架上拿下来,
     #    **不用等管理员点头**, 而且文件**保留** (unpublished, 不是删掉).
-    #    为什么不给作者"直接删"的权限: 删除不可逆, 共享市场里资产是别人也在用的.
+    #    为什么不给作者"直接删"的权限: 删除不可逆, 共享扩展里资产是别人也在用的.
     "take_down": ((PUBLISHED,), UNPUBLISHED, "author"),
     # ---- 重新上架 ----
     "publish": ((UNPUBLISHED,), PUBLISHED, "author"),

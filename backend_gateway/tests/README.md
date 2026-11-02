@@ -35,11 +35,11 @@ docker exec -w /app test-mate-backend-1 python -m pytest tests/ -v
 |---|---|
 | 数据库 | `MYSQL_DATABASE=testmate_test`，每个用例前后清表 |
 | git 工作区 | 每个用例一个临时目录 + 一个**本地裸库**当远端（真跑 commit/push，不连真 GitLab） |
-| 远端地址 | `MARKET_GIT_REMOTE` 指向 127.0.0.1:1（一定连不上），不会误推真仓库 |
+| 远端地址 | `EXTENSIONS_GIT_REMOTE` 指向 127.0.0.1:1（一定连不上），不会误推真仓库 |
 | 后台任务 | 用 `ASGITransport` 不跑 lifespan → worker/拉取器都不启动 |
 | 事件循环 | 全部用例共用一个 loop（SQLAlchemy 连接池绑在 loop 上） |
 
-⚠️ `MARKET_WORKSPACE` 必须**强制**覆盖成临时目录：容器里它指向真实的
+⚠️ `EXTENSIONS_WORKSPACE` 必须**强制**覆盖成临时目录：容器里它指向真实的
 `/workspace`（市场 git 仓库），用 `setdefault` 会保留它 —— 测试就会往真实仓库里写文件。
 
 ## 覆盖范围

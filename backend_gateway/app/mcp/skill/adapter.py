@@ -23,9 +23,21 @@ def _json(model: Any) -> dict[str, Any]:
     return model.model_dump(mode="json")
 
 
+_EXTENSION_KINDS = ("skill", "plugin", "mcp")
+
+
+def _validate_kind(kind: str) -> str:
+    if kind not in _EXTENSION_KINDS:
+        raise HTTPException(
+            status_code=422, detail="kind 必须是 skill / plugin / mcp 之一"
+        )
+    return kind
+
+
 async def _list_assets(
     ctx: McpContext,
     *,
+    kind: str | None,
     keyword: str | None,
     category: str | None,
     project: str | None,
@@ -35,7 +47,7 @@ async def _list_assets(
 ):
     """Supply every FastAPI Query default explicitly for a direct call."""
     return await marketplace.list_assets(
-        kind=None,
+        kind=kind,
         category=category,
         project=project,
         q=keyword,
@@ -51,6 +63,7 @@ async def _list_assets(
 
 async def search(
     ctx: McpContext,
+    kind: str | None = None,
     keyword: str | None = None,
     category: str | None = None,
     project: str | None = None,
@@ -60,9 +73,12 @@ async def search(
     page: int = 1,
     page_size: int = 20,
 ) -> dict[str, Any]:
+    if kind is not None:
+        _validate_kind(kind)
     if tag is None and author is None:
         result = await _list_assets(
             ctx,
+            kind=kind,
             keyword=keyword,
             category=category,
             project=project,
@@ -84,6 +100,7 @@ async def search(
     while True:
         result = await _list_assets(
             ctx,
+            kind=kind,
             keyword=keyword,
             category=category,
             project=project,
@@ -184,10 +201,10 @@ async def package_info(
         user_id=ctx.principal.user.id, code=asset.code, version=selected_version
     )
     public_base = str(
-        await get_setting("marketplace.public_base_url", "") or ""
+        await get_setting("extensions.public_base_url", "") or ""
     ).strip().rstrip("/")
     download_url = (
-        f"{public_base}/api/v1/assets/{quote(asset.code, safe='')}"
+        f"{public_base}/api/v1/extensions/{quote(asset.code, safe='')}"
         f"/versions/{quote(selected_version, safe='')}/ticket-download"
         f"?ticket={quote(ticket, safe='')}"
     )
@@ -253,12 +270,40 @@ def _json_field(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+async def _extension_source(
+    code: str,
+    kind: str,
+    *,
+    files: dict[str, str] | None,
+    package_base64: str | None,
+    mcp_config: dict[str, Any] | None,
+) -> tuple[list[UploadFile] | None, UploadFile | None, str]:
+    """Split extension kinds into package-backed vs config-only before side effects."""
+    if kind == "mcp":
+        if files is not None or package_base64 is not None:
+            raise HTTPException(
+                status_code=422, detail="连接器不需要安装包，只提供 mcp_config"
+            )
+        if mcp_config is None:
+            raise HTTPException(
+                status_code=422, detail="连接器必须提供 MCP 配置 (mcp_config)"
+            )
+        return None, None, _json_field(mcp_config)
+    if mcp_config is not None:
+        raise HTTPException(
+            status_code=422, detail="只有连接器 (kind=mcp) 才能提供 mcp_config"
+        )
+    uploads, package = await _package_uploads(code, files, package_base64)
+    return uploads, package, ""
+
+
 async def publish(
     ctx: McpContext,
     code: str,
     name: str,
     version: str,
     summary: str,
+    kind: str = "skill",
     description: str = "",
     use_when: str = "",
     not_for: str = "",
@@ -271,15 +316,23 @@ async def publish(
     permissions: dict[str, Any] | None = None,
     install_steps: list[str] | None = None,
     bindings: dict[str, Any] | None = None,
+    mcp_config: dict[str, Any] | None = None,
     files: dict[str, str] | None = None,
     package_base64: str | None = None,
 ) -> dict[str, Any]:
-    uploads, package = await _package_uploads(code, files, package_base64)
+    kind = _validate_kind(kind)
+    uploads, package, config_text = await _extension_source(
+        code,
+        kind,
+        files=files,
+        package_base64=package_base64,
+        mcp_config=mcp_config,
+    )
     user = ctx.principal.user
     await marketplace.require_publisher(user)
     result = await marketplace.upload_asset(
         code=code,
-        kind="skill",
+        kind=kind,
         name=name,
         summary=summary,
         version=version,
@@ -295,7 +348,7 @@ async def publish(
         permissions=_json_field(permissions if permissions is not None else {}),
         install_steps=_json_field(install_steps if install_steps is not None else []),
         bindings=_json_field(bindings if bindings is not None else {}),
-        mcp_config="",
+        mcp_config=config_text,
         files=uploads,
         package=package,
         user=user,
@@ -321,6 +374,8 @@ async def update(
     permissions: dict[str, Any] | None = None,
     install_steps: list[str] | None = None,
     bindings: dict[str, Any] | None = None,
+    kind: str | None = None,
+    mcp_config: dict[str, Any] | None = None,
     files: dict[str, str] | None = None,
     package_base64: str | None = None,
 ) -> dict[str, Any]:
@@ -328,11 +383,22 @@ async def update(
     current = await marketplace.get_asset(code=code, client_id="local", user=user)
     if version == current.version:
         raise HTTPException(status_code=409, detail="version 必须不同于当前版本")
-    uploads, package = await _package_uploads(code, files, package_base64)
+    if kind is not None and kind != current.kind:
+        raise HTTPException(
+            status_code=422, detail="资产类型不可变更，kind 必须与已发布类型一致"
+        )
+    effective_kind = _validate_kind(current.kind)
+    uploads, package, config_text = await _extension_source(
+        code,
+        effective_kind,
+        files=files,
+        package_base64=package_base64,
+        mcp_config=mcp_config,
+    )
     await marketplace.require_publisher(user)
     result = await marketplace.update_asset(
         code=code,
-        kind="skill",
+        kind=effective_kind,
         name=current.name if name is None else name,
         summary=current.summary if summary is None else summary,
         version=version,
@@ -350,7 +416,7 @@ async def update(
             current.install_steps if install_steps is None else install_steps
         ),
         bindings=_json_field(current.bindings if bindings is None else bindings),
-        mcp_config="",
+        mcp_config=config_text,
         files=uploads,
         package=package,
         user=user,
@@ -374,6 +440,7 @@ async def edit_meta(
     permissions: dict[str, Any] | None = None,
     install_steps: list[str] | None = None,
     bindings: dict[str, Any] | None = None,
+    mcp_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     changes = {
         key: value
@@ -391,12 +458,19 @@ async def edit_meta(
             "permissions": permissions,
             "install_steps": install_steps,
             "bindings": bindings,
+            "mcp_config": mcp_config,
         }.items()
         if value is not None
     }
     if not changes:
         raise HTTPException(status_code=422, detail="至少提供一个可编辑字段")
     user = ctx.principal.user
+    if mcp_config is not None:
+        current = await marketplace.get_asset(code=code, client_id="local", user=user)
+        if current.kind != "mcp":
+            raise HTTPException(
+                status_code=422, detail="只有连接器 (kind=mcp) 才能修改 MCP 配置"
+            )
     await marketplace.require_publisher(user)
     result = await marketplace.update_asset_meta(
         code=code, payload=AssetMetaUpdateIn(**changes), user=user

@@ -3,7 +3,7 @@
  *
  * 用户报的问题: "插件技能连接器支持编辑相关信息（同样是作者和管理才能编辑）".
  *
- * ✅ 做的是一条**新路**: `PATCH /assets/{code}` —— 只改元信息, 不碰安装包,
+ * ✅ 做的是一条**新路**: `PATCH /extensions/{code}` —— 只改元信息, 不碰安装包,
  *    也不动版本号. 跟原来的「发布新版本」(PUT, 必须重传包) 分开.
  *
  * ⚠️ 最要紧的一条是**后端**: 走错分支会把别人上传的安装包删掉
@@ -85,7 +85,7 @@ describe('提交: 编辑模式走 PATCH (只改元信息)', () => {
   it('api 层要有 updateAssetMeta → PATCH /assets/{code}', () => {
     const api = strip(read('src/api/assets.ts'));
     expect(api).toMatch(/export async function updateAssetMeta/);
-    expect(api).toMatch(/apiPatch<AssetJob>\(`\/assets\/\$\{encodeURIComponent\(code\)\}`/);
+    expect(api).toMatch(/apiPatch<AssetJob>\(`\/extensions\/\$\{encodeURIComponent\(code\)\}`/);
   });
 
   it('编辑模式不发 version (版本号归「发新版本」管)', () => {

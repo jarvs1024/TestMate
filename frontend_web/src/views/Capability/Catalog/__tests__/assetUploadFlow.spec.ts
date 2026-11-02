@@ -173,7 +173,7 @@ describe('上传抽屉: 类型头与换类型', () => {
     const w = await open({ initialKind: 'skill' });
     const scope = w.findAll('.el-select').find((s) => s.text().includes('通用'));
     expect(scope).toBeTruthy();
-    // 项目列表是配置 (设置项 marketplace.projects) —— 下拉里要有它
+    // 项目列表是配置 (设置项 extensions.projects) —— 下拉里要有它
     expect(scope!.text()).toContain('6100');
   });
 

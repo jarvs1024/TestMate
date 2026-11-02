@@ -57,7 +57,7 @@ async def _seed_failed_job(code: str, *, asset_exists: bool) -> None:
 async def _market_check(client) -> dict:
     r = await client.get(f"{API}/health/ready")
     assert r.status_code == 200, r.text
-    return r.json()["checks"]["marketplace"]
+    return r.json()["checks"]["extensions"]
 
 
 def _patch_deps(monkeypatch, *, gitlab_ok: bool = True):

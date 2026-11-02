@@ -180,7 +180,7 @@ async function snap(page) {
 async function codeByName(page, name) {
   return page.evaluate(async (n) => {
     const tk = localStorage.getItem('testmate:token');
-    const r = await fetch('/api/v1/assets?kind=plugin&limit=50', { headers: { Authorization: 'Bearer ' + tk } });
+    const r = await fetch('/api/v1/extensions?kind=plugin&limit=50', { headers: { Authorization: 'Bearer ' + tk } });
     const d = await r.json();
     return (d.items || []).find((i) => i.name === n)?.code || '';
   }, name);
@@ -206,7 +206,7 @@ async function codeByName(page, name) {
   page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
   page.on('request', (r) => {
     const u = r.url();
-    if (u.includes('/api/v1/assets?')) apiCalls.push(u);
+    if (u.includes('/api/v1/extensions?')) apiCalls.push(u);
   });
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
@@ -291,7 +291,7 @@ async function codeByName(page, name) {
       }
       return saved;
     }, NOTIFY_SWITCHES);
-    await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1200);
     let s = await snap(page);
@@ -310,7 +310,7 @@ async function codeByName(page, name) {
     // ⚠️ 首页路由的 path 是 '' (路由名 home) → 浏览器里的地址是 "/"
     check('A6 旧地址 /plaza 自动跳到能力墙首页',
       onHome === '/' || onHome === '/home', `path=${onHome}`);
-    await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1200);
 
@@ -441,7 +441,7 @@ async function codeByName(page, name) {
       (document.querySelector('.foot-hint')?.textContent || '').replace(/\s+/g, ' ').trim());
     apiCalls.length = 0;
     await sleep(22000);
-    const autoCall = apiCalls.find((u) => u.includes('/api/v1/assets?'));
+    const autoCall = apiCalls.find((u) => u.includes('/api/v1/extensions?'));
     const footAfter = await page.evaluate(() =>
       (document.querySelector('.foot-hint')?.textContent || '').replace(/\s+/g, ' ').trim());
     check('C7 市场页自动刷新 (20s 内自己刷一次)',
@@ -523,7 +523,7 @@ async function codeByName(page, name) {
     await sleep(2000);
     const unpub = await page.evaluate(async (c) => {
       const tk = localStorage.getItem('testmate:token');
-      const r = await fetch('/api/v1/assets?limit=200&include_unpublished=true', { headers: { Authorization: 'Bearer ' + tk } });
+      const r = await fetch('/api/v1/extensions?limit=200&include_unpublished=true', { headers: { Authorization: 'Bearer ' + tk } });
       const d = await r.json();
       return (d.items || []).find((i) => i.code === c)?.publish_status || '';
     }, code);
@@ -534,7 +534,7 @@ async function codeByName(page, name) {
     await page.evaluate(async (c) => {
       const tk = localStorage.getItem('testmate:token');
       const fd = new FormData(); fd.append('comment', 'e2e 撤销下架申请');
-      await fetch(`/api/v1/assets/${c}/unpublish-cancel`, { method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd });
+      await fetch(`/api/v1/extensions/${c}/unpublish-cancel`, { method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd });
     }, code);
     await sleep(1500);
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -543,7 +543,7 @@ async function codeByName(page, name) {
     s = await snap(page);
     const back = await page.evaluate(async (c) => {
       const tk = localStorage.getItem('testmate:token');
-      const r = await fetch('/api/v1/assets?limit=100&include_unpublished=true', { headers: { Authorization: 'Bearer ' + tk } });
+      const r = await fetch('/api/v1/extensions?limit=100&include_unpublished=true', { headers: { Authorization: 'Bearer ' + tk } });
       const d = await r.json();
       return (d.items || []).find((i) => i.code === c)?.publish_status || 'missing';
     }, code);
@@ -665,10 +665,10 @@ async function codeByName(page, name) {
     check('H1-4 进阶信息标题写明「可展开」', /可展开/.test(formState.advTitle), formState.advTitle.slice(0, 40));
     check('H1-8 上传表单有「适用项目」下拉', /适用项目/.test(formState.labels),
       formState.labels.slice(0, 70));
-    // 项目列表来自后端配置 (设置项 marketplace.projects)
+    // 项目列表来自后端配置 (设置项 extensions.projects)
     const projCodes = await page.evaluate(async () => {
       const tk = localStorage.getItem('testmate:token');
-      const r = await fetch('/api/v1/assets/projects', { headers: { Authorization: 'Bearer ' + tk } });
+      const r = await fetch('/api/v1/extensions/projects', { headers: { Authorization: 'Bearer ' + tk } });
       const d = await r.json();
       return (d.items || []).map((i) => i.code);
     });
@@ -694,7 +694,7 @@ async function codeByName(page, name) {
     check('H1-6 图标提示写明不跟现有资产重复', /重复/.test(iconState.hint), iconState.hint.slice(0, 60));
     const usedIcons = await page.evaluate(async () => {
       const tk = localStorage.getItem('testmate:token');
-      const r = await fetch('/api/v1/assets?limit=500', { headers: { Authorization: 'Bearer ' + tk } });
+      const r = await fetch('/api/v1/extensions?limit=500', { headers: { Authorization: 'Bearer ' + tk } });
       const d = await r.json();
       return (d.items || []).map((i) => (i.icon || '').trim()).filter(Boolean);
     });
@@ -807,7 +807,7 @@ async function codeByName(page, name) {
     // 预清理: 上一轮崩了会留下同名资产 (上传会 409, 后面全乱)
     await page.evaluate(async (c) => {
       const tk = localStorage.getItem('testmate:token');
-      await fetch('/api/v1/assets/' + c, {
+      await fetch('/api/v1/extensions/' + c, {
         method: 'DELETE', headers: { Authorization: 'Bearer ' + tk },
       });
     }, tmpCode);
@@ -821,7 +821,7 @@ async function codeByName(page, name) {
       fd.append('keywords', '[]'); fd.append('featured', 'false'); fd.append('permissions', '{}');
       fd.append('install_steps', '[]'); fd.append('bindings', '{}');
       fd.append('files', new Blob(['---\nname: e2e-tmp-delete\ndescription: 临时\n---\n\n# 临时\n'], { type: 'text/plain' }), 'SKILL.md');
-      await fetch('/api/v1/assets/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd });
+      await fetch('/api/v1/extensions/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd });
     }, tmpCode);
     await sleep(6000);
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -849,7 +849,7 @@ async function codeByName(page, name) {
     await sleep(3000);
     const stPending = await page.evaluate(async (c) => {
       const tk = localStorage.getItem('testmate:token');
-      const r = await fetch('/api/v1/assets/' + c, { headers: { Authorization: 'Bearer ' + tk } });
+      const r = await fetch('/api/v1/extensions/' + c, { headers: { Authorization: 'Bearer ' + tk } });
       const d = await r.json();
       return d.publish_status || '';
     }, tmpCode);
@@ -871,7 +871,7 @@ async function codeByName(page, name) {
     for (let i = 0; i < 20; i++) {
       gone = await page.evaluate(async (c) => {
         const tk = localStorage.getItem('testmate:token');
-        const r = await fetch('/api/v1/assets/' + c, { headers: { Authorization: 'Bearer ' + tk } });
+        const r = await fetch('/api/v1/extensions/' + c, { headers: { Authorization: 'Bearer ' + tk } });
         return r.status;
       }, tmpCode);
       if (gone === 404) break;

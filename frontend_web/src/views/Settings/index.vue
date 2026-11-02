@@ -66,8 +66,8 @@
               <span class="toc-dot"></span>
               <span class="toc-lb">{{ c.label }}</span>
               <span class="toc-cnt">{{ c.count }}</span>
-              <!-- ⚠️ 第三层 (2026-10-28) —— 「能力墙 → 资产 → 插件·技能·连接」这种三级结构.
-                   目录只有两层的话, 「插件·技能·连接」和「知识库」就得挤在同一层,
+              <!-- ⚠️ 第三层 (2026-10-28) —— 「能力墙 → 资产 → 扩展」这种三级结构.
+                   目录只有两层的话, 「扩展」和「知识库」就得挤在同一层,
                    用户看不出它们是资产的三张卡, 而不是三种能力角色. -->
               <ul v-if="c.children && c.children.length" class="toc-sub toc-sub3">
                 <li v-for="g in c.children" :key="g.id"
@@ -89,14 +89,14 @@
         <!-- ⚠️ 2026-10-28 大改: 这里以前是**三个平级的顶级 section**
              (📚 知识库 / 🗂️ 能力墙 / 🧰 软件库), 而首页能力墙的分类是
              **📦 资产 / 🛠 工具 / 📊 看板** —— 资产下面才是
-             插件·技能·连接 / 知识库 / 软件库 三张卡.
+             扩展 / 知识库 / 软件库 三张卡.
              设置页跟首页两套分类, 用户配「知识库」得先知道它在设置页
              叫哪个顶级项. 现在**两边一套名字、一套层级**.
 
              新的结构:
                🗂️ 能力墙
                  📦 资产
-                   🧩 插件·技能·连接   marketplace.*
+                   🧩 扩展（技能·插件·连接） extensions.*
                    📚 知识库            search.* / chat.* / ragflow.*
                    🧰 软件库            software.*
                  🛠 工具               (暂无配置项)
@@ -124,11 +124,11 @@
               💡 资产 = <strong>能被复用、给别人供料</strong>的东西 —— 首页能力墙里这三张卡都属于它.
             </div>
 
-            <!-- 🧩 插件·技能·连接 -->
+            <!-- 🧩 扩展 -->
             <div id="sec-asset-market" class="sub-grp sub3">
-              <h4>🧩 插件·技能·连接 <span class="sub-cnt">{{ marketItems.length }} 项</span></h4>
+              <h4>🧩 扩展 <span class="sub-cnt">{{ marketItems.length }} 项</span></h4>
               <div class="hint">
-                💡 资产市场的后端配置 —— GitLab 仓库在哪、项目列表怎么配、谁能发布、
+                💡 扩展的后端配置 —— GitLab 仓库在哪、项目列表怎么配、谁能发布、
                 怎么对外暴露 marketplace.json. 改完<strong>立即生效</strong>, 不用重启后端.
               </div>
               <SettingRow v-for="(it, idx) in marketItems" :key="it.key"
@@ -322,7 +322,7 @@
           </h2>
           <div class="hint">
             💡 这里是<strong>不属于任何一类能力</strong>的全局配置 —— 跟具体能力相关的
-            (资产市场 / 知识库 / 软件库 / 看板) 都在<strong>能力墙</strong>下面, 跟着各自的能力走.
+            (扩展 / 知识库 / 软件库 / 看板) 都在<strong>能力墙</strong>下面, 跟着各自的能力走.
           </div>
           <!-- ⚠️ 这里以前是**手抄的一整套 row 模板** (跟 SettingRow 重复) ——
                后果是 SettingRow 后来加的「描述渲染粗体」「secret 掩码提示」这些
@@ -335,7 +335,7 @@
         </section>
 
 
-        <!-- 🔔 通知 (钉钉机器人 · 市场上下架通知) -->
+        <!-- 🔔 通知 (钉钉机器人 · 扩展上架/下架通知) -->
         <section v-if="activeTop === 'sec-notification'" :id="'sec-notification'" class="card grp">
           <h2>
             <span>🔔 通知</span>
@@ -344,11 +344,11 @@
           <div class="hint">
             💡 通知分<strong>两个群</strong>:
             <strong>审核群</strong>收「上架待审核」「下架申请」—— 需要管理员处理的事;
-            <strong>市场群</strong>收「上架成功」「版本更新」「彻底下架」(都 @所有人)
+            <strong>扩展群</strong>收「上架成功」「版本更新」「彻底下架」(都 @所有人)
             和「审核不通过」(⚠️ 不 @具体的人 —— 正文里写一行「发布人: xxx」)。
             <strong>软件库</strong>的上架和发布新版本也发这个群, 共用「软件库上架 / 发布新版本」那一个开关。
             两个群的 webhook / 加签密钥 / 关键词各配各的 —— 测试环境可以把两边配成一样的。
-            <br />下架要走审核: 申请阶段通知<b>审核群</b>, 等管理员确认、资产真的被移除才在<b>市场群</b>通知一次。
+            <br />下架要走审核: 申请阶段通知<b>审核群</b>, 等管理员确认、资产真的被移除才在<b>扩展群</b>通知一次。
             配好 webhook 后点对应的「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
           </div>
 
@@ -360,8 +360,8 @@
 
           <!-- ⚠️ 测试发送 = admin only (后端已收紧) -->
           <div v-if="isAdmin" class="test-row">
-            <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-market')">
-              {{ testing === 'dingtalk-market' ? '发送中…' : '📨 测试市场群' }}
+            <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-extensions')">
+              {{ testing === 'dingtalk-extensions' ? '发送中…' : '📨 测试扩展群' }}
             </button>
             <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-review')">
               {{ testing === 'dingtalk-review' ? '发送中…' : '📨 测试审核群' }}
@@ -372,9 +372,9 @@
             <button class="test-btn" :disabled="previewLoading" @click="togglePreview()">
               {{ previewLoading ? '加载中…' : (previewOpen ? '👀 收起预览' : '👀 预览消息') }}
             </button>
-            <div v-if="testResults['dingtalk-market']" class="test-result" :class="`s-${testResults['dingtalk-market']?.status}`">
+            <div v-if="testResults['dingtalk-extensions']" class="test-result" :class="`s-${testResults['dingtalk-extensions']?.status}`">
               <span class="dot"></span>
-              <span class="msg">{{ testResults['dingtalk-market']?.message }}</span>
+              <span class="msg">{{ testResults['dingtalk-extensions']?.message }}</span>
             </div>
             <div v-if="testResults['dingtalk-review']" class="test-result" :class="`s-${testResults['dingtalk-review']?.status}`">
               <span class="dot"></span>
@@ -507,7 +507,7 @@ const testing = ref<string | null>(null);
 const testResults = reactive<Record<string, TestResult | null>>({});
 
 // 当前选中的顶级 section + 子级 (sub group) + 第三级 (2026-10-28)
-// ⚠️ 默认落在「能力墙 → 资产 → 插件·技能·连接」—— 那是设置页里项最多的地方.
+// ⚠️ 默认落在「能力墙 → 资产 → 扩展」—— 那是设置页里项最多的地方.
 const activeTop = ref<string>('sec-capability');
 const activeSub = ref<string>('sec-asset');
 const activeSub2 = ref<string>('sec-asset-market');
@@ -518,8 +518,8 @@ const chatItems = computed(() => itemsByCategory('chat'));
 const generalItems = computed(() => itemsByCategory('general'));
 // 通知 (钉钉机器人: webhook / 关键词 / 加签 / 触发开关)
 const notificationItems = computed(() => itemsByCategory('notification'));
-// 资产市场 (GitLab 仓库 / 安装目录 / 发布白名单 / 对外暴露方式)
-const marketItems = computed(() => itemsByCategory('marketplace'));
+// 扩展 (GitLab 仓库 / 安装目录 / 发布白名单 / 对外暴露方式)
+const marketItems = computed(() => itemsByCategory('extensions'));
 // 软件库 (存储根目录 / 单包上限 / 保留版本数 / 公开下载)
 // ⚠️ 2026-10-28: 这一组后端一直有, 前端一直没渲染 —— 补上.
 const softwareItems = computed(() => itemsByCategory('software'));
@@ -529,7 +529,7 @@ const toolItems = computed(() => itemsByCategory('tool'));
 // 看板类能力的配置 (后端 board 类设置项) —— 目前空, 看板的实际配置是 ReviewAgent (见 boardSourceGroups)
 const boardItems = computed(() => itemsByCategory('board'));
 
-// 市场当前生效的配置 (只读, 用来展示"工作区在哪 / 远端是哪个")
+// 扩展当前生效的配置 (只读, 用来展示"工作区在哪 / 远端是哪个")
 const marketWorkspace = ref('');
 const marketRemote = ref('');
 async function loadMarketConfig() {
@@ -593,7 +593,7 @@ const NOTIFY_EVENTS: Record<string, string> = {
   unpublish: '资产已下架',
   reject: '审核未通过',
   delete: '资产已删除',
-  // ⚠️ 2026-10-30 (第十一轮): 软件库的两个事件 —— 跟市场通知**区分开**
+  // ⚠️ 2026-10-30 (第十一轮): 软件库的两个事件 —— 跟扩展通知**区分开**
   //    (走的是同一个机器人, 但说的是"软件包", 不是插件/技能/连接器)
   software_publish: '新软件上架',
   software_update: '软件新版本',
@@ -684,7 +684,7 @@ function countOf(groups: DataSourceGroup[]): number {
 const kbSourceTotal = computed(() => countOf(kbSourceGroups.value));
 /** 知识库 = 知识检索 + 知识对话 + RAGFlow API */
 const kbTotal = computed(() => searchItems.value.length + chatItems.value.length + kbSourceTotal.value);
-/** 资产 = 插件·技能·连接 + 知识库 + 软件库 (首页资产组的三张卡) */
+/** 资产 = 扩展 + 知识库 + 软件库 (首页资产组的三张卡) */
 const assetTotal = computed(() => marketItems.value.length + kbTotal.value + softwareItems.value.length);
 /** 看板 = 代码检视的数据源 + 以后可能有的 board 类设置项 */
 const boardTotal = computed(() => boardItems.value.length + countOf(boardSourceGroups.value));
@@ -703,7 +703,7 @@ function itemsByCategory(cat: string): SettingItem[] {
 
 // ===== 左侧目录 (sections 定义) =====
 // ⚠️ TocItem 自己也能有 children —— 目录是**三层**的:
-//   能力墙 → 资产 → 插件·技能·连接
+//   能力墙 → 资产 → 扩展
 //   (第一层 children 是能力角色, 第二层 children 是该角色下的具体能力)
 interface TocItem { id: string; label: string; count: number; children?: TocItem[] }
 interface TocSection { id: string; icon: string; label: string; count?: number; children: TocItem[] }
@@ -715,7 +715,7 @@ const sections = computed<TocSection[]>(() => {
   {
     // ⚠️ 2026-10-28: 目录跟着**首页能力墙的分类**走 ——
     //   📦 资产 / 🛠 工具 / 📊 看板, 资产下面才是首页那三张卡
-    //   (插件·技能·连接 / 知识库 / 软件库).
+    //   (扩展 / 知识库 / 软件库).
     //   以前这里是三个平级顶级项 (知识库 / 能力墙 / 软件库), 跟首页对不上.
     id: 'sec-capability',
     icon: '🗂️',
@@ -727,7 +727,7 @@ const sections = computed<TocSection[]>(() => {
         label: '📦 资产',
         count: assetTotal.value,
         children: [
-          { id: 'sec-asset-market', label: '🧩 插件·技能·连接', count: marketItems.value.length },
+          { id: 'sec-asset-market', label: '🧩 扩展', count: marketItems.value.length },
           { id: 'sec-asset-kb',      label: '📚 知识库',         count: kbTotal.value },
           { id: 'sec-asset-sw',      label: '🧰 软件库',         count: softwareItems.value.length },
         ],
@@ -759,7 +759,7 @@ const sections = computed<TocSection[]>(() => {
 
 // ===== 点击目录 =====
 // ⚠️ onPickTop / onPickSub / onPickSub2 是**三级**的 —— 目录有三层
-//   (能力墙 → 资产 → 插件·技能·连接), 点击要跟得上层数, 否则高亮会停在错的地方.
+//   (能力墙 → 资产 → 扩展), 点击要跟得上层数, 否则高亮会停在错的地方.
 function onPickTop(topId: string) {
   activeTop.value = topId;
   // 滚到右侧 section 顶部 (不滚到子级)
@@ -769,7 +769,7 @@ function onPickTop(topId: string) {
   });
   // 通知区带送达回执, 进区就拉一次
   if (topId === 'sec-notification') loadNotifyLog();
-  // 资产市场区展示当前生效的工作区/远端
+  // 扩展区展示当前生效的工作区/远端
   if (topId === 'sec-capability') loadMarketConfig();
   // 用户管理区拉账号列表
   if (topId === 'sec-users') loadUsers();
@@ -901,8 +901,8 @@ async function onSave(it: SettingItem) {
 const _testClients: Record<string, () => Promise<TestResult>> = {
   'ragflow':  testRagflow,
   'review-agent': testReviewAgent,
-  // 钉钉分两个频道 (市场群 / 审核群), 各配各的 webhook → 也要分别自检
-  'dingtalk-market': () => testDingTalk('market'),
+  // 钉钉分两个频道 (扩展群 / 审核群), 各配各的 webhook → 也要分别自检
+  'dingtalk-extensions': () => testDingTalk('extensions'),
   'dingtalk-review': () => testDingTalk('review'),
   'gitlab': testGitLab,
   // 软件库存储目录体检 (admin only)
@@ -1075,7 +1075,7 @@ onMounted(() => {
 .set-layout {
   display: grid;
   /* ⚠️ 260px 而不是 220px (2026-10-28) —— 目录变成**三层**之后,
-     「🧩 插件·技能·连接」这一行在 220px 里会被挤成竖排 (一个字一行). */
+     「🧩 扩展」这一行在 220px 里会被挤成竖排 (一个字一行). */
   grid-template-columns: 260px 1fr;
   gap: 24px;
   align-items: start;
@@ -1152,7 +1152,7 @@ onMounted(() => {
 .toc-sub li { font-size: 12.5px; padding: 5px 10px; }
 /* ⚠️ 含子项的 li 必须改成 **grid** (2026-10-28) ——
    li 默认是 flex, 嵌套进来的 ul 会被当成 flex 子项, 宽度被压到 0,
-   结果「插件·技能·连接」这些长标签被挤成**竖排** (一个字一行).
+   结果「扩展」这些长标签被挤成**竖排** (一个字一行).
    grid 里给嵌套 ul 一个整行位置就正常了. */
 .toc-sub li.has-sub {
   display: grid;
@@ -1167,7 +1167,7 @@ onMounted(() => {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* ⚠️ 第三层 (2026-10-28) —— 再缩一点 + 字小一号.
-   三层挤在窄侧栏里, 不分层的话「插件·技能·连接」和「知识库」
+   三层挤在窄侧栏里, 不分层的话「扩展」和「知识库」
    看起来是并列的, 用户会以为它们是两种能力角色, 而不是资产的三张卡. */
 .toc-sub3 {
   margin: 2px 0 4px;
@@ -1207,7 +1207,7 @@ onMounted(() => {
   display: flex; align-items: center; gap: 6px;
   scroll-margin-top: 16px;
 }
-/* ⚠️ 第四层 (2026-10-28) —— 能力墙 → 资产 → 插件·技能·连接 这种三层结构,
+/* ⚠️ 第四层 (2026-10-28) —— 能力墙 → 资产 → 扩展 这种三层结构,
    靠字号 + 左边框线把层级拉开: h2=section, h3=能力角色, h4=具体能力, h5=能力内部的分组 */
 .sub-grp h4 {
   font-size: 13px; font-weight: 600;
@@ -1509,7 +1509,7 @@ onMounted(() => {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* ===== 资产市场: 工作区/远端只读展示 ===== */
+/* ===== 扩展: 工作区/远端只读展示 ===== */
 .workdir {
   margin-top: 10px; padding: 9px 12px; border-radius: var(--radius-sm);
   background: var(--surface-sunken); font-size: 11.5px; color: var(--ink-700);

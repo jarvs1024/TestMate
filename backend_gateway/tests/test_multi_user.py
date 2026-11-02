@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from tests.test_market_api import _enable_publisher, _upload
 
-API = "/api/v1/assets"
+API = "/api/v1/extensions"
 
 
 async def _publish_asset(client, auth, pauth, code):
@@ -42,13 +42,13 @@ async def test_publisher_cannot_unpublish_others_asset(
     """别人上传的资产, 白名单用户**不能**下架."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "own-demo")
 
     # stranger 也在白名单里, 但他不是作者
-    await set_setting("marketplace.publisher_usernames",
+    await set_setting("extensions.publisher_usernames",
                       f"{publisher_user['username']},{stranger_user['username']}")
     sauth = {"Authorization": f"Bearer {stranger_user['token']}"}
 
@@ -69,12 +69,12 @@ async def test_publisher_cannot_delete_others_asset(
     """别人上传的资产, 白名单用户**不能**彻底删除."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "own-demo2")
 
-    await set_setting("marketplace.publisher_usernames",
+    await set_setting("extensions.publisher_usernames",
                       f"{publisher_user['username']},{stranger_user['username']}")
     sauth = {"Authorization": f"Bearer {stranger_user['token']}"}
 
@@ -91,12 +91,12 @@ async def test_publisher_cannot_update_others_asset(
     """别人上传的资产, 白名单用户**不能**发新版本覆盖掉."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "own-demo3")
 
-    await set_setting("marketplace.publisher_usernames",
+    await set_setting("extensions.publisher_usernames",
                       f"{publisher_user['username']},{stranger_user['username']}")
     sauth = {"Authorization": f"Bearer {stranger_user['token']}"}
 
@@ -122,7 +122,7 @@ async def test_author_can_request_unpublish_own_asset(
 
     # ⚠️ 审核总开关**开着** → 下架走申请制 (它现在同时管上架与下架).
     #    免审时下架会变自助, 拿不到「待下架审核」这个状态.
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     # ⚠️ 要的是「在架」的资产 —— 审核开着时上传落「待审核」,
@@ -143,7 +143,7 @@ async def test_unpublish_requires_confirm_code(
     """⚠️ 申请下架必须带**对的** confirm_code —— 前端弹窗拦不住, 后端自己也要拦."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "own-confirm")
@@ -169,7 +169,7 @@ async def test_admin_can_delete_others_asset(
     """管理员是运营者 —— 可以清理任何人的资产."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "admin-demo")
@@ -188,7 +188,7 @@ async def test_normal_publisher_cannot_review(
     """白名单用户**不是**审核人 —— 不能审别人的资产."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "rev-demo")
@@ -204,8 +204,8 @@ async def test_reviewer_can_approve(
     """被授权的审核人 (不是 admin) 也能审 —— 团队里 admin 一个人审不过来."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
-    await set_setting("marketplace.review.reviewer_usernames", stranger_user["username"])
+    await set_setting("extensions.review.enabled", "true")
+    await set_setting("extensions.review.reviewer_usernames", stranger_user["username"])
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "rev-ok")
@@ -224,8 +224,8 @@ async def test_reviewer_sees_all_pending_assets(
     """审核人在「待审核」筛选里看得到**别人**的待审资产 (普通用户只看自己的)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
-    await set_setting("marketplace.review.reviewer_usernames", stranger_user["username"])
+    await set_setting("extensions.review.enabled", "true")
+    await set_setting("extensions.review.reviewer_usernames", stranger_user["username"])
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "rev-list")
@@ -246,7 +246,7 @@ async def test_normal_user_cannot_see_others_pending(
     """普通用户按状态过滤时只看得到自己的 —— 别人的待审内容不该被列出来."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _publish_asset(client, auth, pauth, "rev-hidden")

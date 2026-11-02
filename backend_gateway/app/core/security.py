@@ -94,7 +94,7 @@ def decode_download_ticket(ticket: str) -> dict[str, Any] | None:
     return payload
 
 
-# ===== 资产市场下载票据 =====
+# ===== 扩展下载票据 =====
 
 ASSET_DOWNLOAD_TICKET_TYPE = "asset-dl"
 ASSET_DOWNLOAD_TICKET_TTL = 600

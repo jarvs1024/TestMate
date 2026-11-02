@@ -34,22 +34,22 @@ NON_PUBLISHER_TOKEN = "skill-write-non-publisher-token"
 READ_ONLY_TOKEN = "skill-write-read-only-token"
 
 READ_TOOL_NAMES = {
-    "skill_search",
-    "skill_get",
-    "skill_read_doc",
-    "skill_list_files",
-    "skill_read_file",
-    "skill_package_info",
-    "skill_categories",
-    "skill_projects",
-    "skill_job_status",
+    "extension_search",
+    "extension_get",
+    "extension_read_doc",
+    "extension_list_files",
+    "extension_read_file",
+    "extension_package_info",
+    "extension_categories",
+    "extension_projects",
+    "extension_job_status",
 }
 WRITE_TOOL_NAMES = {
-    "skill_publish",
-    "skill_update",
-    "skill_edit_meta",
-    "skill_submit_review",
-    "skill_unpublish_request",
+    "extension_publish",
+    "extension_update",
+    "extension_edit_meta",
+    "extension_submit_review",
+    "extension_unpublish_request",
 }
 TOOL_NAMES = READ_TOOL_NAMES | WRITE_TOOL_NAMES
 
@@ -69,10 +69,12 @@ _METADATA_PROPERTIES = {
     "bindings",
 }
 _PACKAGE_PROPERTIES = {"files", "package_base64"}
+_EXPANSION_PROPERTIES = {"kind", "mcp_config"}
 EXPECTED_SCHEMAS = {
-    "skill_search": (
+    "extension_search": (
         [],
         {
+            "kind",
             "keyword",
             "category",
             "project",
@@ -83,25 +85,34 @@ EXPECTED_SCHEMAS = {
             "page_size",
         },
     ),
-    "skill_get": (["code"], {"code"}),
-    "skill_read_doc": (["code"], {"code"}),
-    "skill_list_files": (["code"], {"code"}),
-    "skill_read_file": (["code", "path"], {"code", "path"}),
-    "skill_package_info": (["code"], {"code", "version"}),
-    "skill_categories": ([], set()),
-    "skill_projects": ([], set()),
-    "skill_job_status": (["job_id"], {"job_id"}),
-    "skill_publish": (
+    "extension_get": (["code"], {"code"}),
+    "extension_read_doc": (["code"], {"code"}),
+    "extension_list_files": (["code"], {"code"}),
+    "extension_read_file": (["code", "path"], {"code", "path"}),
+    "extension_package_info": (["code"], {"code", "version"}),
+    "extension_categories": ([], set()),
+    "extension_projects": ([], set()),
+    "extension_job_status": (["job_id"], {"job_id"}),
+    "extension_publish": (
         ["code", "name", "version", "summary"],
-        {"code", "version", "featured"} | _METADATA_PROPERTIES | _PACKAGE_PROPERTIES,
+        {"code", "version", "featured"}
+        | _METADATA_PROPERTIES
+        | _PACKAGE_PROPERTIES
+        | _EXPANSION_PROPERTIES,
     ),
-    "skill_update": (
+    "extension_update": (
         ["code", "version"],
-        {"code", "version", "featured"} | _METADATA_PROPERTIES | _PACKAGE_PROPERTIES,
+        {"code", "version", "featured"}
+        | _METADATA_PROPERTIES
+        | _PACKAGE_PROPERTIES
+        | _EXPANSION_PROPERTIES,
     ),
-    "skill_edit_meta": (["code"], {"code"} | _METADATA_PROPERTIES),
-    "skill_submit_review": (["code"], {"code", "comment"}),
-    "skill_unpublish_request": (["code"], {"code", "reason"}),
+    "extension_edit_meta": (
+        ["code"],
+        {"code", "mcp_config"} | _METADATA_PROPERTIES,
+    ),
+    "extension_submit_review": (["code"], {"code", "comment"}),
+    "extension_unpublish_request": (["code"], {"code", "reason"}),
 }
 
 
@@ -144,12 +155,12 @@ async def principals():
     def principal(user: User, scopes: frozenset[str]) -> Principal:
         return Principal(user=user, client_id="skill-write-tests", scopes=scopes)
 
-    write = frozenset({"market:read", "market:write"})
+    write = frozenset({"extensions:read", "extensions:write"})
     return {
         OWNER_TOKEN: principal(owner, write),
         OTHER_PUBLISHER_TOKEN: principal(other, write),
         NON_PUBLISHER_TOKEN: principal(viewer, write),
-        READ_ONLY_TOKEN: principal(owner, frozenset({"market:read"})),
+        READ_ONLY_TOKEN: principal(owner, frozenset({"extensions:read"})),
     }
 
 
@@ -174,7 +185,7 @@ async def _client(principals):
         redis_client=_FakeRedis(),
     )
     server._token_verifier = _WriteTokenVerifier(principals)
-    dispatcher = build_dispatcher({"skill": server})
+    dispatcher = build_dispatcher({"extensions": server})
     app = Starlette(routes=[Mount("/mcp", app=dispatcher)])
     async with run_mcp_lifespan(dispatcher):
         async with AsyncClient(
@@ -212,6 +223,17 @@ def _skill_files(code: str, marker: str = "body") -> dict[str, str]:
     }
 
 
+def _plugin_files(code: str, marker: str = "body") -> dict[str, str]:
+    return {
+        "README.md": f"# {code}\n\n{marker}\n",
+        "plugin.json": json.dumps({"name": code}, ensure_ascii=False),
+    }
+
+
+def _connector_config(code: str, url: str = "http://host.docker.internal:5050/mcp"):
+    return {"mcpServers": {code: {"url": url}}}
+
+
 def _zip_bytes(code: str, marker: str = "body") -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
@@ -245,21 +267,24 @@ async def _publish(client, code: str, **overrides):
     if "package_base64" in overrides:
         del arguments["files"]
     arguments.update(overrides)
-    return await _call(client, OWNER_TOKEN, "skill_publish", **arguments)
+    return await _call(client, OWNER_TOKEN, "extension_publish", **arguments)
 
 
 async def _seed_asset(
     code: str,
     *,
     author: str = "mcp-write-owner",
+    kind: str = "skill",
     version: str = "1.0.0",
     publish_status: str = "published",
+    mcp_config: dict | None = None,
 ) -> Asset:
     asset = Asset(
         code=code,
         name=f"Original {code}",
         icon="S",
-        kind="skill",
+        kind=kind,
+        mcp_config=mcp_config,
         version=version,
         summary=f"Original summary {code}",
         description="Original description",
@@ -329,14 +354,14 @@ async def test_tools_list_exposes_exactly_fourteen_frozen_schemas(principals):
                 "maxLength": 64,
             }, name
 
-    search = tools["skill_search"]["inputSchema"]["properties"]
+    search = tools["extension_search"]["inputSchema"]["properties"]
     assert search["page"]["minimum"] == 1
     assert search["page_size"]["minimum"] == 1
     assert search["page_size"]["maximum"] == 100
-    assert tools["skill_read_file"]["inputSchema"]["properties"]["path"][
+    assert tools["extension_read_file"]["inputSchema"]["properties"]["path"][
         "maxLength"
     ] == 1024
-    assert tools["skill_job_status"]["inputSchema"]["properties"]["job_id"][
+    assert tools["extension_job_status"]["inputSchema"]["properties"]["job_id"][
         "minimum"
     ] == 1
 
@@ -344,9 +369,24 @@ async def test_tools_list_exposes_exactly_fourteen_frozen_schemas(principals):
         {"required": ["files"], "not": {"required": ["package_base64"]}},
         {"required": ["package_base64"], "not": {"required": ["files"]}},
     ]
-    for name in ("skill_publish", "skill_update"):
+    connector_rule = {
+        "if": {"properties": {"kind": {"const": "mcp"}}, "required": ["kind"]},
+        "then": {
+            "required": ["mcp_config"],
+            "not": {
+                "anyOf": [{"required": ["files"]}, {"required": ["package_base64"]}]
+            },
+        },
+        "else": {"oneOf": package_choice, "not": {"required": ["mcp_config"]}},
+    }
+    for name in ("extension_publish", "extension_update"):
         schema = tools[name]["inputSchema"]
-        assert schema["oneOf"] == package_choice, name
+        assert schema["allOf"] == [connector_rule], name
+        assert schema["properties"]["kind"] == {
+            "type": "string",
+            "enum": ["skill", "plugin", "mcp"],
+        }, name
+        assert schema["properties"]["mcp_config"] == {"type": "object"}, name
         assert schema["properties"]["files"] == {
             "type": "object",
             "minProperties": 1,
@@ -363,12 +403,13 @@ async def test_tools_list_exposes_exactly_fourteen_frozen_schemas(principals):
             "maxLength": 32,
         }, name
 
-    edit_schema = tools["skill_edit_meta"]["inputSchema"]
+    edit_schema = tools["extension_edit_meta"]["inputSchema"]
     assert "version" not in edit_schema["properties"]
     assert "featured" not in edit_schema["properties"]
     assert not _PACKAGE_PROPERTIES & edit_schema["properties"].keys()
+    assert edit_schema["properties"]["mcp_config"] == {"type": "object"}
     assert edit_schema["anyOf"] == [
-        {"required": [field]} for field in sorted(_METADATA_PROPERTIES)
+        {"required": [field]} for field in sorted(_METADATA_PROPERTIES | {"mcp_config"})
     ]
 
 
@@ -385,7 +426,7 @@ async def test_publish_missing_required_fields_have_no_side_effects(
     }
     del arguments[missing]
     async with _client(principals) as client:
-        result = await call_tool(client, OWNER_TOKEN, "skill_publish", arguments)
+        result = await call_tool(client, OWNER_TOKEN, "extension_publish", arguments)
 
     assert _error(result) == "Invalid tool arguments."
     assert await _market_counts() == (0, 0, 0)
@@ -411,7 +452,7 @@ async def test_publish_requires_exactly_one_nonempty_package_source(
         **package_arguments,
     }
     async with _client(principals) as client:
-        result = await call_tool(client, OWNER_TOKEN, "skill_publish", arguments)
+        result = await call_tool(client, OWNER_TOKEN, "extension_publish", arguments)
 
     assert _error(result) == "Invalid tool arguments."
     assert await _market_counts() == (0, 0, 0)
@@ -430,7 +471,7 @@ async def test_publish_rejects_non_strict_base64_before_side_effects(
         "package_base64": encoded,
     }
     async with _client(principals) as client:
-        result = await call_tool(client, OWNER_TOKEN, "skill_publish", arguments)
+        result = await call_tool(client, OWNER_TOKEN, "extension_publish", arguments)
 
     assert _error(result) == "Tool request failed (HTTP 422)."
     assert await _market_counts() == (0, 0, 0)
@@ -450,7 +491,7 @@ async def test_malformed_publish_archive_leaves_workspace_unchanged(
     }
 
     async with _client(principals) as client:
-        result = await call_tool(client, OWNER_TOKEN, "skill_publish", arguments)
+        result = await call_tool(client, OWNER_TOKEN, "extension_publish", arguments)
 
     assert _error(result) == "Tool request failed (HTTP 422)."
     assert _workspace_snapshot(ws) == before
@@ -483,7 +524,7 @@ async def test_malformed_update_archive_leaves_workspace_unchanged(
     }
 
     async with _client(principals) as client:
-        result = await call_tool(client, OWNER_TOKEN, "skill_update", arguments)
+        result = await call_tool(client, OWNER_TOKEN, "extension_update", arguments)
 
     assert _error(result) == "Tool request failed (HTTP 422)."
     assert _workspace_snapshot(ws) == before
@@ -496,7 +537,7 @@ async def test_malformed_update_archive_leaves_workspace_unchanged(
 async def test_publish_rejects_oversized_decoded_package_before_side_effects(
     principals, notifications
 ):
-    await set_setting("marketplace.max_package_mb", "1")
+    await set_setting("extensions.max_package_mb", "1")
     arguments = {
         "code": "mcp-oversized-package",
         "name": "Oversized package",
@@ -505,7 +546,7 @@ async def test_publish_rejects_oversized_decoded_package_before_side_effects(
         "package_base64": base64.b64encode(b"x" * (1024 * 1024 + 1)).decode("ascii"),
     }
     async with _client(principals) as client:
-        result = await call_tool(client, OWNER_TOKEN, "skill_publish", arguments)
+        result = await call_tool(client, OWNER_TOKEN, "extension_publish", arguments)
 
     assert _error(result) == "Tool request failed (HTTP 413)."
     assert await _market_counts() == (0, 0, 0)
@@ -553,7 +594,7 @@ async def test_update_rejects_missing_package_version_same_version_and_bad_base6
     await _seed_asset("mcp-update-negative")
     before = await _market_counts()
     async with _client(principals) as client:
-        result = await call_tool(client, OWNER_TOKEN, "skill_update", arguments)
+        result = await call_tool(client, OWNER_TOKEN, "extension_update", arguments)
 
     assert _error(result) == expected_error
     asset = await _asset("mcp-update-negative")
@@ -569,17 +610,17 @@ async def test_edit_meta_requires_an_editable_field_and_forbids_version_featured
     await _seed_asset("mcp-edit-negative")
     before = await _market_counts()
     async with _client(principals) as client:
-        empty = await call_tool(client, OWNER_TOKEN, "skill_edit_meta", {"code": "mcp-edit-negative"})
+        empty = await call_tool(client, OWNER_TOKEN, "extension_edit_meta", {"code": "mcp-edit-negative"})
         version = await call_tool(
             client,
             OWNER_TOKEN,
-            "skill_edit_meta",
+            "extension_edit_meta",
             {"code": "mcp-edit-negative", "version": "2.0.0"},
         )
         featured = await call_tool(
             client,
             OWNER_TOKEN,
-            "skill_edit_meta",
+            "extension_edit_meta",
             {"code": "mcp-edit-negative", "featured": False},
         )
 
@@ -591,7 +632,7 @@ async def test_edit_meta_requires_an_editable_field_and_forbids_version_featured
 
 
 def _write_arguments(tool: str) -> dict:
-    if tool == "skill_publish":
+    if tool == "extension_publish":
         return {
             "code": "mcp-scope-publish",
             "name": "Scope",
@@ -599,15 +640,15 @@ def _write_arguments(tool: str) -> dict:
             "summary": "Scope",
             "files": _skill_files("mcp-scope-publish"),
         }
-    if tool == "skill_update":
+    if tool == "extension_update":
         return {
             "code": "mcp-scope-update",
             "version": "2.0.0",
             "files": _skill_files("mcp-scope-update"),
         }
-    if tool == "skill_edit_meta":
+    if tool == "extension_edit_meta":
         return {"code": "mcp-scope-meta", "summary": "Scope"}
-    if tool == "skill_submit_review":
+    if tool == "extension_submit_review":
         return {"code": "mcp-scope-submit"}
     return {"code": "mcp-scope-unpublish", "reason": "Scope"}
 
@@ -633,11 +674,11 @@ async def test_every_write_tool_requires_market_write_scope(
 async def test_non_publisher_is_denied_before_every_write_route(
     principals, notifications, tool
 ):
-    if tool != "skill_publish":
+    if tool != "extension_publish":
         await _seed_asset("mcp-non-publisher", author="mcp-write-viewer")
     before = await _market_counts()
     arguments = _write_arguments(tool)
-    if tool != "skill_publish":
+    if tool != "extension_publish":
         arguments["code"] = "mcp-non-publisher"
     async with _client(principals) as client:
         result = await call_tool(client, NON_PUBLISHER_TOKEN, tool, arguments)
@@ -649,7 +690,7 @@ async def test_non_publisher_is_denied_before_every_write_route(
 
 @pytest.mark.parametrize(
     "tool",
-    ["skill_update", "skill_edit_meta", "skill_submit_review", "skill_unpublish_request"],
+    ["extension_update", "extension_edit_meta", "extension_submit_review", "extension_unpublish_request"],
 )
 async def test_existing_object_level_authorization_still_denies_other_publishers(
     principals, notifications, tool
@@ -669,7 +710,7 @@ async def test_existing_object_level_authorization_still_denies_other_publishers
 async def test_publish_files_presences_and_defaults_are_not_guessed(
     principals, ws, restore_git_config, notifications
 ):
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await set_setting(market_projects.SETTINGS_KEY, "6100,7000")
     async with _client(principals) as client:
         explicit = await _publish(
@@ -721,7 +762,7 @@ async def test_publish_files_presences_and_defaults_are_not_guessed(
     assert minimal_asset.bindings == {}
     assert [event for event, _, _ in notifications] == ["publish", "publish"]
 
-    audits = await _tool_audits("skill_publish")
+    audits = await _tool_audits("extension_publish")
     assert len(audits) == 2
     assert audits[0].success is True and audits[0].read_only is False
     assert audits[0].args_summary["files"] == {
@@ -734,14 +775,14 @@ async def test_publish_files_presences_and_defaults_are_not_guessed(
 async def test_publish_base64_returns_real_job_and_audits_only_package_metadata(
     principals, ws, restore_git_config, notifications
 ):
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     package = _zip_bytes("mcp-publish-base64", "sensitive package body")
     encoded = base64.b64encode(package).decode("ascii")
     async with _client(principals) as client:
         result = await _call(
             client,
             OWNER_TOKEN,
-            "skill_publish",
+            "extension_publish",
             code="mcp-publish-base64",
             name="Base64 publish",
             version="1.2.3",
@@ -758,7 +799,7 @@ async def test_publish_base64_returns_real_job_and_audits_only_package_metadata(
     assert package_path.read_bytes() == package
     assert [event for event, _, _ in notifications] == ["publish"]
 
-    audit = (await _tool_audits("skill_publish"))[0]
+    audit = (await _tool_audits("extension_publish"))[0]
     assert audit.success is True
     assert audit.args_summary["package_base64"] == {
         "bytes": len(package),
@@ -772,7 +813,7 @@ async def test_publish_base64_returns_real_job_and_audits_only_package_metadata(
 async def test_update_retains_every_omitted_metadata_field(
     principals, ws, restore_git_config, notifications
 ):
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await set_setting(market_projects.SETTINGS_KEY, "6100,7000")
     async with _client(principals) as client:
         await _publish(
@@ -795,7 +836,7 @@ async def test_update_retains_every_omitted_metadata_field(
         result = await _call(
             client,
             OWNER_TOKEN,
-            "skill_update",
+            "extension_update",
             code="mcp-update-retain",
             version="2.0.0",
             summary="Only summary changes",
@@ -825,7 +866,7 @@ async def test_update_retains_every_omitted_metadata_field(
 async def test_edit_meta_changes_only_supplied_fields_and_preserves_package(
     principals, ws, restore_git_config, notifications
 ):
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     original_package = _zip_bytes("mcp-edit-success")
     async with _client(principals) as client:
         await _publish(
@@ -837,11 +878,11 @@ async def test_edit_meta_changes_only_supplied_fields_and_preserves_package(
             featured=True,
         )
         notifications.clear()
-        await set_setting("marketplace.review.enabled", "true")
+        await set_setting("extensions.review.enabled", "true")
         result = await _call(
             client,
             OWNER_TOKEN,
-            "skill_edit_meta",
+            "extension_edit_meta",
             code="mcp-edit-success",
             summary="Edited summary",
             description="",
@@ -867,7 +908,7 @@ async def test_edit_meta_changes_only_supplied_fields_and_preserves_package(
 async def test_submit_review_uses_existing_state_machine_comment_and_audit(
     principals, ws, restore_git_config, notifications
 ):
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     async with _client(principals) as client:
         await _publish(client, "mcp-submit-success")
         async with AsyncSessionLocal() as session:
@@ -881,7 +922,7 @@ async def test_submit_review_uses_existing_state_machine_comment_and_audit(
         result = await _call(
             client,
             OWNER_TOKEN,
-            "skill_submit_review",
+            "extension_submit_review",
             code="mcp-submit-success",
             comment="Please review this exact comment",
         )
@@ -920,15 +961,15 @@ async def test_unpublish_binds_confirmation_reason_and_preserves_review_switch(
     expected_event,
     expected_action,
 ):
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     async with _client(principals) as client:
         await _publish(client, "mcp-unpublish-success")
         notifications.clear()
-        await set_setting("marketplace.review.enabled", str(review_enabled).lower())
+        await set_setting("extensions.review.enabled", str(review_enabled).lower())
         result = await _call(
             client,
             OWNER_TOKEN,
-            "skill_unpublish_request",
+            "extension_unpublish_request",
             code="mcp-unpublish-success",
             reason="Exact unpublish reason",
         )
@@ -948,3 +989,182 @@ async def test_unpublish_binds_confirmation_reason_and_preserves_review_switch(
             .where(AssetAudit.action == expected_action)
         )
     assert audit.comment == "Exact unpublish reason"
+
+
+# ---------- 扩展 (技能 / 插件 / 连接) ----------
+
+
+async def test_publish_plugin_kind_uses_readme_and_persists_kind(principals):
+    async with _client(principals) as client:
+        result = await _call(
+            client,
+            OWNER_TOKEN,
+            "extension_publish",
+            code="ext-plugin-demo",
+            kind="plugin",
+            name="插件示例",
+            version="1.0.0",
+            summary="插件一句话",
+            files=_plugin_files("ext-plugin-demo"),
+        )
+    assert result["kind"] == "plugin"
+    asset = await _asset("ext-plugin-demo")
+    assert asset.kind == "plugin"
+    assert asset.version == "1.0.0"
+
+
+async def test_publish_connector_kind_uses_config_only_and_stays_readable(principals):
+    config = _connector_config("ext-connector-demo")
+    async with _client(principals) as client:
+        result = await _call(
+            client,
+            OWNER_TOKEN,
+            "extension_publish",
+            code="ext-connector-demo",
+            kind="mcp",
+            name="连接器示例",
+            version="1.0.0",
+            summary="连接器一句话",
+            mcp_config=config,
+        )
+        fetched = await _call(
+            client, OWNER_TOKEN, "extension_get", code="ext-connector-demo"
+        )
+        doc = await call_tool(
+            client, OWNER_TOKEN, "extension_read_doc", {"code": "ext-connector-demo"}
+        )
+    asset = await _asset("ext-connector-demo")
+    assert result["kind"] == "mcp"
+    assert asset.kind == "mcp"
+    assert asset.mcp_config == config
+    assert fetched["kind"] == "mcp"
+    assert doc.get("isError") is True
+
+
+async def test_publish_rejects_connector_package_and_non_connector_config(principals):
+    before = await _market_counts()
+    async with _client(principals) as client:
+        packaged = await call_tool(
+            client,
+            OWNER_TOKEN,
+            "extension_publish",
+            {
+                "code": "ext-conn-with-package",
+                "kind": "mcp",
+                "name": "x",
+                "version": "1.0.0",
+                "summary": "s",
+                "mcp_config": _connector_config("ext-conn-with-package"),
+                "files": _plugin_files("ext-conn-with-package"),
+            },
+        )
+        configured = await call_tool(
+            client,
+            OWNER_TOKEN,
+            "extension_publish",
+            {
+                "code": "ext-skill-with-config",
+                "kind": "skill",
+                "name": "x",
+                "version": "1.0.0",
+                "summary": "s",
+                "files": _skill_files("ext-skill-with-config"),
+                "mcp_config": _connector_config("ext-skill-with-config"),
+            },
+        )
+    assert packaged.get("isError") is True
+    assert configured.get("isError") is True
+    assert await _market_counts() == before
+
+
+async def test_update_connector_infers_nothing_and_requires_matching_kind(principals):
+    code = "ext-conn-update"
+    config = _connector_config(code)
+    async with _client(principals) as client:
+        await _call(
+            client,
+            OWNER_TOKEN,
+            "extension_publish",
+            code=code,
+            kind="mcp",
+            name="连接器",
+            version="1.0.0",
+            summary="连接器一句话",
+            mcp_config=config,
+        )
+        updated_config = {
+            "mcpServers": {code: {"command": "npx", "args": ["-y", "demo"]}}
+        }
+        result = await _call(
+            client,
+            OWNER_TOKEN,
+            "extension_update",
+            code=code,
+            kind="mcp",
+            version="2.0.0",
+            mcp_config=updated_config,
+        )
+        wrong_kind = await call_tool(
+            client,
+            OWNER_TOKEN,
+            "extension_update",
+            {
+                "code": code,
+                "kind": "plugin",
+                "version": "3.0.0",
+                "files": _plugin_files(code),
+            },
+        )
+    asset = await _asset(code)
+    assert result["kind"] == "mcp"
+    assert asset.kind == "mcp"
+    assert asset.version == "2.0.0"
+    assert asset.mcp_config == updated_config
+    assert wrong_kind.get("isError") is True
+
+
+async def test_edit_meta_connector_config_is_limited_to_connectors(principals):
+    code = "ext-conn-meta"
+    async with _client(principals) as client:
+        await _call(
+            client,
+            OWNER_TOKEN,
+            "extension_publish",
+            code=code,
+            kind="mcp",
+            name="连接器",
+            version="1.0.0",
+            summary="连接器一句话",
+            mcp_config=_connector_config(code),
+        )
+        changed = {
+            "mcpServers": {code: {"url": "http://host.docker.internal:6060/mcp"}}
+        }
+        result = await _call(
+            client, OWNER_TOKEN, "extension_edit_meta", code=code, mcp_config=changed
+        )
+        await _seed_asset("ext-skill-meta", kind="skill")
+        rejected = await call_tool(
+            client,
+            OWNER_TOKEN,
+            "extension_edit_meta",
+            {"code": "ext-skill-meta", "mcp_config": changed},
+        )
+    asset = await _asset(code)
+    assert result["code"] == code
+    assert asset.mcp_config == changed
+    assert rejected.get("isError") is True
+
+
+async def test_search_filters_by_kind(principals):
+    await _seed_asset("ext-kind-plugin", kind="plugin")
+    await _seed_asset("ext-kind-skill", kind="skill")
+    async with _client(principals) as client:
+        result = await _call(
+            client, OWNER_TOKEN, "extension_search", kind="plugin", page_size=100
+        )
+    assert result["items"]
+    assert {item["kind"] for item in result["items"]} == {"plugin"}
+    codes = {item["code"] for item in result["items"]}
+    assert "ext-kind-plugin" in codes
+    assert "ext-kind-skill" not in codes

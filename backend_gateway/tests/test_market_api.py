@@ -14,7 +14,7 @@ import pytest
 
 from tests.conftest import make_plugin_zip, make_skill_zip
 
-API = "/api/v1/assets"
+API = "/api/v1/extensions"
 
 
 def _zip_bytes(files: dict[str, str], filename: str = "pkg.zip") -> tuple[str, bytes, str]:
@@ -52,7 +52,7 @@ async def _enable_publisher(publisher_user):
     """把发布者加进白名单 (用户名口径)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.publisher_usernames", publisher_user["username"])
+    await set_setting("extensions.publisher_usernames", publisher_user["username"])
 
 
 # ---------- 上传 ----------
@@ -62,7 +62,7 @@ async def test_upload_creates_asset_as_pending(client, auth, ws, restore_git_con
     """开了审核 → 发布者上传后进「待审核」, 不是直接上架."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
 
@@ -83,7 +83,7 @@ async def test_upload_without_review_publishes_directly(client, auth, ws,
     """关掉审核 → 直接上架 (旧行为)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
 
@@ -99,7 +99,7 @@ async def test_upload_requires_publisher_whitelist(client, auth, ws,
     """不在白名单 → 403."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.publisher_usernames", "")
+    await set_setting("extensions.publisher_usernames", "")
     sauth = {"Authorization": f"Bearer {stranger_user['token']}"}
     r = await _upload(client, sauth, code="denied-demo")
     assert r.status_code == 403
@@ -111,7 +111,7 @@ async def test_upload_rejects_missing_doc_file(client, auth, ws,  # noqa: ARG001
     """包里没有 SKILL.md → 422 (技能包必须有)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     r = await _upload(client, pauth, code="nodoc-demo",
@@ -129,7 +129,7 @@ async def test_visibility_stranger_cannot_see_pending(client, auth, ws,
     """待审资产对陌生人不可见, 但对提交者和管理员可见."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     sauth = {"Authorization": f"Bearer {stranger_user['token']}"}
@@ -153,7 +153,7 @@ async def test_visibility_non_admin_cannot_filter_others_pending(client, auth, w
     """非管理员按状态过滤时只能看到自己的 —— 别人的待审内容不该被列出来."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     sauth = {"Authorization": f"Bearer {stranger_user['token']}"}
@@ -181,7 +181,7 @@ async def test_visibility_unpublished_hidden_from_others(client, auth, ws,
     """
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="unpub-demo")
@@ -223,7 +223,7 @@ async def test_download_increments_download_count(
     from app.models.asset import Asset
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="dl-demo")
@@ -262,7 +262,7 @@ async def test_review_flow_approve(client, auth, ws, restore_git_config,  # noqa
     """发布者上传 → 管理员通过 → 上架, 全过程状态正确."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="approve-demo")
@@ -289,7 +289,7 @@ async def test_approve_notification_carries_asset_summary_and_author(
     from app.api import marketplace as mk_api
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="notify-approve")
@@ -320,7 +320,7 @@ async def test_review_flow_reject_then_resubmit(client, auth, ws,  # noqa: ARG00
     """驳回 → rejected + 理由写进资产 → 重新提交 → pending → 通过 → published."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="cycle-demo")
@@ -345,7 +345,7 @@ async def test_review_requires_admin(client, auth, ws, restore_git_config,  # no
     """发布者不能自己审自己的资产."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="self-review-demo")
@@ -360,7 +360,7 @@ async def test_submit_requires_author(client, auth, ws, restore_git_config,  # n
     """别人不能替别人的资产提交审核."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     sauth = {"Authorization": f"Bearer {stranger_user['token']}"}
@@ -374,7 +374,7 @@ async def test_review_rejects_bad_decision(client, auth, ws,  # noqa: ARG001
                                            restore_git_config, publisher_user):
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="bad-dec-demo")
@@ -463,7 +463,7 @@ async def test_unpublish_and_publish(client, auth, ws, restore_git_config,  # no
 
     # ⚠️ 审核总开关开着 → 上传要审核、下架也走申请制 (两个一起管).
     #    以前这里把它设成 false 拿在架资产, 现在那样下架会变自助 —— 测不到申请制了.
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="updown-demo")
@@ -488,7 +488,7 @@ async def test_delete_removes_everything(client, auth, ws, restore_git_config,  
     """删除 → 资产、安装记录、索引条目全没, 审计留痕."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="del-demo")
@@ -526,7 +526,7 @@ async def test_audit_records_actions(client, auth, ws, restore_git_config,  # no
                                      publisher_user):
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="audit-demo")
@@ -543,7 +543,7 @@ async def test_sync_status_counts(client, auth, ws, restore_git_config,  # noqa:
                                   publisher_user):
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="cnt-demo")
@@ -579,7 +579,7 @@ async def test_doc_bundle_and_files(client, auth, ws,  # noqa: ARG001
     """文档 / 文件树 / 包内容 三个只读端点."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="read-demo")
@@ -604,8 +604,8 @@ async def test_upload_keeps_project_and_lists_projects(client, auth, ws,
     """上传时选的项目要落到资产上, 并且出现在项目列表里."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.projects", "6100,3361")
+    await set_setting("extensions.review.enabled", "false")
+    await set_setting("extensions.projects", "6100,3361")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
 
@@ -628,8 +628,8 @@ async def test_upload_normalizes_unknown_project_to_general(client, auth, ws,
     """填了列表里没有的项目 → 归成通用 (脏值不进 manifest)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.projects", "6100")
+    await set_setting("extensions.review.enabled", "false")
+    await set_setting("extensions.projects", "6100")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
 
@@ -644,8 +644,8 @@ async def test_list_filters_by_project(client, auth, ws, restore_git_config,
     """按项目筛: 选某项目 = 该项目特有 + 通用; 选 __general = 只看通用."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.projects", "6100")
+    await set_setting("extensions.review.enabled", "false")
+    await set_setting("extensions.projects", "6100")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
 
@@ -669,7 +669,7 @@ async def test_pending_asset_detail_hidden_from_others(client, auth, ws,
     """待审核的资产**详情**也不能让无关的人看到 (以前只有列表做了过滤)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     r = await _upload(client, pauth, code="hidden-demo")
@@ -693,7 +693,7 @@ async def test_author_cannot_self_publish_pending_asset(client, auth, ws,
     """作者对**待审核**的资产自助上架 = 绕过审核 —— 必须被拒."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="selfpublish-demo")
@@ -710,7 +710,7 @@ async def test_reviewer_cannot_reject_published_asset(client, auth, ws,
     """在架资产不能被"驳回" —— 审核只接受 pending."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="reject-published-demo")
@@ -731,7 +731,7 @@ async def test_upload_rejects_package_name_not_matching_code(client, auth, ws,
     """包名必须与资产 code 一致 —— 这条以前只有前端管, 能被绕过."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     pkg = _zip_bytes(
@@ -754,7 +754,7 @@ async def test_upload_rejects_mcp_code_not_matching_server_name(client, auth, ws
     """连接器: 资产 code 必须是 MCP 配置里的某个连接器名."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     r = await client.post(
@@ -774,7 +774,7 @@ async def test_search_matches_tags_and_keywords(client, auth, ws, restore_git_co
     """「搜索关键词」字段是给搜索用的 —— 后端不搜它就等于白填."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="search-demo", tags='["日志诊断"]',
@@ -795,14 +795,14 @@ async def test_update_keeps_project_when_removed_from_settings(client, auth, ws,
     """项目从设置项里删掉后, 资产的归属**不能**被悄悄清成通用."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
-    await set_setting("marketplace.projects", "6100")
+    await set_setting("extensions.review.enabled", "false")
+    await set_setting("extensions.projects", "6100")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="projkeep-demo", project="6100")
 
     # 项目从设置里删掉
-    await set_setting("marketplace.projects", "3361")
+    await set_setting("extensions.projects", "3361")
     await _upload(client, pauth, code="projkeep-demo", project="6100")
 
     st = await client.get(f"{API}/projkeep-demo", headers=auth)

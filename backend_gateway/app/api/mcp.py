@@ -77,7 +77,7 @@ class TokenCreate(BaseModel):
     @classmethod
     def validate_scopes(cls, value: list[str]) -> list[str]:
         if not value or any(scope not in SUPPORTED_SCOPES for scope in value):
-            raise ValueError("scopes 必须是 market:read market:write 的非空子集")
+            raise ValueError("scopes 必须是 extensions:read extensions:write 的非空子集")
         return value
 
     @field_validator("expires_at")

@@ -52,7 +52,7 @@ function check(name, ok, detail) {
     // ---------- API 层: 时间戳必须带 Z ----------
     const apiCheck = await page.evaluate(async () => {
       const t = localStorage.getItem('testmate:token');
-      const r = await fetch('/api/v1/assets/notifications?limit=5', {
+      const r = await fetch('/api/v1/extensions/notifications?limit=5', {
         headers: { Authorization: 'Bearer ' + t },
       });
       const d = await r.json();

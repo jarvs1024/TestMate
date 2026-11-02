@@ -20,7 +20,7 @@
       <!-- 上架审核状态 -->
       <el-alert v-if="item.publish_status === 'pending'" type="warning"
                 :closable="false" show-icon class="ad-alert"
-                title="该资产正在等待管理员审核, 审核通过后才会出现在市场里" />
+                title="该资产正在等待管理员审核, 审核通过后才会出现在扩展里" />
       <el-alert v-else-if="item.publish_status === 'rejected'" type="error"
                 :closable="false" show-icon class="ad-alert"
                 :title="'审核未通过: ' + (item.review_note || '未说明原因, 请修改后重新提交')" />
@@ -238,7 +238,7 @@ const props = withDefaults(defineProps<{
   item: AssetItem | null;
   canEdit?: boolean;
   /**
-   * 审核总开关的**生效值** (后端 /assets/config 给的) —— 关 = 免审核.
+   * 审核总开关的**生效值** (后端 /extensions/config 给的) —— 关 = 免审核.
    *
    * ⚠️ 必须显式 `default: undefined` —— Vue 对 **Boolean 类型的 prop** 有一条
    *    "缺省强转成 false" 的规则 (Boolean casting): 父组件没传这个 prop 时,
@@ -463,7 +463,7 @@ async function doDownload() {
  *   1. 要手打资产 code 确认 (跟"彻底删除"一样的门槛)
  *   2. 提交后不是立刻删, 而是进「待下架审核」, 等管理员拍板
  *
- * 为什么不是点了就删: 市场是**共享**的 —— 资产下架了别人第二天就装不上,
+ * 为什么不是点了就删: 扩展是**共享**的 —— 资产下架了别人第二天就装不上,
  * 得有人确认 (管理员通过后资产会被彻底删除).
  */
 async function doApplyUnpublish() {
@@ -480,7 +480,7 @@ async function doApplyUnpublish() {
     await ElMessageBox.prompt(
       instant
         ? `下架「${name}」?\n`
-          + `当前「免审核」, 下架「立刻生效」: 资产马上从市场消失, `
+          + `当前「免审核」, 下架「立刻生效」: 资产马上从扩展消失, `
           + `卡片会标「已下架」。\n`
           + `GitLab 上的文件会「保留」, 随时可以「重新上架」, 不会丢。\n`
           + `请输入资产 code「${code}」以确认。`
@@ -612,7 +612,7 @@ async function doReview(decision: 'approve' | 'reject') {
   } else {
     try {
       await ElMessageBox.confirm(
-        `确认通过「${name}」的审核? 通过后它会出现在市场里。`,
+        `确认通过「${name}」的审核? 通过后它会出现在扩展里。`,
         '通过审核',
         { type: 'success', confirmButtonText: '通过', cancelButtonText: '取消' },
       );

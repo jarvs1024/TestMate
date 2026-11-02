@@ -24,7 +24,7 @@ import subprocess
 
 from tests.test_market_api import _enable_publisher, _upload
 
-API = "/api/v1/assets"
+API = "/api/v1/extensions"
 
 
 async def _make_published(client, pauth, code, admin_auth):
@@ -32,7 +32,7 @@ async def _make_published(client, pauth, code, admin_auth):
 
     ⚠️ 审核总开关开着时, 发布者上传会落「待审核」 —— 这里代管理员通过一下,
        让用例能直接拿到一个在架的资产去测下架流程.
-    ⚠️ 以前这里靠 `set_setting("marketplace.review.enabled", "false")` 拿在架资产 ——
+    ⚠️ 以前这里靠 `set_setting("extensions.review.enabled", "false")` 拿在架资产 ——
        但那个开关现在**同时管下架审核**了, 关掉它下架就变成"自助下架",
        申请制那条路根本测不到. 所以改成"开着审核 + 代通过".
     """
@@ -64,7 +64,7 @@ async def test_apply_unpublish_moves_to_pending(
     """申请下架 → 状态变 unpublish_pending."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-apply", auth)
@@ -85,7 +85,7 @@ async def test_pending_unpublish_still_visible_in_market(
     """⚠️ 待下架审核期间资产**仍在架** —— 管理员确认前它还在被用, 不能消失."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-visible", auth)
@@ -110,7 +110,7 @@ async def test_duplicate_apply_rejected(
     """重复申请 → 409 (别把审核台刷爆)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-dup", auth)
@@ -127,7 +127,7 @@ async def test_publish_blocked_while_unpublish_pending(
     """有待审的下架申请时不能直接"重新上架" —— 两条路别打架."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-conflict", auth)
@@ -147,7 +147,7 @@ async def test_author_can_cancel_request(
     """作者可以撤销自己的下架申请 —— 不用等管理员驳回."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-cancel", auth)
@@ -167,7 +167,7 @@ async def test_cancel_without_request_rejected(
     """没有待审申请时撤销 → 409."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-nocancel", auth)
@@ -187,8 +187,8 @@ async def test_reviewer_cannot_approve_unpublish(
     """
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
-    await set_setting("marketplace.review.reviewer_usernames", stranger_user["username"])
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.reviewer_usernames", stranger_user["username"])
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-rev", auth)
@@ -211,7 +211,7 @@ async def test_admin_approve_deletes_asset(
     """管理员通过 → 资产被**彻底删除** (查不到了)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-ok", auth)
@@ -236,7 +236,7 @@ async def test_unpublish_review_has_no_reject(
     """
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-reject", auth)
@@ -260,7 +260,7 @@ async def test_review_without_request_rejected(
     """没有待审申请时审核 → 409 (别把已上架的资产误删了)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-noreview", auth)
@@ -277,7 +277,7 @@ async def test_review_bad_decision_rejected(
 ):
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-baddec", auth)
@@ -299,7 +299,7 @@ async def test_audit_records_the_whole_flow(
     """申请 / 审核 通过 都要留痕 —— 谁在什么时候动了什么."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-audit", auth)
@@ -329,10 +329,10 @@ async def test_notification_only_after_full_removal(
     from tests.conftest import set_setting
 
     # 配个连不上的 webhook —— 发送会失败, 但**回执照样落库** (我们要看的是"有没有发起")
-    # 两个频道都要配: 申请下架通知走**审核群**, 彻底下架通知走**市场群**
-    await set_setting("dingtalk.market_webhook", "http://127.0.0.1:1/nope")
+    # 两个频道都要配: 申请下架通知走**审核群**, 彻底下架通知走**扩展群**
+    await set_setting("dingtalk.extensions_webhook", "http://127.0.0.1:1/nope")
     await set_setting("dingtalk.review_webhook", "http://127.0.0.1:1/nope")
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-notify", auth)
@@ -344,13 +344,13 @@ async def test_notification_only_after_full_removal(
             )).scalars().all()
         return [r.event for r in rows]
 
-    # 申请下架 → 通知**审核群** (unpublish_request 事件), 不是市场群的 unpublish
+    # 申请下架 → 通知**审核群** (unpublish_request 事件), 不是扩展群的 unpublish
     await _apply_unpublish(client, pauth, "unp-notify")
     evs = await events_of("unp-notify")
     assert evs.count("unpublish_request") == 1, f"申请下架应通知审核群一次: {evs}"
     assert "unpublish" not in evs, f"申请阶段不该发彻底下架通知: {evs}"
 
-    # 管理员通过 → 资产彻底下架 → 这时候才在市场群通知一次
+    # 管理员通过 → 资产彻底下架 → 这时候才在扩展群通知一次
     r = await client.post(f"{API}/unp-notify/unpublish-review",
                           data={"decision": "approve"}, headers=auth)
     assert r.status_code == 200, r.text
@@ -367,9 +367,9 @@ async def test_cancel_request_sends_no_notification(
     from sqlalchemy import select
     from tests.conftest import set_setting
 
-    await set_setting("dingtalk.market_webhook", "http://127.0.0.1:1/nope")
+    await set_setting("dingtalk.extensions_webhook", "http://127.0.0.1:1/nope")
     await set_setting("dingtalk.review_webhook", "http://127.0.0.1:1/nope")
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-cancel-notify", auth)
@@ -396,7 +396,7 @@ async def test_list_filter_by_unpublish_pending(
     """管理员能按「待下架审核」筛选."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-filter", auth)
@@ -422,7 +422,7 @@ async def test_delete_endpoint_is_admin_only(
     """
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
+    await set_setting("extensions.review.enabled", "true")   # 开着 → 上架要审核、下架也走申请制
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "unp-del", auth)
@@ -443,7 +443,7 @@ async def test_author_can_discard_own_pending_asset(
     """
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")   # 开审核 → 落 pending
+    await set_setting("extensions.review.enabled", "true")   # 开审核 → 落 pending
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="discard-demo")
@@ -463,7 +463,7 @@ async def test_author_can_discard_own_pending_asset(
     assert "discard-demo" not in out.stdout, out.stdout
 
 
-# ---------- 免审核 (审核总开关 marketplace.review.enabled 关掉) ----------
+# ---------- 免审核 (审核总开关 extensions.review.enabled 关掉) ----------
 #
 # ⚠️ 审核总开关现在**同时管上架审核与下架审核**:
 #    · 开 (默认) → 上架要审核, 下架走申请制 (管理员通过 = 彻底删除)
@@ -480,7 +480,7 @@ async def test_review_disabled_publisher_upload_publishes_immediately(
     """审核总开关关 → 发布者上传**直接上架**, 不进「待审核」."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="nr-upload")
@@ -496,7 +496,7 @@ async def test_review_disabled_author_can_take_down_directly(
     """审核总开关关 → 作者点下架**立刻生效**, 状态是 unpublished (不是 unpublish_pending)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "nr-takedown", auth)
@@ -531,7 +531,7 @@ async def test_review_disabled_take_down_keeps_files(
 
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "nr-keep", auth)
@@ -555,7 +555,7 @@ async def test_review_disabled_author_can_republish(
     """免审下架之后能自己「重新上架」 —— 回到 published."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "nr-republish", auth)
@@ -572,7 +572,7 @@ async def test_review_enabled_still_uses_apply_flow(
     """审核总开关开 (默认) → 下架仍是**申请制**, 不是自助下架."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _make_published(client, pauth, "nr-apply", auth)
@@ -588,11 +588,11 @@ async def test_config_exposes_effective_review_switch(
     """/assets/config 要把**生效的**审核开关告诉前端 (按钮文案靠它)."""
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     r = await client.get(f"{API}/config", headers=auth)
     assert r.status_code == 200, r.text
     assert r.json()["review_enabled"] is False, r.text
 
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     r = await client.get(f"{API}/config", headers=auth)
     assert r.json()["review_enabled"] is True, r.text

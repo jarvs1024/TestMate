@@ -80,17 +80,17 @@ SEED_AGENTS: list[dict] = [
         "route": "page:code-review",
     },
     {
-        # 插件·技能·连接: 能力墙入口卡片, 点击跳 /market 页 (仿 Qoder 插件市场的浏览页).
+        # 扩展: 能力墙入口卡片, 点击跳 /extensions 页 (仿 Qoder 插件市场的浏览页).
         # 原型期数据为前端静态 (frontend_web/src/views/Market/marketCatalog.ts), 后端只提供这张入口卡.
-        # route 走 "page:" 前缀 → Home/index.vue onOpen 会 router.push({ name: 'market' }).
+        # route 走 "page:" 前缀 → Home/index.vue onOpen 会 router.push({ name: 'extensions' }).
         # ⚠️ status 不能是 draft: CapabilityCard 对 draft 直接 return 不跳转 + 盖"规划中"遮罩.
         #
-        # ⚠️ 2026-10-27 改名: "AI 资产市场" → "插件·技能·连接".
+        # ⚠️ 2026-10-27 改名: "AI 扩展" → "扩展".
         #    老名字里"AI 资产"跟角色名"资产"(platform)撞了 —— 用户分不清
-        #    "资产市场"卖的是不是"资产"这个角色. 新名字直接说清卖什么:
+        #    "扩展"卖的是不是"资产"这个角色. 新名字直接说清卖什么:
         #    三种可复用的扩展 (插件 / 技能 / 连接器).
         "code": "agent-market",
-        "name": "插件·技能·连接",
+        "name": "扩展",
         "icon": "🏪",
         "category": AgentCategory.ai_market.value,
         "kind": AgentKind.platform.value,
@@ -107,7 +107,7 @@ SEED_AGENTS: list[dict] = [
         "data_sources": [],
         "tools": [],
         "is_featured": False,
-        "route": "page:market",
+        "route": "page:extensions",
     },
     {
         # 知识库卡 (2026-10-25): 知识库从**侧栏顶级项**降级成能力墙上的一张卡.
@@ -135,8 +135,8 @@ SEED_AGENTS: list[dict] = [
         "route": "page:kb-manage",
     },
     {
-        # 软件库卡 (2026-10-27 新增): 存**公司内部的软件**, 跟"插件·技能·连接"是两回事.
-        #   · 插件·技能·连接 → 装进 Agent 的扩展 (可复用能力)
+        # 软件库卡 (2026-10-27 新增): 存**公司内部的软件**, 跟"扩展"是两回事.
+        #   · 扩展 → 装进 Agent 的扩展 (可复用能力)
         #   · 软件库        → 给人用的内部软件 (装在哪 / 怎么用 / 什么版本)
         # ⚠️ 2026-10-27: 功能已落地 (/software 页) —— status 从 draft 改 beta,
         #    route 接上 (之前是"规划中", 点了不跳任何地方).
@@ -155,7 +155,7 @@ SEED_AGENTS: list[dict] = [
         "status": AgentStatus.beta.value,
         "summary": "公司内部软件的统一入口: 自研工具与基于开源改造的版本都在这儿, 找到就能下",
         "use_when": "要拿公司内部软件的安装包, 或把自己做的工具发上来给同事用",
-        "not_for": "要找装进 Agent 的插件 / 技能 / 连接器请去「插件·技能·连接」",
+        "not_for": "要找装进 Agent 的插件 / 技能 / 连接器请去「扩展」",
         "tags": ["软件", "内部", "工具"],
         "engine": AgentEngine.builtin.value,
         "engine_config": {},

@@ -32,8 +32,8 @@ TOKEN_METADATA_FIELDS = {
 
 @pytest.fixture(autouse=True)
 async def _mcp_api_settings():
-    await set_setting("marketplace.public_base_url", PUBLIC_BASE)
-    await set_setting("marketplace.publisher_roles", "tester")
+    await set_setting("extensions.public_base_url", PUBLIC_BASE)
+    await set_setting("extensions.publisher_roles", "tester")
 
 
 def _auth(user: dict) -> dict[str, str]:
@@ -66,7 +66,7 @@ def _authorization_params(registered: dict, **overrides) -> dict:
         "client_id": registered["client_id"],
         "redirect_uri": registered["redirect_uris"][0],
         "response_type": "code",
-        "scope": "market:read market:write",
+        "scope": "extensions:read extensions:write",
         "code_challenge": _challenge(),
         "code_challenge_method": "S256",
         "state": "state with spaces/&",
@@ -108,7 +108,7 @@ async def _create_token(
 ) -> tuple[dict, dict]:
     payload = {
         "name": "CI static token",
-        "scopes": ["market:read", "market:write"],
+        "scopes": ["extensions:read", "extensions:write"],
     }
     payload.update(overrides)
     response = await client.post(
@@ -134,7 +134,7 @@ async def test_viewer_preview_intersects_requested_scopes_with_current_capabilit
         "client_id": registered["client_id"],
         "client_name": "Task 5 API client",
         "redirect_uri": REDIRECT_URI,
-        "scopes": ["market:read"],
+        "scopes": ["extensions:read"],
         "response_type": "code",
         "code_challenge": _challenge(),
         "code_challenge_method": "S256",
@@ -154,7 +154,7 @@ async def test_publisher_preview_includes_current_write_capability(
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["scopes"] == ["market:read", "market:write"]
+    assert response.json()["scopes"] == ["extensions:read", "extensions:write"]
 
 
 async def test_preview_oauth_errors_use_structured_http_detail(client, stranger_user):
@@ -212,7 +212,7 @@ async def test_consent_callback_preserves_query_and_state_and_code_exchanges(
         },
     )
     assert exchanged.status_code == 200, exchanged.text
-    assert exchanged.json()["scope"] == "market:read market:write"
+    assert exchanged.json()["scope"] == "extensions:read extensions:write"
 
 
 async def test_consent_omits_absent_state_from_callback(client, publisher_user):
@@ -232,8 +232,8 @@ async def test_grants_are_scoped_to_current_user_and_include_client_metadata(
     client, publisher_user, stranger_user
 ):
     registered = await _register(client)
-    own = await _grant(publisher_user["id"], registered, ["market:read"])
-    await _grant(stranger_user["id"], registered, ["market:read", "market:write"])
+    own = await _grant(publisher_user["id"], registered, ["extensions:read"])
+    await _grant(stranger_user["id"], registered, ["extensions:read", "extensions:write"])
 
     response = await client.get("/api/v1/mcp/grants", headers=_auth(publisher_user))
 
@@ -255,7 +255,7 @@ async def test_grants_are_scoped_to_current_user_and_include_client_metadata(
         "id": own.id,
         "client_id": registered["client_id"],
         "client_name": "Task 5 API client",
-        "scopes": ["market:read"],
+        "scopes": ["extensions:read"],
         "version": 3,
         "revoked_at": None,
         "created_at": "2026-10-31T12:00:00Z",
@@ -267,8 +267,8 @@ async def test_user_cannot_revoke_another_users_grant_and_own_revocation_keeps_h
     client, publisher_user, stranger_user
 ):
     registered = await _register(client)
-    own = await _grant(publisher_user["id"], registered, ["market:read"])
-    other = await _grant(stranger_user["id"], registered, ["market:read"])
+    own = await _grant(publisher_user["id"], registered, ["extensions:read"])
+    other = await _grant(stranger_user["id"], registered, ["extensions:read"])
 
     forbidden = await client.delete(
         f"/api/v1/mcp/grants/{other.id}", headers=_auth(publisher_user)
@@ -294,7 +294,7 @@ async def test_user_cannot_revoke_another_users_grant_and_own_revocation_keeps_h
 async def test_tokens_are_self_service_and_scoped_to_creator(
     client, publisher_user, stranger_user
 ):
-    created, _ = await _create_token(client, publisher_user, scopes=["market:read"])
+    created, _ = await _create_token(client, publisher_user, scopes=["extensions:read"])
 
     own = await client.get("/api/v1/mcp/tokens", headers=_auth(publisher_user))
     assert own.status_code == 200, own.text
@@ -321,9 +321,9 @@ async def test_token_scope_options_follow_current_capability(
     )
 
     assert publisher_scopes.status_code == 200, publisher_scopes.text
-    assert publisher_scopes.json() == {"scopes": ["market:read", "market:write"]}
+    assert publisher_scopes.json() == {"scopes": ["extensions:read", "extensions:write"]}
     assert stranger_scopes.status_code == 200, stranger_scopes.text
-    assert stranger_scopes.json() == {"scopes": ["market:read"]}
+    assert stranger_scopes.json() == {"scopes": ["extensions:read"]}
 
 
 async def test_token_creation_rejects_scopes_beyond_current_capability(
@@ -331,12 +331,12 @@ async def test_token_creation_rejects_scopes_beyond_current_capability(
 ):
     response = await client.post(
         "/api/v1/mcp/tokens",
-        json={"name": "too powerful", "scopes": ["market:read", "market:write"]},
+        json={"name": "too powerful", "scopes": ["extensions:read", "extensions:write"]},
         headers=_auth(stranger_user),
     )
 
     assert response.status_code == 403, response.text
-    assert "market:write" in response.json()["detail"]
+    assert "extensions:write" in response.json()["detail"]
 
 
 async def test_static_token_plaintext_is_visible_and_db_stores_sha256(
@@ -354,7 +354,7 @@ async def test_static_token_plaintext_is_visible_and_db_stores_sha256(
     assert created["name"] == "CI static token"
     assert created["user_id"] == publisher_user["id"]
     assert created["username"] == publisher_user["username"]
-    assert created["scopes"] == ["market:read", "market:write"]
+    assert created["scopes"] == ["extensions:read", "extensions:write"]
     assert created["expires_at"] == "2099-01-02T03:04:05Z"
     assert created["revoked_at"] is None
     assert created["last_used_at"] is None
@@ -369,7 +369,7 @@ async def test_static_token_plaintext_is_visible_and_db_stores_sha256(
 
     verified = await McpTokenVerifier().verify_token(plaintext)
     assert verified is not None
-    assert verified.scopes == ["market:read", "market:write"]
+    assert verified.scopes == ["extensions:read", "extensions:write"]
 
     listed = await client.get("/api/v1/mcp/tokens", headers=_auth(publisher_user))
     assert listed.status_code == 200, listed.text
@@ -477,8 +477,8 @@ async def test_deleting_missing_static_token_returns_404(client, publisher_user)
         {"name": ""},
         {"name": "   "},
         {"scopes": []},
-        {"scopes": "market:read"},
-        {"scopes": ["market:read", "market:delete"]},
+        {"scopes": "extensions:read"},
+        {"scopes": ["extensions:read", "market:delete"]},
         {"expires_at": "not-a-date"},
         {"expires_at": "2000-01-01T00:00:00Z"},
     ],
@@ -488,7 +488,7 @@ async def test_static_token_input_validation(
 ):
     payload = {
         "name": "valid name",
-        "scopes": ["market:read"],
+        "scopes": ["extensions:read"],
     }
     payload.update(overrides)
 

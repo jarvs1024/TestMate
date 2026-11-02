@@ -87,7 +87,7 @@ async def build_marketplace(base_url: str, name: str = "testmate",
                 "author": {"name": a.author or "unknown"},
                 "source": {
                     "source": "archive",
-                    "url": f"{base}/api/v1/assets/{a.code}/versions/{a.version}/download",
+                    "url": f"{base}/api/v1/extensions/{a.code}/versions/{a.version}/download",
                     "sha256": sha,
                 },
             }

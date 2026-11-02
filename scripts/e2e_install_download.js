@@ -109,7 +109,7 @@ function check(name, ok, detail) {
     // 用**总和差值**而不是单个资产的计数 —— 不依赖从 DOM 里抠 code, 稳得多
     const totalCount = async () => page.evaluate(async () => {
       const tk = localStorage.getItem('testmate:token');
-      const r = await fetch('/api/v1/assets?limit=500&status=all&client_id=e2e-dl',
+      const r = await fetch('/api/v1/extensions?limit=500&status=all&client_id=e2e-dl',
         { headers: { Authorization: 'Bearer ' + tk } });
       const d = await r.json();
       return (d.items || []).reduce((n, i) => n + (i.download_count || 0), 0);

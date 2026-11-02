@@ -78,7 +78,7 @@ function cap(over: any = {}) {
 
 const CAPS = [
   cap({ id: 1, code: 'code-review', name: '代码检视', icon: '🧬', kind: 'board', status: 'stable', category: 'auto-code', route: 'page:code-review' }),
-  cap({ id: 2, code: 'agent-market', name: '插件·技能·连接', icon: '🏪', kind: 'platform', status: 'beta', category: 'ai-market', route: 'page:market', cta: '浏览资产' }),
+  cap({ id: 2, code: 'agent-market', name: '扩展', icon: '🏪', kind: 'platform', status: 'beta', category: 'ai-market', route: 'page:extensions', cta: '浏览资产' }),
   cap({ id: 3, code: 'kb-inventory', name: '知识库', icon: '📚', kind: 'platform', status: 'stable', category: 'ssd-kb', route: 'page:kb-manage', cta: '检索语料' }),
   cap({ id: 4, code: 'log-analysis', name: '日志分析', icon: '📜', kind: 'tool', status: 'beta', category: 'ssd-trace' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', icon: '🧪', kind: 'tool', status: 'draft', category: 'ssd-spec' }),
@@ -156,13 +156,13 @@ describe('首页 · 能力墙', () => {
     w.unmount();
   });
 
-  it('资产筛选: 插件·技能·连接 + 知识库同列 (同属资产角色)', async () => {
+  it('资产筛选: 扩展 + 知识库同列 (同属资产角色)', async () => {
     const { w } = await mountHome();
     const chip = w.findAll('.filter').find((f) => f.text().includes('资产'))!;
     await chip.trigger('click');
     const names = w.findAllComponents({ name: 'CapabilityCard' })
       .map((c) => c.props('capability').name);
-    expect(names.sort()).toEqual(['插件·技能·连接', '知识库']);
+    expect(names.sort()).toEqual(['扩展', '知识库']);
     w.unmount();
   });
 
@@ -233,7 +233,7 @@ describe('首页 · 能力墙', () => {
     const card = w.findAllComponents({ name: 'CapabilityCard' })
       .find((c) => c.props('capability').code === 'agent-market')!;
     await card.find('.cc-cta').trigger('click');
-    expect(pushSpy).toHaveBeenCalledWith({ name: 'market' });
+    expect(pushSpy).toHaveBeenCalledWith({ name: 'extensions' });
     w.unmount();
   });
 
@@ -287,7 +287,7 @@ describe('首页 · 能力墙', () => {
     const { w } = await mountHome({ loggedIn: true });
     const item = w.findAll('.ts-item').find((t) => t.text().includes('等你审核'))!;
     await item.trigger('click');
-    expect(pushSpy).toHaveBeenCalledWith({ name: 'market', query: { status: 'pending' } });
+    expect(pushSpy).toHaveBeenCalledWith({ name: 'extensions', query: { status: 'pending' } });
     w.unmount();
   });
 
@@ -332,7 +332,7 @@ describe('首页 · 能力墙', () => {
 
   it('首页跳的目标路由在真路由表里都存在 (别跳到空页)', () => {
     const names = router.getRoutes().map((r) => r.name);
-    for (const n of ['home', 'tool-runner', 'code-review', 'market', 'kb-manage']) {
+    for (const n of ['home', 'tool-runner', 'code-review', 'extensions', 'kb-manage']) {
       expect(names).toContain(n);
     }
   });

@@ -7,7 +7,7 @@
    ③ **知识库从侧栏顶级项变成了一张卡** (kind=platform, route=page:kb-manage);
    ④ 每张卡自带 cta —— 同角色的卡动法不同 (浏览资产 vs 检索语料 vs 浏览软件);
    ⑤ GET /agents **匿名可读** + 能按角色过滤;
-   ⑥ 2026-10-27: **工具只留「环境运维」**; 「AI 资产市场」改名「插件·技能·连接」;
+   ⑥ 2026-10-27: **工具只留「环境运维」**; 「AI 资产市场」改名「扩展」;
       新增「软件库」卡; 环境运维的文案不许再提温箱 / 稳定性那一摊.
 """
 from app.api.agents import SEED_AGENTS, seed_agents
@@ -273,12 +273,12 @@ def test_env_ops_copy_covers_the_intended_scope():
 
 
 def test_agent_market_renamed_to_plugin_skill_connector():
-    """「AI 资产市场」→「插件·技能·连接」 —— 老名字跟角色名「资产」撞了, 用户分不清."""
+    """「AI 资产市场」→「扩展」 —— 老名字跟角色名「资产」撞了, 用户分不清."""
     mkt = next(c for c in SEED_AGENTS if c["code"] == "agent-market")
-    assert mkt["name"] == "插件·技能·连接"
+    assert mkt["name"] == "扩展"
     assert "AI 资产市场" not in mkt["name"]
-    # 改名了, route 不能变 (前端按 route 跳 /market)
-    assert mkt["route"] == "page:market"
+    # 改名了, route 同步换成 /extensions
+    assert mkt["route"] == "page:extensions"
 
 
 def test_software_library_seed():

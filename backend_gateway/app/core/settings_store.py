@@ -182,7 +182,7 @@ SETTING_SCHEMA: list[dict] = [
     },
     {
         # ⚠️ 2026-10-31 (第十八轮): 副标题从写死的「SSD 测试伙伴」改成设置项 ——
-        #    平台早就不只是 SSD 相关了 (资产市场 / 软件库 / 知识库 / 代码检视 / 环境运维),
+        #    平台早就不只是 SSD 相关了 (扩展 / 软件库 / 知识库 / 代码检视 / 环境运维),
         #    写死一个具体品类反而会误导人.
         "key": "general.platform_tagline",
         "category": "general",
@@ -296,26 +296,26 @@ SETTING_SCHEMA: list[dict] = [
         "description": "嵌入 URL 是否自动拼 &theme=<light/dark> (按浏览器当前主题)",
         "is_secret": False,
     },
-    # ===== 插件·技能·连接 =====
+    # ===== 扩展 =====
     {
-        "key": "marketplace.projects",
-        "category": "marketplace",
+        "key": "extensions.projects",
+        "category": "extensions",
         "value_type": "string",
         "default": "6100,3361,8560,9560,3100",
         "description": (
             "项目列表 (逗号分隔, 如 6100,3361) —— 上架资产时选「通用」或某个项目特有, "
-            "市场页按项目筛选也用这份列表 (项目会增减, 加项目改这里就行, 不用发版)"
+            "扩展页按项目筛选也用这份列表 (项目会增减, 加项目改这里就行, 不用发版)"
         ),
         "is_secret": False,
     },
     {
-        "key": "marketplace.publisher_roles",
-        "category": "marketplace",
+        "key": "extensions.publisher_roles",
+        "category": "extensions",
         "value_type": "string",
         "default": "tester",
         "description": (
             "默认可发布的**角色** (逗号分隔, 如 tester) —— "
-            "tester = 测试工程, 默认就能往市场里上传/更新资产; "
+            "tester = 测试工程, 默认就能往扩展里上传/更新资产; "
             "admin 恒可发布, 跟这里无关; "
             "清空 = 退回「只看白名单」的老行为"
         ),
@@ -325,8 +325,8 @@ SETTING_SCHEMA: list[dict] = [
         "admin_only": True,
     },
     {
-        "key": "marketplace.publisher_ids",
-        "category": "marketplace",
+        "key": "extensions.publisher_ids",
+        "category": "extensions",
         "value_type": "string",
         "default": "[]",
         "description": (
@@ -336,8 +336,8 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
-        "key": "marketplace.publisher_usernames",
-        "category": "marketplace",
+        "key": "extensions.publisher_usernames",
+        "category": "extensions",
         "value_type": "string",
         "default": "",
         "description": (
@@ -347,8 +347,8 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
-        "key": "marketplace.review.enabled",
-        "category": "marketplace",
+        "key": "extensions.review.enabled",
+        "category": "extensions",
         "value_type": "bool",
         "default": "true",
         "description": (
@@ -361,8 +361,8 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
-        "key": "marketplace.review.reviewer_usernames",
-        "category": "marketplace",
+        "key": "extensions.review.reviewer_usernames",
+        "category": "extensions",
         "value_type": "string",
         "default": "",
         "description": (
@@ -373,42 +373,42 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
-        "key": "marketplace.review.admin_self_approve",
-        "category": "marketplace",
+        "key": "extensions.review.admin_self_approve",
+        "category": "extensions",
         "value_type": "bool",
         "default": "true",
         "description": "管理员自己上传的资产是否免审 (免审 = 直接上架, 不用等别人审)",
         "is_secret": False,
     },
     {
-        "key": "marketplace.git.max_push_attempts",
-        "category": "marketplace",
+        "key": "extensions.git.max_push_attempts",
+        "category": "extensions",
         "value_type": "int",
         "default": "3",
         "description": "推送到 GitLab 失败时的自动重试次数 (超过就停下来等人工处理)",
         "is_secret": False,
     },
     {
-        "key": "marketplace.upload.max_files",
-        "category": "marketplace",
+        "key": "extensions.upload.max_files",
+        "category": "extensions",
         "value_type": "int",
         "default": "200",
         "description": "单次上传允许的附加文本文件数上限",
         "is_secret": False,
     },
     {
-        "key": "marketplace.upload.max_total_mb",
-        "category": "marketplace",
+        "key": "extensions.upload.max_total_mb",
+        "category": "extensions",
         "value_type": "int",
         "default": "2",
         "description": "单次上传的文本文件总体积上限 (MB)",
         "is_secret": False,
     },
     {
-        "key": "marketplace.git.remote",
-        "category": "marketplace",
+        "key": "extensions.git.remote",
+        "category": "extensions",
         "value_type": "string",
-        "default": "ssh://git@host.docker.internal:8922/root/testmate-market.git",
+        "default": "ssh://git@host.docker.internal:8922/root/testmate-extensions.git",
         "description": (
             "GitLab 仓库地址 (SSH). 资产就是提交到这个仓库的 —— "
             "改完立即生效, 下次同步会用新地址"
@@ -419,8 +419,8 @@ SETTING_SCHEMA: list[dict] = [
         "admin_only": True,
     },
     {
-        "key": "marketplace.git.branch",
-        "category": "marketplace",
+        "key": "extensions.git.branch",
+        "category": "extensions",
         "value_type": "string",
         "default": "main",
         "description": "GitLab 分支 (资产提交到哪个分支)",
@@ -429,51 +429,51 @@ SETTING_SCHEMA: list[dict] = [
         "admin_only": True,
     },
     {
-        "key": "marketplace.git.web_url",
-        "category": "marketplace",
+        "key": "extensions.git.web_url",
+        "category": "extensions",
         "value_type": "url",
         "default": "",
         "description": (
-            "GitLab 网页地址 (如 http://gitlab.local:8929/root/testmate-market), "
-            "用于市场页上的「在 GitLab 查看」链接; 留空则不显示"
+            "GitLab 网页地址 (如 http://gitlab.local:8929/root/testmate-extensions), "
+            "用于扩展页上的「在 GitLab 查看」链接; 留空则不显示"
         ),
         "is_secret": False,
     },
     {
-        "key": "marketplace.sync.interval_seconds",
-        "category": "marketplace",
+        "key": "extensions.sync.interval_seconds",
+        "category": "extensions",
         "value_type": "int",
         "default": "30",
         "description": "从 GitLab 拉取对齐的周期 (秒)",
         "is_secret": False,
     },
     {
-        "key": "marketplace.max_package_mb",
-        "category": "marketplace",
+        "key": "extensions.max_package_mb",
+        "category": "extensions",
         "value_type": "int",
         "default": "50",
         "description": "上传安装包体积上限 (MB)",
         "is_secret": False,
     },
     {
-        "key": "marketplace.marketplace_name",
-        "category": "marketplace",
+        "key": "extensions.name",
+        "category": "extensions",
         "value_type": "string",
         "default": "testmate",
         "description": "对外 marketplace.json 的 name 字段 (决定 Qoder 缓存目录名)",
         "is_secret": False,
     },
     {
-        "key": "marketplace.public_base_url",
-        "category": "marketplace",
+        "key": "extensions.public_base_url",
+        "category": "extensions",
         "value_type": "url",
         "default": "",
         "description": "对外可达的基地址 (Qoder 拉 marketplace.json 与安装包用; 留空则用请求来源)",
         "is_secret": False,
     },
     {
-        "key": "marketplace.public_download",
-        "category": "marketplace",
+        "key": "extensions.public_download",
+        "category": "extensions",
         "value_type": "bool",
         "default": "false",
         "description": (
@@ -488,17 +488,17 @@ SETTING_SCHEMA: list[dict] = [
         # ⚠️ 这是**对外暴露策略** —— 只给管理员看/改
         "admin_only": True,
     },
-    # ===== 钉钉 (市场通知) =====
+    # ===== 钉钉 (扩展通知) =====
     {
-        "key": "dingtalk.market_webhook",
+        "key": "dingtalk.extensions_webhook",
         "category": "notification",
         "value_type": "url",
         "default": "",
-        "description": "钉钉自定义机器人 webhook (市场上下架/更新通知用)",
+        "description": "钉钉自定义机器人 webhook (扩展中下架/更新通知用)",
         "is_secret": False,
     },
     {
-        "key": "dingtalk.market_secret",
+        "key": "dingtalk.extensions_secret",
         "category": "notification",
         "value_type": "secret",
         "default": "",
@@ -510,7 +510,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": True,
-        "description": "**上架成功**时通知市场群, @所有人 (默认开启)",
+        "description": "**上架成功**时通知扩展群, @所有人 (默认开启)",
         "is_secret": False,
     },
     {
@@ -518,7 +518,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": True,
-        "description": "**版本更新**时通知市场群, @所有人 (默认开启)",
+        "description": "**版本更新**时通知扩展群, @所有人 (默认开启)",
         "is_secret": False,
     },
     {
@@ -526,7 +526,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": True,
-        "description": "资产被**彻底下架**(移除)时通知市场群, @所有人 (默认开启)",
+        "description": "资产被**彻底下架**(移除)时通知扩展群, @所有人 (默认开启)",
         "is_secret": False,
     },
     {
@@ -542,7 +542,7 @@ SETTING_SCHEMA: list[dict] = [
         "category": "notification",
         "value_type": "bool",
         "default": False,
-        "description": "管理员**直接删除**资产时通知市场群, @所有人 (默认关闭)",
+        "description": "管理员**直接删除**资产时通知扩展群, @所有人 (默认关闭)",
         "is_secret": False,
     },
     {
@@ -560,7 +560,7 @@ SETTING_SCHEMA: list[dict] = [
         "default": True,
         "description": (
             "**软件库上架 / 发布新版本**时通知钉钉 (两个动作**共用这一个开关**; "
-            "发到市场群用的同一个机器人 —— 跟市场通知一起配就行)"
+            "发到扩展群用的同一个机器人 —— 跟扩展通知一起配就行)"
         ),
         "is_secret": False,
     },
@@ -586,7 +586,7 @@ SETTING_SCHEMA: list[dict] = [
             "审核类通知的**合并窗口** (秒): 窗口内的「待上架审核 / 待下架确认」"
             "只发第一条, 其余攒起来在窗口末发一条汇总 —— 避免十几个人同时上架"
             "把审核群刷屏。设 0 = 恢复一个资产一条消息。"
-            "⚠️ 只影响**审核类**通知; 上架/更新/下架那几类市场通告不合并"
+            "⚠️ 只影响**审核类**通知; 上架/更新/下架那几类扩展通告不合并"
         ),
         "is_secret": False,
     },
@@ -596,14 +596,14 @@ SETTING_SCHEMA: list[dict] = [
         "value_type": "bool",
         "default": True,
         "description": (
-            "**上架审核未通过**时通知市场群 (默认开启). "
+            "**上架审核未通过**时通知扩展群 (默认开启). "
             "⚠️ 2026-10-31 (第十六轮): **不再 @发布者** —— 钉钉要的是 userid, "
             "平台只有账号名, 「@具体的人」整套下线了; 消息正文里会写一行「发布人: xxx」"
         ),
         "is_secret": False,
     },
     {
-        "key": "dingtalk.market_keyword",
+        "key": "dingtalk.extensions_keyword",
         "category": "notification",
         "value_type": "string",
         "default": "",
@@ -614,7 +614,7 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     # ===== 审核通知频道 (另一个群) =====
-    # 市场动作 (上架/更新/彻底下架) 走市场群, 审核相关 (待审核/驳回/删除) 走审核群.
+    # 扩展动作 (上架/更新/彻底下架) 走扩展群, 审核相关 (待审核/驳回/删除) 走审核群.
     # 两个群通常是两个不同的机器人 —— 密钥和关键词各配各的.
     # (测试环境可以把两边配成一样的)
     {
@@ -717,7 +717,7 @@ SETTING_SCHEMA: list[dict] = [
         "default": "false",
         "description": (
             "未登录的人能不能下载软件包 (默认关). "
-            "跟「插件·技能·连接」的同名开关一个口径 —— 开了等于把安装包公开出去"
+            "跟「扩展」的同名开关一个口径 —— 开了等于把安装包公开出去"
         ),
         "is_secret": False,
     },
@@ -729,7 +729,7 @@ SETTING_SCHEMA: list[dict] = [
         "default": "",
         "description": (
             "MCP 额外允许的 Host 请求头 (逗号分隔). 裸 host 与 host:port 都接受; "
-            "marketplace.public_base_url 的 host 和回环地址会自动加入"
+            "extensions.public_base_url 的 host 和回环地址会自动加入"
         ),
         "is_secret": False,
         "admin_only": True,
@@ -741,9 +741,9 @@ SETTING_SCHEMA: list[dict] = [
 # 服务端写盘安装通道下线: 安装统一在用户本机完成 (选目录 / 下载安装包),
 # 服务端不再有"可配置的安装目录"这回事.
 DEPRECATED_KEYS = (
-    "marketplace.install.skill_dir",
-    "marketplace.install.plugin_dir",
-    "marketplace.install.enabled",
+    "extensions.install.skill_dir",
+    "extensions.install.plugin_dir",
+    "extensions.install.enabled",
     # Dify 数据源整个下线 (2026-10-25): 平台不再接入 Dify,
     # 这三项从 SCHEMA 移除后, DB 里的残留行在启动时一并清掉.
     "dify.base_url",
@@ -764,9 +764,9 @@ DEPRECATED_KEYS = (
 # 规则: 只有 DB 值**等于旧默认值**时才改 (说明用户没自己动过); 用户手动改过的
 # 值一律不动 —— 动了就说明那是用户的决定, 不能被默认值覆盖.
 DEFAULT_CHANGES: dict[str, tuple[Any, Any]] = {
-    # 钉钉市场通知的默认值改过一次又调回来 (2026-10-24):
+    # 钉钉扩展通知的默认值改过一次又调回来 (2026-10-24):
     #   原始默认 "true" → 一律改成"默认不发" (别刷屏) → 最后只留
-    #   **上架 / 更新 / 下架** 三个市场动作默认打开, 其余 (删除 / 待审核 / 驳回) 关闭.
+    #   **上架 / 更新 / 下架** 三个扩展动作默认打开, 其余 (删除 / 待审核 / 驳回) 关闭.
     #
     # 登记的是**当前这一跳**: 旧默认 False → 新默认 True.
     # DB 里存着 false 的行 (等于旧默认) 迁到 true;

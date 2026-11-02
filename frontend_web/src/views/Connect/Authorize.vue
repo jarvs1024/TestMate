@@ -114,7 +114,7 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 function scopeText(scope: McpScope): { title: string; description: string } {
-  if (scope === 'market:write') {
+  if (scope === 'extensions:write') {
     return {
       title: '管理资产',
       description: '以你的名义新建、修改、发布或下架你有权操作的插件、技能和连接器。',

@@ -337,12 +337,12 @@ async def _current_interval(default: int) -> int:
     """当前生效的拉取周期.
 
     每轮都从设置里读 —— 这样设置页改周期**立即生效**, 不用重启后端.
-    (之前这个值只在启动时从 env 取一次, 设置项 marketplace.sync.interval_seconds 是死的)
+    (之前这个值只在启动时从 env 取一次, 设置项 extensions.sync.interval_seconds 是死的)
     """
     try:
         from app.core.settings_store import get
 
-        raw = await get("marketplace.sync.interval_seconds", "")
+        raw = await get("extensions.sync.interval_seconds", "")
         n = int(str(raw).strip() or default)
     except Exception:  # noqa: BLE001 — 读设置失败不该让同步停下来
         return default

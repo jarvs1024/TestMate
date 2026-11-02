@@ -9,7 +9,7 @@
  *   ④ 盘点所有通知的 @口径 —— 唯一「@个人」的事件要能真 @ 到人 (映射表).
  *
  * ⚠️ **只读 + 截图** —— 不做任何写操作, **绝对不往真实钉钉群发消息**.
- *    预览走的是后端 `GET /api/v1/assets/notifications/preview` (只渲染不发送).
+ *    预览走的是后端 `GET /api/v1/extensions/notifications/preview` (只渲染不发送).
  * ⚠️ 本脚本**不改仓库任何代码**, 也不改生产配置 (映射表只做**干跑校验**).
  *
  * 用法 (native 端口):
@@ -52,7 +52,7 @@ async function apiLogin() {
 
 /** 干跑预览 —— headers 可带 X-Forwarded-Host (模拟不同访问地址) */
 async function preview(token, headers = {}) {
-  const r = await fetch(API + '/api/v1/assets/notifications/preview', {
+  const r = await fetch(API + '/api/v1/extensions/notifications/preview', {
     headers: { Authorization: 'Bearer ' + token, ...headers },
   });
   if (!r.ok) throw new Error('预览接口失败 ' + r.status);
@@ -74,7 +74,7 @@ async function closeOverlays(page) {
 
 /** 直接问后端要通知回执条数 (用来证明"预览一条都没发") */
 async function receiptCount(token) {
-  const r = await fetch(API + '/api/v1/assets/notifications?limit=200', {
+  const r = await fetch(API + '/api/v1/extensions/notifications?limit=200', {
     headers: { Authorization: 'Bearer ' + token },
   });
   if (!r.ok) return null;
@@ -134,7 +134,7 @@ async function receiptCount(token) {
     !/evil\.com/.test(evilText), evilText.match(/http:\/\/[^)\s]+/)?.[0] || '(无链接)');
 
   // 经 nginx 走一圈 —— 端口**不能丢** (原来 Host $host 不含端口)
-  const pvNginx = await fetch(BASE + '/api/v1/assets/notifications/preview', {
+  const pvNginx = await fetch(BASE + '/api/v1/extensions/notifications/preview', {
     headers: { Authorization: 'Bearer ' + token },
   }).then((r) => r.json());
   const nginxLink = (pvNginx[0]?.text || '').match(/http:\/\/[^)\s]+/)?.[0] || '';

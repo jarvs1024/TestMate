@@ -2,7 +2,7 @@
  * 第 9 轮 UX 整改的回归测试 (2026-10-30).
  *
  * 锁住这六件事 (每一件都是"用户看不到/点不动"的毛病):
- *  1. 上传抽屉的市场规则接口失败 → 必须说清楚 + 给「重试」, 且禁止提交;
+ *  1. 上传抽屉的扩展规则接口失败 → 必须说清楚 + 给「重试」, 且禁止提交;
  *  2. 列表加载超时 → 必须出现「加载超时」提示条 (以前永远渲染不出来);
  *  3. 分类 chip 上的数字 → 必须来自**当前列表**, 不是后端的 by_kind;
  *  4. 「重新上架」按钮 → 必须有 loading 绑定 (不然连点两次发两次请求);
@@ -173,9 +173,9 @@ afterEach(() => {
 });
 
 // ===================================================================
-// ① P0 · 上传抽屉: 市场规则失败必须可见、可重试且禁止提交
+// ① P0 · 上传抽屉: 扩展规则失败必须可见、可重试且禁止提交
 // ===================================================================
-describe('上传抽屉 · 市场规则加载失败', () => {
+describe('上传抽屉 · 扩展规则加载失败', () => {
   async function openDialog() {
     const w = mount(AssetUploadDialog, {
       props: { modelValue: false, mode: 'create', initialKind: 'skill' },
@@ -187,14 +187,14 @@ describe('上传抽屉 · 市场规则加载失败', () => {
     return w;
   }
 
-  it('规则接口失败 → 抽屉里说清楚「市场规则加载失败」, 并给一个「重试」', async () => {
+  it('规则接口失败 → 抽屉里说清楚「扩展规则加载失败」, 并给一个「重试」', async () => {
     requestGet.mockRejectedValue({
       response: { status: 500, data: { detail: '规则读取失败' } },
     });
     const w = await openDialog();
     const err = w.find('.cat-err');
     expect(err.exists()).toBe(true);
-    expect(err.text()).toContain('市场规则加载失败');
+    expect(err.text()).toContain('扩展规则加载失败');
     expect(err.text()).toContain('规则读取失败');
     expect(w.find('.cat-retry').exists()).toBe(true);
   });
@@ -212,15 +212,15 @@ describe('上传抽屉 · 市场规则加载失败', () => {
     requestGet.mockRejectedValue({ response: { status: 500, data: { detail: 'boom' } } });
     const w = await openDialog();
     expect(w.find('.foot-right button:last-child').attributes('disabled')).toBeDefined();
-    expect(w.find('.foot-warn').text()).toContain('市场规则');
+    expect(w.find('.foot-warn').text()).toContain('扩展规则');
   });
 
-  it('缺项提示说清是「市场规则加载失败」, 而不是「你没选分类」', async () => {
+  it('缺项提示说清是「扩展规则加载失败」, 而不是「你没选分类」', async () => {
     requestGet.mockRejectedValue({ response: { status: 500, data: { detail: 'boom' } } });
     const w = await openDialog();
     const warn = w.find('.foot-warn');
     expect(warn.exists()).toBe(true);
-    expect(warn.text()).toContain('市场规则');
+    expect(warn.text()).toContain('扩展规则');
     expect(warn.text()).toContain('加载失败');
   });
 

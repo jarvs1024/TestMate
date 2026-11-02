@@ -273,8 +273,8 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     const rules = marketRules.value;
     if (marketRulesLoading.value || !rules) {
       out.push(!marketRulesLoading.value && marketRulesError.value
-        ? '市场规则 (加载失败, 请重试)'
-        : '市场规则 (加载中)');
+        ? '扩展规则 (加载失败, 请重试)'
+        : '扩展规则 (加载中)');
       return out;
     }
     const required = isEdit.value
@@ -314,7 +314,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     projectOptions.value = [...(rules?.projects || [])];
     // 复用抽屉已有的可见错误与重试区; 规则失败时分类/项目也不能另走兜底接口.
     categoriesError.value = marketRulesError.value
-      ? `市场规则加载失败: ${marketRulesError.value}`
+      ? `扩展规则加载失败: ${marketRulesError.value}`
       : '';
     categoriesLoading.value = false;
   }

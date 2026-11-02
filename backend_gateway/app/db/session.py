@@ -100,7 +100,7 @@ async def init_db() -> None:
     """
     # 引入 models 让 Base.metadata 知道表 — alembic env.py 也 import 了,这里再 import 一次保险
     # ⚠️ import **整个** app.models 包: create_all 靠 Base.metadata 建表,
-    #    漏导一个模型就少建一张表 (资产市场那几张就在这儿).
+    #    漏导一个模型就少建一张表 (扩展那几张就在这儿).
     import app.models  # noqa: F401
 
     # session.py 在 backend_gateway/app/db/session.py,需要 .parent.parent.parent 才是仓库根 (backend_gateway/)

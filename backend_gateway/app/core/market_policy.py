@@ -1,10 +1,10 @@
-"""资产市场的权限判定 —— 谁能发布 / 谁能审核 / 谁能改这个资产.
+"""扩展的权限判定 —— 谁能发布 / 谁能审核 / 谁能改这个资产.
 
 ⚠️ 判定逻辑放这里 (纯逻辑, 可单测), api 层只留 Depends 装饰器的薄壳 ——
    以前判定散在路由里, 每加一条路径就可能漏掉一处身份判断.
 
 发布权 (can_publish) 是**两条路**:
-   ① 角色 —— marketplace.publisher_roles, 默认 tester (测试工程) 就能发;
+   ① 角色 —— extensions.publisher_roles, 默认 tester (测试工程) 就能发;
    ② 白名单 —— publisher_ids / publisher_usernames, 给角色不在列表里的人开口子.
    admin 恒可发布.
 """
@@ -18,10 +18,10 @@ from app.core.settings_store import get
 from app.models.asset import Asset
 from app.models.user import User
 
-PUBLISHER_IDS_KEY = "marketplace.publisher_ids"
-PUBLISHER_NAMES_KEY = "marketplace.publisher_usernames"
-PUBLISHER_ROLES_KEY = "marketplace.publisher_roles"
-REVIEWER_NAMES_KEY = "marketplace.review.reviewer_usernames"
+PUBLISHER_IDS_KEY = "extensions.publisher_ids"
+PUBLISHER_NAMES_KEY = "extensions.publisher_usernames"
+PUBLISHER_ROLES_KEY = "extensions.publisher_roles"
+REVIEWER_NAMES_KEY = "extensions.review.reviewer_usernames"
 
 
 def split_list(raw: str) -> list[str]:
@@ -85,7 +85,7 @@ async def publisher_roles() -> set[str]:
     """**按角色**默认可发布 (逗号分隔, 默认 tester = 测试工程).
 
     ⚠️ 为什么要有这一层 (2026-10-25): 原来"谁能发布"只认白名单, 白名单空着
-       就等于**除 admin 外谁都发不了** —— 连"测试工程"这种天天要往市场里
+       就等于**除 admin 外谁都发不了** —— 连"测试工程"这种天天要往扩展里
        沉淀插件/技能/连接器的角色也被挡住, 报错还只说"不在白名单内",
        让人以为是配置漏了, 其实是模型本身把角色能力忽略了.
        现在是**角色 + 白名单两条路**: 角色在列表里就能发, 白名单是给

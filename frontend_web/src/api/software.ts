@@ -1,6 +1,6 @@
 /** 软件库 API —— 后端 /api/v1/software/*.
  *
- * ⚠️ 与「插件·技能·连接」(api/assets.ts) 的分工:
+ * ⚠️ 与「扩展」(api/assets.ts) 的分工:
  *    那边传的是**文本包**(FormData/multipart), 真身在 GitLab;
  *    这边传的是**任意格式的二进制软件包**(原始字节流), 真身在服务端磁盘.
  *

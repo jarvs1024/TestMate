@@ -8,8 +8,8 @@
 最后一步 url_quote_plus **最易漏** —— 漏了会返回 "sign not match".
 
 用法:
-    from app.core.dingtalk import notify_market
-    await notify_market("publish", name="SSD 日志医生", version="1.0.0", actor="jarvs")
+    from app.core.dingtalk import notify_extensions
+    await notify_extensions("publish", name="SSD 日志医生", version="1.0.0", actor="jarvs")
 
 失败一律只记日志, 绝不抛给调用方 —— 通知失败不应该让发布事务回滚.
 但**失败不能就这么算了**: 每次尝试都落一张回执 (asset_notifications),
@@ -45,14 +45,14 @@ RETRY_BASE_SEC = 30
 # 重试扫描间隔 (秒)
 RETRY_SCAN_SEC = 30
 # pending 回执的"宽限期" (秒) —— 调用方刚落库、正在发的这条, 重试 worker 不许抢.
-# ⚠️ 2026-11-01 事故: 审核通过的上架通知发了**两遍** —— notify_market 先落 pending
+# ⚠️ 2026-11-01 事故: 审核通过的上架通知发了**两遍** —— notify_extensions 先落 pending
 #    回执再发送, 重试 worker 恰好扫到这条 pending, 两边各发了一次.
 #    宽限期过后仍 pending = 发送途中进程崩了 → 由重试 worker 补发.
 PENDING_GRACE_SEC = 90
 
 # ---------- 「平台是从哪个地址被访问的」 (2026-10-31 · 第十三轮) ----------
 #
-# 通知正文里那个「去市场看看 / 去软件库看看」的链接, 得是**同事点得开**的地址.
+# 通知正文里那个「去扩展看看 / 去软件库看看」的链接, 得是**同事点得开**的地址.
 # ⚠️ 写死一个地址 (如 http://127.0.0.1:8081) 有三个问题:
 #    ① 换台机部署 → 链接指到别的机器去了;
 #    ② 同事从 http://10.0.0.5:8081 访问 → 那个 127.0.0.1 是**他自己**的电脑;
@@ -127,7 +127,7 @@ def reset_base_url_cache() -> None:
 # 为什么只合并**审核类**事件 (review / unpublish_request):
 #   · 审核类是「要人去做一件事」—— 管理员的动作是"打开审核台看全部待办",
 #     逐条消息反而刷屏, 合并成一条汇总更省事.
-#   · 市场群那几类 (publish / update / unpublish / reject / delete) 是
+#   · 扩展群那几类 (publish / update / unpublish / reject / delete) 是
 #     「资产已经变了」的**事实通告**, 而且 @所有人 —— 合并会丢信息,
 #     谁上架了什么都要看得见, 保持一条一个.
 _AGGREGATED_EVENTS = ("review", "unpublish_request")
@@ -196,20 +196,20 @@ async def send_markdown(
         return {"raw": r.text[:200]}
 
 
-# ---------- 市场通知 ----------
+# ---------- 扩展通知 ----------
 
 # 通知事件表 (2026-10-24 重排):
 #
 #   审核群 (审核钉钉) —— 需要管理员**处理**的事:
 #       review            上架待审核
 #       unpublish_request 下架申请
-#   市场群 (用户群钉钉) —— 资产**已经变了**的事:
+#   扩展群 (用户群钉钉) —— 资产**已经变了**的事:
 #       publish  上架成功 @所有人
 #       update   版本更新 @所有人
 #       unpublish 彻底下架 @所有人
 #       reject   上架审核不通过 (⚠️ 不 @人, 正文里写「发布人: xxx」)
 #       delete   管理员直接删除 @所有人
-#   软件库 (也走市场群, 同一个机器人) —— 2026-10-30 加:
+#   软件库 (也走扩展群, 同一个机器人) —— 2026-10-30 加:
 #       software_publish 新软件上架
 #       software_update  软件新版本
 #       ⚠️ 这两个**共用一个开关** (dingtalk.notify_on_software) ——
@@ -219,7 +219,7 @@ _EVENT_TEXT = {
     "unpublish_request": "🗑 申请下架, 待确认",
     "publish": "🎉 新资产上架",
     "update": "📦 资产版本更新",
-    # ⚠️ 2026-10-30 (第十一轮): 软件库的通知 —— 走市场群, 但文案要说清是"软件包"
+    # ⚠️ 2026-10-30 (第十一轮): 软件库的通知 —— 走扩展群, 但文案要说清是"软件包"
     "software_publish": "📦 新软件上架",
     "software_update": "🆙 软件新版本",
     # ⚠️ 2026-10-31 (第十三轮): 软件**下架**也要通知 ——
@@ -261,7 +261,7 @@ _SWITCH_KEY = {
 
 # ---------- 两个通知频道 (两个群) ----------
 # 审核群: 需要管理员处理的事 (上架审核 / 下架申请)
-# 市场群: 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
+# 扩展群: 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
 #
 # 每个频道有自己的一套 webhook / 加签密钥 / 关键词 —— 两个群通常是两个不同的机器人,
 # 密钥和关键词校验都不一样. (测试环境可以把两边配成一样的)
@@ -269,27 +269,27 @@ _CHANNEL_OF_EVENT = {
     # 审核群
     "review": "review",
     "unpublish_request": "review",
-    # 市场群
-    "publish": "market",
-    "update": "market",
-    "unpublish": "market",
-    "reject": "market",
-    "delete": "market",
-    # ⚠️ 2026-10-30 (第十一轮): 软件库**也走市场群** ——
+    # 扩展群
+    "publish": "extensions",
+    "update": "extensions",
+    "unpublish": "extensions",
+    "reject": "extensions",
+    "delete": "extensions",
+    # ⚠️ 2026-10-30 (第十一轮): 软件库**也走扩展群** ——
     #    用户原话「钉钉在设置中配置……为了测试, 可以用市场的通知中配置的钉钉信息」.
-    #    也就是说: 不新增第三个机器人, 直接复用市场那套 webhook/加签/关键词.
+    #    也就是说: 不新增第三个机器人, 直接复用扩展那套 webhook/加签/关键词.
     #    以后想分开群, 再加一套独立配置也不迟 —— 那时只要改这里的映射.
-    "software_publish": "market",
-    "software_update": "market",
-    # ⚠️ 2026-10-31 (第十三轮): 软件下架也走市场群 (同一个机器人)
-    "software_unpublish": "market",
+    "software_publish": "extensions",
+    "software_update": "extensions",
+    # ⚠️ 2026-10-31 (第十三轮): 软件下架也走扩展群 (同一个机器人)
+    "software_unpublish": "extensions",
 }
 
 _CHANNEL_KEYS = {
-    "market": (
-        "dingtalk.market_webhook",
-        "dingtalk.market_secret",
-        "dingtalk.market_keyword",
+    "extensions": (
+        "dingtalk.extensions_webhook",
+        "dingtalk.extensions_secret",
+        "dingtalk.extensions_keyword",
     ),
     "review": (
         "dingtalk.review_webhook",
@@ -298,7 +298,7 @@ _CHANNEL_KEYS = {
     ),
 }
 
-_CHANNEL_LABEL = {"market": "市场群", "review": "审核群"}
+_CHANNEL_LABEL = {"extensions": "扩展群", "review": "审核群"}
 
 # 资产类型 → 中文 (通知里要说明"这是个啥": skill 还是插件)
 # ⚠️ 跟 UI 的说法**保持一致** (页签/形态选择器/上传表单都叫「技能」) ——
@@ -351,24 +351,24 @@ _NOTE_LABEL = {
 }
 
 # 通知里「查看详情」链接的**相对路径** (按事件) + 链接文字.
-# ⚠️ 用户要求: 插件/技能/连接器 → /market; 软件包 → /software.
+# ⚠️ 用户要求: 插件/技能/连接器 → /extensions; 软件包 → /software.
 _DEFAULT_LINK_PATH = {
-    "publish": "/market",
-    "update": "/market",
+    "publish": "/extensions",
+    "update": "/extensions",
     "software_publish": "/software",
     "software_update": "/software",
     # ⚠️ 2026-10-31 (第十三轮): 软件下架 → 也指向软件库
     "software_unpublish": "/software",
 }
 _LINK_TEXT = {
-    "/market": "去市场看看",
+    "/extensions": "去扩展看看",
     "/software": "去软件库看看",
 }
 
 
 async def _channel_config(channel: str) -> tuple[str, str, str]:
     """取某个频道的 (webhook, 加签密钥, 关键词)."""
-    wh_key, sec_key, kw_key = _CHANNEL_KEYS.get(channel, _CHANNEL_KEYS["market"])
+    wh_key, sec_key, kw_key = _CHANNEL_KEYS.get(channel, _CHANNEL_KEYS["extensions"])
     webhook = (await get(wh_key, "")) or ""
     secret = (await get(sec_key, "")) or ""
     keyword = ((await get(kw_key, "")) or "").strip()
@@ -398,7 +398,7 @@ async def _deliver(
 #   **窗口内的其余攒起来**, 窗口末发一条「另有 N 个在等审核」的汇总.
 #
 # ⚠️ 状态存 DB (asset_notifications) 而不是内存 —— 进程重启不能把攒着的通知弄丢.
-# ⚠️ 市场群那几类 (publish / update / unpublish / reject / delete) **不合并**:
+# ⚠️ 扩展群那几类 (publish / update / unpublish / reject / delete) **不合并**:
 #    那是「资产已经变了」的事实通告而且 @所有人, 合并会让人漏看谁上架了什么.
 
 
@@ -443,10 +443,10 @@ async def _within_window(event: str, window: int) -> bool:
 
 async def _review_entry_link() -> str:
     """审核入口链接 —— 没有对外基地址就**不给链接** (别发一个打不开的地址)."""
-    base = (await get("marketplace.public_base_url", "") or "").strip().rstrip("/")
+    base = (await get("extensions.public_base_url", "") or "").strip().rstrip("/")
     if not base:
         return ""
-    return f"{base}/market?status=pending"
+    return f"{base}/extensions?status=pending"
 
 
 async def _notify_base_url() -> str:
@@ -458,13 +458,13 @@ async def _notify_base_url() -> str:
            用户主动配了就听用户的 (比如要发公网域名给外部人看).
         ② **动态推断** —— "这次请求是从哪个地址进来的".
            同事在浏览器里打开 `http://10.0.0.5:8081`, 通知里的链接就该是
-           `http://10.0.0.5:8081/market`, 点开就在他眼前 —— 而不是某个写死的 IP.
+           `http://10.0.0.5:8081/extensions`, 点开就在他眼前 —— 而不是某个写死的 IP.
            ⚠️ 请求头 `Host` 被 nginx 改成了 `$host` (**不含端口**),
               所以后端优先读 nginx 专门透传的 `X-Forwarded-Host` ($http_host, 含端口).
-        ③ `marketplace.public_base_url` —— 市场的对外基地址 (给 Qoder 装包用的).
+        ③ `extensions.public_base_url` —— 扩展的对外基地址 (给 Qoder 装包用的).
         ④ 都没有 → **不给链接** (别发一个打不开的地址).
 
-    ⚠️ 为什么不只用 `marketplace.public_base_url`:
+    ⚠️ 为什么不只用 `extensions.public_base_url`:
         那个是给 **Qoder 装包**用的对外地址 (可能是公网域名/CDN),
         而通知链接是给**同事**点的 —— 同一台机器上, 内网地址更顺手.
         两个用途分开配, 才不会一边改坏另一边.
@@ -477,8 +477,8 @@ async def _notify_base_url() -> str:
     base = get_request_base_url().strip().rstrip("/")
     if base:
         return base
-    # ③ 市场的对外基地址
-    base = (await get("marketplace.public_base_url", "") or "").strip().rstrip("/")
+    # ③ 扩展的对外基地址
+    base = (await get("extensions.public_base_url", "") or "").strip().rstrip("/")
     return base
 
 
@@ -525,7 +525,7 @@ async def _flush_event(event: str, window: int) -> int:
     if last is not None and (now - last).total_seconds() < window:
         return 0        # 窗口还没到, 继续等
 
-    channel = _CHANNEL_OF_EVENT.get(event, "market")
+    channel = _CHANNEL_OF_EVENT.get(event, "extensions")
     webhook, secret, keyword = await _channel_config(channel)
     if not webhook:
         return 0
@@ -609,7 +609,7 @@ async def _render_market_body(
     """构造通知正文 —— 返回 (行, 汇总用的属性, 标题文案).
 
     ⚠️ **抽出来是为了两件事** (2026-10-30 第十一轮):
-        ① `notify_market` 发送时用;
+        ① `notify_extensions` 发送时用;
         ② `preview_market_message` **干跑预览**时用 ——
            消息长什么样要能**单独看**, 不能为了看一眼就得真往群里发一条.
 
@@ -685,7 +685,7 @@ async def _render_market_body(
             lines.append(f"- [去审核台]({entry})")
 
     # ---------- @谁 (2026-10-31 第十六轮: 只剩 @所有人) ----------
-    # ⚠️ 以前 @ 是在 `notify_market` 里发送前才拼的 → **预览里看不到**,
+    # ⚠️ 以前 @ 是在 `notify_extensions` 里发送前才拼的 → **预览里看不到**,
     #    管理员在设置页「👀 预览消息」看到的正文跟真发出去的不一样.
     #    现在统一在渲染层拼: 预览 = 真发出去的样子.
     # ⚠️ 钉钉要正文里带 "@xxx" 才渲染成提醒 (at 字段只是"谁被 @" 的名单).
@@ -700,7 +700,7 @@ async def preview_market_message(event: str, **kw) -> dict[str, Any]:
     """**干跑**: 只渲染消息, **不发送** —— 用来预览/自检消息长什么样.
 
     ⚠️ 绝对不碰 webhook —— 这个函数只拼字符串, 一行网络请求都不发.
-       (线上要真发, 走 notify_market.)
+       (线上要真发, 走 notify_extensions.)
     """
     lines, body_bits, event_text = await _render_market_body(event, **kw)
     title = f"{event_text} · {kw.get('name', '')}"
@@ -713,7 +713,7 @@ async def preview_market_message(event: str, **kw) -> dict[str, Any]:
     }
 
 
-async def notify_market(
+async def notify_extensions(
     event: str,
     *,
     name: str,
@@ -731,14 +731,14 @@ async def notify_market(
     summary: str = "",
     release_notes: str = "",
 ) -> bool:
-    """发一条市场通知. 返回是否发送成功 (失败只记日志, 不抛).
+    """发一条扩展通知. 返回是否发送成功 (失败只记日志, 不抛).
 
     event: review | unpublish_request | publish | update | unpublish | reject | delete
            | software_publish | software_update   (2026-10-30 加软件库两个)
     按事件自动选频道:
       审核群 —— 需要管理员处理的事 (上架审核 / 下架申请)
-      市场群 —— 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
-      软件库那两个也走市场群 (同一个机器人)
+      扩展群 —— 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
+      软件库那两个也走扩展群 (同一个机器人)
 
     kind / category: 通知里要说明"这是个啥" (技能? 插件? 连接器? 软件包?)
     project: 适用项目 (空 = 通用; 有值才写这一行)
@@ -751,15 +751,15 @@ async def notify_market(
 
     ⚠️ summary / release_notes (2026-10-30 加) —— 通知正文里那一行"这玩意儿是干嘛的":
         · summary       = 资产/软件的**简介** (上架时最该说清楚的就是这个);
-        · release_notes = **这次更新了啥** (软件库有, 市场没有这个字段);
+        · release_notes = **这次更新了啥** (软件库有, 扩展没有这个字段);
         · 两者都传 → release_notes 优先 (更新事件更该说"改了啥");
         · 都没有 → 退回 detail (老逻辑: 这次操作发生了什么).
     """
     if event not in _EVENT_TEXT:
-        logger.warning("dingtalk.notify_market 未知事件: %s", event)
+        logger.warning("dingtalk.notify_extensions 未知事件: %s", event)
         return False
 
-    channel = _CHANNEL_OF_EVENT.get(event, "market")
+    channel = _CHANNEL_OF_EVENT.get(event, "extensions")
     try:
         webhook, secret, keyword = await _channel_config(channel)
         # ⚠️ 默认**不通知** —— 开关默认关, 要发自己去设置里打开.
@@ -941,16 +941,16 @@ async def list_notifications(limit: int = 50) -> tuple[list[AssetNotification], 
     return list(rows), int(total)
 
 
-async def send_test_market_message(channel: str = "market") -> tuple[bool, str, dict[str, Any] | None]:
-    """发一条测试消息 (不落回执 —— 测试不是市场事件).
+async def send_test_extensions_message(channel: str = "extensions") -> tuple[bool, str, dict[str, Any] | None]:
+    """发一条测试消息 (不落回执 —— 测试不是扩展事件).
 
     返回 (ok, 给人看的说明, 钉钉原始响应).
     用当前配置 (webhook / 关键词 / 加签密钥) 走**完整**的发送路径 ——
     配置对不对, 一按就知道, 不用靠猜.
 
-    channel: market(市场群) | review(审核群) —— 两个群各配各的, 所以要分别自检.
+    channel: market(扩展群) | review(审核群) —— 两个群各配各的, 所以要分别自检.
     """
-    channel = channel if channel in _CHANNEL_KEYS else "market"
+    channel = channel if channel in _CHANNEL_KEYS else "extensions"
     label = _CHANNEL_LABEL.get(channel, channel)
     webhook, secret, keyword = await _channel_config(channel)
     if not webhook:
@@ -961,9 +961,9 @@ async def send_test_market_message(channel: str = "market") -> tuple[bool, str, 
         f"### ✅ TestMate 通知配置自检（{label}）\n"
         "这是一条来自 TestMate 的**测试消息**, 看到即说明配置正确。\n"
         + (
-            # ⚠️ 2026-10-30 (第十一轮): 市场群现在还收**软件库**的上架/发版本
+            # ⚠️ 2026-10-30 (第十一轮): 扩展群现在还收**软件库**的上架/发版本
             "- 上架 / 更新 / 彻底下架 / 软件库上架 / 软件库新版本 通知发到这个群"
-            if channel == "market"
+            if channel == "extensions"
             else "- 待审核 / 驳回 / 删除 通知发到这个群"
         )
     )
@@ -1039,9 +1039,9 @@ async def retry_failed_notifications() -> int:
             await _mark_skipped(r)
             skipped += 1
             continue
-        # ⚠️ 频道要**按事件**取 —— 审核类通知不能重试到市场群去!
+        # ⚠️ 频道要**按事件**取 —— 审核类通知不能重试到扩展群去!
         #    (之前只有一个群, 现在分两个了)
-        channel = _CHANNEL_OF_EVENT.get(r.event, "market")
+        channel = _CHANNEL_OF_EVENT.get(r.event, "extensions")
         try:
             webhook, secret, _kw = await _channel_config(channel)
         except Exception as e:  # noqa: BLE001

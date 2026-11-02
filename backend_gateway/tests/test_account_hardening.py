@@ -21,9 +21,9 @@ SETTINGS = f"{API}/settings"
 
 # 这些设置项**不能**让非管理员看到 (内网仓库地址 / 发布权限策略)
 ADMIN_ONLY_KEYS = (
-    "marketplace.git.remote",
-    "marketplace.git.branch",
-    "marketplace.publisher_roles",
+    "extensions.git.remote",
+    "extensions.git.branch",
+    "extensions.publisher_roles",
     # ⚠️ 2026-10-28: 软件库的存储根目录 —— **服务端文件路径**,
     #    泄露等于告诉别人服务的目录结构. 显式标了 admin_only.
     "software.storage_path",
@@ -247,7 +247,7 @@ async def test_token_with_garbage_sub_is_401_not_500(client):
 async def test_account_operations_are_audited(client, admin_user):
     """建号/改号都要留痕 (管理员在「操作记录」里能查到谁动了哪个账号)."""
     await _create_account(client, admin_user, "au_t", "User@12345")
-    r = await client.get(f"{API}/assets/audits?limit=50", headers={
+    r = await client.get(f"{API}/extensions/audits?limit=50", headers={
         "Authorization": f"Bearer {admin_user['token']}"
     })
     assert r.status_code == 200, r.text
@@ -271,7 +271,7 @@ async def test_account_operations_are_audited(client, admin_user):
     }, json={"role": "viewer"})
     assert r2.status_code == 200, r2.text
 
-    r3 = await client.get(f"{API}/assets/audits?limit=50", headers={
+    r3 = await client.get(f"{API}/extensions/audits?limit=50", headers={
         "Authorization": f"Bearer {admin_user['token']}"
     })
     updates = [a for a in r3.json()["items"] if a["action"] == "user.update"]
@@ -337,7 +337,7 @@ async def test_auth_config_is_public_and_returns_email_domain(client):
 
 async def test_sync_requires_admin(client, publisher_user):
     """全量同步 = 全市场级别的运维动作 → 只给管理员."""
-    r = await client.post(f"{API}/assets/sync", headers={
+    r = await client.post(f"{API}/extensions/sync", headers={
         "Authorization": f"Bearer {publisher_user['token']}"
     })
     assert r.status_code == 403, r.text
@@ -345,7 +345,7 @@ async def test_sync_requires_admin(client, publisher_user):
 
 async def test_admin_can_sync(client, admin_user):
     """管理员照常能同步."""
-    r = await client.post(f"{API}/assets/sync", headers={
+    r = await client.post(f"{API}/extensions/sync", headers={
         "Authorization": f"Bearer {admin_user['token']}"
     })
     assert r.status_code == 200, r.text
@@ -368,7 +368,7 @@ async def test_job_list_is_scoped_to_owner(client, publisher_user, admin_user):
     mine = await _make_job(publisher_user["id"], "my-job")
     theirs = await _make_job(admin_user["id"], "other-job")
 
-    r = await client.get(f"{API}/assets/jobs", headers={
+    r = await client.get(f"{API}/extensions/jobs", headers={
         "Authorization": f"Bearer {publisher_user['token']}"
     })
     assert r.status_code == 200, r.text
@@ -377,7 +377,7 @@ async def test_job_list_is_scoped_to_owner(client, publisher_user, admin_user):
     assert theirs not in ids, f"不该看到别人的 job: {ids}"
 
     # 管理员看得到全部
-    r2 = await client.get(f"{API}/assets/jobs", headers={
+    r2 = await client.get(f"{API}/extensions/jobs", headers={
         "Authorization": f"Bearer {admin_user['token']}"
     })
     ids2 = {j["id"] for j in r2.json()["items"]}
@@ -387,7 +387,7 @@ async def test_job_list_is_scoped_to_owner(client, publisher_user, admin_user):
 async def test_cannot_read_other_users_job(client, publisher_user, admin_user):
     """别人的 job 详情 → 403."""
     theirs = await _make_job(admin_user["id"], "other-job")
-    r = await client.get(f"{API}/assets/jobs/{theirs}", headers={
+    r = await client.get(f"{API}/extensions/jobs/{theirs}", headers={
         "Authorization": f"Bearer {publisher_user['token']}"
     })
     assert r.status_code == 403, r.text
@@ -396,7 +396,7 @@ async def test_cannot_read_other_users_job(client, publisher_user, admin_user):
 async def test_cannot_retry_other_users_job(client, publisher_user, admin_user):
     """别人的 job 不能重试 (重试 = 触发执行)."""
     theirs = await _make_job(admin_user["id"], "other-job")
-    r = await client.post(f"{API}/assets/jobs/{theirs}/retry", headers={
+    r = await client.post(f"{API}/extensions/jobs/{theirs}/retry", headers={
         "Authorization": f"Bearer {publisher_user['token']}"
     })
     assert r.status_code == 403, r.text
@@ -469,9 +469,9 @@ async def _make_published_asset(code: str, status: str = "published") -> int:
 
 
 async def test_download_requires_login_by_default(client):
-    """默认: 未登录下载 → 401 (marketplace.public_download 默认关)."""
+    """默认: 未登录下载 → 401 (extensions.public_download 默认关)."""
     await _make_published_asset("dml-pub")
-    r = await client.get("/api/v1/assets/dml-pub/versions/0.1.0/download")
+    r = await client.get("/api/v1/extensions/dml-pub/versions/0.1.0/download")
     assert r.status_code == 401, r.text
 
 
@@ -480,13 +480,13 @@ async def test_public_download_allows_anonymous_when_enabled(client, admin_user)
     await _make_published_asset("dml-pub2")
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.public_download", "true")
+    await set_setting("extensions.public_download", "true")
     try:
-        r = await client.get("/api/v1/assets/dml-pub2/versions/0.1.0/download")
+        r = await client.get("/api/v1/extensions/dml-pub2/versions/0.1.0/download")
         # 资产没有真实文件 → 404 (而不是 401) = 鉴权已经放过去了
         assert r.status_code == 404, r.text
     finally:
-        await set_setting("marketplace.public_download", "false")
+        await set_setting("extensions.public_download", "false")
 
 
 async def test_public_download_still_requires_login_for_unpublished(client):
@@ -494,12 +494,12 @@ async def test_public_download_still_requires_login_for_unpublished(client):
     await _make_published_asset("dml-pending", status="pending")
     from tests.conftest import set_setting
 
-    await set_setting("marketplace.public_download", "true")
+    await set_setting("extensions.public_download", "true")
     try:
-        r = await client.get("/api/v1/assets/dml-pending/versions/0.1.0/download")
+        r = await client.get("/api/v1/extensions/dml-pending/versions/0.1.0/download")
         assert r.status_code == 404, r.text
     finally:
-        await set_setting("marketplace.public_download", "false")
+        await set_setting("extensions.public_download", "false")
 
 
 async def test_public_download_setting_is_admin_only(client, stranger_user):
@@ -507,7 +507,7 @@ async def test_public_download_setting_is_admin_only(client, stranger_user):
     r = await client.get(f"{SETTINGS}/schema", headers={
         "Authorization": f"Bearer {stranger_user['token']}"
     })
-    assert "marketplace.public_download" not in _schema_keys(r.json())
+    assert "extensions.public_download" not in _schema_keys(r.json())
 
     r2 = await client.put(f"{SETTINGS}/marketplace.public_download", headers={
         "Authorization": f"Bearer {stranger_user['token']}"

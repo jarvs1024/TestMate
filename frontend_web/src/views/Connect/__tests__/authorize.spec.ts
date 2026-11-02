@@ -19,7 +19,7 @@ const OAUTH_QUERY = {
   client_id: 'client-123',
   redirect_uri: 'https://client.example/callback?existing=kept',
   response_type: 'code',
-  scope: 'market:read market:write',
+  scope: 'extensions:read extensions:write',
   code_challenge: 'challenge-abc',
   code_challenge_method: 'S256',
   state: 'state with spaces/&',
@@ -29,7 +29,7 @@ const PREVIEW = {
   client_id: 'client-123',
   client_name: 'CI Assistant',
   redirect_uri: 'https://client.example/callback?existing=kept',
-  scopes: ['market:read', 'market:write'],
+  scopes: ['extensions:read', 'extensions:write'],
   response_type: 'code',
   code_challenge: 'challenge-abc',
   code_challenge_method: 'S256',
@@ -49,7 +49,7 @@ const NEW_PREVIEW = {
   client_id: 'client-new',
   client_name: 'New Assistant',
   redirect_uri: 'https://new.example/callback',
-  scopes: ['market:read'],
+  scopes: ['extensions:read'],
   code_challenge: 'challenge-new',
   state: 'new-state',
 };
@@ -106,14 +106,14 @@ describe('MCP 授权同意页', () => {
 
   it('同意时提交已验证字段和 narrowed scopes，并整页跳转 callback_url', async () => {
     const { wrapper: w } = await mountAuthorize();
-    await w.get('input[type="checkbox"][value="market:write"]').setValue(false);
+    await w.get('input[type="checkbox"][value="extensions:write"]').setValue(false);
     await button(w, '同意授权').trigger('click');
     await flushPromises();
 
     expect(api.authorizeMcp).toHaveBeenCalledWith({
       client_id: 'client-123',
       redirect_uri: 'https://client.example/callback?existing=kept',
-      scopes: ['market:read'],
+      scopes: ['extensions:read'],
       response_type: 'code',
       code_challenge: 'challenge-abc',
       code_challenge_method: 'S256',

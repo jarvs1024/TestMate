@@ -21,15 +21,15 @@ _TEST_DB = os.environ.get("TESTMATE_TEST_DB", "testmate_test")
 os.environ["MYSQL_DATABASE"] = _TEST_DB
 os.environ["DEBUG"] = "true"
 # 测试里绝对不连真实 GitLab —— 用一个一定连不上的地址
-os.environ.setdefault("MARKET_GIT_REMOTE", "ssh://git@127.0.0.1:1/nonexistent.git")
-os.environ.setdefault("MARKET_GIT_BRANCH", "main")
+os.environ.setdefault("EXTENSIONS_GIT_REMOTE", "ssh://git@127.0.0.1:1/nonexistent.git")
+os.environ.setdefault("EXTENSIONS_GIT_BRANCH", "main")
 # 拉取器/worker 在测试里不启动 (ASGITransport 不跑 lifespan), 间隔也调大以防万一
-os.environ.setdefault("MARKET_SYNC_INTERVAL_SECONDS", "99999")
+os.environ.setdefault("EXTENSIONS_SYNC_INTERVAL_SECONDS", "99999")
 # 每个进程一套临时工作区.
-# ⚠️ 必须**强制**覆盖: 容器里 MARKET_WORKSPACE 指向真实的 /workspace (市场 git 仓库),
+# ⚠️ 必须**强制**覆盖: 容器里 EXTENSIONS_WORKSPACE 指向真实的 /workspace (市场 git 仓库),
 #    用 setdefault 会保留它 —— 测试就会往真实仓库里写文件.
 _TEST_WS = tempfile.mkdtemp(prefix="tm-test-ws-")
-os.environ["MARKET_WORKSPACE"] = _TEST_WS
+os.environ["EXTENSIONS_WORKSPACE"] = _TEST_WS
 
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402

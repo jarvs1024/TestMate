@@ -14,14 +14,14 @@ from app.core.config import settings
 from app.core.settings_store import get
 from app.db.session import AsyncSessionLocal
 from app.mcp.common.context import Principal
-from app.mcp.common.oauth import OAuthError, allowed_scopes
+from app.mcp.common.oauth import OAuthError, allowed_scopes, normalize_scope
 from app.models.mcp import McpApiToken, McpOAuthGrant
 from app.models.user import User
 
 
 async def _mcp_audience(public_base: str | None = None) -> str | None:
     if public_base is None:
-        public_base = await get("marketplace.public_base_url", "")
+        public_base = await get("extensions.public_base_url", "")
     base = str(public_base or "").strip().rstrip("/")
     return f"{base}/mcp" if base else None
 
@@ -46,7 +46,7 @@ def _integer(claims: dict[str, Any], name: str) -> int | None:
 def _scopes(value: Any) -> set[str] | None:
     if not isinstance(value, list) or not all(isinstance(scope, str) for scope in value):
         return None
-    return set(value)
+    return {normalize_scope(scope) for scope in value}
 
 
 def _access_token(
@@ -67,7 +67,7 @@ async def issue_static_token(user: User, public_base: str | None = None) -> str:
     """Issue a static MCP JWT; its database record alone controls scopes/expiry."""
     audience = await _mcp_audience(public_base)
     if audience is None:
-        raise OAuthError("invalid_request", "未配置 marketplace.public_base_url")
+        raise OAuthError("invalid_request", "未配置 extensions.public_base_url")
     payload = {
         "sub": str(user.id),
         "token_version": int(user.token_version),

@@ -1,4 +1,4 @@
-"""插件·技能·连接 API (原「AI 资产市场」).
+"""扩展 API (原「AI 扩展」).
 
 数据流:
     上传(压缩包) → 服务端解压 → 写工作区 files/ + package/ → 建 job(staged) → 立即 202
@@ -35,7 +35,7 @@ from app.core.asset_jobs import enqueue, retry_job, start_worker
 from app.core.asset_locks import code_lock
 from app.core.dingtalk import (
     list_notifications,
-    notify_market,
+    notify_extensions,
     preview_market_message,
 )
 from app.core import (
@@ -110,7 +110,7 @@ async def _setting(key: str, default: str = "") -> str:
 async def require_publisher(user: User = Depends(get_current_user)) -> User:
     """谁能发布 —— **角色**或**白名单**任一命中即可 (admin 恒可).
 
-    · 角色口径 (marketplace.publisher_roles, 默认 tester = 测试工程) —— 默认就能发;
+    · 角色口径 (extensions.publisher_roles, 默认 tester = 测试工程) —— 默认就能发;
     · 白名单口径 (publisher_ids / publisher_usernames) —— 给角色不在列表里的人开口子;
     · admin 恒可发布.
 
@@ -137,11 +137,11 @@ async def _is_reviewer(user: User) -> bool:
 
 
 async def _public_download_enabled() -> bool:
-    """未登录能不能下载已上架资产的包 (设置项 marketplace.public_download, 默认关)."""
+    """未登录能不能下载已上架资产的包 (设置项 extensions.public_download, 默认关)."""
     try:
         from app.core.settings_store import to_bool
 
-        return to_bool(await _setting("marketplace.public_download", "false"), False)
+        return to_bool(await _setting("extensions.public_download", "false"), False)
     except Exception:  # noqa: BLE001
         return False
 
@@ -166,7 +166,7 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     """管理员 —— 上架审核人 / 下架审核人 / 直接删资产.
 
     ⚠️ 下架审核**只限管理员**: 通过就等于删了别人的资产,
-    被授权的审核人 (marketplace.review.reviewer_usernames) 只能做上架审核.
+    被授权的审核人 (extensions.review.reviewer_usernames) 只能做上架审核.
     """
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
     if role == "admin":
@@ -181,7 +181,7 @@ async def _assert_can_modify(code: str, user: User) -> Asset:
 
     ⚠️ 以前这些写操作只查"是不是发布者"(白名单), 于是**任何在白名单里的用户
     都能下架/删除/更新别人的资产** —— 多用户场景下这是越权.
-    白名单的含义是"可以往市场上放东西", 不是"可以改别人放的东西".
+    白名单的含义是"可以往扩展中放东西", 不是"可以改别人放的东西".
 
     管理员仍然可以改任何人的资产 (运营需要, 比如清理不合规的资产).
     """
@@ -241,9 +241,9 @@ async def _resolve_project(code: str, raw: str, *, action: str) -> str:
 
 
 async def _project_list() -> list[str]:
-    """项目列表 (设置项 marketplace.projects) —— 没配就用默认列表.
+    """项目列表 (设置项 extensions.projects) —— 没配就用默认列表.
 
-    项目会增减 —— 所以是**配置**而不是写死的常量; 上传表单 / 市场筛选 /
+    项目会增减 —— 所以是**配置**而不是写死的常量; 上传表单 / 扩展筛选 /
     卡片徽标都用这一份, 免得两处各写一套.
     """
     raw = await _setting(market_projects.SETTINGS_KEY, "")
@@ -273,11 +273,11 @@ async def _review_required(user: User) -> bool:
     - 管理员自己上传 → 默认免审 (不然没人能审自己)
     - 其余发布者 → 一律待审核
     """
-    if not await _setting_bool("marketplace.review.enabled", True):
+    if not await _setting_bool("extensions.review.enabled", True):
         return False
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
     if role == "admin":
-        return not await _setting_bool("marketplace.review.admin_self_approve", True)
+        return not await _setting_bool("extensions.review.admin_self_approve", True)
     return True
 
 
@@ -338,9 +338,9 @@ def _to_out(a: Asset, can_review: bool = False) -> AssetOut:
 async def _apply_git_web_url(items: list[AssetOut]) -> None:
     """按当前配置的 GitLab 网页地址补上每个资产的网页链接.
 
-    这是**派生值** —— 改了 marketplace.git.web_url 立刻反映, 不必回填数据库.
+    这是**派生值** —— 改了 extensions.git.web_url 立刻反映, 不必回填数据库.
     """
-    base = ((await _setting("marketplace.git.web_url", "")) or "").strip().rstrip("/")
+    base = ((await _setting("extensions.git.web_url", "")) or "").strip().rstrip("/")
     if not base:
         return
     branch = git_sync.git_branch()
@@ -447,7 +447,7 @@ async def list_assets(
                     )
                 )
         elif is_admin or is_reviewer:
-            # 管理员/审核人是市场运营者 —— 列表里能看到**全部**资产
+            # 管理员/审核人是扩展运营者 —— 列表里能看到**全部**资产
             # (含待审核/已驳回/已下架), 每张卡片自己标着状态
             pass
         else:
@@ -472,7 +472,7 @@ async def list_assets(
             #    (JSON 列没法直接 like, 只能 CAST 成文本; 走不了索引, 但资产量不大)
             #
             # ⚠️ **项目也参与检索** (2026-10-25): 输入项目号 (如 6100) 能搜到
-            #    归属该项目的资产 —— 市场页搜索框的承诺就是"按项目也能搜".
+            #    归属该项目的资产 —— 扩展页搜索框的承诺就是"按项目也能搜".
             #    (注意: 这是**文本命中**, 不是"项目筛选" —— 选项目 6100 会带上通用资产,
             #     搜 6100 只命中 project='6100' 的那些, 两者语义不同, 别混)
             proj_match = [Asset.project.like(like)]
@@ -661,8 +661,8 @@ async def list_projects(_user: User = Depends(get_current_user)) -> dict[str, An
 
     ⚠️ 返回的是**完整列表** (含计数为 0 的) —— 前端据此渲染:
       · 上传表单的「适用项目」下拉
-      · 市场页的项目筛选 chip
-    项目列表来自设置项 marketplace.projects (管理员可改, 不用发版)。
+      · 扩展页的项目筛选 chip
+    项目列表来自设置项 extensions.projects (管理员可改, 不用发版)。
     """
     projects = await _project_list()
 
@@ -698,7 +698,7 @@ async def list_jobs(
     """任务列表 —— **默认只看自己的** (admin 看全部).
 
     ⚠️ 为什么要限本人: job 里带 code / asset_name / git_path ——
-       那是**还没通过审核**的资产信息. 以前任何登录用户都能列出全市场的任务,
+       那是**还没通过审核**的资产信息. 以前任何登录用户都能列出全部扩展的任务,
        等于绕过审核机制去偷看别人的草稿.
     """
     async with AsyncSessionLocal() as session:
@@ -775,7 +775,7 @@ async def sync_status(
 ) -> SyncStatusOut:
     """前端顶部状态条: 待同步 / 失败 / 有更新 / 有冲突.
 
-    ⚠️ **系统级**的计数 (别人几个资产同步失败了 / 有几个冲突 / 全市场几个待审)
+    ⚠️ **系统级**的计数 (别人几个资产同步失败了 / 有几个冲突 / 全部扩展几个待审)
        只给管理员 —— 那是运营数据, 普通用户看了也没用.
        但**跟我自己有关的** (我的几个待审 / 我申请下架的) 谁都能看 ——
        前端顶部那两条提示条就是靠这些字段.
@@ -879,7 +879,7 @@ async def list_notification_receipts(
 _PREVIEW_SCENES: list[dict[str, Any]] = [
     {
         "event": "publish",
-        "label": "市场 · 上架新资产 (插件)",
+        "label": "扩展 · 上架新资产 (插件)",
         "kw": {
             # 审核通过的真实场景: 操作人 = 审核人, 作者 = 提交人
             "name": "代码检视流水线", "version": "1.0.0", "actor": "admin",
@@ -890,7 +890,7 @@ _PREVIEW_SCENES: list[dict[str, Any]] = [
     },
     {
         "event": "update",
-        "label": "市场 · 发布新版本 (连接器)",
+        "label": "扩展 · 发布新版本 (连接器)",
         "kw": {
             "name": "GitLab 连接器", "version": "0.2.0", "actor": "zhangsan",
             "kind": "mcp", "category": "管协同", "code": "dml-gitlab",
@@ -927,7 +927,7 @@ _PREVIEW_SCENES: list[dict[str, Any]] = [
     },
     {
         "event": "review",
-        "label": "市场 · 上架待审核 (审核群)",
+        "label": "扩展 · 上架待审核 (审核群)",
         "kw": {
             "name": "SSD 日志医生", "version": "1.0.0", "actor": "lisi",
             "kind": "skill", "category": "兜住质量", "code": "dml-ssd-doctor",
@@ -937,7 +937,7 @@ _PREVIEW_SCENES: list[dict[str, Any]] = [
     {
         # ⚠️ 2026-10-30 (第十二轮): 「只改了信息」的待审通知 ——
         #    跟「新资产待审核」长得不一样 (标题 + 说的是"改了信息"), 管理员才分得出.
-        #    ⚠️ 这条**只发审核群**, 审核通过后**不通知市场群** (包没变).
+        #    ⚠️ 这条**只发审核群**, 审核通过后**不通知扩展群** (包没变).
         "event": "review",
         "label": "审核群 · 只改了信息, 待审核 (包没变)",
         "kw": {
@@ -953,7 +953,7 @@ _PREVIEW_SCENES: list[dict[str, Any]] = [
         #    钉钉要 userid, 平台只有账号名, 映射表那套整个删掉了 (用户决定暂时不 @ 具体的人).
         #    这条消息仍然**说清这条是驳回谁的** (正文里一行「发布人: lisi」), 只是不 @.
         "event": "reject",
-        "label": "市场 · 审核不通过 (告知发布人)",
+        "label": "扩展 · 审核不通过 (告知发布人)",
         "kw": {
             "name": "SSD 日志医生", "version": "1.0.0", "actor": "admin",
             "kind": "skill", "category": "兜住质量", "code": "dml-ssd-doctor",
@@ -992,7 +992,7 @@ async def preview_notification_messages(
 
 @router.get("/config", response_model=MarketConfigOut)
 async def get_market_config(user: User = Depends(get_current_user)) -> MarketConfigOut:
-    """市场当前生效的配置 —— 设置页用来展示"工作区在哪 / 远端是哪个".
+    """扩展当前生效的配置 —— 设置页用来展示"工作区在哪 / 远端是哪个".
 
     注意是**生效值** (DB 设置 > env 初值), 不是 schema 里的默认值.
 
@@ -1005,7 +1005,7 @@ async def get_market_config(user: User = Depends(get_current_user)) -> MarketCon
         workspace=str(git_sync.WORKSPACE) if is_admin else "",
         remote=git_sync.git_remote() if is_admin else "",
         branch=git_sync.git_branch(),
-        web_url=((await _setting("marketplace.git.web_url", "")) or "").strip(),
+        web_url=((await _setting("extensions.git.web_url", "")) or "").strip(),
         skill_dir=SKILL_INSTALL_DIR,
         plugin_dir=PLUGIN_INSTALL_DIR,
         install_enabled=True,
@@ -1013,13 +1013,13 @@ async def get_market_config(user: User = Depends(get_current_user)) -> MarketCon
         head=st.get("head", ""),
         # ⚠️ 审核总开关的**生效值** (不是 schema 默认值) —— 前端要靠它决定
         #    「申请下架」还是「下架」, 以及确认框里怎么措辞.
-        review_enabled=await _setting_bool("marketplace.review.enabled", True),
+        review_enabled=await _setting_bool("extensions.review.enabled", True),
     )
 
 
 @router.get("/rules")
 async def get_market_rules(_user: User = Depends(get_current_user)) -> dict[str, Any]:
-    """上传/编辑表单与 MCP 共用的当前市场规则."""
+    """上传/编辑表单与 MCP 共用的当前扩展规则."""
     return await market_rules.rules_payload()
 
 
@@ -1176,7 +1176,7 @@ async def download_package(
 ) -> Response:
     """下载安装包 (原始 zip; 老资产没有存包则即时确定性打包).
 
-    ⚠️ **未登录也能下, 但有条件** (设置项 marketplace.public_download, 默认关):
+    ⚠️ **未登录也能下, 但有条件** (设置项 extensions.public_download, 默认关):
        Qoder 原生安装器拉 marketplace.json 是**公开**的, 但它下载安装包时带不了
        TestMate 的登录 token —— 不开这个口子, 那个安装器必然 401, 功能是死路.
        开了之后也**只对已上架 (published) 的资产生效**: 待审核/已下架的照旧要登录.
@@ -1193,7 +1193,7 @@ async def download_package(
         if not await _public_download_enabled():
             raise HTTPException(
                 status_code=401,
-                detail="下载需要登录 (若要让 Qoder 原生安装器直接下载, 请管理员开启「marketplace.public_download」)",
+                detail="下载需要登录 (若要让 Qoder 原生安装器直接下载, 请管理员开启「extensions.public_download」)",
             )
         if a.publish_status != "published":
             # 未上架的资产 (待审核/被驳回/已下架) 不给匿名下载
@@ -1463,7 +1463,7 @@ async def _set_publish_state(
 
     为什么必须提交到 GitLab:
       上下架只改资产文件, 改的是 index.json (派生物) 与 manifest.json (权威).
-      不提交的话, 别的 TestMate 实例永远不知道这个资产被下架了 —— 共享市场就废了.
+      不提交的话, 别的 TestMate 实例永远不知道这个资产被下架了 —— 共享扩展就废了.
       所以这里也建 job, 走同一条 commit + push 队列.
 
     文件**保留** —— 在用的人还能继续用, 只是列表里标「已下架」.
@@ -1508,7 +1508,7 @@ async def _set_publish_state(
             if review_note is not None:
                 a.review_note = review_note
             # ⚠️ 2026-10-30 (第十二轮): 记住**改之前**在等什么审核, 然后清掉标记.
-            #    审核端点要用它决定"通过之后要不要在市场群发上架通知" ——
+            #    审核端点要用它决定"通过之后要不要在扩展群发上架通知" ——
             #    只改了信息 (meta) 的, 包没变, 发那条是假消息.
             #    ⚠️ **只在真的在架/已下架时清** —— 驳回 (rejected) 时要**留着**,
             #    否则"驳回 → 改了重新提交"这条路上, 重新提交就不知道是改信息还是改包了.
@@ -1587,13 +1587,13 @@ async def unpublish_asset(
     comment: str = Form("", description="下架理由 (给管理员看)"),
     user: User = Depends(require_publisher),
 ) -> dict[str, Any]:
-    """下架 —— **走哪条路看审核总开关** (`marketplace.review.enabled`).
+    """下架 —— **走哪条路看审核总开关** (`extensions.review.enabled`).
 
     · 审核总开关**开** (默认) → **申请制**: 作者提交申请, 等管理员确认,
       确认通过资产被**彻底删除** (连文件带索引带 DB 记录一起没).
       为什么不是"点了就下架":
         · 删除是**不可逆的终态**
-        · 市场是**共享**的 —— 资产下架了, 别人第二天就装不上, 得有人拍板
+        · 扩展是**共享**的 —— 资产下架了, 别人第二天就装不上, 得有人拍板
     · 审核总开关**关** (免审核) → **自助下架**: 立刻从货架消失, **文件保留**,
       随时能「重新上架」. 不用等管理员点头.
       ⚠️ 免审只免掉"等审核", **不**把不可逆的删除权限放给作者 ——
@@ -1621,7 +1621,7 @@ async def unpublish_asset(
             )
 
     # ⚠️ 免审核 → 自助下架 (保留文件), 不进申请流程
-    if not await _setting_bool("marketplace.review.enabled", True):
+    if not await _setting_bool("extensions.review.enabled", True):
         out = await _set_publish_state(
             code=code, publish_status="unpublished", action="take_down",
             comment=comment or "自助下架 (免审核)", user=user, review_note="",
@@ -1647,7 +1647,7 @@ async def unpublish_asset(
         comment=comment or "申请下架", user=user, review_note=comment or "",
     )
     # 申请下架 → 通知**审核群** (提醒管理员去确认).
-    # ⚠️ 注意跟"彻底下架"的通知分开: 申请阶段资产还在架, 别在市场群说这件事.
+    # ⚠️ 注意跟"彻底下架"的通知分开: 申请阶段资产还在架, 别在扩展群说这件事.
     if out.get("changed"):
         await market_notify.notify_asset(
             "unpublish_request", out,
@@ -1675,7 +1675,7 @@ async def review_unpublish_asset(
     所以这个端点只接受 approve.
 
     ⚠️ 只有**管理员**能审 —— 通过就等于删了别人的资产.
-    被授权的审核人 (marketplace.review.reviewer_usernames) 只能做**上架**审核,
+    被授权的审核人 (extensions.review.reviewer_usernames) 只能做**上架**审核,
     边界跟之前定的一致: "能审" ≠ "能改别人上传的资产".
     """
     if decision != "approve":
@@ -1754,7 +1754,7 @@ async def review_asset(
 ) -> dict[str, Any]:
     """管理员审核上架.
 
-    approve → publish_status=published (资产在市场可见)
+    approve → publish_status=published (资产在扩展可见)
     reject  → publish_status=rejected  (发布者能看到驳回理由, 改了重新提交)
 
     审核结果同样会 commit + push 到 GitLab —— 别的实例要立刻看到"这件通过了".
@@ -1769,14 +1769,14 @@ async def review_asset(
         )
         if out.get("changed"):
             # ⚠️ 2026-10-30 (第十二轮): **只改了信息**的资产审核通过 →
-            #    **不通知市场群**.
-            #    用户原话「审核通过, 这个编辑信息没涉及到包变化就不用通知到市场群」.
+            #    **不通知扩展群**.
+            #    用户原话「审核通过, 这个编辑信息没涉及到包变化就不用通知到扩展群」.
             #    道理也站得住: 包跟上次一模一样, 群里那条"新资产上架"是**假消息** ——
             #    用户白点一次下载, 装到的东西完全没变.
             #    (管理员自己刚点的通过, 他知道结果; 编辑人刷新页面能看到状态回来了.)
             if out.get("pending_action") == "meta":
                 logger.info(
-                    "资产信息修改审核通过, 不通知市场群 (包没变): code=%s", code,
+                    "资产信息修改审核通过, 不通知扩展群 (包没变): code=%s", code,
                 )
             else:
                 await market_notify.notify_asset(
@@ -1891,7 +1891,7 @@ async def _hard_delete_asset(
       · 作者删自己**没上架过**的资产 (DELETE /{code}, pending/rejected) → event="delete"
 
     事件分开是有意的: "走审核下架"和"直接删"在审计里是两回事, 通知也该分得清.
-    notify=False 用于"从没公开过"的资产 —— 没必要惊动市场群.
+    notify=False 用于"从没公开过"的资产 —— 没必要惊动扩展群.
 
     顺序很关键 (**先推 GitLab, 后动 DB**):
       1. index.json 剔除该资产 (DB 行还在, 用 exclude 参数)
@@ -2006,7 +2006,7 @@ async def _hard_delete_asset(
             {"name": asset_name, "version": version, "code": code,
              "kind": kind, "category": category, "project": project},
             actor=user.username,
-            detail=comment or "资产已从市场删除",
+            detail=comment or "资产已从扩展删除",
         )
     logger.info("delete 资产 code=%s action=%s event=%s", code, audit_action, event)
     return AssetDeleteOut(
@@ -2062,7 +2062,7 @@ async def delete_asset(
                 comment=comment or "作者删除未上架的资产",
                 audit_action="discard",
                 event="delete",
-                notify=False,   # ⚠️ 没过审的东西从没公开过 → 不用惊动市场群
+                notify=False,   # ⚠️ 没过审的东西从没公开过 → 不用惊动扩展群
             )
     return await _hard_delete_asset(
         code=code, user=user,
@@ -2117,7 +2117,7 @@ async def _read_upload_limited(upload: UploadFile, max_bytes: int | None, label:
 async def _max_package_bytes() -> int | None:
     """安装包大小上限 (设置页可配, 默认 50MB). 配 0/负数 = 不限制."""
     try:
-        max_mb = int(await _setting("marketplace.max_package_mb", "50") or 50)
+        max_mb = int(await _setting("extensions.max_package_mb", "50") or 50)
     except (TypeError, ValueError):
         max_mb = 50
     return max_mb * 1024 * 1024 if max_mb > 0 else None
@@ -2128,11 +2128,11 @@ async def _parse_uploads(files: list[UploadFile] | None) -> dict[str, str]:
         return {}
     # 限额来自设置页 (可在前端改), 传 None 则用模块默认值
     try:
-        max_files = int(await _setting("marketplace.upload.max_files", "") or 0) or None
+        max_files = int(await _setting("extensions.upload.max_files", "") or 0) or None
     except (TypeError, ValueError):
         max_files = None
     try:
-        max_mb = int(await _setting("marketplace.upload.max_total_mb", "") or 0) or None
+        max_mb = int(await _setting("extensions.upload.max_total_mb", "") or 0) or None
     except (TypeError, ValueError):
         max_mb = None
     max_bytes = max_mb * 1024 * 1024 if max_mb else None
@@ -2367,7 +2367,7 @@ async def _stage_asset_locked(
                 json.dumps(manifest, ensure_ascii=False, indent=2),
             )
         elif package is not None:
-            max_mb = int(await _setting("marketplace.max_package_mb", "50") or 50)
+            max_mb = int(await _setting("extensions.max_package_mb", "50") or 50)
             extracted = pkg.extract_package(
                 package, package_name, files_dir,
                 max_package_bytes=max_mb * 1024 * 1024,
@@ -2480,7 +2480,7 @@ async def _stage_asset_locked(
             a.review_note = ""
             # ⚠️ 2026-10-30 (第十二轮): 记下**在等什么审核** ——
             #    new = 第一次上架, update = 发了新版本 (包变了).
-            #    审核通过后这两种都要在市场群发通知 (包真的变了);
+            #    审核通过后这两种都要在扩展群发通知 (包真的变了);
             #    只改了信息的 (meta) 不发 —— 见 _stage_asset_meta.
             a.pending_action = "new" if action == "create" else "update"
         elif existing is None:
@@ -2501,8 +2501,8 @@ async def _stage_asset_locked(
             f"{base}/manifest.json",
             json.dumps(manifest, ensure_ascii=False, indent=2),
         )
-        # 资产在 GitLab 上的网页地址 —— 市场页可以给个「在 GitLab 查看」链接
-        web_base = ((await _setting("marketplace.git.web_url", "")) or "").strip().rstrip("/")
+        # 资产在 GitLab 上的网页地址 —— 扩展页可以给个「在 GitLab 查看」链接
+        web_base = ((await _setting("extensions.git.web_url", "")) or "").strip().rstrip("/")
         a.git_web_url = (
             f"{web_base}/-/tree/{git_sync.git_branch()}/{base}" if web_base else ""
         )
@@ -2574,7 +2574,7 @@ async def _stage_asset_locked(
         # ⚠️ 2026-10-30 (第十一轮): 正文带上**简介** ——
         #    用户要求「上架补充发描述, 比如是干嘛的」.
         #    detail 是"发生了什么"的套话 (跟标题重复), summary 才是"这玩意儿干嘛的".
-        #    ⚠️ 市场**没有**「更新说明」这个字段 (manifest/Asset 都没有),
+        #    ⚠️ 扩展**没有**「更新说明」这个字段 (manifest/Asset 都没有),
         #    所以「发布新版本」只能带新简介 —— 标签会自动变成「更新:」.
         await market_notify.notify_asset(
             "publish" if action == "create" else "update", manifest,
@@ -2807,7 +2807,7 @@ async def update_asset_meta(
 
     ⚠️ 权限跟"发新版本"一致 —— **作者本人 或 管理员** (_assert_can_modify).
     ⚠️ 审核口径也一致 —— 内容变了就得重新走审核 (跟"发新版本"一个口径).
-       否则就是审核绕过: 简介/说明就是市场上卡片上显示的内容.
+       否则就是审核绕过: 简介/说明就是扩展中卡片上显示的内容.
     """
     await _assert_can_modify(code, user)
 
@@ -2968,7 +2968,7 @@ async def _stage_asset_meta(
             a.publish_status = "pending"
             a.review_note = ""
             # ⚠️ 2026-10-30 (第十二轮): 记下这是「**只改了信息**」的审核 ——
-            #    包没变, 审核通过后**不通知市场群** (见 review_asset 的 approve 分支).
+            #    包没变, 审核通过后**不通知扩展群** (见 review_asset 的 approve 分支).
             a.pending_action = "meta"
         elif a.publish_status in (market_state.REJECTED, market_state.UNPUBLISHED):
             a.publish_status = "published"
@@ -2988,7 +2988,7 @@ async def _stage_asset_meta(
             _cleanup_staged_dir(old_git_path or base)
             await session.rollback()
             raise HTTPException(status_code=500, detail=f"写入本地工作区失败: {e}") from e
-        web_base = ((await _setting("marketplace.git.web_url", "")) or "").strip().rstrip("/")
+        web_base = ((await _setting("extensions.git.web_url", "")) or "").strip().rstrip("/")
         a.git_web_url = (
             f"{web_base}/-/tree/{git_sync.git_branch()}/{base}" if web_base else ""
         )
@@ -3046,10 +3046,10 @@ async def _stage_asset_meta(
     #
     #    ⚠️ 口径变更说明 (跟第十一轮相反, 是用户后来明确要求的):
     #       第十一轮: 「编辑信息就不需要通知到钉钉」→ 当时把通知整段删了;
-    #       这一轮:   「编辑信息 → 管理员审核, 通知到管理审核群, 但审核通过**不通知市场群**」.
+    #       这一轮:   「编辑信息 → 管理员审核, 通知到管理审核群, 但审核通过**不通知扩展群**」.
     #       所以现在是**两条腿**:
     #         · 提交时   → 审核群 (review 事件) —— 管理员得知道有活要干;
-    #         · 通过后   → **不发市场群** (包没变, 发那条是假消息).
+    #         · 通过后   → **不发扩展群** (包没变, 发那条是假消息).
     #
     #    ⚠️ 事件 key 仍然是 "review" —— 开关 (dingtalk.notify_on_review) 和
     #       频道 (审核群) 都靠 key 查, 换 key 会关错开关、发错群.
@@ -3114,7 +3114,7 @@ async def sync_from_workspace(
 ) -> SyncOut:
     """从本地工作区的 index.json 回灌 DB 镜像, 并把待同步的任务重新入队.
 
-    ⚠️ **admin only**: 这是全市场级别的运维动作 —— 回灌 DB 镜像 + 把所有
+    ⚠️ **admin only**: 这是全部扩展级别的运维动作 —— 回灌 DB 镜像 + 把所有
        待同步的任务重新入队. 以前用的是 require_publisher (默认 tester 就能发),
        等于任何发布者都能触发一次全量回灌 (会把远端 index.json 的内容覆盖到
        本地 DB, 也会把别人的待同步任务全部重新排队).

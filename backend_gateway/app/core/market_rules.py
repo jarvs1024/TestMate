@@ -1,4 +1,4 @@
-"""市场表单与 MCP 共用的只读规则包.
+"""扩展表单与 MCP 共用的只读规则包.
 
 命名、包后缀、分类和项目均从现有校验模块派生, 避免接口再维护一套规则.
 """
@@ -21,7 +21,7 @@ CODE_MAX_LENGTH = int(_LENGTH_MATCH.group(2))
 
 
 async def rules_payload() -> dict[str, Any]:
-    """返回当前生效的市场规则; 项目列表读取现有设置项."""
+    """返回当前生效的扩展规则; 项目列表读取现有设置项."""
     try:
         from app.core.settings_store import get
 

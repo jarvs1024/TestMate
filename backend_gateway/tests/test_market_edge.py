@@ -28,7 +28,7 @@ async def test_projects_setting_empty_falls_back_to_default(client, auth):
     """项目列表配成空 → 用默认列表 (不能变成"没有项目可选")."""
     from app.core import market_projects
 
-    await set_setting("marketplace.projects", "")
+    await set_setting("extensions.projects", "")
     items = (await client.get(f"{API}/projects", headers=auth)).json()["items"]
     codes = [i["code"] for i in items]
     assert "general" in codes
@@ -37,7 +37,7 @@ async def test_projects_setting_empty_falls_back_to_default(client, auth):
 
 async def test_projects_setting_with_dirty_values(client, auth):
     """项目列表里有空格/重复/中文 → 只保留干净的, 不崩."""
-    await set_setting("marketplace.projects", " 6100 , 6100 ,,中文项目 ,3361")
+    await set_setting("extensions.projects", " 6100 , 6100 ,,中文项目 ,3361")
     items = (await client.get(f"{API}/projects", headers=auth)).json()["items"]
     codes = [i["code"] for i in items]
     assert "6100" in codes and "3361" in codes
@@ -142,7 +142,7 @@ def test_version_format_rejected(version):
 async def test_upload_with_illegal_code_rejected(client, auth, ws,  # noqa: ARG001
                                                   restore_git_config, publisher_user):
     """非法 code → 422 (别把脏 code 写进 manifest / 目录)."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     pkg = _zip_bytes({"SKILL.md": "---\nname: x\ndescription: d\n---\n\n# x\n"},
@@ -159,7 +159,7 @@ async def test_upload_with_illegal_code_rejected(client, auth, ws,  # noqa: ARG0
 async def test_upload_duplicate_code_rejected(client, auth, ws,  # noqa: ARG001
                                               restore_git_config, publisher_user):
     """同 code 再传一次 → 409 (不能覆盖别人的资产)."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     assert (await _upload(client, pauth, code="dup-demo")).status_code == 202
@@ -190,8 +190,8 @@ async def test_unknown_code_returns_404(client, auth):
 async def test_non_publisher_cannot_upload(client, auth, ws,  # noqa: ARG001
                                            restore_git_config, stranger_user):
     """不在白名单 → 403."""
-    await set_setting("marketplace.publisher_usernames", "")
-    await set_setting("marketplace.publisher_ids", "[]")
+    await set_setting("extensions.publisher_usernames", "")
+    await set_setting("extensions.publisher_ids", "[]")
     r = await client.post(
         f"{API}/upload",
         data={"code": "dml-nope", "kind": "skill", "name": "x", "summary": "s"},
@@ -203,10 +203,10 @@ async def test_non_publisher_cannot_upload(client, auth, ws,  # noqa: ARG001
 async def test_cannot_modify_others_asset(client, auth, ws,  # noqa: ARG001
                                          restore_git_config, publisher_user, stranger_user):
     """白名单用户也**不能**改别人的资产."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     # ⚠️ 白名单是**覆盖式**设置 —— 两个都要放进去 (别用 _enable_publisher 连着调, 后一个会覆盖前一个)
     await set_setting(
-        "marketplace.publisher_usernames",
+        "extensions.publisher_usernames",
         f"{publisher_user['username']},{stranger_user['username']}",
     )
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
@@ -238,7 +238,7 @@ async def test_cannot_modify_others_asset(client, auth, ws,  # noqa: ARG001
 async def test_delete_requires_admin(client, auth, ws,  # noqa: ARG001
                                      restore_git_config, publisher_user):
     """在架的资产: 作者本人也删不了 —— 必须走「申请下架 → 管理员确认」."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="del-demo")
@@ -257,7 +257,7 @@ async def test_concurrent_upload_same_code_one_wins(client, auth, ws,  # noqa: A
     """同一 code 并发上传 → 只有一个成功, 另一个 409 (不能两份都进去)."""
     import asyncio
 
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     pkg = _zip_bytes({"SKILL.md": "---\nname: x\ndescription: d\n---\n\n# x\n"},
@@ -280,7 +280,7 @@ async def test_concurrent_upload_same_code_one_wins(client, auth, ws,  # noqa: A
 async def test_review_twice_is_idempotent(client, auth, ws,  # noqa: ARG001
                                           restore_git_config, publisher_user):
     """重复审核同一个待审资产 → 第二次 409 (状态机拦)."""
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="twice-demo")
@@ -296,7 +296,7 @@ async def test_review_twice_is_idempotent(client, auth, ws,  # noqa: ARG001
 async def test_submit_after_approve_rejected(client, auth, ws,  # noqa: ARG001
                                              restore_git_config, publisher_user):
     """已上架的资产不能"重新提交审核" (那是驳回后专用的)."""
-    await set_setting("marketplace.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="sub-demo")
@@ -367,7 +367,7 @@ async def test_list_with_unmatched_filters(client, auth):
 async def test_search_with_special_chars(client, auth, ws,  # noqa: ARG001
                                           restore_git_config, publisher_user):
     """搜索词里带 % _ 和引号 → 不报错 (SQL 通配符注入)."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="sqli-demo")
@@ -385,7 +385,7 @@ async def test_search_hits_assets_of_that_project(client, auth, ws,  # noqa: ARG
     ⚠️ 注意语义: 搜索是**文本命中** (project 字段 LIKE %6100%),
        不是"项目筛选" (那会带上通用资产). 两者不一样, 别混.
     """
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="proj-6100-demo", project="6100")
@@ -402,7 +402,7 @@ async def test_search_hits_assets_of_that_project(client, auth, ws,  # noqa: ARG
 async def test_search_general_keyword_hits_general_assets(client, auth, ws,  # noqa: ARG001
                                                            restore_git_config, publisher_user):
     """搜「通用」→ 命中通用资产 (显示名叫「通用」, 存的却是空串)."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="gen-kw-demo", project="")
@@ -420,7 +420,7 @@ async def test_search_general_keyword_hits_general_assets(client, auth, ws,  # n
 async def test_audit_action_label_comes_from_backend(client, auth, ws,  # noqa: ARG001
                                                       restore_git_config, publisher_user):
     """审计接口要吐 action_label —— 中文只有一个真源, 前端不再自己翻译."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="audit-label-demo")
@@ -450,7 +450,7 @@ def test_audit_action_label_known_actions():
 async def test_upload_with_huge_metadata_rejected(client, auth, ws,  # noqa: ARG001
                                                   restore_git_config, publisher_user):
     """超长字段 → 422 (别把垃圾写进 manifest)."""
-    await set_setting("marketplace.review.enabled", "false")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     r = await client.post(

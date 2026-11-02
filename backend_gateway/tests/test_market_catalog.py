@@ -308,7 +308,7 @@ async def test_sync_does_not_reset_download_count(ws, restore_git_config):  # no
     # 造一个**老格式**的 index.json —— 里面带着发布时的旧快照 (0)
     idx = {
         "schema_version": mc.INDEX_SCHEMA_VERSION,
-        "generated_by": "testmate-marketplace",
+        "generated_by": "testmate-extensions",
         "assets": [{
             "code": code, "name": "下载计数演示", "kind": "skill", "version": "1.0.0",
             "summary": "摘要", "description": "", "use_when": "", "not_for": "",

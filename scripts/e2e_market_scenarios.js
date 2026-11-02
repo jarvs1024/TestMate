@@ -161,20 +161,20 @@ z.close()
   const insToken = await login(INSTALLER.username, INSTALLER.password);
 
   // 预清理: 上一轮崩了会留下同名资产 (上传会 409, 后面全乱)
-  const stale = await api(`/api/v1/assets/${ASSET}`, { method: 'DELETE', token: adminToken });
+  const stale = await api(`/api/v1/extensions/${ASSET}`, { method: 'DELETE', token: adminToken });
   if (stale.status === 200) console.log('  [预清理] 已删除残留资产', ASSET);
 
   // 场景前置: 开审核 + 把小王加进发布白名单
   // ⚠️ 改的是**生产设置** —— 先存原值, 结束必须还原.
   //    (只删测试账号是不够的: 白名单里留着已删除的测试账号 = 脏配置)
-  const TOUCHED = ['marketplace.review.enabled', 'marketplace.publisher_usernames'];
+  const TOUCHED = ['extensions.review.enabled', 'extensions.publisher_usernames'];
   const savedSettings = await getSettings(adminToken, TOUCHED);
 
   const pkg = makePkg();
   let browser = null;
   try {
-    await setSetting(adminToken, 'marketplace.review.enabled', 'true');
-    await setSetting(adminToken, 'marketplace.publisher_usernames', PUBLISHER.username);
+    await setSetting(adminToken, 'extensions.review.enabled', 'true');
+    await setSetting(adminToken, 'extensions.publisher_usernames', PUBLISHER.username);
 
     browser = await puppeteer.launch({
       executablePath: CHROME,
@@ -259,7 +259,7 @@ z.close()
     });
     await sleep(800);
 
-    const st = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    const st = await api(`/api/v1/extensions/${ASSET}`, { token: adminToken });
     check('③ 资产状态为待审核', st.json && st.json.publish_status === 'pending', st.json && st.json.publish_status);
     // 适用项目: 上传时选了 6100 → 资产上要带着
     check('③c 资产带上了适用项目 (6100 项目)',
@@ -271,7 +271,7 @@ z.close()
     // 曾经被猜成 published → 待审核的资产自动上架, 审核形同虚设.
     // 这个 bug 只在冲突判定触发时发作, 所以以前表现为"端到端偶发失败".
     await sleep(35000);
-    const stAfterSync = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    const stAfterSync = await api(`/api/v1/extensions/${ASSET}`, { token: adminToken });
     check('③b 等一个同步周期后仍是待审核',
       stAfterSync.json && stAfterSync.json.publish_status === 'pending',
       `publish_status=${stAfterSync.json && stAfterSync.json.publish_status}`);
@@ -315,7 +315,7 @@ z.close()
       b && b.click();
     });
     await sleep(2500);
-    const st2 = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    const st2 = await api(`/api/v1/extensions/${ASSET}`, { token: adminToken });
     check('⑥ 驳回后状态 rejected', st2.json && st2.json.publish_status === 'rejected', st2.json && st2.json.publish_status);
     check('⑦ 驳回理由写进资产', st2.json && st2.json.review_note === '权限声明不完整, 请补充后再提交', st2.json && st2.json.review_note);
 
@@ -352,7 +352,7 @@ z.close()
       b && b.click();
     });
     await sleep(2000);
-    const st3 = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    const st3 = await api(`/api/v1/extensions/${ASSET}`, { token: adminToken });
     check('⑪ 重新提交后回到 pending', st3.json && st3.json.publish_status === 'pending', st3.json && st3.json.publish_status);
 
     // 管理员通过
@@ -380,7 +380,7 @@ z.close()
       b && b.click();
     });
     await sleep(3000);
-    const st4 = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    const st4 = await api(`/api/v1/extensions/${ASSET}`, { token: adminToken });
     check('⑫ 审核通过后上架', st4.json && st4.json.publish_status === 'published', st4.json && st4.json.publish_status);
 
     // ===== ④ 小李(安装者) 装这个技能 =====
@@ -473,7 +473,7 @@ z.close()
     // ===== ⑤ 申请下架 → 待下架审核 (资产**仍在架**) → 撤销 → 恢复 =====
     //    新流程 (2026-10-24): 下架是**申请制** —— 管理员确认后资产才会被彻底删除.
     //    待确认期间资产**仍在市场可见** (管理员没点头之前它还在被用), 只挂个徽标.
-    const applyRes = await api(`/api/v1/assets/${ASSET}/unpublish`, {
+    const applyRes = await api(`/api/v1/extensions/${ASSET}/unpublish`, {
       method: 'POST', token: adminToken,
       // ⚠️ 这些端点的字段是 **Form**, 必须发 FormData —— 发 JSON 的话
       //    confirm_code 这种必填字段收不到 (后端直接 422).
@@ -488,7 +488,7 @@ z.close()
       `status=${applyRes.status} ${(applyRes.text || '').slice(0, 80)}`);
     await sleep(2500);
 
-    const stUnp = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    const stUnp = await api(`/api/v1/extensions/${ASSET}`, { token: adminToken });
     check('⑲ 状态是 unpublish_pending',
       stUnp.json && stUnp.json.publish_status === 'unpublish_pending',
       stUnp.json && stUnp.json.publish_status);
@@ -525,7 +525,7 @@ z.close()
       !!(pubBadges && pubBadges.includes('⏳ 待下架审核')), JSON.stringify(pubBadges));
 
     // 撤销申请 → 恢复在架
-    const cancelRes = await api(`/api/v1/assets/${ASSET}/unpublish-cancel`, {
+    const cancelRes = await api(`/api/v1/extensions/${ASSET}/unpublish-cancel`, {
       method: 'POST', token: adminToken,
       form: (() => {
         const f = new FormData();
@@ -534,30 +534,30 @@ z.close()
       })(),
     });
     await sleep(2500);
-    const st5 = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    const st5 = await api(`/api/v1/extensions/${ASSET}`, { token: adminToken });
     check('㉒ 撤销申请后恢复 published',
       cancelRes.status === 200 && st5.json && st5.json.publish_status === 'published',
       `cancel=${cancelRes.status} publish_status=${st5.json && st5.json.publish_status}`);
 
     // ===== ⑥ 审计 / 回执 / 状态统计 =====
-    const audits = await api(`/api/v1/assets/audits?code=${ASSET}`, { token: adminToken });
+    const audits = await api(`/api/v1/extensions/audits?code=${ASSET}`, { token: adminToken });
     const actions = (audits.json.items || []).map((a) => a.action);
     check('㉓ 审计留痕完整',
       ['create', 'reject', 'submit', 'approve', 'unpublish_request', 'unpublish_cancel']
         .every((a) => actions.includes(a)),
       actions.join(','));
 
-    const notif = await api('/api/v1/assets/notifications?limit=50', { token: adminToken });
+    const notif = await api('/api/v1/extensions/notifications?limit=50', { token: adminToken });
     const evs = (notif.json.items || []).filter((n) => n.code === ASSET).map((n) => n.event);
     check('㉔ 通知事件齐全 (待审/驳回/上架)',
       ['review', 'reject', 'publish'].every((e) => evs.includes(e)), evs.join(','));
 
-    const sync = await api('/api/v1/assets/sync-status?client_id=scn', { token: adminToken });
+    const sync = await api('/api/v1/extensions/sync-status?client_id=scn', { token: adminToken });
     check('㉕ 同步状态可读', sync.status === 200 && sync.json.pending_count >= 0,
       `pending=${sync.json.pending_count} failed=${sync.json.failed_count}`);
 
     // ===== ⑦ 申请下架 → 管理员通过 → 彻底删除 (新流程) =====
-    const apply2 = await api(`/api/v1/assets/${ASSET}/unpublish`, {
+    const apply2 = await api(`/api/v1/extensions/${ASSET}/unpublish`, {
       method: 'POST', token: adminToken,
       form: (() => {
         const f = new FormData();
@@ -567,7 +567,7 @@ z.close()
       })(),
     });
     await sleep(1500);
-    const del = await api(`/api/v1/assets/${ASSET}/unpublish-review`, {
+    const del = await api(`/api/v1/extensions/${ASSET}/unpublish-review`, {
       method: 'POST', token: adminToken,
       form: (() => {
         const f = new FormData();
@@ -579,9 +579,9 @@ z.close()
     check('㉖ 下架审核通过 → 资产被删除',
       apply2.status === 200 && del.status === 200,
       `apply=${apply2.status} approve=${del.status} ${(del.text || '').slice(0, 80)}`);
-    const gone = await api(`/api/v1/assets/${ASSET}`, { token: adminToken });
+    const gone = await api(`/api/v1/extensions/${ASSET}`, { token: adminToken });
     check('㉗ 删除后资产不可查', gone.status === 404, `status=${gone.status}`);
-    const listAfter = await api('/api/v1/assets?limit=200&client_id=scn', { token: adminToken });
+    const listAfter = await api('/api/v1/extensions?limit=200&client_id=scn', { token: adminToken });
     check('㉘ 删除后不在任何列表里',
       !(listAfter.json.items || []).some((i) => i.code === ASSET));
 

@@ -17,11 +17,12 @@ def build_skill_server(
     redis_client: Any | None = None,
 ) -> FastMCP:
     server = build_mcp(
-        "skill",
+        "extensions",
         public_base_url=public_base_url,
         allowed_hosts=allowed_hosts,
         redis_client=redis_client,
+        server_name="testmate-extensions",
     )
     for spec in TOOL_SPECS:
-        register_tool(server, "skill", spec, redis_client=redis_client)
+        register_tool(server, "extensions", spec, redis_client=redis_client)
     return server

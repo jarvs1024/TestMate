@@ -153,7 +153,7 @@ async function cleanup() {
   const t = cleanupToken;
   try {
     if (t) {
-      await api(`/api/v1/assets/${CODE}`, {
+      await api(`/api/v1/extensions/${CODE}`, {
         method: 'DELETE', headers: { Authorization: 'Bearer ' + t },
       });
     }
@@ -162,7 +162,7 @@ async function cleanup() {
   }
   // 还原白名单原值 (不是清空 —— 清空会把真实配置也抹掉)
   try {
-    if (t) await restoreSetting(t, 'marketplace.publisher_usernames', savedPublisherSetting);
+    if (t) await restoreSetting(t, 'extensions.publisher_usernames', savedPublisherSetting);
   } catch (e) {
     console.error(`  [清理] ⚠️ 白名单还原失败: ${String(e.message).split('\n')[0]}`);
   }
@@ -215,14 +215,14 @@ async function openPage(browser, token, user) {
   cleanupToken = adminToken;
 
   // ---------- 准备: 发布者账号 + 白名单 ----------
-  await api(`/api/v1/assets/${CODE}`, {
+  await api(`/api/v1/extensions/${CODE}`, {
     method: 'DELETE',
     headers: { Authorization: 'Bearer ' + adminToken },
   });
   await ensureUser(adminToken, PUB, PUB_PW, 'tester');
   // ⚠️ 先存原值 —— 白名单是**生产设置**, 结束时必须还原
   //    (以前直接恢复成空字符串, 会把管理员配好的真实白名单一起抹掉)
-  savedPublisherSetting = await getSetting(adminToken, 'marketplace.publisher_usernames');
+  savedPublisherSetting = await getSetting(adminToken, 'extensions.publisher_usernames');
   await api('/api/v1/settings/marketplace.publisher_usernames', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminToken },

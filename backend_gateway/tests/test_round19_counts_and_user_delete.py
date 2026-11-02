@@ -145,14 +145,14 @@ async def test_asset_counts_are_constant_across_filters(client, admin_user):
     await _seed_asset("as-b", author=me, category="工具")
     await _seed_asset("as-c", author=me, category="驱动")
 
-    r = await client.get("/api/v1/assets", headers=_auth(admin_user))
+    r = await client.get("/api/v1/extensions", headers=_auth(admin_user))
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["total"] == 3
     assert body["all_total"] == 3
     assert body["mine_total"] == 3
 
-    r2 = await client.get("/api/v1/assets", params={"category": "工具"}, headers=_auth(admin_user))
+    r2 = await client.get("/api/v1/extensions", params={"category": "工具"}, headers=_auth(admin_user))
     body2 = r2.json()
     assert body2["total"] == 2
     assert body2["all_total"] == 3
@@ -163,7 +163,7 @@ async def test_asset_mine_total_only_counts_my_items(client, admin_user, publish
     await _seed_asset("as-mine", author=publisher_user["username"])
     await _seed_asset("as-other", author=admin_user["username"])
 
-    r = await client.get("/api/v1/assets", headers=_auth(publisher_user))
+    r = await client.get("/api/v1/extensions", headers=_auth(publisher_user))
     body = r.json()
     assert body["mine_total"] == 1
     assert body["all_total"] == 2
@@ -174,7 +174,7 @@ async def test_asset_kind_filter_narrows_counts(client, admin_user):
     await _seed_asset("as-p", author=admin_user["username"], kind="plugin")
     await _seed_asset("as-s", author=admin_user["username"], kind="skill")
 
-    r = await client.get("/api/v1/assets", params={"kind": "plugin"}, headers=_auth(admin_user))
+    r = await client.get("/api/v1/extensions", params={"kind": "plugin"}, headers=_auth(admin_user))
     body = r.json()
     assert body["total"] == 1
     assert body["all_total"] == 1
