@@ -17,6 +17,14 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=TZ=@@TIMEZONE@@
 
+# ⚠️ **PATH 里必须有 venv/bin** ——
+#    app/db/session.py 的 _alembic() 用 create_subprocess_exec("alembic", ...)
+#    **裸命令**调 alembic 迁移, 靠 PATH 找可执行文件。
+#    systemd 的默认 PATH (/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
+#    里没有 venv/bin → 启动时 FileNotFoundError →
+#    "Application startup failed. Exiting." → 服务反复重启起不来。
+Environment=PATH=@@VENV_BIN@@:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # ⚠️ **只能一个 worker** ——
 #    后端的 lifespan 钩子会拉起三个后台任务: 资产市场 job 消费者 / 反向同步 puller /
 #    钉钉重试. 资产 job 走的是**进程内** asyncio.Queue + 单消费者 (git 的 index.lock 是
@@ -57,7 +65,7 @@ LockPersonality=true
 # 这些目录要可写: 运行时目录(日志/market 工作区/临时文件/软件库存放目录)
 # ⚠️ SOFTWARE_DIR 是软件包的落盘目录 (最多 5G/个) —— 必须可写,
 #    否则后端一传文件就报 "存储目录不可写".
-ReadWritePaths=@@RUNTIME_DIR@@ @@DATA_DIR@@ @@LOG_DIR@@ @@MARKET_DIR@@ @@SOFTWARE_DIR@@ @@RUN_DIR@@
+ReadWritePaths=@@RUNTIME_DIR@@ @@DATA_DIR@@ @@LOG_DIR@@ @@EXTENSIONS_DIR@@ @@SOFTWARE_DIR@@ @@RUN_DIR@@
 
 [Install]
 WantedBy=multi-user.target

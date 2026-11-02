@@ -88,6 +88,29 @@ pkg_log_tail() {
 }
 
 # ---------- 单项依赖检查 ----------
+# ===== Python 解释器选择 =====
+# ⚠️ 不要直接用 `python3`:
+#    CentOS Stream 9 的 /usr/bin/python3 指向 3.9 —— 那是因为 dnf/yum 自己
+#    是 python 写的, **不能改这个软链**。但本项目要 Python >= 3.11
+#    (requirements.lock 里 fastapi 等包不支持 3.9/3.10), 于是
+#    `python3 -m venv` 建出来的 venv 用 3.9 → pip 装依赖时
+#    "ERROR: No matching distribution found for fastapi==x.y.z"。
+#
+#    这里挑一个可用的 3.11+ 解释器, 从新到旧试: 3.13 → 3.12 → 3.11 → python3。
+#    选出来的解释器放进 PYTHON_BIN, 供建 venv / 体检 / 其它地方用。
+PYTHON_BIN=""
+for _cand in python3.13 python3.12 python3.11; do
+  if command -v "$_cand" >/dev/null 2>&1 &&
+     "$_cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' >/dev/null 2>&1; then
+    PYTHON_BIN="$_cand"; break
+  fi
+done
+if [[ -z "$PYTHON_BIN" ]] && command -v python3 >/dev/null 2>&1 &&
+   python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+fi
+export PYTHON_BIN
+
 # check_dep <逻辑名> <人类名> <最低版本> <安装提示>
 # 有 --auto 时先尝试装
 check_dep() {
@@ -95,7 +118,7 @@ check_dep() {
   local cmdname version
 
   case "$logical" in
-    python3) cmdname="python3" ;;
+    python3) cmdname="${PYTHON_BIN:-python3}" ;;
     pip)     cmdname="pip3" ;;
     node)    cmdname="node" ;;
     npm)     cmdname="npm" ;;
@@ -188,7 +211,7 @@ preflight_run() {
     "需要 Python >= 3.11 (3.10 及以下跑不动): ${PKG_MGR:+$(pkg_name python3 "$PKG_MGR")}" || true
 
   # venv 模块 (Debian/Ubuntu 上 python3 与 venv 是分开的包)
-  if have_cmd python3 && python3 -c 'import venv' >/dev/null 2>&1; then
+  if [[ -n "${PYTHON_BIN:-}" ]] && "$PYTHON_BIN" -c 'import venv' >/dev/null 2>&1; then
     chk_pass "Python venv 模块: 可用"
   elif [[ "${PREFLIGHT_AUTO:-0}" == "1" ]] && [[ -n "$PKG_MGR" ]]; then
     if pkg_install python-venv "$PKG_MGR"; then

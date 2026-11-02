@@ -58,6 +58,30 @@
 
 set -euo pipefail
 
+# ===== Python 解释器选择 =====
+# ⚠️ 不要直接用 `python3`:
+#    CentOS Stream 9 的 /usr/bin/python3 指向 3.9 —— 那是因为 dnf/yum 自己
+#    是 python 写的, **不能改这个软链**。但本项目要 Python >= 3.11
+#    (requirements.lock 里 fastapi 等包不支持 3.9/3.10), 于是
+#    `python3 -m venv` 建出来的 venv 用 3.9 → pip 装依赖时
+#    "ERROR: No matching distribution found for fastapi==x.y.z"。
+#
+#    这里挑一个可用的 3.11+ 解释器, 从新到旧试: 3.13 → 3.12 → 3.11 → python3。
+#    选出来的解释器放进 PYTHON_BIN, 供建 venv / 体检 / 其它地方用。
+PYTHON_BIN=""
+for _cand in python3.13 python3.12 python3.11; do
+  if command -v "$_cand" >/dev/null 2>&1 &&
+     "$_cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' >/dev/null 2>&1; then
+    PYTHON_BIN="$_cand"; break
+  fi
+done
+if [[ -z "$PYTHON_BIN" ]] && command -v python3 >/dev/null 2>&1 &&
+   python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+fi
+export PYTHON_BIN
+
+
 # ==================== 引导 ====================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NATIVE_DIR="$SCRIPT_DIR"
@@ -759,7 +783,7 @@ build_venv() {
   local venv="$RUNTIME_DIR/venv"
   log "准备 Python 虚拟环境"
   if [[ ! -x "$venv/bin/python" ]]; then
-    python3 -m venv "$venv" || die "创建 venv 失败 —— 装 python3-venv"
+    "${PYTHON_BIN:-python3}" -m venv "$venv" || die "创建 venv 失败 (用的解释器: ${PYTHON_BIN:-python3}) —— 装 python3-venv"
   fi
   "$venv/bin/pip" install -q --upgrade pip setuptools wheel
 
@@ -782,7 +806,15 @@ build_venv() {
 build_frontend() {
   log "构建前端"
   cd "$REPO_ROOT/frontend_web"
-  if [[ $OPT_OFFLINE -eq 1 ]]; then
+  # ⚠️ node_modules 已经存在时**跳过 npm 安装** ——
+  #    有些环境(内网机器)连不上任何 npm registry, 依赖是离线装好的
+  #    (npm pack 的 tarball 手工解包)。此时再跑 npm ci/install 会:
+  #      1) 联网失败 (ECONNRESET)
+  #      2) 或者把 node_modules 重装成别的平台的原生二进制 (esbuild/rollup)
+  #    → 只做 build。
+  if [[ -d node_modules && -x node_modules/.bin/vite ]]; then
+    warn "node_modules 已存在(离线安装) —— 跳过 npm install"
+  elif [[ $OPT_OFFLINE -eq 1 ]]; then
     local cache="$RUNTIME_DIR/npm-cache"
     mkdir -p "$cache"
     npm ci --offline --cache "$cache" --no-audit --no-fund 2>/dev/null \
@@ -1080,13 +1112,65 @@ pick_free_port() {
 # 占着这个端口的**是不是我们自己起的服务**?
 # ⚠️ 不看这个的话, 服务在跑的时候重跑 install 会把自己的端口当成"被别人占了",
 #    自动跳到下一个端口 —— 用户会发现"我啥也没改, 端口怎么变了".
+# systemd unit 的主进程 PID (没在跑返回空)
+systemd_unit_mainpid() {
+  local name="$1" unit pid
+  case "$name" in
+    backend)  unit="$BACKEND_UNIT" ;;
+    frontend) unit="$FRONTEND_UNIT" ;;
+    *)        unit="testmate-$name" ;;
+  esac
+  have_cmd systemctl || { echo ""; return 1; }
+  pid="$(systemctl show "$unit" -p MainPID --value 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$pid" != "0" ]] || { echo ""; return 1; }
+  printf '%s' "$pid"
+}
+
+# systemd unit 里真正 listen 某个端口的进程 PID
+# (nginx 是 Type=forking: MainPID 是 master, listen 的是 worker)
+systemd_unit_port_pid() {
+  local name="$1" port="$2" unit cgroup pids pid
+  case "$name" in
+    backend)  unit="$BACKEND_UNIT" ;;
+    frontend) unit="$FRONTEND_UNIT" ;;
+    *)        unit="testmate-$name" ;;
+  esac
+  have_cmd systemctl || { echo ""; return 1; }
+  cgroup="$(systemctl show "$unit" -p ControlGroup --value 2>/dev/null || true)"
+  [[ -n "$cgroup" ]] || { echo ""; return 1; }
+  # cgroup 路径 -> /sys/fs/cgroup<path>/cgroup.procs
+  local procs="/sys/fs/cgroup${cgroup}/cgroup.procs"
+  [[ -r "$procs" ]] || procs="/sys/fs/cgroup${cgroup}/tasks"
+  [[ -r "$procs" ]] || { echo ""; return 1; }
+  while read -r p; do
+    [[ -n "$p" ]] || continue
+    # 这个进程有没有 listen 这个端口?
+    if have_cmd ss; then
+      ss -ltnp "sport = :$port" 2>/dev/null | grep -q "pid=$p," && { printf '%s' "$p"; return 0; }
+    elif have_cmd lsof; then
+      lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $2}' | grep -qx "$p" && { printf '%s' "$p"; return 0; }
+    fi
+  done < "$procs"
+  echo ""
+  return 1
+}
+
 port_is_own_service() {
   local port="$1" pid own p
   pid="$(port_owner_pid "$port")"
   [[ -n "$pid" ]] || return 1
   for own in backend frontend; do
+    # systemd: MainPID 是**子进程**(uvicorn), 端口是它监听的 —— 直接比 MainPID
+    p="$(systemd_unit_mainpid "$own" 2>/dev/null || true)"
+    [[ -n "$p" && "$p" == "$pid" ]] && return 0
+    # systemd: nginx 是 Type=forking, 主进程会再 fork worker,
+    #    真正 listen 的是 worker —— 所以还要比整个 unit 的进程组
+    p="$(systemd_unit_port_pid "$own" "$port" 2>/dev/null || true)"
+    [[ -n "$p" && "$p" == "$pid" ]] && return 0
+    # local driver (PID 文件)
     p="$(local_pid "$own" 2>/dev/null || true)"
     [[ -n "$p" && "$p" == "$pid" ]] && return 0
+    # macOS launchd
     p="$(launchd_pid "com.testmate.$own" 2>/dev/null || true)"
     [[ -n "$p" && "$p" == "$pid" ]] && return 0
   done
