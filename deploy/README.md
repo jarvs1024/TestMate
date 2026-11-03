@@ -2,6 +2,8 @@
 
 > 内网 SSD 测试组 AI 工作平台。Vue 3 + FastAPI + RAGFlow。
 
+> 部署到 **25 服务器(裸机 systemd 模式)** 的实操流程 —— 更新、备份、排障 —— 看 [`native/DEPLOY-OPS.md`](native/DEPLOY-OPS.md)。
+
 ## 0. 三种模式,先选一个
 
 | | Docker(本文件) | 裸机 systemd | 裸机 local |

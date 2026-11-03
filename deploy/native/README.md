@@ -1,5 +1,7 @@
 # TestMate 裸机部署 (native)
 
+
+> **实操手册**(这台机器上实际的安装/更新流程、踩过的坑)看 [`DEPLOY-OPS.md`](DEPLOY-OPS.md)。本文讲的是功能与设计。
 > 不走 Docker, 直接在机器上跑进程。Linux 用 systemd 管生命周期和开机自启, macOS 用 launchd。
 > 适合: 内网服务器不让装 Docker / 机器资源紧张 / 运维只认 systemctl / mac 上要本地跑。
 
