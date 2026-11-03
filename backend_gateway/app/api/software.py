@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, unquote
@@ -668,6 +669,127 @@ async def download_by_ticket(
     )
 
 
+# ---------- 固定下载链接 (2026-11-03) ----------
+
+# 复合后缀 (.tar.gz / .tar.bz2 …) 要整体保留 —— 只取最后一个点后面会把 .tar 弄丢
+_COMPOUND_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst")
+# ⚠️ code 会进 Content-Disposition 头 —— 引号/换行就是**头注入**, 只留安全字符
+_DOWNLOAD_NAME_SAFE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _fixed_download_name(code: str, source_name: str) -> str:
+    """固定下载链接给的文件名 —— **{code}{真实后缀}** (不带版本号).
+
+    ⚠️ 为什么不用原文件名: 原文件名里带版本号 (如 fio-3.42-xxx.tar.gz),
+       而这个链接的意义就是"永远指向推荐版本" —— 文件名也该跟着稳定下来.
+    ⚠️ 后缀跟**真实内容**走: 存的是 tar.gz 就别给个 .bin 的名字.
+    """
+    safe = _DOWNLOAD_NAME_SAFE.sub("_", (code or "").strip()) or "package"
+    low = (source_name or "").lower()
+    for suf in _COMPOUND_SUFFIXES:
+        if low.endswith(suf):
+            return f"{safe}{suf}"
+    ext = Path(low).suffix
+    # ⚠️ 只认"像个后缀"的 (.zip / .bin / .exe …) —— ".v2" 这种不算
+    if ext and 1 < len(ext) <= 8 and ext[1:].isalnum():
+        return f"{safe}{ext}"
+    return safe
+
+
+async def _recommended_version(session, item_id: int) -> SoftwareVersion | None:
+    """推荐版本 —— **优先 is_default**, 没有推荐才取时间上最新的 ready 版本.
+
+    ⚠️ 排序跟 _latest_ready_versions 完全一致 —— 页面上「⬇ 下载」按钮下的是哪个版本,
+       固定链接就必须是哪个 (不能一个给 1.0.3、另一个给 1.0.1).
+    """
+    return (
+        await session.execute(
+            select(SoftwareVersion)
+            .where(
+                SoftwareVersion.item_id == item_id,
+                SoftwareVersion.status == "ready",
+            )
+            .order_by(
+                SoftwareVersion.is_default.desc(),
+                SoftwareVersion.created_at.desc(),
+                SoftwareVersion.id.desc(),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+@router.get("/{code}/download")
+async def download_recommended(code: str) -> FileResponse:
+    """**固定**下载链接 —— 永远返回「推荐版本」, 这个 URL **永不变**.
+
+    ⚠️ 为什么要有这个端点 (2026-11-03 用户要求):
+       别的软件 / 脚本要用 wget 拉这个包 → 地址必须**固定不变**:
+       以后发新版本、换推荐版本, 这个地址都还得能用.
+       以前只有 `/dl?t=<10 分钟短时票>&v=<版本>` —— 票会过期、URL 里带着版本号,
+       做不了"贴到别的软件里就一直用"这件事.
+
+    ⚠️ **免登录** (用户明确要求): wget 默认不带 Authorization 头.
+       → 任何拿到这个地址的人都能下载, 所以只对**已上架**
+         (publish_status=published) 的软件开放; 待上架 / 已下架 / 已删除的一律 404.
+       ⚠️ 这个取舍是用户拍板的 —— 内部工具换来"一条 wget 命令就能拉"的好处.
+
+    ⚠️ 版本选择跟页面上「⬇ 下载」那个按钮**完全一致**:
+       优先「推荐版本」(is_default), 没有推荐才取时间上最新的 ready 版本.
+       所以"页面上推荐哪个, 这个链接就下哪个".
+    """
+    async with AsyncSessionLocal() as session:
+        item = (
+            await session.execute(select(SoftwareItem).where(SoftwareItem.code == code))
+        ).scalar_one_or_none()
+        if item is None or item.deleted_at is not None:
+            raise HTTPException(status_code=404, detail=f"软件 {code} 不存在")
+        if item.publish_status != "published":
+            # ⚠️ 免登录的端点 —— 只能给**已上架**的软件开.
+            #    未上架/已下架的内部工具不该被一条裸链接带出去.
+            raise HTTPException(status_code=404, detail=f"软件 {code} 不存在")
+
+        # ⚠️ 排序跟页面上「⬇ 下载」那个按钮**完全一致**: 推荐版本排最前, 其次按时间.
+        ver = await _recommended_version(session, item.id)
+        if ver is None:
+            raise HTTPException(status_code=404, detail="这个软件还没有可下载的文件")
+
+        # ⚠️ 在**所有候选根**里找文件 —— 管理员改过 storage_path 时老文件还在旧根
+        roots = await _roots()
+        path = software_store.locate_under(roots, ver.file_path)
+        if path is None:
+            raise HTTPException(status_code=404, detail="文件不在服务器上了, 请联系管理员")
+
+        # 下载次数 +1 —— 原子自增 (先读后写会丢计数)
+        await session.execute(
+            update(SoftwareItem).where(SoftwareItem.id == item.id)
+            .values(download_count=SoftwareItem.download_count + 1)
+        )
+        await session.execute(
+            update(SoftwareVersion).where(SoftwareVersion.id == ver.id)
+            .values(download_count=SoftwareVersion.download_count + 1)
+        )
+        await session.commit()
+
+        file_name = _fixed_download_name(code, ver.file_name)
+        sha = ver.sha256
+        version = ver.version
+
+    return FileResponse(
+        path,
+        filename=file_name,
+        media_type="application/octet-stream",
+        headers={
+            "X-Content-Sha256": sha,
+            # ⚠️ 顺便把**实际下到的版本**说出来 —— 万一有人要确认"这个链接现在给的是哪版"
+            "X-Software-Version": version,
+            # ⚠️ 固定链接的缓存: 别让 CDN/浏览器把某一版缓存住 ——
+            #    推荐版本变了, 下一次 wget 拿到的必须是新的那个.
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
 @router.get("/{code}", response_model=SoftwareDetailOut)
 async def get_software(code: str, user: User = Depends(get_current_user)) -> SoftwareDetailOut:
     """详情: 条目 + 版本历史 (每版带更新说明/大小/sha256/下载次数)."""
@@ -690,11 +812,24 @@ async def get_software(code: str, user: User = Depends(get_current_user)) -> Sof
             )
         ).scalars().all()
         ready_map = await _latest_ready_versions(session, [item.id])
+        # ⚠️ 2026-11-03: 固定下载链接的基地址 —— 设置项优先, 没配就用请求来源
+        public_base = str(await _setting("software.public_base_url", "") or "").strip().rstrip("/")
+        # ⚠️ 推荐版本 —— 固定链接下的是它 (跟页面「⬇ 下载」按钮一致)
+        rec = await _recommended_version(session, item.id)
 
     out = SoftwareDetailOut.model_validate(item)
     out.can_edit = can_edit
     out.download_version = ready_map.get(item.id, "")
     out.versions = [SoftwareVersionOut.model_validate(v) for v in versions]
+    # ⚠️ 只有**已上架**的软件才有固定链接 —— 未上架的没有免登录下载这回事
+    if item.publish_status == "published" and out.download_version:
+        out.fixed_download_url = (
+            f"{public_base}/api/v1/software/{quote(code, safe='')}/download"
+            if public_base
+            else f"/api/v1/software/{quote(code, safe='')}/download"
+        )
+        if rec is not None:
+            out.fixed_download_name = _fixed_download_name(code, rec.file_name)
     return out
 
 

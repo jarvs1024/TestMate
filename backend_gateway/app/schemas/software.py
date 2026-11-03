@@ -90,6 +90,14 @@ class SoftwareDetailOut(SoftwareOut):
     """详情 = 条目 + 版本历史."""
 
     versions: list[SoftwareVersionOut] = []
+    # ⚠️ 2026-11-03 (第二十二轮): **固定**下载链接 (免登录, 永远指向推荐版本).
+    #
+    #    这个 URL **永不变** —— 发新版本、换推荐版本都还是它.
+    #    别的软件/脚本拿它 wget, 所以要一个绝对地址 (不是相对路径).
+    #    空 = 这个软件没上架 (未上架的没有固定链接).
+    fixed_download_url: str = ""
+    # ⚠️ 固定链接下载下来时的文件名 ({code}{真实后缀}) —— 前端给 wget 命令用
+    fixed_download_name: str = ""
 
 
 class SoftwareCategoryOut(BaseModel):

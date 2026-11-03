@@ -75,9 +75,12 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   /**
    * 表单状态 —— 只放**表单里真能填**的字段.
    *
-   * 详细说明 / 不适用 / 安装步骤 / 设为精选 已经从表单里去掉了 (2026-10-24),
-   * 所以它们**不在 form 里** —— 更新版本时直接取 asset 的原值提交,
-   * 免得"没填"把老资产的字段清空 (也不必维护一份用不到的表单状态)。
+   * ⚠️ 2026-11-03 (第二十二轮) 更新: 「详细说明 / 不适用场景 / 安装步骤」
+   *   **重新回到上架表单里了** —— 以前只有「只改元信息」模式有输入框,
+   *   新上架的资产这几个字段恒为空 → 编辑页看到 4 个空框 (跟详情页对不上).
+   *   现在 create / edit 两种模式都能填, 发新版本 (update) 保留原值.
+   *
+   * 设为精选 仍然不在表单里 (前端不提供这个入口).
    */
   const form = reactive({
     code: CODE_PREFIX, kind: 'skill' as MarketKind, name: '', version: '1.0.0',
@@ -434,7 +437,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
       step.value = 'form';
       form.code = a.code; form.kind = a.kind; form.name = a.name; form.version = a.version;
       form.summary = a.summary;
-      form.use_when = a.use_when;
+      form.use_when = a.use_when || '';
       form.category = a.category; form.icon = a.icon;
       form.project = a.project || '';   // 适用项目: 带出原值 (可改)
       // 连接器: 带出老配置 (发布新版本 = 只改这段配置)

@@ -1,5 +1,7 @@
 <template>
-  <el-drawer :model-value="modelValue" size="620px" direction="rtl"
+  <!-- ⚠️ size 用 min(860px, 94vw) —— 写死像素在窄屏下抽屉整个跑到屏幕外;
+       860px 是为了放得下「下载安装包 + 说明」那一整段不挤字 (2026-11-03) -->
+  <el-drawer :model-value="modelValue" size="min(860px, 94vw)" direction="rtl"
              @update:model-value="emit('update:modelValue', $event)">
     <template #header>
       <div v-if="item" class="ad-hd">
@@ -81,10 +83,23 @@
         </span>
       </div>
 
-      <!-- ⚠️ 「适用场景」整块去掉了 (2026-10-25 用户要求):
-           上传表单里已经不让人填这个字段 (新建不填 / 更新保留原值),
-           页面再单列一块只是把 README 里的内容重复一遍. -->
-      <!-- ⚠️ 「不适用」也早就去掉了 (2026-10-24): README 里已经写了, 页面再列一遍是重复. -->
+      <!-- ⚠️ 2026-11-03 (第二十二轮) 把「适用场景 / 不适合的场景 / 安装步骤」加回来了.
+           ⚠️ 以前 (2026-10-25) 整块删掉, 理由是"上传表单已经不让人填, 页面再列一遍是重复".
+              但 2026-10-30 只在「只改元信息」模式补了输入框, **上架时还是没有** →
+              新资产的这些字段恒为空 → 用户在编辑页看到 4 个空框, 详情页又只有包里的
+              SKILL.md → "编辑页和上架内容对不上".
+           ✅ 现在上架表单**也能填**这几项 → 填了什么这里就显示什么, 编辑页改完立刻可见. -->
+      <div v-if="item.use_when || item.not_for" class="ad-block">
+        <div class="ad-block-h">🎯 适用场景</div>
+        <div v-if="item.use_when" class="ad-when ok">
+          <span class="wb-tag">适合</span>
+          <span class="wb-text">{{ item.use_when }}</span>
+        </div>
+        <div v-if="item.not_for" class="ad-when no">
+          <span class="wb-tag">不适合</span>
+          <span class="wb-text">{{ item.not_for }}</span>
+        </div>
+      </div>
 
       <!-- 连接器: 只有一段 MCP 配置 (没有 README) -->
       <div v-if="item.kind === 'mcp'" class="ad-block">
@@ -106,9 +121,15 @@
         <div v-else class="ad-doc-empty">暂无文档内容</div>
       </div>
 
-      <!-- ⚠️ 权限声明 / 安装步骤 的独立区块都去掉了 (2026-10-24):
-           权限声明 —— 上传表单里已经不让填了, 留着只会显示"没填"却像是"确认不需要";
-           安装步骤 —— README 里本来就有一份, 两处重复. -->
+      <!-- ⚠️ 权限声明的独立区块仍然没有 (2026-10-24): 上传表单里已经不让填了,
+           留着只会显示"没填"却像是"确认不需要".
+           ⚠️ 安装步骤 2026-11-03 加回来了 —— 上架表单里现在能填, 不填就不显示. -->
+      <div v-if="installStepList.length" class="ad-block">
+        <div class="ad-block-h">🧩 安装步骤</div>
+        <ol class="ad-steps">
+          <li v-for="(s, i) in installStepList" :key="i">{{ s }}</li>
+        </ol>
+      </div>
 
 
       <div class="ad-tags">
@@ -356,6 +377,14 @@ async function doDiscard() {
 }
 
 const docHtml = computed(() => renderMarkdown(doc.value?.content || ''));
+
+/**
+ * 安装步骤 —— 后端存的是**列表** (install_steps: list[str]), 一条一步.
+ *
+ * ⚠️ 2026-11-03 (第二十二轮) 加回来的 —— 上架表单里现在能填这一项,
+ *    填了这里就显示 (不填就不占位).
+ */
+const installStepList = computed(() => (props.item?.install_steps || []).filter(Boolean));
 
 /** 待下架审核时的提示 —— 管理员看到的是"等你拍板", 作者看到的是"等管理员确认" */
 const unpublishPendingText = computed(() => {
@@ -704,6 +733,28 @@ async function doSubmit() {
 .ad-block-h.perm { color: var(--ink-900); }
 .ad-block-b { font-size: 12.5px; color: var(--ink-700); line-height: 1.6; }
 .ad-block-b.muted { color: var(--ink-500); font-style: italic; }
+
+/* ⚠️ 2026-11-03 (第二十二轮): 适用场景 / 安装步骤 —— 跟软件的详情抽屉同款样式 */
+.ad-when {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 7px 10px; border-radius: var(--radius-sm);
+  font-size: 12.5px; line-height: 1.6; color: var(--ink-700);
+  background: var(--surface-sunken); border: 1px solid var(--border);
+}
+.ad-when + .ad-when { margin-top: 6px; }
+.ad-when .wb-tag {
+  flex-shrink: 0; font-size: 11px; font-weight: 700;
+  padding: 1px 7px; border-radius: 999px;
+}
+.ad-when.ok .wb-tag { color: var(--ok); background: rgba(52, 211, 153, 0.14); }
+.ad-when.no .wb-tag { color: var(--warn); background: rgba(251, 191, 36, 0.14); }
+.ad-when .wb-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+
+.ad-steps {
+  margin: 0; padding-left: 20px;
+  font-size: 12.5px; line-height: 1.7; color: var(--ink-700);
+}
+.ad-steps li { margin-bottom: 3px; }
 .ad-loading { font-size: 11px; color: var(--ink-500); font-weight: 400; }
 
 /* 文档正文 — 内容已由 DOMPurify 消毒 */

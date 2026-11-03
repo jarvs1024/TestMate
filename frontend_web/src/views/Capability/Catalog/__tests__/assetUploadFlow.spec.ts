@@ -196,19 +196,25 @@ describe('上传抽屉: 类型头与换类型', () => {
 });
 
 describe('上传抽屉: 表单内容', () => {
-  it('进阶信息只留标签 / 关键词, 「适用场景」整个表单里都没有了', async () => {
+  it('⚠️ 上架时也能填 详细说明 / 适用场景 / 不适合的场景 / 安装步骤 (2026-11-03 加回来)', async () => {
+    // ⚠️ 2026-11-03 (第二十二轮) 翻转了 2026-10-25 的决定:
+    //    以前上架表单里**没有**这几项 → 新上架的资产这些字段恒为空 →
+    //    以后进「编辑」看到 4 个空框, 而详情页明明有一大段说明 →
+    //    用户看到的"编辑页和上架内容对不上".
+    //    现在上架就能填 → 编辑有值 → 详情页显示, 闭环.
     const w = await open({ initialKind: 'skill' });
+    const form = w.find('.up-form').text();
+    expect(form).toContain('详细说明');
+    expect(form).toContain('适用场景');
+    expect(form).toContain('不适合的场景');
+    expect(form).toContain('安装步骤');
+
+    // 进阶信息块里仍然只留标签 / 关键词 —— 这几项不在"进阶"里, 在基础信息里
     const adv = w.find('.adv-body').text();
     expect(adv).toContain('标签');
     expect(adv).toContain('搜索关键词');
-    // 这些都不该再出现在表单里
-    expect(adv).not.toContain('详细说明');
-    expect(adv).not.toContain('不适用');
-    expect(adv).not.toContain('安装步骤');
     expect(adv).not.toContain('设为精选');
     expect(adv).not.toContain('权限声明');
-    // ⚠️ 「适用场景」也不在表单里了 (用户 2026-10-25 去掉)
-    expect(w.find('.up-form').text()).not.toContain('适用场景');
   });
 
   it('资产 code 是**只读展示**, 不给输入框 (它是包名派生的)', async () => {

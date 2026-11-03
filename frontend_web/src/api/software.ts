@@ -73,6 +73,16 @@ export interface SoftwareItem {
 
 export interface SoftwareDetail extends SoftwareItem {
   versions: SoftwareVersion[];
+  /**
+   * **固定**下载链接 (2026-11-03) —— 免登录, 永远指向「推荐版本」, URL 永不变.
+   *
+   * ⚠️ 别的软件/脚本拿它 wget → 所以是绝对地址 (后端没配
+   *    `software.public_base_url` 时给的是相对路径, 前端要自己拼上当前 origin).
+   * ⚠️ 空 = 这个软件没上架 (未上架的没有固定链接).
+   */
+  fixed_download_url?: string;
+  /** 固定链接下载下来时的文件名 ({code}{真实后缀}) —— wget 命令里 -O 用它 */
+  fixed_download_name?: string;
 }
 
 export interface SoftwareListResp {

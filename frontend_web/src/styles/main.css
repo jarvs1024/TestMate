@@ -783,6 +783,23 @@ html[data-theme="dark"] {
   background-color: transparent !important;
 }
 
+/* ③ 暗色: 浮层背后**再糊一层** (2026-11-03 · 第二十二轮).
+ *
+ * ⚠️ 用户报的毛病: 暗色下抽屉背后的**页面卡片文字直接透上来**, 跟抽屉正文
+ *    叠在一起 —— "相关字体会被覆盖".
+ * ✅ 底色 alpha 已经从 .55 提到 .94 (见 tokens.css), 但剩下那 6% 的透出
+ *    在深色底上仍然看得见 (浅色卡片文字 × 6% 还是比深底亮).
+ * ✅ 再加一层 backdrop-filter: blur() —— 背后变成一团模糊的色块,
+ *    **看着还是毛玻璃, 但一个字都读不出来**, 叠字问题彻底断掉.
+ *
+ * ⚠️ 只在**暗色**下加 —— 亮色底色本来就是不透明纯白, 加了没意义。 */
+html[data-theme="dark"] .el-drawer,
+html[data-theme="dark"] .el-dialog,
+html[data-theme="dark"] .el-message-box {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
 /* 浮层里的原生输入框 (项目自己的 .tm-input) —— 边框跟 EP 控件对齐.
    ⚠️ 页面上的 --border 只有 6% 的墨色, 那是给「半透明卡片」设计的;
       浮层现在是**纯白面板**, 6% 的边几乎看不见 → 输入框整个糊掉. */

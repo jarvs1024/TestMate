@@ -441,7 +441,7 @@
     </div>
 
     <!-- 数据集详情抽屉 (P1) -->
-    <el-drawer v-model="detailOpen" :title="detailDs?.name || '数据集详情'" size="520px" direction="rtl">
+    <el-drawer v-model="detailOpen" :title="detailDs?.name || '数据集详情'" size="min(760px, 94vw)" direction="rtl">
       <template v-if="detailDs">
         <div class="dt">
           <div class="dt-row"><span class="dt-k">ID</span><span class="dt-v mono">{{ detailDs.id }}</span></div>
@@ -468,7 +468,7 @@
     </el-drawer>
 
     <!-- 新建数据集抽屉 (2026-10-29) -->
-    <el-drawer v-model="createOpen" title="新建数据集" size="520px" direction="rtl">
+    <el-drawer v-model="createOpen" title="新建数据集" size="min(760px, 94vw)" direction="rtl">
       <div class="cd-panel">
         <div class="cd-field">
           <label class="cd-lbl">数据集名称 <span class="cd-req">*</span></label>
@@ -576,7 +576,7 @@
     </el-drawer>
 
     <!-- 上传文档抽屉 (2026-10-29) -->
-    <el-drawer v-model="uploadOpen" title="上传文档到知识库" size="520px" direction="rtl">
+    <el-drawer v-model="uploadOpen" title="上传文档到知识库" size="min(760px, 94vw)" direction="rtl">
       <div class="up-panel">
         <div class="cd-field">
           <label class="cd-lbl">目标数据集</label>
@@ -637,7 +637,7 @@
     </el-drawer>
 
     <!-- 更新文档抽屉 (2026-10-29) -->
-    <el-drawer v-model="updateOpen" title="更新文档内容" size="520px" direction="rtl">
+    <el-drawer v-model="updateOpen" title="更新文档内容" size="min(760px, 94vw)" direction="rtl">
       <div class="up-panel up-panel-update" v-if="updateDoc">
         <div class="up-rules">
           · 当前文档：<b>{{ updateDoc.name }}</b>（{{ fmtSize(updateDoc.size) }} / {{ updateDoc.chunk_count }} 个分段）<br />
@@ -684,7 +684,7 @@
     </el-drawer>
 
     <!-- 文档分段预览抽屉 -->
-    <el-drawer v-model="chunksOpen" :title="chunksTitle" size="640px" direction="rtl">
+    <el-drawer v-model="chunksOpen" :title="chunksTitle" size="min(860px, 94vw)" direction="rtl">
       <div class="chunks-panel">
         <div class="chunks-hd">
           <div class="chunks-meta">
@@ -717,7 +717,7 @@
     </el-drawer>
 
     <!-- 文档详情抽屉 -->
-    <el-drawer v-model="docDetailOpen" :title="docDetail?.name || '文档详情'" size="540px" direction="rtl">
+    <el-drawer v-model="docDetailOpen" :title="docDetail?.name || '文档详情'" size="min(760px, 94vw)" direction="rtl">
       <template v-if="docDetail">
         <div class="dt">
           <div class="dt-row"><span class="dt-k">ID</span><span class="dt-v mono">{{ docDetail.id }}</span></div>

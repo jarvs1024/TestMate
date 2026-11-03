@@ -1,5 +1,5 @@
 <template>
-  <el-drawer :model-value="modelValue" size="760px" direction="rtl"
+  <el-drawer :model-value="modelValue" size="min(900px, 94vw)" direction="rtl"
              :title="mode === 'version' ? `发布新版本 · ${item?.name || ''}` : '上架软件'"
              :close-on-click-modal="false" class="sw-up-drawer"
              @update:model-value="emit('update:modelValue', $event)">
@@ -137,16 +137,28 @@
           <p class="hint">一行一条 —— 卡片上会显示前 3 条.</p>
         </el-form-item>
 
-        <el-form-item label="适用场景">
-          <el-input v-model="form.use_when" type="textarea" :rows="2"
-                    placeholder="什么情况下该用它" />
+        <!-- ⚠️ 2026-11-03 (第二十二轮): 「详细说明」加回来了.
+               以前 (2026-10-28) 跟「不适合的场景」一起去掉, 理由是"跟功能清单/安装说明重叠".
+               ⚠️ 但「编辑软件」弹窗里**一直有**这两个框 —— 于是上架时填不了,
+                  编辑页看到的永远是空框 (老数据才有值) → 跟扩展那边同一个病:
+                  **编辑页的框和上架内容对不上**.
+               ✅ 现在上架就能填 → 编辑有值 → 详情页的条件渲染也才有东西可显示. -->
+        <el-form-item label="详细说明">
+          <el-input v-model="form.description" type="textarea" :rows="3"
+                    placeholder="这个软件到底是什么、怎么用 —— 详情页会整段显示" />
+          <p class="hint">选填 —— 填了详情页会显示「详情」一栏, 没填就不占位.</p>
         </el-form-item>
 
-        <!-- ⚠️ 2026-10-28: 「详情」和「不适合的场景」两个输入框**去掉了** ——
-             上架时只填真正影响"能不能用、怎么用"的信息, 少两个框少两次纠结.
-             · 「详情」= 一段自由文本, 跟「功能清单」「安装说明」重叠, 详情页本来就有条件渲染;
-             · 「不适合的场景」更没必要 —— 「注意事项」已经覆盖了"别乱用"这件事.
-             两者在后端都是 nullable=False + default="", 不传就是空串, 老数据照常显示. -->
+        <div class="row-2">
+          <el-form-item label="适用场景">
+            <el-input v-model="form.use_when" type="textarea" :rows="2"
+                      placeholder="什么情况下该用它" />
+          </el-form-item>
+          <el-form-item label="不适合的场景">
+            <el-input v-model="form.not_for" type="textarea" :rows="2"
+                      placeholder="什么情况下别用它" />
+          </el-form-item>
+        </div>
 
         <!-- ===== 安装说明 / 注意事项 —— **选填**, 详情页有则显示、无则不占位 ===== -->
         <el-form-item label="安装说明">
@@ -318,8 +330,10 @@ const mode = computed(() => props.mode || 'create');
 function emptyForm() {
   return {
     code: '', name: '', icon: '🧰', version: '1.0.0', summary: '',
-    // ⚠️ 2026-10-28: `description`(详情) 和 `not_for`(不适合的场景) 不再是表单字段 ——
-    //    上架时不再问这两个, 提交时也不传 (后端 default="", 老数据照常显示).
+    // ⚠️ 2026-11-03 (第二十二轮): `description`(详情) 和 `not_for`(不适合的场景)
+    //    **重新回到上架表单** —— 以前 2026-10-28 去掉, 但「编辑软件」弹窗里一直有这两个框
+    //    → 上架时填不了, 编辑页看到的永远是空框 (跟扩展那边同一个病).
+    description: '', not_for: '',
     use_when: '', platform: '', category: '', tags: '', keywords: '',
     // 安装说明 / 注意事项 —— 选填 (2026-10-28)
     install_steps: '', caveats: '',
@@ -662,7 +676,10 @@ async function submit() {
         summary: form.value.summary.trim(),
         features: splitFeatures(featuresText.value),
         use_when: form.value.use_when,
-        // ⚠️ 不再传 description / not_for (2026-10-28) —— 上架页没有这两个输入框了
+        // ⚠️ 2026-11-03 (第二十二轮): 「详细说明 / 不适合的场景」上架页**又有输入框了**
+        //    (以前 2026-10-28 去掉 → 编辑页那俩框永远是空的, 跟上架内容对不上)
+        description: form.value.description,
+        not_for: form.value.not_for,
         // 安装说明 / 注意事项 (选填)
         install_steps: form.value.install_steps,
         caveats: form.value.caveats,

@@ -1,5 +1,7 @@
 <template>
-  <el-drawer :model-value="modelValue" size="720px" direction="rtl"
+  <!-- ⚠️ size 用 min(900px, 94vw) —— 头部要放得下「下载 + 编辑 + 发布新版本」三个按钮,
+       超长版本名才不至于把标题挤成竖排 (2026-11-03) -->
+  <el-drawer :model-value="modelValue" size="min(900px, 94vw)" direction="rtl"
              :title="item ? `软件详情 · ${item.name}` : '软件详情'"
              :close-on-click-modal="false" class="sw-drawer"
              @update:model-value="emit('update:modelValue', $event)">
@@ -43,6 +45,7 @@
         </div>
         <div class="sw-hd-actions">
           <button class="mini-btn primary" :disabled="!item.download_version"
+                  :title="defaultLabel || '下载'"
                   @click="doDownload(item.download_version)">
             ⬇ 下载{{ item.download_version ? ` ${defaultLabel}` : '' }}
           </button>
@@ -153,6 +156,31 @@
         </div>
       </section>
 
+      <!-- ===== 固定下载链接 (2026-11-03 · 第二十二轮) =====
+           这个地址**永远不变** —— 发新版本、换推荐版本都还是它.
+           别的软件/脚本拿它 wget, 所以一行命令就能拉. -->
+      <section v-if="fixedUrl" class="sw-sec">
+        <div class="sec-h">
+          <span class="sec-no">{{ secNos.fixed }}</span>固定下载链接
+          <span class="sec-tip">永远指向推荐版本</span>
+        </div>
+        <p class="fx-tip">
+          这个地址<b>不会变</b> —— 以后发新版本、换推荐版本, 都还是它.
+          下到的永远是当前<b>推荐</b>的那一版. 免登录, 别的机器可以直接 wget.
+        </p>
+        <div class="fx-row">
+          <code class="fx-url mono">{{ fixedUrl }}</code>
+          <button class="mini-btn" @click="copyFixed(fixedUrl)">复制地址</button>
+        </div>
+        <div class="fx-row">
+          <code class="fx-cmd mono">{{ fixedWgetCmd }}</code>
+          <button class="mini-btn" @click="copyFixed(fixedWgetCmd)">复制命令</button>
+        </div>
+        <p class="fx-tip dim">
+          ⚠️ 免登录的地址 —— 拿到的人都能下. 只给**已上架**的软件开这个链接.
+        </p>
+      </section>
+
       <!-- ===== 标签 / 元信息 ===== -->
       <section v-if="item.tags?.length || item.keywords?.length" class="sw-sec">
         <div class="sec-h"><span class="sec-no">{{ secNos.tags }}</span>标签</div>
@@ -233,6 +261,27 @@ const loading = ref(false);
 const loadError = ref('');
 
 /**
+ * **固定**下载链接 (2026-11-03 · 第二十二轮).
+ *
+ * ⚠️ 后端没配 `software.public_base_url` 时给的是**相对路径** ——
+ *    这里拼上当前 origin (用户是从哪个地址访问的, 就给哪个地址).
+ *    配了设置项的话后端给的是绝对地址, 直接用.
+ */
+const fixedUrl = computed(() => {
+  const u = item.value?.fixed_download_url || '';
+  if (!u) return '';
+  return /^https?:\/\//i.test(u) ? u : `${window.location.origin}${u}`;
+});
+
+/** 固定链接下载下来时的文件名 ({code}{真实后缀}) —— wget 的 -O 用它 */
+const fixedFileName = computed(() =>
+  item.value?.fixed_download_name || `${item.value?.code || 'package'}.zip`);
+
+/** 一行就能贴到别处的 wget 命令 */
+const fixedWgetCmd = computed(() =>
+  `wget -O ${fixedFileName.value} "${fixedUrl.value}"`);
+
+/**
  * 详情页各区块的**连续编号** —— 条件渲染的块不占号.
  *
  * ⚠️ 2026-10-28: 以前这里是硬编码的 1..7, 但每个块都是 `v-if` 条件渲染 ——
@@ -251,9 +300,20 @@ const secNos = computed(() => {
   if (it?.install_steps) out.install = take();
   if (it?.caveats) out.caveats = take();
   out.versions = take();          // 版本历史总是显示
+  if (fixedUrl.value) out.fixed = take();   // 固定下载链接 (2026-11-03)
   if (it?.tags?.length || it?.keywords?.length) out.tags = take();
   return out;
 });
+
+/** 复制 (地址 / 命令) —— 剪贴板不可用时降级提示, 别静默失败 */
+async function copyFixed(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    ElMessage.success('已复制到剪贴板');
+  } catch {
+    ElMessage.warning('复制失败 —— 请手动选中复制');
+  }
+}
 
 /**
  * 推荐下载版本的显示名 —— 版本号 + 变体标签 (有的话).
@@ -487,17 +547,28 @@ function statusLabel(s: string): string {
 }
 .reset:hover { border-color: var(--primary); color: var(--primary); }
 
-.sw-hd { display: flex; gap: 12px; align-items: flex-start; }
+/* ⚠️ 2026-11-03 (第二十二轮): 头部 = 标题区 + 三个动作按钮.
+   以前 `.sw-hd-actions` 是 flex-shrink:0 —— 按钮里的版本名一长 (如
+   "fio-3.42-dml-20260921 CXL/DAX 增强版 (Linux x86_64 安装包)"),
+   按钮就把标题区挤成**竖排一列字** (用户报的图2). 现在:
+     · .sw-hd 允许换行 —— 放不下就让按钮掉到第二行;
+     · .sw-hd-main 至少 240px —— 标题永远是一行, 不会被挤扁;
+     · 按钮文案限宽 + 省略号 —— 完整值在 title 里. */
+.sw-hd { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
 .sw-icon {
   width: 42px; height: 42px; border-radius: 11px;
   background: linear-gradient(135deg, var(--primary), var(--primary-2));
   display: flex; align-items: center; justify-content: center;
   font-size: 21px; flex-shrink: 0; box-shadow: var(--primary-shadow);
 }
-.sw-hd-main { flex: 1; min-width: 0; }
+.sw-hd-main { flex: 1 1 260px; min-width: 240px; }
 .sw-name { font-size: 17px; font-weight: 700; color: var(--ink-900); line-height: 1.25; }
 .sw-sub { font-size: 11.5px; color: var(--ink-500); margin-top: 3px; }
-.sw-hd-actions { display: flex; gap: 7px; flex-shrink: 0; }
+.sw-hd-actions { display: flex; gap: 7px; flex-shrink: 0; flex-wrap: wrap; }
+/* ⚠️ 按钮里的版本名可能超长 → 限宽 + 省略号 (完整值在 title 里) */
+.sw-hd-actions .mini-btn {
+  max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .sw-note {
   padding: 8px 11px; border-radius: var(--radius-sm); font-size: 12px;
@@ -521,6 +592,21 @@ function statusLabel(s: string): string {
 .sec-tip { font-size: 10.5px; color: var(--ink-500); font-weight: 400; margin-left: auto; }
 
 .feature-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-700); line-height: 1.75; }
+
+/* ⚠️ 2026-11-03 (第二十二轮): 固定下载链接 —— 地址 + wget 命令, 都能一键复制 */
+.fx-tip { margin: 0; font-size: 12px; color: var(--ink-700); line-height: 1.6; }
+.fx-tip.dim { color: var(--ink-500); font-size: 11.5px; }
+.fx-tip b { color: var(--ink-900); }
+.fx-row { display: flex; align-items: center; gap: 8px; }
+.fx-url, .fx-cmd {
+  flex: 1; min-width: 0;
+  padding: 7px 10px; border-radius: var(--radius-sm);
+  background: var(--surface-sunken); border: 1px solid var(--border);
+  font-size: 11.5px; color: var(--ink-900);
+  overflow-x: auto; white-space: nowrap;
+}
+.fx-cmd { color: var(--primary-2); }
+.fx-row .mini-btn { flex-shrink: 0; }
 .pre-wrap { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; color: var(--ink-700); line-height: 1.65; }
 
 /* ===== 安装说明 (选填) ===== */

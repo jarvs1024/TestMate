@@ -1,5 +1,6 @@
 <template>
-  <el-drawer :model-value="modelValue" size="760px" direction="rtl"
+  <!-- ⚠️ size 用 min(900px, 94vw) —— 表单两列 (基础信息 / 详细说明) 要放得下 (2026-11-03) -->
+  <el-drawer :model-value="modelValue" size="min(900px, 94vw)" direction="rtl"
              :title="mode === 'edit' ? `编辑资产 · ${asset?.name || ''}`
                      : (mode === 'update' ? `更新资产 · ${asset?.name || ''}` : '上传新资产')"
              :close-on-click-modal="false" :with-header="true"
@@ -256,10 +257,15 @@
             <p v-if="mode === 'update'" class="hint">发新版本建议 +1 (如 1.0.0 → 1.1.0)</p>
           </el-form-item>
 
-          <!-- ⚠️ 2026-10-30 「只改元信息」: 这几项上架表单里**没有**输入框,
-               但用户想改的就是它们 (详细说明 / 适用场景 / 安装步骤) ——
-               以前只能靠"发新版本"改, 太重了. -->
-          <template v-if="mode === 'edit'">
+          <!-- ⚠️ 2026-11-03 (第二十二轮): 这几项**上架时也能填**了.
+               ⚠️ 以前 (2026-10-30) 只有「只改元信息」模式才有输入框, 新建/发新版本没有 ——
+                  于是**新上架的资产这几个字段恒为空** → 以后进「编辑」看到 4 个空框,
+                  而详情页明明有一大段说明 (那段其实来自包里的 SKILL.md) →
+                  用户看到的"编辑页和上架内容对不上".
+               ✅ 现在: 新建 (create) 也能填; 发新版本 (update) **不显示** ——
+                  那条路的元信息字段一律保留原值 (见下面的 submit).
+               ✅ 详情页也跟着显示这几项 (见 AssetDetailDrawer) —— 填了什么就显示什么. -->
+          <template v-if="mode !== 'update'">
             <el-form-item label="详细说明">
               <el-input v-model="form.description" type="textarea" :rows="4"
                         placeholder="这个资产到底是什么、怎么用 —— 详情页会整段显示" />
@@ -579,18 +585,21 @@ async function submit() {
     name: form.name.trim(),
     version: form.version.trim() || '1.0.0',
     summary: form.summary.trim(),
-    // ⚠️ 详细说明 / 不适用 / 安装步骤 / 设为精选 已经不在表单里填了 ——
-    //    更新版本时**保留原值** (从 asset 取), 别让"没填"把老资产的字段清空。
-    description: props.mode === 'update' ? (props.asset?.description || '') : '',
+    // ⚠️ 2026-11-03 (第二十二轮): 这几项现在**上架时也能填**了 (表单里有输入框了).
+    //    发新版本 (update) 那一路**不显示**这几项 → 一律保留原值 (从 asset 取),
+    //    别让"没填"把老资产的字段清空。
+    description: props.mode === 'update' ? (props.asset?.description || '') : form.description,
     use_when: form.use_when,
-    not_for: props.mode === 'update' ? (props.asset?.not_for || '') : '',
+    not_for: props.mode === 'update' ? (props.asset?.not_for || '') : form.not_for,
     category: form.category,
     // 适用项目: 空 = 通用; 不在项目列表里的后端会归一成通用
     project: form.project || '',
     icon: form.icon || '🧩',
     tags: splitList(tagsText.value),
     keywords: splitList(keywordsText.value),
-    install_steps: props.mode === 'update' ? [...(props.asset?.install_steps || [])] : [],
+    install_steps: props.mode === 'update'
+      ? [...(props.asset?.install_steps || [])]
+      : splitLines(form.installStepsText),
     // ⚠️ 权限声明不再由表单填 (2026-10-24) —— 固定空, 审核直接看包里的内容
     permissions: {},
     featured: props.mode === 'update' ? !!props.asset?.featured : false,

@@ -181,12 +181,28 @@ describe('资产详情抽屉 · 适用项目与适用场景', () => {
     expect(w.find('.ad-meta').text()).not.toContain('plugin');
   });
 
-  it('「适用场景」整块不存在 (上传表单已不让填, 页面不再重复一遍)', async () => {
-    // ⚠️ 2026-10-25: 从"有内容才显示"改成**整块删掉** ——
-    //    字段还在 (存量资产有值), 但页面上不再单列一块.
+  it('⚠️ 「适用场景」显示出来 (2026-11-03 第二十二轮加回来)', async () => {
+    // ⚠️ 2026-11-03 (第二十二轮) 翻转了 2026-10-25 的决定:
+    //    以前整块删掉, 理由是"上传表单已经不让人填" —— 但后来发现上架表单里
+    //    **压根没有**这几个输入框 → 新资产的字段恒为空 → 编辑页 4 个空框,
+    //    详情页又只有包里的 SKILL.md → "编辑页和上架内容对不上".
+    //    现在上架也能填 → 这里把它显示出来, 编辑完立刻可见.
     const w = await mountDrawer({ it: item({ use_when: '拿到 dmesg 时用它' }) });
-    expect(w.text()).not.toContain('适用场景');
-    expect(w.text()).not.toContain('拿到 dmesg 时用它');
+    expect(w.text()).toContain('适用场景');
+    expect(w.text()).toContain('拿到 dmesg 时用它');
+  });
+
+  it('「不适合的场景」「安装步骤」有值才显示 (没填就不占位)', async () => {
+    const w = await mountDrawer({
+      it: item({ use_when: '该用它时', not_for: '别用它时', install_steps: ['第一步', '第二步'] }),
+    });
+    expect(w.text()).toContain('别用它时');
+    expect(w.text()).toContain('安装步骤');
+    expect(w.text()).toContain('第一步');
+
+    const w2 = await mountDrawer({ it: item({ use_when: '', not_for: '', install_steps: [] }) });
+    expect(w2.text()).not.toContain('不适合的场景');
+    expect(w2.text()).not.toContain('安装步骤');
   });
 
   it('安装提示是通用话术, 不写死某个 Agent 的目录', async () => {

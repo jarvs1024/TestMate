@@ -721,6 +721,18 @@ SETTING_SCHEMA: list[dict] = [
         ),
         "is_secret": False,
     },
+    {
+        "key": "software.public_base_url",
+        "category": "software",
+        "value_type": "url",
+        "default": "",
+        "description": (
+            "对外可达的基地址 (留空 = 用浏览器当前的地址). "
+            "**固定下载链接** (GET /api/v1/software/{code}/download) 就是用它拼出来的 —— "
+            "别的机器要用 wget 拉这个地址, 所以这里要填**别的机器也能访问到的**那个地址"
+        ),
+        "is_secret": False,
+    },
     # ===== MCP =====
     {
         "key": "mcp.allowed_hosts",

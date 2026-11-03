@@ -1,5 +1,5 @@
 <template>
-  <el-drawer :model-value="modelValue" size="640px" direction="rtl"
+  <el-drawer :model-value="modelValue" size="min(860px, 94vw)" direction="rtl"
              :title="item ? `编辑软件 · ${item.name}` : '编辑软件'"
              :close-on-click-modal="false" class="sw-edit-drawer"
              @update:model-value="emit('update:modelValue', $event)">

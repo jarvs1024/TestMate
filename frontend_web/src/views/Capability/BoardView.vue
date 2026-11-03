@@ -401,9 +401,9 @@
     </div>
 
     <!-- 时间线抽屉 -->
-    <!-- ⚠️ size 用 min(640px, 92vw) —— 写死 640px 时, 375px 视口下抽屉
+    <!-- ⚠️ size 用 min(860px, 94vw) —— 写死像素时, 375px 视口下抽屉
          left = -265px, 连标题都在屏幕外, 整个抽屉没法用 -->
-    <el-drawer v-model="tlOpen" :title="tlTitle" size="min(640px, 92vw)" direction="rtl">
+    <el-drawer v-model="tlOpen" :title="tlTitle" size="min(860px, 94vw)" direction="rtl">
       <template v-if="timeline">
         <!-- MR 健康摘要: 应用率 + 4 stat mini -->
         <div class="dt-health">
@@ -514,8 +514,8 @@
     </el-drawer>
 
     <!-- 周报抽屉: 取代原 Token 卡. 展示 telemetry / merged_mrs / repo_scan 3 section + LLM 综述 -->
-    <!-- ⚠️ size 用 min(720px, 94vw) —— 同上, 写死宽度在窄屏下抽屉整个跑到屏幕外 -->
-    <el-drawer v-model="wrOpen" size="min(720px, 94vw)" direction="rtl">
+    <!-- ⚠️ size 用 min(900px, 94vw) —— 同上, 写死宽度在窄屏下抽屉整个跑到屏幕外 -->
+    <el-drawer v-model="wrOpen" size="min(900px, 94vw)" direction="rtl">
       <template #header>
         <div class="wr-drawer-hd">
           <span class="wr-drawer-emoji">{{ weeklyReport?.report_emoji || '📊' }}</span>
