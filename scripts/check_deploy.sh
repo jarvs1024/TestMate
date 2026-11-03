@@ -23,7 +23,8 @@ FEATURES=(
   "自动取安装包名"             # 资产 code 的派生来源说明
   "适用项目"                  # 2026-10-25: 「适用范围」改名
   "选好包后自动生成"            # 2026-10-25: 没选包时 code 显示占位, 不露初始 dml-
-  "的名字只能用小写字母/数字/连字符 (如 my-connector)"   # 2026-10-25: 更新存量连接器时不强制 dml- 前缀
+  "的名字只能用小写字母/数字/连字符"       # 2026-10-25: 更新存量连接器时不强制 dml- 前缀
+                                       #   (示例文案后来改成后端下发的 rules.code.example, 不再写死 my-connector)
   "搜索名称、说明、标签或项目号"    # 2026-10-25: 搜索支持按项目
   "本页上次刷新"               # 2026-10-25: 市场页自动刷新 + 页脚时间戳
   "导入这个压缩包即可安装"        # 2026-10-25: 下载提示通用化
@@ -36,12 +37,16 @@ FEATURES=(
   "一行一条"                    # 2026-10-28: 软件库功能清单的输入提示
   "兜住质量 / 提效 / 守流程 / 管协同"   # 2026-10-28: 分类整改后的上传引导文案 (5 类新分类)
   "自助下架 (免审核)"                # 2026-10-28: 审核总开关关掉后的下架提示
+  "[^A-Za-z0-9._-]"                 # 2026-11-03: 下载文件名去版本号 (assetForm.downloadFileName 的字符白名单)
 )
 
 echo "=== 源码里有没有这些特征串 (确认我们测的是当前代码) ==="
+# ⚠️ 一律用 grep -F (固定串) —— 特征串里可能有 [ ] ( ) . * 等正则元字符,
+#    按正则匹配的话 "[^A-Za-z0-9._-]" 会被当成**字符类** → 几乎任何文件都命中
+#    → 漂移检测形同虚设.
 missing_src=0
 for f in "${FEATURES[@]}"; do
-  if grep -rq "$f" frontend_web/src 2>/dev/null; then
+  if grep -rqF "$f" frontend_web/src 2>/dev/null; then
     printf "  ✓ %s\n" "$f"
   else
     printf "  ✗ %s  ← 源码里没有, 特征串可能过期了\n" "$f"
@@ -76,9 +81,9 @@ echo "  (检查对象: $CHECK_KIND 模式, $HTML_DIR)"
 missing=0
 for f in "${FEATURES[@]}"; do
   if [ "$CHECK_KIND" = "docker" ]; then
-    hit="$(docker exec "$CONTAINER" sh -lc "grep -rl '$f' $HTML_DIR/assets/*.js 2>/dev/null | head -1")"
+    hit="$(docker exec "$CONTAINER" sh -lc "grep -rlF '$f' $HTML_DIR/assets/*.js 2>/dev/null | head -1")"
   else
-    hit="$(grep -rl "$f" "$HTML_DIR"/assets/*.js 2>/dev/null | head -1)"
+    hit="$(grep -rlF "$f" "$HTML_DIR"/assets/*.js 2>/dev/null | head -1)"
   fi
   if [ -n "$hit" ]; then
     printf "  ✓ %s\n" "$f"

@@ -457,7 +457,8 @@ async def test_package_info_hashes_real_bytes_and_never_falls_back_to_another_ve
     assert info == {
         "code": asset.code,
         "version": "1.0.0",
-        "filename": "1.0.0.zip",
+        # ⚠️ 文件名**不带版本号** —— 2026-11-03 起是 "{code}.zip"
+        "filename": f"{asset.code}.zip",
         "size_bytes": len(package_bytes),
         "sha256": hashlib.sha256(package_bytes).hexdigest(),
     }

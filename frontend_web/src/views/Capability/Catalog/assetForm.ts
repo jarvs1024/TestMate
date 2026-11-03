@@ -140,6 +140,24 @@ export function codeFromPackageName(
   return name.replace(packagePattern(rules), '');
 }
 
+/**
+ * 下载到本地时的文件名 —— **不带版本号** (如 dml-ssd-log-doctor.zip).
+ *
+ * ⚠️ 与后端 `market_naming.download_filename` **同一套规则** ——
+ *    前后端各有一份实现 (本文件头注释就说了这规矩), 改规则时**两边都要改**.
+ *
+ * ⚠️ 为什么去掉版本号: 存的原始包叫 "1.0.0.zip" —— 一屏下三四个扩展,
+ *    本地全是 "1.0.0.zip", 互相覆盖还认不出谁是谁. code 才是这个扩展的**身份**.
+ *
+ * @param code        资产 code (文件名主体)
+ * @param contentType 下载响应的 Content-Type (决定后缀 —— tar.gz 别硬给 .zip)
+ */
+export function downloadFileName(code: string, contentType = ''): string {
+  const safe = (code || '').trim().replace(/[^A-Za-z0-9._-]/g, '_') || 'package';
+  const type = (contentType || '').toLowerCase();
+  return type.includes('gzip') ? `${safe}.tar.gz` : `${safe}.zip`;
+}
+
 /** 校验资产 code, 返回空串 = 通过. */
 export function validateCode(
   code: string,

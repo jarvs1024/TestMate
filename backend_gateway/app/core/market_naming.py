@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+import re
+
 # ⚠️ code 的**格式**规则不在这里 —— 唯一真源是 market_catalog.CODE_RE
 #    (与前端 assetForm.CODE_PATTERN / SEGMENT_PATTERN 同一套分段规则).
 #    这里以前自己留了一份**宽松的旧正则** —— 没人引用, 还跟权威版本不一致
@@ -63,3 +65,44 @@ def check_mcp_code_consistency(mcp_config: dict | None, code: str) -> str:
         f"资产 code 必须与 MCP 配置里的连接器名一致 "
         f"(配置里是 {', '.join(names)})"
     )
+
+
+# ---------- 下载文件名 (2026-11-03 用户要求: 不带版本号) ----------
+#
+# ⚠️ 为什么以前带版本号是个问题:
+#    仓库里存的原始安装包叫 `{version}.zip` (1.0.0.zip / 1.1.0.zip …),
+#    以前直接把这个名字发给浏览器 → 用户存到本地是 `1.0.0.zip`.
+#    一屏下三四个扩展, 本地全是 "1.0.0.zip" —— 互相覆盖, 根本认不出谁是谁.
+#    现在统一成 `{code}.zip` —— code 是这个扩展的**身份**, 一眼认得出.
+
+_DOWNLOAD_NAME_SAFE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def download_filename(code: str, source_name: str = "") -> str:
+    """下载到本地时的文件名 —— **不带版本号** (如 dml-ssd-log-doctor.zip).
+
+    ⚠️ 后缀跟着**真实内容**走 —— 存的包要是 tar.gz, 别硬给个 .zip 的名字
+       (浏览器会当成 zip 解, 装不上).
+
+    ⚠️ code 会被过滤成"只留字母/数字/点/下划线/连字符" —— 因为这个串要进
+       HTTP 的 ``Content-Disposition`` 头, 里面出现引号/换行就是**头注入**.
+       ⚠️ 实际上 code 早就被 market_catalog.CODE_RE 校验过
+          (小写字母/数字/连字符分段), 这里是纵深防御 —— 万一哪天校验放宽了,
+          这里还能兜住.
+    """
+    safe_code = _DOWNLOAD_NAME_SAFE.sub("_", (code or "").strip()) or "package"
+    lowered = (source_name or "").lower()
+    suffix = ".zip"
+    for suf in PACKAGE_SUFFIXES:
+        if lowered.endswith(suf):
+            suffix = suf
+            break
+    return f"{safe_code}{suffix}"
+
+
+def package_media_type(name: str) -> str:
+    """安装包对应的 Content-Type —— tar.gz 别标成 application/zip."""
+    lowered = (name or "").lower()
+    if lowered.endswith(".tar.gz") or lowered.endswith(".tgz"):
+        return "application/gzip"
+    return "application/zip"

@@ -39,7 +39,7 @@
         <template v-if="item.kind !== 'mcp'">
           <div class="ins-h">
             <span class="ins-t">⬇ 下载安装包</span>
-            <code class="ins-file">{{ item.code }}-{{ item.version }}.zip</code>
+            <code class="ins-file">{{ item.code }}.zip</code>
           </div>
           <el-button type="primary" class="ins-btn" :loading="busy" @click="doDownload">
             下载
@@ -229,6 +229,7 @@ import { useUserStore } from '@/stores/user';
 import { renderMarkdown } from '@/utils/markdown';
 import { downloadBlob } from '@/utils/download';
 import { kindMeta } from './kindMeta';
+import { downloadFileName } from './assetForm';
 import { isAuthor } from './identity';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { fmtDate } from '@/utils/format';
@@ -445,11 +446,13 @@ async function doDownload() {
   busy.value = true;
   try {
     const blob = await downloadAssetPackage(it.code, it.version);
-    downloadBlob(blob, `${it.code}-${it.version}.zip`);
+    // ⚠️ 文件名**不带版本号** —— 下载到本地就该是 dml-xxx.zip, 不是 dml-xxx-1.0.0.zip
+    const fileName = downloadFileName(it.code, blob.type);
+    downloadBlob(blob, fileName);
     // ⚠️ 不记任何安装状态 —— 安装只是下载, 后端不知道用户到底装没装,
     //    记了也是虚假语义 ("已安装" 徽标会骗人)
     ElMessage.success(
-      `已下载 ${it.code}-${it.version}.zip —— 在 Agent 里导入这个压缩包即可安装`,
+      `已下载 ${fileName} —— 在 Agent 里导入这个压缩包即可安装`,
     );
   } catch (e: any) {
     ElMessage.error('下载失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));

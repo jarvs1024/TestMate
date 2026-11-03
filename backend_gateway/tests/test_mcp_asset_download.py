@@ -226,7 +226,8 @@ async def test_package_info_ticket_downloads_exact_selected_bytes(
     expected = package_bytes[selected_version]
     assert info["code"] == asset.code
     assert info["version"] == selected_version
-    assert info["filename"] == f"{selected_version}.zip"
+    # ⚠️ 文件名**不带版本号** —— 2026-11-03 起是 "{code}.zip"
+    assert info["filename"] == f"{asset.code}.zip"
     assert info["size_bytes"] == len(expected)
     assert info["sha256"] == hashlib.sha256(expected).hexdigest()
 
@@ -413,9 +414,15 @@ async def test_package_info_rejects_symlinked_package_directory(
 async def test_ticket_download_content_disposition_preserves_unsafe_filename_safely(
     principals, asset_workspace, client
 ):
+    """文件名基于 code (不带版本号) —— 危险的 version 串**进不了**响应头.
+
+    ⚠️ 2026-11-03 改动: 下载文件名从 "{version}.zip" 改成 "{code}.zip".
+       以前那个危险 version 串 ("2.0.0" 包\\r\\nX-Evil) 会被塞进 Content-Disposition,
+       得靠 ASCII 兜底 + RFC5987 转义才不炸头; 现在它**根本不会出现在文件名里**
+       —— 这是比原来**更强**的保证, 不是放松.
+    """
     asset = await _seed_asset("dml-ticket-unsafe-filename")
     version = '2.0.0" 包\r\nX-Evil'
-    filename = f"{version}.zip"
     _write_package(asset, version, b"unsafe filename package")
     ticket = _asset_ticket(
         user_id=principals[OTHER_TOKEN].user.id,
@@ -432,8 +439,13 @@ async def test_ticket_download_content_disposition_preserves_unsafe_filename_saf
     assert response.content == b"unsafe filename package"
     disposition = response.headers["content-disposition"]
     disposition.encode("ascii")
+    # 文件名 = code + 真实后缀 —— **不带版本号**
     assert disposition == (
-        'attachment; filename="2.0.0_ __X-Evil.zip"; '
-        "filename*=UTF-8''2.0.0%22%20%E5%8C%85%0D%0AX-Evil.zip"
+        'attachment; filename="dml-ticket-unsafe-filename.zip"; '
+        "filename*=UTF-8''dml-ticket-unsafe-filename.zip"
     )
-    assert filename not in disposition
+    # 危险的 version 串 (原样 / 转义后) 都不许出现
+    assert "X-Evil" not in disposition
+    assert "%0D%0A" not in disposition
+    assert "%22" not in disposition
+    assert f"{version}.zip" not in disposition

@@ -1213,13 +1213,16 @@ async def download_package(
     stored = _find_stored_package(base, version)
     if stored is not None:
         data = stored.read_bytes()
-        name = stored.name
+        source_name = stored.name
     else:
         root = pkg.files_root(base)
         if not root.is_dir():
             raise HTTPException(status_code=404, detail="资产文件不存在")
         data = pkg.build_zip(root)
-        name = f"{code}-{version}.zip"
+        source_name = "package.zip"
+    # ⚠️ 下载到本地的文件名**不带版本号** —— 存的包叫 "1.0.0.zip", 一屏下三四个扩展
+    #    本地全是 "1.0.0.zip", 互相覆盖还认不出谁是谁. 统一成 "{code}.zip".
+    name = market_naming.download_filename(code, source_name)
 
     # 下载次数 +1 —— 原子自增 (先读后写会丢计数: 并发下载时互相覆盖)
     async with AsyncSessionLocal() as session:
@@ -1231,7 +1234,7 @@ async def download_package(
 
     return Response(
         content=data,
-        media_type="application/zip",
+        media_type=market_naming.package_media_type(name),
         headers={
             "Content-Disposition": f'attachment; filename="{name}"',
             "X-Content-Sha256": pkg.sha256_bytes(data),
@@ -1327,9 +1330,12 @@ async def download_package_by_asset_ticket(
 
     return Response(
         content=data,
-        media_type="application/zip",
+        media_type=market_naming.package_media_type(stored.name),
         headers={
-            "Content-Disposition": _ticket_content_disposition(stored.name),
+            # ⚠️ 文件名基于 code (不带版本号) —— 见 download_package 里的说明
+            "Content-Disposition": _ticket_content_disposition(
+                market_naming.download_filename(code, stored.name)
+            ),
             "X-Content-Sha256": pkg.sha256_bytes(data),
         },
     )

@@ -212,7 +212,8 @@ async def package_info(
     return {
         "code": asset.code,
         "version": selected_version,
-        "filename": package.name,
+        # ⚠️ 不带版本号 —— 下载到本地就该是 dml-xxx.zip, 不是 dml-xxx-1.0.0.zip
+        "filename": market_naming.download_filename(asset.code, package.name),
         "size_bytes": package.stat().st_size,
         "sha256": pkg.sha256_file(package),
         "download_url": download_url,
