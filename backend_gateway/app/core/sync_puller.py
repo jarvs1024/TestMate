@@ -141,132 +141,167 @@ def _resolve_winner(
     return "remote", f"远端版本 {rv} 高于本地 {lv}"
 
 
+def _git_phase() -> dict[str, Any]:
+    """同步里的 **git 阶段** —— 所有会阻塞的 git 子进程都集中在这里.
+
+    ⚠️ 必须在**后台线程**里跑 (sync_once 用 asyncio.to_thread 调它):
+       这里的 git 调用是同步 subprocess (fetch 走 SSH, 网络一慢就是好几秒,
+       上限 120s), 直接跑在事件循环里会把**整个后端**卡住 —— 线上实锤
+       (2026-11-04): 每 ~41 秒所有接口 (列表 / doc / 健康检查) 一起挂 ~10 秒,
+       表现成"浏览器多刷新几次又恢复", 其实与浏览器无关.
+
+    返回 {"skipped": ...} / {"error": ...} / {"ok": True, ...}, 不写 _puller.
+    """
+    # ⚠️ 安全闸: 本地工作区有未提交的资产改动时**必须跳过本轮**.
+    #    否则会出现: 用户刚上传完(文件已落盘, 还没 commit) → 本轮同步判定
+    #    "本地没有这个资产" → 用远端版本 checkout 覆盖 → 刚上传的文件被冲掉.
+    st = git_sync.workspace_status()
+    pending_local = [
+        ln for ln in (st.get("dirty_files") or [])
+        if ln.strip().endswith("/") is False and "assets/" in ln
+    ]
+    if pending_local:
+        logger.info(
+            "sync_puller 跳过本轮 (本地有未提交资产改动 %s 项)", len(pending_local)
+        )
+        return {"skipped": "本地有未提交的资产改动, 本轮跳过"}
+
+    with git_sync._FileLock(git_sync.LOCK_FILE):
+        rc, so, se = git_sync._run_git(
+            ["fetch", "origin", git_sync.git_branch()],
+            cwd=git_sync.WORKSPACE, timeout=120,
+        )
+        if rc != 0:
+            return {"error": f"fetch 失败: {se.strip()[:200]}"}
+
+        ref = f"origin/{git_sync.git_branch()}"
+        remote = _remote_manifests(ref)
+        local = _local_manifests()
+
+        # ⚠️ 安全闸 2: 本地有**未推送**的 commit 时跳过整轮.
+        #    否则拉取会把远端版本 checkout 到工作区, 覆盖掉本地未推送的工作.
+        rc, so, se = git_sync._run_git(
+            ["rev-list", "--count", f"{ref}..HEAD"], cwd=git_sync.WORKSPACE
+        )
+        ahead = so.strip() if rc == 0 else "0"
+        if ahead and ahead != "0":
+            logger.info("sync_puller 跳过本轮 (本地有 %s 个未推送 commit)", ahead)
+            return {"skipped": f"本地有 {ahead} 个未推送 commit, 本轮跳过"}
+
+        to_checkout: list[str] = []
+        conflicts: list[dict] = []
+        changed = 0
+        # 远端胜出的资产 —— 它们的 publish_status 以远端 manifest 为准
+        remote_won: dict[str, str] = {}
+
+        for code, rman in remote.items():
+            lman = local.get(code)
+            winner, why = _resolve_winner(code, lman, rman)
+            if winner == "remote":
+                # 把远端版本的该资产目录整个拉下来
+                paths = [
+                    p for p in git_sync.list_files_at_ref(ref)
+                    if _asset_code_from_manifest_path(p) == code
+                ]
+                to_checkout.extend(paths)
+                changed += 1
+                # ⚠️ 远端 manifest 没有 publish_status 时**不能猜成 published** ——
+                #    老资产 / 早期上传的资产会缺这个字段, 猜错等于
+                #    **把待审核的资产直接改成已上架**, 审核就形同虚设.
+                ps = _remote_publish_status(rman)
+                if ps:
+                    remote_won[code] = ps
+                if lman is not None:
+                    conflicts.append(
+                        {
+                            "code": code,
+                            "reason": why,
+                            "local_version": lman.get("version"),
+                            "remote_version": rman.get("version"),
+                        }
+                    )
+            elif winner == "same" and lman is None:
+                to_checkout.extend(
+                    p for p in git_sync.list_files_at_ref(ref)
+                    if _asset_code_from_manifest_path(p) == code
+                )
+                changed += 1
+
+        # 远端删掉的资产 → 本地也删 (下架的极端情况: 直接删文件)
+        remote_paths = set(git_sync.list_files_at_ref(ref))
+        local_paths = set(git_sync.list_files_at_ref("HEAD"))
+        removed = [
+            p for p in (local_paths - remote_paths)
+            if p.startswith("assets/")
+        ]
+
+        if to_checkout:
+            git_sync.checkout_from_ref(ref, sorted(set(to_checkout)))
+        if removed:
+            rc2, so2, se2 = git_sync._run_git(
+                ["rm", "-r", "--quiet", "--", *removed], cwd=git_sync.WORKSPACE
+            )
+            if rc2 != 0:
+                logger.warning("删除远端已移除的文件失败: %s", se2.strip()[:200])
+
+        # ⚠️ **必须把本地分支对齐到远端** (2026-10-25 审计):
+        #    上面 checkout / git rm 都会**顺带改 index** (git checkout <tree> -- paths
+        #    同时改工作区和 index), 而这些改动**从不被提交** → 下一轮
+        #    `git status --porcelain` 看到含 "assets/" 的行 → 安全闸 1 命中 →
+        #    **反向同步从此每轮都跳过**, 自己把自己锁死.
+        #
+        #    `reset --mixed <ref>` 一次解决三件事:
+        #      · 分支指针移到远端 (不再 ahead → 安全闸 2 也不命中)
+        #      · index 重置成远端的树 (刚才 stage 的改动全部撤掉)
+        #      · **工作区不动** ← 关键: 不能用 --hard, 否则会把上传请求
+        #        刚落盘、还没提交的文件一起冲掉 (落盘阶段不在 git 锁里)
+        #
+        #    ⚠️ 只在本地是远端的祖先时做 —— 分叉了 (有人 force push) 就别动,
+        #    留给人看.
+        rc3, so3, se3 = git_sync._run_git(
+            ["merge-base", "--is-ancestor", "HEAD", ref], cwd=git_sync.WORKSPACE
+        )
+        if rc3 == 0:
+            rc4, so4, se4 = git_sync._run_git(
+                ["reset", "--mixed", ref], cwd=git_sync.WORKSPACE
+            )
+            if rc4 != 0:
+                logger.warning("对齐本地分支到远端失败: %s", se4.strip()[:200])
+        else:
+            logger.warning(
+                "本地 HEAD 与远端已分叉 (可能被 force push), 本轮不对齐 —— 请人工检查"
+            )
+
+    return {
+        "ok": True,
+        "remote_won": remote_won,
+        "conflicts": conflicts,
+        "changed": changed,
+        "removed": len(removed),
+    }
+
+
 async def sync_once() -> dict[str, Any]:
-    """跑一轮同步. 返回本次的处理摘要."""
+    """跑一轮同步. 返回本次的处理摘要.
+
+    git 阶段在**后台线程**里跑 (asyncio.to_thread) —— 事件循环全程不被阻塞,
+    列表 / doc / 下载这些纯读缓存的请求不再跟着一起卡.
+    """
     if _puller._running:
         return {"skipped": "上一轮还没跑完"}
     _puller._running = True
     try:
-        # ⚠️ 安全闸: 本地工作区有未提交的资产改动时**必须跳过本轮**.
-        #    否则会出现: 用户刚上传完(文件已落盘, 还没 commit) → 本轮同步判定
-        #    "本地没有这个资产" → 用远端版本 checkout 覆盖 → 刚上传的文件被冲掉.
-        st = git_sync.workspace_status()
-        pending_local = [
-            ln for ln in (st.get("dirty_files") or [])
-            if ln.strip().endswith("/") is False and "assets/" in ln
-        ]
-        if pending_local:
-            logger.info(
-                "sync_puller 跳过本轮 (本地有未提交资产改动 %s 项)", len(pending_local)
-            )
-            return {"skipped": "本地有未提交的资产改动, 本轮跳过"}
+        result = await asyncio.to_thread(_git_phase)
+        if "skipped" in result:
+            return {"skipped": result["skipped"]}
+        if "error" in result:
+            _puller.last_error = result["error"]
+            return {"error": _puller.last_error}
 
-        with git_sync._FileLock(git_sync.LOCK_FILE):
-            rc, so, se = git_sync._run_git(
-                ["fetch", "origin", git_sync.git_branch()],
-                cwd=git_sync.WORKSPACE, timeout=120,
-            )
-            if rc != 0:
-                _puller.last_error = f"fetch 失败: {se.strip()[:200]}"
-                return {"error": _puller.last_error}
-
-            ref = f"origin/{git_sync.git_branch()}"
-            remote = _remote_manifests(ref)
-            local = _local_manifests()
-
-            # ⚠️ 安全闸 2: 本地有**未推送**的 commit 时跳过整轮.
-            #    否则拉取会把远端版本 checkout 到工作区, 覆盖掉本地未推送的工作.
-            rc, so, se = git_sync._run_git(
-                ["rev-list", "--count", f"{ref}..HEAD"], cwd=git_sync.WORKSPACE
-            )
-            ahead = so.strip() if rc == 0 else "0"
-            if ahead and ahead != "0":
-                logger.info("sync_puller 跳过本轮 (本地有 %s 个未推送 commit)", ahead)
-                return {"skipped": f"本地有 {ahead} 个未推送 commit, 本轮跳过"}
-
-            to_checkout: list[str] = []
-            conflicts: list[dict] = []
-            changed = 0
-            # 远端胜出的资产 —— 它们的 publish_status 以远端 manifest 为准
-            remote_won: dict[str, str] = {}
-
-            for code, rman in remote.items():
-                lman = local.get(code)
-                winner, why = _resolve_winner(code, lman, rman)
-                if winner == "remote":
-                    # 把远端版本的该资产目录整个拉下来
-                    paths = [
-                        p for p in git_sync.list_files_at_ref(ref)
-                        if _asset_code_from_manifest_path(p) == code
-                    ]
-                    to_checkout.extend(paths)
-                    changed += 1
-                    # ⚠️ 远端 manifest 没有 publish_status 时**不能猜成 published** ——
-                    #    老资产 / 早期上传的资产会缺这个字段, 猜错等于
-                    #    **把待审核的资产直接改成已上架**, 审核就形同虚设.
-                    ps = _remote_publish_status(rman)
-                    if ps:
-                        remote_won[code] = ps
-                    if lman is not None:
-                        conflicts.append(
-                            {
-                                "code": code,
-                                "reason": why,
-                                "local_version": lman.get("version"),
-                                "remote_version": rman.get("version"),
-                            }
-                        )
-                elif winner == "same" and lman is None:
-                    to_checkout.extend(
-                        p for p in git_sync.list_files_at_ref(ref)
-                        if _asset_code_from_manifest_path(p) == code
-                    )
-                    changed += 1
-
-            # 远端删掉的资产 → 本地也删 (下架的极端情况: 直接删文件)
-            remote_paths = set(git_sync.list_files_at_ref(ref))
-            local_paths = set(git_sync.list_files_at_ref("HEAD"))
-            removed = [
-                p for p in (local_paths - remote_paths)
-                if p.startswith("assets/")
-            ]
-
-            if to_checkout:
-                git_sync.checkout_from_ref(ref, sorted(set(to_checkout)))
-            if removed:
-                rc2, so2, se2 = git_sync._run_git(
-                    ["rm", "-r", "--quiet", "--", *removed], cwd=git_sync.WORKSPACE
-                )
-                if rc2 != 0:
-                    logger.warning("删除远端已移除的文件失败: %s", se2.strip()[:200])
-
-            # ⚠️ **必须把本地分支对齐到远端** (2026-10-25 审计):
-            #    上面 checkout / git rm 都会**顺带改 index** (git checkout <tree> -- paths
-            #    同时改工作区和 index), 而这些改动**从不被提交** → 下一轮
-            #    `git status --porcelain` 看到含 "assets/" 的行 → 安全闸 1 命中 →
-            #    **反向同步从此每轮都跳过**, 自己把自己锁死.
-            #
-            #    `reset --mixed <ref>` 一次解决三件事:
-            #      · 分支指针移到远端 (不再 ahead → 安全闸 2 也不命中)
-            #      · index 重置成远端的树 (刚才 stage 的改动全部撤掉)
-            #      · **工作区不动** ← 关键: 不能用 --hard, 否则会把上传请求
-            #        刚落盘、还没提交的文件一起冲掉 (落盘阶段不在 git 锁里)
-            #
-            #    ⚠️ 只在本地是远端的祖先时做 —— 分叉了 (有人 force push) 就别动,
-            #    留给人看.
-            rc3, so3, se3 = git_sync._run_git(
-                ["merge-base", "--is-ancestor", "HEAD", ref], cwd=git_sync.WORKSPACE
-            )
-            if rc3 == 0:
-                rc4, so4, se4 = git_sync._run_git(
-                    ["reset", "--mixed", ref], cwd=git_sync.WORKSPACE
-                )
-                if rc4 != 0:
-                    logger.warning("对齐本地分支到远端失败: %s", se4.strip()[:200])
-            else:
-                logger.warning(
-                    "本地 HEAD 与远端已分叉 (可能被 force push), 本轮不对齐 —— 请人工检查"
-                )
+        remote_won = result["remote_won"]
+        conflicts = result["conflicts"]
+        changed = result["changed"]
+        removed = result["removed"]
 
         # ---- 回灌 DB 镜像 + 写冲突审计 ----
         async with AsyncSessionLocal() as session:
@@ -308,7 +343,7 @@ async def sync_once() -> dict[str, Any]:
             "conflicts": conflicts,
             "added": added,
             "updated": updated,
-            "removed": len(removed),
+            "removed": removed,
         }
     except Exception as e:  # noqa: BLE001 — 同步异常不能影响推送链路
         _puller.last_error = f"{type(e).__name__}: {e}"
