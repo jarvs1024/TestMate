@@ -169,13 +169,8 @@
           <span class="sec-tip">永远指向推荐版本</span>
         </div>
         <p class="fx-tip">
-          这个地址<b>不会变</b> —— 以后发新版本、换推荐版本, 都还是它.
-          下到的永远是当前<b>推荐</b>的那一版. 免登录, 别的机器可以直接 wget.
-        </p>
-        <p class="fx-tip">
-          ⚠️ 链接里<b>不含版本号</b> —— 它指的是「这个软件」, 不是「这个软件的某个版本」.
-          一个软件挂多个版本时, 给的是你标了<b>推荐</b>的那一个 (没标推荐就给最新的);
-          以后你换推荐版本, 这条链接不用改.
+          这个地址<b>不会变</b> —— 以后发新版本、换推荐版本, 都还是它,
+          下到的永远是当前<b>推荐</b>的那一版.
         </p>
         <div class="fx-row">
           <code class="fx-url mono">{{ fixedUrl }}</code>
@@ -185,9 +180,6 @@
           <code class="fx-cmd mono">{{ fixedWgetCmd }}</code>
           <button class="mini-btn" @click="copyFixed(fixedWgetCmd)">复制命令</button>
         </div>
-        <p class="fx-tip dim">
-          ⚠️ 免登录的地址 —— 拿到的人都能下. 只给**已上架**的软件开这个链接.
-        </p>
       </section>
 
       <!-- ===== 标签 / 元信息 ===== -->

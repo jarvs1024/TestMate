@@ -113,9 +113,25 @@ describe('② 剪贴板在非安全上下文下也能复制 (2026-11-04)', () =>
 // ═══════════════ ① 固定链接用别名 ═══════════════
 
 describe('① 固定下载链接用「下载别名」—— URL 里没有版本号 (2026-11-04)', () => {
-  it('页面文案说清"链接不含版本号"和"多版本给推荐"', () => {
-    expect(swDetail).toMatch(/不含版本号/);
-    expect(swDetail).toMatch(/推荐/);
+  it('固定链接区块的说明是**精简**的, 不再堆一大段', () => {
+    // ⚠️ 2026-11-04: 用户要求精简 —— 原来三段说明 (含"免登录"提示) 太啰嗦,
+    //    现在只留一句"地址不会变 + 永远给推荐版本".
+    const sec = swDetail.slice(
+      swDetail.indexOf('固定下载链接'),
+      swDetail.indexOf('<!-- ===== 标签 / 元信息 ====='),
+    );
+    const tips = (sec.match(/class="fx-tip/g) || []).length;
+    expect(tips, '说明段落太多').toBeLessThanOrEqual(1);
+    expect(sec).toMatch(/不会变/);
+    expect(sec).toMatch(/推荐/);
+  });
+
+  it('⚠️ 不再显示「免登录」的提示', () => {
+    const sec = swDetail.slice(
+      swDetail.indexOf('固定下载链接'),
+      swDetail.indexOf('<!-- ===== 标签 / 元信息 ====='),
+    );
+    expect(sec).not.toMatch(/免登录/);
   });
 
   it('固定链接区块还在 (没被这次改动删掉)', () => {
