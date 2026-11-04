@@ -670,6 +670,12 @@ textarea::-moz-selection {
   color: #fff;
 }
 
+/* ===== 全局抽屉 / 弹窗关闭按钮放大 (2026-11-04) =====
+   Element Plus 默认: 抽屉 20px、弹窗 16px —— 在浅色细描边的页面里太小,
+   用户第一眼找不到「从哪关」。放大后整站所有 el-drawer / el-dialog 一起生效. */
+.el-drawer__close-btn { font-size: 26px; }
+.el-dialog__headerbtn { font-size: 22px; }
+
 /* ===== 全局 Element Plus 控件深色主题适配 =====
    element-plus 内置 dark 模式已经做了 .el-drawer/.el-message-box 等的深色色,
    但默认是白底, 在我们 html[data-theme="dark"] 下不会自动切换.

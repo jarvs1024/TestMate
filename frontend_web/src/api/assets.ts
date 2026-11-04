@@ -63,6 +63,8 @@ export interface AssetItem {
   review_note: string;
   /** 当前用户能不能审这个资产 (管理员或被授权的审核人) */
   can_review: boolean;
+  /** 平台内置资产 (2026-11-04) —— 不落 GitLab、不可编辑/下架/删除 */
+  builtin?: boolean;
 }
 
 export interface AssetListResp {
@@ -570,6 +572,16 @@ export async function downloadAssetPackage(code: string, version: string): Promi
     { responseType: 'blob' },
   );
   return resp as unknown as Blob;
+}
+
+/**
+ * 连接器「复制 MCP 配置」计数 +1 (2026-11-04) —— 返回累计次数.
+ *
+ * ⚠️ 详情抽屉里**两个**复制按钮 (吸顶卡 + MCP 配置块) 都调它;
+ *    复制本身失败时**不**调 (没复制成功不算数).
+ */
+export async function recordMcpCopy(code: string): Promise<{ code: string; copy_count: number }> {
+  return apiPost(`/extensions/${encodeURIComponent(code)}/copy`);
 }
 
 export async function publishAsset(code: string, comment = ''): Promise<void> {

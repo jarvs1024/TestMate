@@ -65,7 +65,7 @@
         <template v-else>
           <div class="ins-h">
             <span class="ins-t">⚙️ 连接器配置</span>
-            <button type="button" class="mini-link" @click="copyMcpConfig">复制 JSON</button>
+            <button type="button" class="mini-btn primary" @click="copyMcpConfig">📋 复制 JSON</button>
           </div>
           <p class="ins-tip">
             连接器是配置型资产 —— 它就是一段 MCP 配置.
@@ -108,7 +108,7 @@
       <div v-if="item.kind === 'mcp'" class="ad-block">
         <div class="ad-block-h">
           ⚙️ MCP 配置
-          <button type="button" class="mini-link" @click="copyMcpConfig">复制</button>
+          <button type="button" class="mini-btn" @click="copyMcpConfig">📋 复制</button>
         </div>
         <pre class="mcp-view mono">{{ mcpConfigText }}</pre>
       </div>
@@ -153,9 +153,10 @@
         <div v-show="techOpen" class="tech-body">
           <div class="tech-line mono">
             <span>资产号 {{ item.code }}</span>
-            <!-- ⚠️ 2026-10-31 (第十四轮): 连接器 (mcp) **没有安装包** ——
-                 下载接口直接 400, 写「下载 0 次」只会让人以为坏了. -->
+            <!-- ⚠️ 2026-11-04 (第二十四轮): 连接器 (mcp) 的 download_count 语义变了 ——
+                 现在记的是「MCP 配置被复制的次数」, 不是下载次数 (没有安装包). -->
             <span v-if="item.kind !== 'mcp'">下载 {{ item.download_count || 0 }} 次</span>
+            <span v-else>MCP 配置已复制 {{ item.download_count || 0 }} 次</span>
           </div>
           <div v-if="item.git_path" class="ad-git mono">
             <span class="ad-git-label">GitLab 存储</span>
@@ -179,6 +180,12 @@
 
     <template #footer>
       <div v-if="item" class="ad-actions">
+        <!-- ⚠️ 2026-11-04 (第二十四轮): 内置资产 (不落 GitLab) 没有任何作者动作 ——
+             不能编辑/下架/删除, 底部只放一行说明, 别摆一堆点了就 400 的按钮. -->
+        <span v-if="item.builtin" class="ad-builtin-note">
+          🔒 平台内置资产 —— 随 TestMate 平台提供, 不能编辑或下架
+        </span>
+        <template v-else>
         <!-- ===== 审核操作 (管理员) ===== -->
         <el-button v-if="canReview && item.publish_status === 'pending'"
                    type="primary" class="ad-btn" :loading="busy" @click="doReview('approve')">
@@ -235,6 +242,7 @@
           ⚠️ 这里**没有**「彻底删除」按钮 (2026-10-24 起) ——
              删除是不可逆的动作, 必须走「申请下架 → 管理员确认」, 有人拍板.
         -->
+        </template>
       </div>
     </template>
   </el-drawer>
@@ -245,7 +253,7 @@ import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   cancelUnpublish, deleteAsset, downloadAssetPackage, getAssetDoc, publishAsset,
-  reviewAsset, reviewUnpublish, submitForReview,
+  recordMcpCopy, reviewAsset, reviewUnpublish, submitForReview,
   unpublishAsset,
   type AssetDoc, type AssetItem,
 } from '@/api/assets';
@@ -309,6 +317,8 @@ const mcpConfigText = computed(() => {
   }
 });
 async function copyMcpConfig() {
+  const it = props.item;
+  if (!it) return;
   const text = mcpConfigText.value;
   if (!text) {
     ElMessage.warning('这个连接器没有 MCP 配置');
@@ -319,6 +329,14 @@ async function copyMcpConfig() {
   const ok = await copyToClipboard(text);
   if (ok) {
     ElMessage.success('MCP 配置已复制');
+    // ⚠️ 2026-11-04: 每复制一次计一次数 (两个「复制」按钮走同一个函数, 各 +1).
+    //    计数落在 download_count 上 —— 连接器没有安装包, 下载接口永远 400,
+    //    这个字段对连接器恒为 0, 正好借来当"复制次数" (卡片上的 ⬇ 展示它).
+    //    ⚠️ 失败只回滚提示, 不打断复制成功的事实 (复制已经成了).
+    try {
+      const r = await recordMcpCopy(it.code);
+      it.download_count = r.copy_count;
+    } catch { /* 计数失败不影响复制成功 */ }
   } else {
     ElMessage.error('复制失败, 请手动选中复制');
   }
@@ -481,7 +499,7 @@ async function doDownload() {
   busy.value = true;
   try {
     const blob = await downloadAssetPackage(it.code, it.version);
-    // ⚠️ 文件名**不带版本号** —— 下载到本地就该是 dml-xxx.zip, 不是 dml-xxx-1.0.0.zip
+    // ⚠️ 文件名**不带版本号** —— 下载到本地就该是 xxx.zip, 不是 xxx-1.0.0.zip
     const fileName = downloadFileName(it.code, blob.type);
     downloadBlob(blob, fileName);
     // ⚠️ 不记任何安装状态 —— 安装只是下载, 后端不知道用户到底装没装,
@@ -928,6 +946,12 @@ async function doSubmit() {
 }
 
 .ad-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* ⚠️ 2026-11-04: 内置资产底栏的说明行 (替代动作按钮) */
+.ad-builtin-note {
+  font-size: 11.5px; color: var(--ink-500);
+  padding: 7px 10px; border-radius: var(--radius-sm);
+  background: var(--surface-sunken); border: 1px dashed var(--border);
+}
 .ad-btn { flex: 1; min-width: 120px; }
 .ad-btn.danger { color: var(--err); border-color: rgba(239, 68, 68, 0.4); }
 .ad-btn.danger:hover { border-color: var(--err); background: rgba(239, 68, 68, 0.08); color: var(--err); }

@@ -40,12 +40,10 @@ from app.core.market_categories import (  # noqa: E402
     slug_of as _category_slug_of,
 )
 
-# code 的格式 —— **与前端 assetForm.CODE_PATTERN 同一套分段规则**
+# code 的格式 —— 由 /extensions/rules 下发给前端 (assetForm.SEGMENT_PATTERN 消费同一份)
 #   (前后端各写一份正则, 改一处就会漂移: 以前后端收 "dml--x", 前端拒)
-# ⚠️ 后端**不要求 dml- 前缀** —— 存量 14 个资产的 code 没有前缀, 强制会锁死它们的更新.
-#    前端只在**新建**时要求前缀 (那是团队命名约定, 不是技术限制).
-CODE_PREFIX = "dml-"
-CODE_EXAMPLE = "dml-ssd-log-doctor"
+# ⚠️ 不要求任何前缀 —— 前缀只是历史命名习惯, 不是技术限制 (存量资产也未必带).
+CODE_EXAMPLE = "ssd-log-doctor"
 CODE_RE = re.compile(r"^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 MAX_FILES = 200
@@ -81,7 +79,7 @@ def validate_code(code: str) -> str:
     code = (code or "").strip().lower()
     if not CODE_RE.match(code):
         raise ManifestError(
-            "code 只能用小写字母/数字/连字符分段 (如 dml-my-tool), 长度 3-64, "
+            "code 只能用小写字母/数字/连字符分段 (如 my-tool), 长度 3-64, "
             "不能有连续连字符"
         )
     return code
@@ -343,6 +341,12 @@ async def apply_index_to_db(session) -> tuple[int, int]:
     for e in entries:
         code = e.get("code")
         if not code or e.get("kind") not in VALID_KINDS:
+            continue
+        # ⚠️ 内置连接器不落 GitLab —— 万一远端 index.json 里出现同名条目
+        #    (比如有人手工塞), 也不能让它覆盖平台内置资产.
+        from app.core.builtin_assets import is_builtin_code
+
+        if is_builtin_code(code):
             continue
         # ⚠️ git_path 来自**远端** index.json —— 谁有仓库写权限谁就能改它.
         #    它会被拼成 WORKSPACE / git_path 去读文件, 所以入库前先校验:

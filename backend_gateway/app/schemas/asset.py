@@ -36,6 +36,8 @@ class AssetOut(UTCModel):
     git_web_url: str = ""
     # 下载次数 (热门度) —— 与"是否安装"无关
     download_count: int = 0
+    # 平台内置资产 (2026-11-04) —— 不落 GitLab、不可编辑/下架, 前端据此隐藏动作按钮
+    builtin: bool = False
     updated_at: datetime | None = None
     # 同步状态: staged / pushed / failed
     sync_status: str = "staged"
@@ -162,6 +164,17 @@ class AssetDeleteOut(BaseModel):
     ok: bool = True
     code: str = ""
     commit_sha: str = ""
+
+
+class AssetCopyOut(BaseModel):
+    """连接器 MCP 配置复制计数的回执 (2026-11-04).
+
+    ⚠️ 计数复用 download_count —— 连接器没有安装包, 下载接口恒 400,
+       这个字段对 mcp 来说就是「配置被复制了多少次」.
+    """
+
+    code: str
+    copy_count: int = 0
 
 
 class AssetNotificationOut(UTCModel):

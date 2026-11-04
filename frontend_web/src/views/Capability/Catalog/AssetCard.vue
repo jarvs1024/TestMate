@@ -17,6 +17,9 @@
       </div>
       <!-- 状态是**每张卡片自己的属性**, 不再做成视图筛选 -->
       <div class="ac-badges">
+        <!-- 平台内置 (2026-11-04): 随平台提供的资产, 不落 GitLab、不可编辑 -->
+        <span v-if="item.builtin" class="ac-badge builtin"
+              title="平台内置资产 —— 随平台提供, 不落 GitLab">🔒 内置</span>
         <!-- 适用项目: 项目特有的才标 (通用的不占地方) -->
         <span v-if="item.project" class="ac-badge proj"
               :title="`只对 ${item.project} 项目有意义`">📁 {{ item.project }} 项目</span>
@@ -54,8 +57,12 @@
          左边指标 + 右边 CTA 箭头. 以前只有一行指标, 看着像"列表行"不像"卡片". -->
     <div class="ac-foot">
       <div class="ac-meta">
+        <!-- ⚠️ 2026-11-04: 连接器也显示 ⬇ —— 对 mcp 来说这个数 = 「MCP 配置被复制了多少次」
+             (连接器没有安装包, 下载接口恒 400; 计数由复制 JSON 成功时 +1). -->
         <span v-if="item.kind !== 'mcp'" class="meta-item"
               :title="`已下载 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
+        <span v-else class="meta-item"
+              :title="`MCP 配置已复制 ${item.download_count || 0} 次`">⬇ {{ item.download_count || 0 }}</span>
         <!-- ⚠️ 2026-10-31 (第十六轮): 作者**只显示用户名** (去掉 @twsc.com.cn) ——
              邮箱后缀每张卡都一样, 摊出来既占地方又吵. 全账号挂 title, 悬停还能看到. -->
         <span class="meta-item" :title="item.author || ''">{{ displayAuthor(item.author) || '未知' }}</span>
@@ -128,6 +135,8 @@ function shortDate(iso: string | null): string {
 .ac-badge.unp { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
 /* 适用项目: 项目特有 —— 用中性蓝, 跟状态徽标(红/黄/蓝)区分开 */
 .ac-badge.proj { background: rgba(20, 184, 166, 0.14); color: var(--primary-2); }
+/* 平台内置 (2026-11-04): 紫调, 跟项目/状态徽标都不同 —— 一眼看出"这是平台自带的" */
+.ac-badge.builtin { background: rgba(139, 92, 246, 0.14); color: #8b5cf6; }
 
 .ac-summary {
   margin: 0;

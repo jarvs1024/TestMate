@@ -39,6 +39,7 @@ from app.core.dingtalk import (
     preview_market_message,
 )
 from app.core import (
+    builtin_assets,
     market_notify,
     market_naming,
     market_policy,
@@ -66,6 +67,7 @@ from app.models.user import User
 from app.schemas.asset import (
     AssetAuditListOut,
     AssetAuditOut,
+    AssetCopyOut,
     AssetDeleteOut,
     AssetDocOut,
     AssetFileBundleOut,
@@ -191,6 +193,9 @@ async def _assert_can_modify(code: str, user: User) -> Asset:
         ).scalar_one_or_none()
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+    if builtin_assets.is_builtin_code(a.code or ""):
+        # 内置连接器是平台的一部分 —— 不落 GitLab、不参与编辑/上下架
+        raise HTTPException(status_code=400, detail="平台内置资产不能修改")
     if not market_policy.can_modify(a, user):
         raise HTTPException(
             status_code=403,
@@ -328,11 +333,29 @@ def _asset_dir(a: Asset) -> Path:
     return p
 
 
-def _to_out(a: Asset, can_review: bool = False) -> AssetOut:
+def _to_out(a: Asset, can_review: bool = False, mcp_base: str = "") -> AssetOut:
     out = AssetOut.model_validate(a)
     # 当前用户能不能审这个资产 —— 前端据此显示「通过审核 / 驳回」按钮
     out.can_review = can_review
+    # 内置连接器: 标记 builtin, 并按当前部署地址**现拼** MCP 配置
+    # (配置不入库 —— 本地 8081 / 生产域名各自自适应, 见 core/builtin_assets.py)
+    if builtin_assets.is_builtin_code(a.code or ""):
+        out.builtin = True
+        if mcp_base:
+            out.mcp_config = builtin_assets.builtin_mcp_config(mcp_base)
     return out
+
+
+async def _mcp_config_base() -> str:
+    """内置连接器 MCP 配置的基地址: 设置里配了 public_base_url 用它,
+    没有就用「当前请求进来的地址」(中间件记的, 生产域名/端口自动对)."""
+    configured = (await _setting("extensions.public_base_url", "")).strip().rstrip("/")
+    if configured:
+        return configured
+    from app.core.dingtalk import get_request_base_url
+
+    return (get_request_base_url() or "").rstrip("/")
+
 
 
 async def _apply_git_web_url(items: list[AssetOut]) -> None:
@@ -560,7 +583,8 @@ async def list_assets(
         page = rows[offset : offset + limit]
 
     is_reviewer = await _is_reviewer(user)
-    items = [_to_out(a, can_review=is_reviewer) for a in page]
+    mcp_base = await _mcp_config_base()
+    items = [_to_out(a, can_review=is_reviewer, mcp_base=mcp_base) for a in page]
     await _apply_git_web_url(items)
     return AssetListOut(
         items=items,
@@ -1040,9 +1064,46 @@ async def get_asset(
         #    (连接器的 MCP 配置里还有 env/headers, 可能是令牌)
         assert_visible(a, username=user.username or "", is_reviewer=is_reviewer,
                        is_admin=market_policy.is_admin(user))
-        out = [_to_out(a, can_review=is_reviewer)]
+        out = [_to_out(a, can_review=is_reviewer, mcp_base=await _mcp_config_base())]
         await _apply_git_web_url(out)
         return out[0]
+
+
+@router.post("/{code}/copy", response_model=AssetCopyOut)
+async def record_connector_copy(
+    code: str,
+    user: User = Depends(get_current_user),
+) -> AssetCopyOut:
+    """连接器「复制 MCP 配置」计数 +1 (2026-11-04).
+
+    ⚠️ 连接器没有安装包可下载 —— 卡片上的「⬇ N」对 mcp 来说就是
+       「配置被复制了多少次」, 复用 download_count (原子自增).
+       前端详情抽屉里**两个**复制按钮 (吸顶卡 + MCP 配置块) 都调它,
+       每次复制成功加一次; 复制失败不调.
+    """
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        if a.kind != "mcp":
+            raise HTTPException(status_code=400, detail="只有连接器 (mcp) 的配置复制可以计数")
+        is_reviewer = await _is_reviewer(user)
+        assert_visible(a, username=user.username or "", is_reviewer=is_reviewer,
+                       is_admin=market_policy.is_admin(user))
+        await session.execute(
+            update(Asset)
+            .where(Asset.code == code)
+            .values(download_count=Asset.download_count + 1)
+        )
+        await session.commit()
+        new_count = (
+            await session.execute(
+                select(Asset.download_count).where(Asset.code == code)
+            )
+        ).scalar_one()
+    return AssetCopyOut(code=code, copy_count=new_count or 0)
 
 
 @router.get("/{code}/doc", response_model=AssetDocOut)
@@ -2048,6 +2109,8 @@ async def delete_asset(
         ).scalar_one_or_none()
         if a is None:
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        if builtin_assets.is_builtin_code(a.code or ""):
+            raise HTTPException(status_code=400, detail="平台内置资产不能删除")
         is_admin = market_policy.is_admin(user)
         is_author = market_policy.can_modify(a, user)
         if not is_admin:

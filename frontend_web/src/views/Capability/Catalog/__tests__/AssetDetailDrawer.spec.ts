@@ -23,9 +23,16 @@ const api = vi.hoisted(() => ({
   submitForReview: vi.fn(async () => ({ ok: true })),
   getAssetDoc: vi.fn(async () => ({ kind: 'skill', filename: 'SKILL.md', frontmatter: {}, content: '# x' })),
   downloadAssetPackage: vi.fn(async () => new Blob(['x'])),
+  recordMcpCopy: vi.fn(async () => ({ code: 'demo', copy_count: 3 })),
 }));
 
 vi.mock('@/api/assets', () => api);
+
+const clipboard = vi.hoisted(() => ({
+  copyToClipboard: vi.fn(async () => true),
+}));
+
+vi.mock('@/utils/clipboard', () => clipboard);
 
 function item(over: Partial<AssetItem> = {}): AssetItem {
   return {
@@ -219,10 +226,11 @@ describe('资产详情抽屉 · 适用项目与适用场景', () => {
 });
 
 /**
- * 下载次数 (2026-10-31 第十四轮).
+ * 下载次数 (2026-10-31 第十四轮; 2026-11-04 第二十四轮改口径).
  *
- * ⚠️ **连接器 (mcp) 没有安装包** —— 后端下载接口直接 400, 所以「下载 N 次」
- *    对连接器没意义 (永远是 0), 显示出来只会让人以为坏了.
+ * ⚠️ **连接器 (mcp) 没有安装包** —— 后端下载接口直接 400.
+ *    2026-11-04 起 download_count 对连接器记的是「MCP 配置被复制的次数」,
+ *    技术信息里显示「MCP 配置已复制 N 次」而不是「下载 N 次」.
  */
 describe('详情抽屉 · 下载次数', () => {
   beforeEach(() => {
@@ -235,9 +243,95 @@ describe('详情抽屉 · 下载次数', () => {
     expect(w.text()).toContain('下载 7 次');
   });
 
-  it('连接器 (mcp) → **不显示**「下载 N 次」', async () => {
-    const w = await mountDrawer({ it: item({ kind: 'mcp', download_count: 0 }) });
+  it('连接器 (mcp) → 技术信息显示「MCP 配置已复制 N 次」, 不写「下载」', async () => {
+    const w = await mountDrawer({ it: item({ kind: 'mcp', download_count: 5 }) });
     await w.find('.tech-toggle').trigger('click');
-    expect(w.text()).not.toContain('下载 0 次');
+    expect(w.text()).toContain('MCP 配置已复制 5 次');
+    expect(w.text()).not.toContain('下载');
+  });
+});
+
+/**
+ * 连接器复制计数 (2026-11-04 第二十四轮).
+ *
+ * ⚠️ 用户原话: 「连接器加回下载图标, 计算方式是复制 json 配置
+ *    (注意有两个复制按钮) 一次累加一次」——
+ *    抽屉里**两个**复制按钮 (吸顶卡「复制 JSON」+ MCP 配置块「复制」)
+ *    都走同一个 copyMcpConfig, 每次复制成功后 recordMcpCopy +1.
+ */
+describe('详情抽屉 · 连接器复制计数', () => {
+  beforeEach(() => {
+    clipboard.copyToClipboard.mockClear();
+    api.recordMcpCopy.mockClear();
+  });
+
+  it('点「复制 JSON」→ 复制成功后计数 +1, 页面数字跟着刷新', async () => {
+    api.recordMcpCopy.mockResolvedValue({ code: 'demo', copy_count: 4 });
+    const w = await mountDrawer({
+      it: item({ kind: 'mcp', download_count: 3, mcp_config: { mcpServers: { demo: { url: 'http://x' } } } }),
+    });
+    const btn = w.findAll('button').find((b) => b.text().replace(/\s+/g, '').includes('复制JSON'));
+    expect(btn).toBeTruthy();
+    await btn!.trigger('click');
+    await flushPromises();
+    expect(clipboard.copyToClipboard).toHaveBeenCalledTimes(1);
+    expect(api.recordMcpCopy).toHaveBeenCalledWith('demo');
+    await w.find('.tech-toggle').trigger('click');
+    expect(w.text()).toContain('MCP 配置已复制 4 次');
+  });
+
+  it('两个复制按钮都计数 —— 各点一次 = 两次', async () => {
+    api.recordMcpCopy.mockResolvedValue({ code: 'demo', copy_count: 9 });
+    const w = await mountDrawer({
+      it: item({ kind: 'mcp', mcp_config: { mcpServers: { demo: { url: 'http://x' } } } }),
+    });
+    const btns = w.findAll('button').filter((b) => b.text().includes('复制'));
+    expect(btns.length).toBe(2);
+    await btns[0].trigger('click');
+    await flushPromises();
+    await btns[1].trigger('click');
+    await flushPromises();
+    expect(api.recordMcpCopy).toHaveBeenCalledTimes(2);
+  });
+
+  it('复制失败 → 不计数', async () => {
+    clipboard.copyToClipboard.mockResolvedValue(false);
+    const w = await mountDrawer({
+      it: item({ kind: 'mcp', mcp_config: { mcpServers: { demo: { url: 'http://x' } } } }),
+    });
+    const btn = w.findAll('button').find((b) => b.text().replace(/\s+/g, '').includes('复制JSON'));
+    expect(btn).toBeTruthy();
+    await btn!.trigger('click');
+    await flushPromises();
+    expect(api.recordMcpCopy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 内置资产 (2026-11-04 第二十四轮).
+ *
+ * ⚠️ 平台内置资产 (如「TestMate 扩展库助手」连接器) 不落 GitLab,
+ *    底栏**不摆**编辑/下架/删除等作者动作 (后端本来就会 400),
+ *    换成一行说明文字.
+ */
+describe('详情抽屉 · 内置资产', () => {
+  it('内置资产 → 没有编辑/下架/删除按钮, 显示内置说明', async () => {
+    const w = await mountDrawer({
+      it: item({ builtin: true, kind: 'mcp', publish_status: 'published' }),
+      role: 'admin',
+    });
+    const texts = buttonTexts(w).join(' ');
+    expect(texts).not.toContain('编辑信息');
+    expect(texts).not.toContain('发布新版本');
+    expect(texts).not.toContain('申请下架');
+    expect(texts).not.toContain('删除');
+    expect(w.find('.ad-builtin-note').exists()).toBe(true);
+    expect(w.find('.ad-builtin-note').text()).toContain('内置');
+  });
+
+  it('内置资产的「复制 JSON」仍在 (连接器配置可以照常复制)', async () => {
+    const w = await mountDrawer({ it: item({ builtin: true, kind: 'mcp' }) });
+    const btn = w.findAll('button').find((b) => b.text().replace(/\s+/g, '').includes('复制JSON'));
+    expect(btn).toBeTruthy();
   });
 });

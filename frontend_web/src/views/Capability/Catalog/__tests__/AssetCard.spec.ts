@@ -125,11 +125,12 @@ describe('AssetCard 不显示权限角标', () => {
 });
 
 /**
- * 下载计数 (2026-10-31 第十四轮).
+ * 下载计数 (2026-10-31 第十四轮; 2026-11-04 第二十四轮改口径).
  *
- * ⚠️ **连接器 (mcp) 没有安装包** —— 它是一段 MCP 配置, 后端下载接口直接 400
- *    ("连接器没有安装包, 请照资产详情里的「MCP 配置」手动添加到宿主").
- *    所以卡片上**不能**显示下载计数 —— 显示个永远 0 的 ⬇0 只会让人以为坏了.
+ * ⚠️ **连接器 (mcp) 没有安装包** —— 后端下载接口直接 400.
+ *    2026-11-04 起: 连接器卡片的 ⬇ **改为显示「MCP 配置被复制的次数」**
+ *    (用户要求"连接器加回下载图标", 计数 = 两个复制按钮各 +1).
+ *    download_count 字段复用: 连接器的下载恒为 0, 正好借来记复制数.
  */
 describe('AssetCard 下载计数', () => {
   function dl(w: ReturnType<typeof mount>) {
@@ -145,10 +146,24 @@ describe('AssetCard 下载计数', () => {
     expect(dl(w2)).toEqual(['⬇ 3']);
   });
 
-  it('连接器 (mcp) → **不显示**下载计数 (它压根没有安装包)', () => {
-    const w = mount(AssetCard, { props: { item: item({ kind: 'mcp', download_count: 0 }) } });
-    expect(dl(w)).toEqual([]);
-    expect(w.text()).not.toContain('⬇');
+  it('连接器 (mcp) → ⬇ 显示的是 MCP 配置复制次数 (2026-11-04)', () => {
+    const w = mount(AssetCard, { props: { item: item({ kind: 'mcp', download_count: 5 }) } });
+    expect(dl(w)).toEqual(['⬇ 5']);
+    const span = w.findAll('.ac-meta .meta-item').find((s) => s.text().startsWith('⬇'));
+    expect(span?.attributes('title')).toBe('MCP 配置已复制 5 次');
+  });
+});
+
+describe('AssetCard 内置徽标 (2026-11-04)', () => {
+  it('内置资产 → 🔒 内置徽标', () => {
+    const w = mount(AssetCard, { props: { item: item({ builtin: true }) } });
+    expect(w.find('.ac-badge.builtin').exists()).toBe(true);
+    expect(w.find('.ac-badge.builtin').text()).toContain('内置');
+  });
+
+  it('普通资产 → 没有内置徽标', () => {
+    const w = mount(AssetCard, { props: { item: item() } });
+    expect(w.find('.ac-badge.builtin').exists()).toBe(false);
   });
 });
 
