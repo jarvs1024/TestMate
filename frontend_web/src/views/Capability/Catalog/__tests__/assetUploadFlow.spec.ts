@@ -38,8 +38,8 @@ vi.mock('@/api/assets', () => ({
 
 const rulesPayload = {
   code: {
-    prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
-    example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+    pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$',
+    example: 'ssd-log-doctor', min_length: 3, max_length: 64,
   },
   segment: {
     pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
@@ -59,8 +59,6 @@ const rulesPayload = {
   categories: [{ name: '其他', slug: 'misc', desc: '', order: 99 }],
   projects: ['6100'],
   enforcement: {
-    require_code_prefix_on_create: true,
-    require_code_prefix_on_update: false,
     code_must_match_package: true,
     code_must_match_mcp_server: true,
     unknown_category: '其他',
@@ -224,9 +222,7 @@ describe('上传抽屉: 表单内容', () => {
     expect(view.exists()).toBe(true);
     expect(view.text()).toContain('资产 code');
     // 没有任何 code 输入框 —— 用户改不了派生值
-    const codeInput = w.findAll('input[type=text]')
-      .find((i) => (i.attributes('placeholder') || '').includes('dml-'));
-    expect(codeInput).toBeUndefined();
+    expect(w.find('.pkg-req input').exists()).toBe(false);
   });
 
   it('进阶信息标题写明「可展开」', async () => {
@@ -245,23 +241,18 @@ describe('上传抽屉: 表单内容', () => {
     const w = await open({ initialKind: 'skill' });
     const req = w.find('.pkg-req').text();
     expect(req).toContain('技能包要求');
-    expect(req).toContain('dml-');
+    expect(req).toContain('小写字母/数字/连字符');
     expect(req).toContain('SKILL.md');
   });
 
   it('文件 accept 和命名提示使用当前服务端规则', async () => {
     requestGet.mockResolvedValue({
       ...rulesPayload,
-      code: {
-        prefix: 'team-', pattern: '^team-[a-z0-9]+$', example: 'team-demo',
-        min_length: 3, max_length: 64,
-      },
       package: { suffixes: ['.bundle', '.tar.zst'] },
     });
     const w = await open({ initialKind: 'skill' });
     expect(w.find('.file-input').attributes('accept')).toBe('.bundle,.tar.zst');
-    expect(w.find('.pkg-req').text()).toContain('team-');
-    expect(w.find('.pkg-req').text()).toContain('team-demo');
+    expect(w.find('.pkg-req').text()).toContain('小写字母/数字/连字符');
     expect(w.find('.pkg-req').text()).not.toContain('dml-');
   });
 
@@ -293,14 +284,14 @@ describe('上传抽屉: 没开始填时不该有红字', () => {
   it('连接器形态刚打开 → 也没有红色错误提示', async () => {
     const w = await open({ initialKind: 'mcp' });
     expect(w.text()).not.toContain('请选择安装包');
-    expect(w.text()).not.toContain('只能用小写字母/数字/连字符');
+    // 说明文案里本来就会提到字符集, 所以按**错误位置**判断, 不按全页文案判断
     expect(w.find('.cv-err').exists()).toBe(false);
     // 配置还没填 = 缺项, 不是错误 → 中性提示, 不标红
     expect(w.find('.mcp-msg.bad').exists()).toBe(false);
     expect(w.find('.mcp-msg').text()).toContain('还没填配置');
   });
 
-  it('没选包时 code 只显示占位文案, 不露出初始的 "dml-"', async () => {
+  it('没选包时 code 只显示占位文案', async () => {
     const w = await open({ initialKind: 'skill' });
     const code = w.find('.pkg-req .pr-code .pc-val').text();
     expect(code).toContain('自动生成');
@@ -318,9 +309,27 @@ describe('上传抽屉: 没开始填时不该有红字', () => {
     expect(w.find('.pkg-req .pr-code .pc-val').text()).toContain('dml-weekly-report');
   });
 
-  it('连接器名的前缀要求: 新建说 dml-, 更新按宽松口径 (存量老名字没前缀)', async () => {
+  it('把文件拖进选择区 → 也能选中安装包', async () => {
+    const w = await open({ initialKind: 'skill' });
+    const file = new File(['x'], 'dml-dropped.zip');
+    await w.find('.file-pick').trigger('drop', { dataTransfer: { files: [file] } });
+    await w.vm.$nextTick();
+    expect(w.find('.pick-hint').exists()).toBe(false);
+    expect(w.find('.file-chip').text()).toContain('dml-dropped.zip');
+    expect(w.find('.pkg-req .pr-code .pc-val').text()).toContain('dml-dropped');
+  });
+
+  it('选择安装包按钮复用全局主按钮 (和「＋ 上传资产」同一套渐变)', async () => {
+    const w = await open({ initialKind: 'skill' });
+    const btn = w.find('.file-pick .pick-btn');
+    expect(btn.classes()).toContain('mini-btn');
+    expect(btn.classes()).toContain('primary');
+  });
+
+  it('连接器名文案: 新建/更新都只要求小写字母/数字/连字符', async () => {
     const w = await open({ initialKind: 'mcp' });
-    expect(w.find('.pkg-req').text()).toContain('必须以 dml- 开头');
+    expect(w.find('.pkg-req').text()).toContain('只能用小写字母/数字/连字符');
+    expect(w.find('.pkg-req').text()).not.toContain('dml-');
     const w2 = await open({ mode: 'update', asset: assetOf('mcp') });
     expect(w2.find('.pkg-req').text()).toContain('只能用小写字母/数字/连字符');
   });

@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from app.core import market_catalog, market_categories, market_naming, market_projects
-from app.core.market_catalog import CODE_EXAMPLE, CODE_PREFIX
+from app.core.market_catalog import CODE_EXAMPLE
 
 _LENGTH_MATCH = re.search(
     r"\(\?=\.\{(\d+),(\d+)\}\$\)",
@@ -30,14 +30,10 @@ async def rules_payload() -> dict[str, Any]:
         raw_projects = ""
     projects = market_projects.parse(raw_projects) or list(market_projects.DEFAULT_PROJECTS)
     segment_pattern = market_catalog.CODE_RE.pattern
-    code_pattern = segment_pattern.replace(
-        _LENGTH_MATCH.group(0),
-        f"{_LENGTH_MATCH.group(0)}{CODE_PREFIX}",
-        1,
-    )
+    # code 与 segment 同一套规则 —— 没有任何前缀要求.
+    code_pattern = segment_pattern
     return {
         "code": {
-            "prefix": CODE_PREFIX,
             "pattern": code_pattern,
             "example": CODE_EXAMPLE,
             "min_length": CODE_MIN_LENGTH,
@@ -67,8 +63,6 @@ async def rules_payload() -> dict[str, Any]:
         "categories": [dict(c) for c in market_categories.table()],
         "projects": projects,
         "enforcement": {
-            "require_code_prefix_on_create": True,
-            "require_code_prefix_on_update": False,
             "code_must_match_package": True,
             "code_must_match_mcp_server": True,
             "unknown_category": market_categories.normalize("__unknown__"),

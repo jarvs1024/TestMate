@@ -11,9 +11,8 @@ async def test_market_rules_returns_complete_existing_contract(client, auth):
     assert response.status_code == 200, response.text
     assert response.json() == {
         "code": {
-            "prefix": "dml-",
-            "pattern": "^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$",
-            "example": "dml-ssd-log-doctor",
+            "pattern": "^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "example": "ssd-log-doctor",
             "min_length": 3,
             "max_length": 64,
         },
@@ -72,8 +71,6 @@ async def test_market_rules_returns_complete_existing_contract(client, auth):
         ],
         "projects": ["6100", "3361", "8560", "9560", "3100"],
         "enforcement": {
-            "require_code_prefix_on_create": True,
-            "require_code_prefix_on_update": False,
             "code_must_match_package": True,
             "code_must_match_mcp_server": True,
             "unknown_category": "其他",

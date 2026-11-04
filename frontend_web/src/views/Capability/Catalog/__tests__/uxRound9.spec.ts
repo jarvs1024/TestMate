@@ -111,8 +111,8 @@ async function mountMarket(opts: { fake?: boolean } = {}) {
 
 const rulesPayload = {
   code: {
-    prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
-    example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+    pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$',
+    example: 'ssd-log-doctor', min_length: 3, max_length: 64,
   },
   segment: {
     pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
@@ -135,8 +135,6 @@ const rulesPayload = {
   ],
   projects: [],
   enforcement: {
-    require_code_prefix_on_create: true,
-    require_code_prefix_on_update: false,
     code_must_match_package: true,
     code_must_match_mcp_server: true,
     unknown_category: '其他',

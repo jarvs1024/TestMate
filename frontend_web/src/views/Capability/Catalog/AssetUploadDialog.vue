@@ -75,15 +75,7 @@
           <div v-if="mode !== 'edit'" class="pkg-req">
             <span class="pr-ic">🔌</span>
             <span class="pr-txt">
-              <!-- 前缀只在服务端规则要求时强制; 存量连接器更新不新增前缀门槛. -->
-              <template v-if="mode === 'create'">
-                <b>连接器名</b>必须以 <code>{{ rules?.code.prefix }}</code> 开头
-                (如 {{ rules?.code.example }})。
-              </template>
-              <template v-else>
-                <b>连接器名</b>只能用小写字母/数字/连字符（新建时还要
-                <code>{{ rules?.code.prefix }}</code> 开头）。
-              </template>
+              <b>连接器名</b>只能用小写字母/数字/连字符分段。
             </span>
             <span class="pr-code">
               <span class="pc-label">资产 code</span>
@@ -100,11 +92,16 @@
         <section v-else-if="mode !== 'edit'" class="up-sec">
           <div class="sec-h"><span class="sec-no">1</span>安装包<span class="sec-tip">必填</span></div>
           <!-- 选文件: 隐藏原生 input (系统默认按钮跟整页风格不搭), 换成统一风格的自定义按钮.
-               ⚠️ 文件名只显示一次 —— 原生 input 旁边那个是重复的. -->
-          <div class="file-pick">
+               ⚠️ 文件名只显示一次 —— 原生 input 旁边那个是重复的.
+               ⚠️ 2026-11-04: 整块做成虚线选择区 + 主色实心按钮, 跟软件库上传抽屉同一套交互
+                  (拖进来松手也能选) —— 以前只有一个描边小按钮, 用户看不出这里要传包. -->
+          <div class="file-pick" :class="{ dragging }"
+               @dragover.prevent="dragging = true"
+               @dragleave.prevent="dragging = false"
+               @drop.prevent="onDropPackage">
             <input ref="fileInput" type="file" class="file-input"
                    :accept="packageAccept" @change="onPickPackage" />
-            <button type="button" class="pick-btn" @click="fileInput?.click()">
+            <button type="button" class="pick-btn mini-btn primary" @click="fileInput?.click()">
               <span class="pb-ic">📦</span>选择安装包
             </button>
             <span v-if="pkgFile" class="file-chip">
@@ -114,7 +111,7 @@
               <button type="button" class="file-clear" @click="clearPackage"
                       aria-label="移除已选安装包">×</button>
             </span>
-            <span v-else class="pick-hint">未选择文件</span>
+            <span v-else class="pick-hint">未选择文件 —— 也可以把文件拖进来</span>
           </div>
           <!-- ⚠️ 只报"包名不合法"这种真错误 ——
                "还没选包"是缺项 (底部「还缺」清单会说), 不是错误, 别一上来就标红 -->
@@ -125,11 +122,7 @@
             <span class="pr-ic">📦</span>
             <span class="pr-txt">
               <b>{{ kind.label }}包要求</b>:
-              <template v-if="packagePrefixRequired">
-                包名以 <code>{{ rules?.code.prefix }}</code> 开头
-                (如 {{ rules?.code.example }}{{ rules?.package.suffixes[0] }});
-              </template>
-              <template v-else>包名使用小写字母/数字/连字符分段, 并与资产 code 一致;</template>
+              包名使用小写字母/数字/连字符分段, 并与资产 code 一致;
               <template v-if="kind.pkgNeed">{{ kind.pkgNeed }}。</template>
               压缩包会在服务端解压后推送到 GitLab。
             </span>
@@ -443,13 +436,13 @@ const advOpen = ref(false);
  */
 const {
   form, tagsText, keywordsText, mcpConfigText, step, hasSource,
-  fileInput, pkgFile, preview, previewing, iconPanel,
+  fileInput, pkgFile, preview, previewing, iconPanel, dragging,
   categories, categoriesError, categoriesLoading, projectOptions, rules,
   isMcp, isEdit, kind, mcpHint, mcpHintState, mcpTemplate, codeFieldError,
   versionError, pkgNameError,
   previewBad, previewIssues, iconChoices, missing, canSubmit,
   formatMcp, useMcpTemplate, loadCategories,
-  onCategoryChange, chooseIcon, clearPackage, onPickPackage,
+  onCategoryChange, chooseIcon, clearPackage, onPickPackage, onDropPackage,
   chooseKind, reset,
 } = useAssetUploadForm({
   mode: () => props.mode,
@@ -467,13 +460,6 @@ const {
 const basicNo = computed(() => (isEdit.value && !isMcp.value ? 1 : 2));
 const advNo = computed(() => basicNo.value + 1);
 const packageAccept = computed(() => rules.value?.package.suffixes.join(',') || '');
-const packagePrefixRequired = computed(() => {
-  const enforcement = rules.value?.enforcement;
-  if (!enforcement) return false;
-  return props.mode === 'create'
-    ? enforcement.require_code_prefix_on_create
-    : enforcement.require_code_prefix_on_update;
-});
 
 /**
  * 分类表里有没有「其他」—— 用来决定失败时**要不要**再注入一个兜底项.
@@ -885,15 +871,19 @@ function close() {
   border-radius: var(--radius-sm); line-height: 1.6; }
 /* ⚠️ 原生 file input 的系统按钮跟整页风格不搭 —— 藏起来, 用自定义按钮 */
 .file-input { display: none; }
-.file-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.pick-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-sm); padding: 7px 14px;
-  color: var(--ink-700); font-size: 13px; cursor: pointer;
-  font-family: inherit; transition: all 0.15s ease;
+/* 选择区: 跟软件库上传抽屉同一套 (虚线框 + 拖放高亮) */
+.file-pick {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 10px; padding: 11px 12px;
+  border: 1px dashed var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-soft);
 }
-.pick-btn:hover { border-color: var(--primary); color: var(--primary); }
+.file-pick.dragging {
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, .06);
+}
+/* 按钮外观直接复用全局 .mini-btn.primary (跟「＋ 上传资产」完全一致);
+   这里只留图标字号, 别再复写颜色/圆角/内边距. */
 .pick-btn .pb-ic { font-size: 14px; }
 .pick-hint { font-size: 12.5px; color: var(--ink-500); }
 .pick-err { margin: -4px 0 10px; font-size: 11.5px; color: var(--err); }

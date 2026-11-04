@@ -17,7 +17,7 @@ import {
   type AssetItem, type MarketKind, type PackagePreview,
 } from '@/api/assets';
 import {
-  CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
+  FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
   checkCodeSync, codeFromPackageName, loadMarketRules, marketRules,
   marketRulesError, marketRulesLoading, pickIcon, validateCode, validatePackageName,
 } from './assetForm';
@@ -83,7 +83,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * 设为精选 仍然不在表单里 (前端不提供这个入口).
    */
   const form = reactive({
-    code: CODE_PREFIX, kind: 'skill' as MarketKind, name: '', version: '1.0.0',
+    code: '', kind: 'skill' as MarketKind, name: '', version: '1.0.0',
     summary: '', use_when: '', category: '', icon: '🧩',
     // 适用项目: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有
     project: '',
@@ -111,17 +111,9 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   /** 当前形态的元信息 (图标 / 需要准备什么) */
   const kind = computed(() => kindMeta(form.kind));
   /**
-   * MCP 配置的实时校验 (规则与后端一致).
-   *
-   * ⚠️ `requirePrefix` 只在**新建**时为 true —— 新上架的连接器统一叫 dml-xxx
-   *    (团队命名约定); 更新**存量**连接器时不强制 (那 4 个老名字没前缀,
-   *    硬拦等于把它们锁死 —— 连发个新版本都提交不了).
+   * MCP 配置的实时校验 (规则与后端一致: 名字只要求小写字母/数字/连字符).
    */
-  const mcpParsed = computed(() => parseMcpConfig(mcpConfigText.value, {
-    requirePrefix: mode() === 'create'
-      ? marketRules.value?.enforcement.require_code_prefix_on_create !== false
-      : marketRules.value?.enforcement.require_code_prefix_on_update === true,
-  }));
+  const mcpParsed = computed(() => parseMcpConfig(mcpConfigText.value));
   const mcpConfigError = computed(() => {
     if (!isMcp.value) return '';
     return mcpParsed.value.ok ? '' : mcpParsed.value.error;
@@ -170,7 +162,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    */
   const codeError = computed(() => {
     if (mode() === 'update' || isEdit.value) return '';
-    // ⚠️ 还没选包 / 没填配置时, code 还是初始的 "dml-" —— 那不是错误,
+    // ⚠️ 还没选包 / 没填配置时, code 还是空串 —— 那不是错误,
     //    是"还没派生出来". 提前标红会让人以为填错了.
     if (!hasSource.value || !marketRules.value) return '';
     return validateCode(form.code, marketRules.value);
@@ -217,24 +209,20 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   /**
    * 安装包名本身的合法性.
    *
-   * ⚠️ `requirePrefix` 只在**新建**时为 true —— 存量资产的 code 本身就没有
-   *    dml- 前缀, 更新时强制前缀等于把那些资产锁死 (后端同理, 见 market_naming)。
+   * ⚠️ 新建 / 更新同一套口径: 只要求小写字母/数字/连字符分段, 不要求任何前缀.
    */
   const pkgNameError = computed(() => {
     // ⚠️ 编辑模式没有安装包 —— 别拿"包名不合规"吓人
     if (isEdit.value || !marketRules.value) return '';
-    const requirePrefix = mode() === 'create'
-      ? marketRules.value.enforcement.require_code_prefix_on_create
-      : marketRules.value.enforcement.require_code_prefix_on_update;
     return pkgFile.value
-      ? validatePackageName(pkgFile.value.name, { requirePrefix, rules: marketRules.value })
+      ? validatePackageName(pkgFile.value.name, { rules: marketRules.value })
       : '';
   });
 
   /**
    * 体检结论: 包装不上.
    *
-   * ⚠️ 包名不合规 (没 dml- 开头) 也要算装不上 ——
+   * ⚠️ 包名不合规 (字符集/长度不对) 也要算装不上 ——
    *    否则用户看到「体检通过」, 却又提交不了, 前后自相矛盾。
    */
   const previewBad = computed(() => {
@@ -381,6 +369,16 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     await runPreview();
   }
 
+  /** 拖拽落文件 —— 跟软件库上传抽屉同一套交互 (拖进来松手就等于选了包) */
+  const dragging = ref(false);
+  async function onDropPackage(e: DragEvent) {
+    dragging.value = false;
+    const f = e.dataTransfer?.files?.[0] ?? null;
+    if (!f) return;
+    pkgFile.value = f;
+    await runPreview();
+  }
+
   /** 体检: 走服务端与真实上传完全相同的解包路径, 结论就是提交后的结论 */
   async function runPreview() {
     if (!pkgFile.value) return;
@@ -455,7 +453,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
       // 没带形态 (别处打开) 就先走第 ① 步让人选, 别再默认「技能」。
       const k = (opts.initialKind() || 'skill') as MarketKind;
       Object.assign(form, {
-        code: CODE_PREFIX, kind: k, name: '', version: '1.0.0', summary: '',
+        code: '', kind: k, name: '', version: '1.0.0', summary: '',
         use_when: '', category: '', icon: '🧩',
         project: '',        // 新建默认通用
         tags: [], files: [],
@@ -495,7 +493,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * MCP 配置变了 → code 跟着配置里的连接器名走 (用户没手改过时).
    *
    * ⚠️ 只在**新建**时同步 —— 更新时 code 不可改 (后端也只允许改配置, 不改 code).
-   *    连接器名在新建时得是 dml- 开头 (配置校验会拦), 这里原样带成 code, 不另做加工.
+   *    连接器名按字符集/分段规则校验 (配置校验会拦), 这里原样带成 code, 不另做加工.
    */
   watch([() => mcpConfigText.value, () => marketRules.value], () => {
     if (mode() !== 'create' || !isMcp.value) return;
@@ -511,6 +509,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     // 状态
     form, tagsText, keywordsText, mcpConfigText, step, hasSource,
     fileInput, pkgFile, preview, previewing, iconPanel, usedIcons, iconTouched,
+    dragging,
     categories, categoriesError, categoriesLoading, projectOptions,
     rules: marketRules, rulesError: marketRulesError, rulesLoading: marketRulesLoading,
     // 派生
@@ -520,7 +519,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     previewBad, previewIssues, iconChoices, missing, canSubmit,
     // 动作
     formatMcp, useMcpTemplate, loadRules, loadCategories, loadProjects, loadUsedIcons,
-    autoIcon, onCategoryChange, chooseIcon, clearPackage, onPickPackage,
+    autoIcon, onCategoryChange, chooseIcon, clearPackage, onPickPackage, onDropPackage,
     runPreview, chooseKind, reset,
   };
 }

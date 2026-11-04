@@ -32,11 +32,8 @@ MAX_CONFIG_BYTES = 64 * 1024
 # 连接器名的**字符规则**: 小写字母/数字/连字符分段.
 #
 # ⚠️ 与 market_catalog.CODE_RE / market_naming 的口径**必须一致**:
-#    后端只管"技术上装不装得上", **不强制 dml- 前缀** ——
-#    那是团队命名约定, 由前端在**新建**时把关 (跟资产 code / 安装包名一个待遇).
-#    以前这里硬要求 dml-, 结果把存量的 4 个连接器
-#    (review-agent-board / pr-agent-review / testmate-machine-ops / dingtalk-notify)
-#    **锁死了**: 连"发个新版本"都提交不了 (前端标红 + 后端 422).
+#    只要求"字符集 + 分段", **不要求任何前缀** ——
+#    前缀只是历史命名习惯, 不是技术限制, 也由前端保持同一口径.
 CONNECTOR_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 

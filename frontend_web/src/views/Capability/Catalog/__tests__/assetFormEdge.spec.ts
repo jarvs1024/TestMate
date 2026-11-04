@@ -6,15 +6,15 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  CODE_PREFIX, FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
+  FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
   checkCodeSync, codeFromPackageName, marketRules, pickIcon, validateCode, validatePackageName,
 } from '../assetForm';
 
 beforeEach(() => {
   marketRules.value = {
     code: {
-      prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
-      example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+      pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$',
+      example: 'ssd-log-doctor', min_length: 3, max_length: 64,
     },
     segment: {
       pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
@@ -41,15 +41,15 @@ describe('code 校验: 边界', () => {
     }
   });
 
-  it('缺 dml- 前缀 → 明确提示', () => {
-    expect(validateCode('weekly-report')).toContain(CODE_PREFIX);
+  it('没有 dml- 前缀也合法', () => {
+    expect(validateCode('weekly-report')).toBe('');
   });
 });
 
-describe('包名校验: 边界 + create/update 差异', () => {
-  it('新建要求 dml- 前缀, 更新不要求 (存量资产的 code 没有前缀)', () => {
-    expect(validatePackageName('weekly-report.zip', { requirePrefix: true })).toContain('dml-');
-    expect(validatePackageName('weekly-report.zip', { requirePrefix: false })).toBe('');
+describe('包名校验: 边界', () => {
+  it('新建/更新同一套口径, 都不要求前缀', () => {
+    expect(validatePackageName('weekly-report.zip')).toBe('');
+    expect(validatePackageName('dml-weekly-report.zip')).toBe('');
   });
 
   it('扩展名只认 zip / tar.gz / tgz', () => {

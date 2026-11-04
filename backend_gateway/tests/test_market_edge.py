@@ -103,7 +103,6 @@ def test_mcp_config_accepts_minimal_valid():
 @pytest.mark.parametrize("filename", [
     "dml-x.rar",              # 扩展名不支持
     "dml-x.exe",
-    "no-prefix.zip",           # 缺 dml- 前缀 (新建时要拦)
     "dml-中文.zip",            # 中文
     "dml-x y.zip",             # 空格
     "dml-X.zip",               # 大写

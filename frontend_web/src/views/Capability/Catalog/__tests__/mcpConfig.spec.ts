@@ -11,8 +11,8 @@ import { formatMcpConfig, parseMcpConfig } from '../mcpConfig';
 beforeEach(() => {
   marketRules.value = {
     code: {
-      prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
-      example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+      pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$',
+      example: 'ssd-log-doctor', min_length: 3, max_length: 64,
     },
     segment: {
       pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
@@ -85,42 +85,38 @@ describe('MCP 配置解析', () => {
     expect(bad).toBe('{oops');
   });
 
-  it('连接器名必须 dml- 开头', () => {
+  it('连接器名不要求 dml- 前缀', () => {
     const r = parseMcpConfig('{"mcpServers": {"xx-xxx": {"url": "http://h/mcp"}}}');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('dml-');
+    expect(r.ok).toBe(true);
   });
 
-  it('命名校验消息使用当前规则的前缀和示例', () => {
+  it('命名校验消息使用当前规则的示例', () => {
     marketRules.value = {
       ...marketRules.value!,
       code: {
-        prefix: 'team-', pattern: '^team-[a-z0-9]+$', example: 'team-demo',
+        pattern: '^[a-z0-9]+$', example: 'demo',
         min_length: 3, max_length: 64,
       },
     };
-    const r = parseMcpConfig('{"mcpServers": {"wrong": {"url": "http://h/mcp"}}}');
+    const r = parseMcpConfig('{"mcpServers": {"bad_name": {"url": "http://h/mcp"}}}');
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.error).toContain('team-');
-      expect(r.error).toContain('team-demo');
+      expect(r.error).toContain('demo');
       expect(r.error).not.toContain('dml-');
     }
   });
 
-  it('更新存量连接器时不强制 dml- 前缀 (老名字得能改得动)', () => {
-    // 存量 4 个连接器的名字本来就没前缀 —— 硬拦等于把它们锁死
+  it('存量连接器的老名字照常合法', () => {
+    // 存量连接器本来就没前缀 —— 不该被拦
     const r = parseMcpConfig(
       '{"mcpServers": {"review-agent-board": {"url": "http://h/mcp"}}}',
-      { requirePrefix: false },
     );
     expect(r.ok).toBe(true);
   });
 
-  it('不要求前缀时也要守住字符集', () => {
+  it('不要求前缀也要守住字符集', () => {
     const r = parseMcpConfig(
       '{"mcpServers": {"Bad_Name": {"url": "http://h/mcp"}}}',
-      { requirePrefix: false },
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('小写字母');

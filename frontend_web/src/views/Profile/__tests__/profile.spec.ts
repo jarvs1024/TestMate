@@ -27,14 +27,35 @@ describe('个人中心', () => {
       },
     });
 
-    expect(w.text()).toContain('个人中心');
-    expect(w.text()).toContain('tester@example.com');
     expect(w.find('[data-test="grants-panel"]').exists()).toBe(true);
     expect(w.find('[data-test="tokens-panel"]').exists()).toBe(false);
 
     await tab(w, '访问令牌').trigger('click');
     expect(w.find('[data-test="grants-panel"]').exists()).toBe(false);
     expect(w.find('[data-test="tokens-panel"]').exists()).toBe(true);
+    w.unmount();
+  });
+
+  it('页内不再重复标题; 账号挂在动作条右侧', () => {
+    const w = mount(Profile, {
+      global: {
+        stubs: {
+          GrantsPanel: { template: '<div data-test="grants-panel" />' },
+          McpTokens: { template: '<div data-test="tokens-panel" />' },
+        },
+      },
+    });
+
+    // 标题和 lede 归顶栏 (AppHeader) —— 页内再写一遍就是两个标题
+    expect(w.find('h1').exists()).toBe(false);
+    expect(w.text()).not.toContain('PERSONAL CENTER');
+    // 顶部跟扩展库/软件库共用同一个动作条
+    const actions = w.find('.mk-actions');
+    expect(actions.exists()).toBe(true);
+    expect(actions.find('.kind-tabs').exists()).toBe(true);
+    expect(actions.text()).toContain('授权管理');
+    expect(actions.text()).toContain('访问令牌');
+    expect(actions.text()).toContain('tester@example.com');
     w.unmount();
   });
 });

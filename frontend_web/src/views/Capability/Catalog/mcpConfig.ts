@@ -4,7 +4,7 @@
  * 前端只是**提前提示** (别让用户填完一整张表单才被 422 拦下),
  * 真正的拦截在后端 —— 两边规则要一样, 不然会出现"前端说行、后端说不行".
  */
-import { CODE_PATTERN, SEGMENT_PATTERN, marketRules } from './assetForm';
+import { SEGMENT_PATTERN, marketRules } from './assetForm';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 export interface McpParseOk {
   ok: true;
@@ -19,18 +19,10 @@ export type McpParseResult = McpParseOk | McpParseErr;
 /**
  * 校验一段 MCP 配置文本, 返回结构化的结果 (不抛异常)
  *
- * ⚠️ `requirePrefix` = 要不要强制连接器名带 `dml-` 前缀:
- *    · **新建**时要求 —— 那是团队命名约定 (跟安装包名 / 资产 code 一个待遇),
- *      新上架的连接器统一叫 dml-xxx, 扩展里一眼能认出来;
- *    · **更新**时不要求 —— 存量 4 个连接器 (review-agent-board 等) 本来就没前缀,
- *      一刀切等于把它们**锁死**: 连发个新版本都提交不了.
- *      (后端也只要求"小写字母/数字/连字符", 见 backend mcp_config.py)
+ * ⚠️ 连接器名只要求"小写字母/数字/连字符分段", **不要求任何前缀** ——
+ *    前缀只是历史命名习惯; 后端 (mcp_config.py) 也是同一套口径.
  */
-export function parseMcpConfig(
-  text: string,
-  opts: { requirePrefix?: boolean } = {},
-): McpParseResult {
-  const requirePrefix = opts.requirePrefix !== false;
+export function parseMcpConfig(text: string): McpParseResult {
   const raw = (text || '').trim();
   if (!raw) return { ok: false, error: '连接器必须提供 MCP 配置 (mcpServers)' };
 
@@ -67,23 +59,15 @@ export function parseMcpConfig(
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
       return { ok: false, error: `连接器「${name}」的配置必须是一个对象` };
     }
-    // ⚠️ 连接器名 = 资产 code 的约定: 当前扩展前缀 + 小写字母/数字/连字符.
+    // ⚠️ 连接器名 = 资产 code 的约定: 小写字母/数字/连字符分段.
     //    详情页会**原样展示**这份配置, 用户照着加进自己的 MCP 配置里 ——
     //    名字起得像 "xx-xxx" 会跟扩展里的资产对不上, 也分不清是谁。
     const rules = marketRules.value;
     if (!rules) return { ok: false, error: '扩展规则尚未加载, 请重试' };
-    if (requirePrefix) {
-      if (!CODE_PATTERN.test(name)) {
-        return {
-          ok: false,
-          error: `连接器「${name}」的名字必须以 ${rules.code.prefix} 开头, 且只能用小写字母/数字/连字符 (如 ${rules.code.example})`,
-        };
-      }
-    } else if (!SEGMENT_PATTERN.test(name)) {
-      // ⚠️ 不要求前缀时, 也要守住"分段 + 字符集" —— 只是不强制当前扩展前缀
+    if (!SEGMENT_PATTERN.test(name)) {
       return {
         ok: false,
-        error: `连接器「${name}」的名字只能用小写字母/数字/连字符`,
+        error: `连接器「${name}」的名字只能用小写字母/数字/连字符 (如 ${rules.code.example})`,
       };
     }
     const { command, url, args } = spec as Record<string, any>;
@@ -119,8 +103,8 @@ export function parseMcpConfig(
 
 /** 格式化 (能解析就格式化, 解析不了就原样返回) */
 export function formatMcpConfig(text: string): string {
-  // ⚠️ 格式化只管 JSON 结构, 不管命名约定 —— 别因为存量连接器没 dml- 前缀就格式化不动
-  const r = parseMcpConfig(text, { requirePrefix: false });
+  // ⚠️ 格式化只管 JSON 结构, 不管命名约定 —— 名字不合法也照原样返回
+  const r = parseMcpConfig(text);
   if (!r.ok) return text;
   return JSON.stringify(r.config, null, 2);
 }

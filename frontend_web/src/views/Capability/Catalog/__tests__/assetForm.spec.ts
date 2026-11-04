@@ -1,13 +1,12 @@
 /**
  * 上传表单的取值规则 —— 资产 code 的命名约定 + 图标自动分配.
  *
- * 两条硬约定 (2026-10-24):
- *  1. code = 包名 = 插件名 → 英文, 且统一以 "dml-" 开头
+ * 两条硬约定 (2026-10-24, 2026-11-04 去掉前缀要求):
+ *  1. code = 包名 = 插件名 → 英文小写/数字/连字符分段, **不要求任何前缀**
  *  2. 图标自动分配, 且**不能跟现有资产重复** (重复图标在卡片上分不清谁是谁)
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  CODE_PREFIX,
   FALLBACK_ICONS,
   GENERAL_ICONS,
   ICON_POOLS,
@@ -22,8 +21,8 @@ import {
 beforeEach(() => {
   marketRules.value = {
     code: {
-      prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
-      example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+      pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$',
+      example: 'ssd-log-doctor', min_length: 3, max_length: 64,
     },
     segment: {
       pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
@@ -33,9 +32,9 @@ beforeEach(() => {
 });
 
 describe('安装包名规则', () => {
-  it('必须是 dml- 开头', () => {
+  it('不要求 dml- 前缀', () => {
     expect(validatePackageName('dml-ssd-log-doctor.zip')).toBe('');
-    expect(validatePackageName('ssd-log-doctor.zip')).toContain('dml-');
+    expect(validatePackageName('ssd-log-doctor.zip')).toBe('');
   });
 
   it('扩展名只支持 zip / tar.gz / tgz', () => {
@@ -64,20 +63,19 @@ describe('资产 code 命名约定', () => {
   it('使用后端下发的规则, 不在前端保留独立命名兜底', () => {
     const rules: any = {
       code: {
-        prefix: 'team-', pattern: '^team-[a-z0-9]+$', example: 'team-demo',
-        min_length: 3, max_length: 64,
+        pattern: '^[a-z0-9]+$', example: 'demo', min_length: 3, max_length: 64,
       },
       segment: { pattern: '^[a-z0-9]+$', min_length: 3, max_length: 64 },
       package: { suffixes: ['.zip'] },
     };
-    expect(validateCode('team-demo', rules)).toBe('');
-    expect(validateCode('dml-demo', rules)).toContain('team-');
-    expect(validatePackageName('team-demo.zip', { rules })).toBe('');
+    expect(validateCode('demo', rules)).toBe('');
+    expect(validateCode('demo-2', rules)).not.toBe('');
+    expect(validatePackageName('demo.zip', { rules })).toBe('');
   });
 
-  it('必须以 dml- 开头', () => {
+  it('不要求 dml- 前缀', () => {
     expect(validateCode('dml-ssd-log-doctor')).toBe('');
-    expect(validateCode('ssd-log-doctor')).toContain('dml-');
+    expect(validateCode('ssd-log-doctor')).toBe('');
     expect(validateCode('')).toContain('必填');
   });
 
@@ -93,13 +91,10 @@ describe('资产 code 命名约定', () => {
   });
 
   it('合法例子', () => {
-    for (const c of ['dml-a', 'dml-ssd-log-doctor', 'dml-trace-kit-2', 'dml-qoder123']) {
+    for (const c of ['dml-a', 'dml-ssd-log-doctor', 'dml-trace-kit-2', 'dml-qoder123',
+                     'a-1', 'ssd-log-doctor', 'trace-kit-2']) {
       expect(validateCode(c)).toBe('');
     }
-  });
-
-  it('前缀常量跟校验规则一致', () => {
-    expect(CODE_PREFIX).toBe('dml-');
   });
 });
 

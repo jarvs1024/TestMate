@@ -12,7 +12,6 @@ export interface MarketRequiredRules {
 
 export interface MarketRules {
   code: {
-    prefix: string;
     pattern: string;
     example: string;
     min_length: number;
@@ -28,8 +27,6 @@ export interface MarketRules {
   categories: { name: string; slug: string; desc?: string; order?: number }[];
   projects: string[];
   enforcement: {
-    require_code_prefix_on_create: boolean;
-    require_code_prefix_on_update: boolean;
     code_must_match_package: boolean;
     code_must_match_mcp_server: boolean;
     unknown_category: string;
@@ -64,10 +61,6 @@ export async function loadMarketRules(): Promise<void> {
   return rulesRequest;
 }
 
-/** 仅用于新建空白表单的初始占位, 不参与校验. */
-export const CODE_PREFIX = 'dml-';
-export const CODE_EXAMPLE = 'dml-ssd-log-doctor';
-
 function activePattern(source: string | undefined): { test(value: string): boolean } {
   return {
     test(value: string): boolean {
@@ -76,12 +69,7 @@ function activePattern(source: string | undefined): { test(value: string): boole
   };
 }
 
-/** mcpConfig 沿用这两个入口, 但实际表达式始终来自当前后端规则. */
-export const CODE_PATTERN = {
-  test(value: string): boolean {
-    return activePattern(marketRules.value?.code.pattern).test(value);
-  },
-};
+/** mcpConfig 沿用这个入口, 实际表达式始终来自当前后端规则. */
 export const SEGMENT_PATTERN = {
   test(value: string): boolean {
     return activePattern(marketRules.value?.segment.pattern).test(value);
@@ -98,10 +86,9 @@ function packagePattern(rules: MarketRules): RegExp {
 /** 校验安装包文件名; 没有后端规则时明确失败, 不使用本地兜底. */
 export function validatePackageName(
   filename: string,
-  opts: { requirePrefix?: boolean; rules?: MarketRules | null } = {},
+  opts: { rules?: MarketRules | null } = {},
 ): string {
   const rules = opts.rules === undefined ? marketRules.value : opts.rules;
-  const requirePrefix = opts.requirePrefix !== false;
   const name = (filename || '').trim();
   if (!name) return '请选择安装包';
   if (!rules) return '扩展规则尚未加载, 请重试';
@@ -109,23 +96,11 @@ export function validatePackageName(
   if (!ext.test(name)) return `安装包只支持 ${rules.package.suffixes.join(' / ')}`;
   const base = name.replace(ext, '');
   const example = rules.code.example;
-  if (requirePrefix) {
-    if (!base.startsWith(rules.code.prefix)) {
-      return `安装包名必须以 "${rules.code.prefix}" 开头 (如 ${example}.zip)`;
-    }
-    if (base.length < rules.code.min_length || base.length > rules.code.max_length) {
-      return `安装包名长度要在 ${rules.code.min_length}-${rules.code.max_length} 个字符之间 (现在 ${base.length} 个)`;
-    }
-    if (!new RegExp(rules.code.pattern).test(base)) {
-      return `安装包名只能用小写字母/数字/连字符, 如 ${example}.zip`;
-    }
-  } else {
-    if (base.length < rules.segment.min_length || base.length > rules.segment.max_length) {
-      return `安装包名长度要在 ${rules.segment.min_length}-${rules.segment.max_length} 个字符之间 (现在 ${base.length} 个)`;
-    }
-    if (!new RegExp(rules.segment.pattern).test(base)) {
-      return `安装包名只能用小写字母/数字/连字符, 如 ${example}.zip`;
-    }
+  if (base.length < rules.segment.min_length || base.length > rules.segment.max_length) {
+    return `安装包名长度要在 ${rules.segment.min_length}-${rules.segment.max_length} 个字符之间 (现在 ${base.length} 个)`;
+  }
+  if (!new RegExp(rules.segment.pattern).test(base)) {
+    return `安装包名只能用小写字母/数字/连字符, 如 ${example}.zip`;
   }
   return '';
 }
@@ -141,7 +116,7 @@ export function codeFromPackageName(
 }
 
 /**
- * 下载到本地时的文件名 —— **不带版本号** (如 dml-ssd-log-doctor.zip).
+ * 下载到本地时的文件名 —— **不带版本号** (如 ssd-log-doctor.zip).
  *
  * ⚠️ 与后端 `market_naming.download_filename` **同一套规则** ——
  *    前后端各有一份实现 (本文件头注释就说了这规矩), 改规则时**两边都要改**.
@@ -166,9 +141,6 @@ export function validateCode(
   const c = (code || '').trim();
   if (!c) return '资产 code 必填';
   if (!rules) return '扩展规则尚未加载, 请重试';
-  if (!c.startsWith(rules.code.prefix)) {
-    return `资产 code 必须以 "${rules.code.prefix}" 开头 (如 ${rules.code.example})`;
-  }
   if (c.length < rules.code.min_length || c.length > rules.code.max_length) {
     return `资产 code 长度要在 ${rules.code.min_length}-${rules.code.max_length} 个字符之间 (现在 ${c.length} 个)`;
   }

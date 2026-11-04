@@ -26,8 +26,8 @@ vi.mock('@/api/assets', () => ({
 
 const rulesPayload = {
   code: {
-    prefix: 'dml-', pattern: '^(?=.{3,64}$)dml-[a-z0-9]+(?:-[a-z0-9]+)*$',
-    example: 'dml-ssd-log-doctor', min_length: 3, max_length: 64,
+    pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$',
+    example: 'ssd-log-doctor', min_length: 3, max_length: 64,
   },
   segment: {
     pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', min_length: 3, max_length: 64,
@@ -50,8 +50,6 @@ const rulesPayload = {
   ],
   projects: ['6100'],
   enforcement: {
-    require_code_prefix_on_create: true,
-    require_code_prefix_on_update: false,
     code_must_match_package: true,
     code_must_match_mcp_server: true,
     unknown_category: '其他',
@@ -88,7 +86,7 @@ describe('上传表单: 初始化', () => {
   it('新建: 没指定形态时停在第 ① 步 (让人选, 不默认「技能」)', () => {
     const f = makeForm();
     expect(f.step.value).toBe('pick');
-    expect(f.form.code).toBe('dml-');
+    expect(f.form.code).toBe('');
     expect(f.form.project).toBe('');       // 默认通用
   });
 
@@ -235,8 +233,8 @@ describe('上传表单: 没选包时不该提前报错', () => {
    *   「请选择安装包」 + 「只能用小写字母/数字/连字符…」。
    * 根因: 校验**时机**错了 ——
    *   · 「还没选包」是**缺项**, 底部「还缺」清单已经说了, 不是错误, 不该标红;
-   *   · code 是**派生值** (取包名 / MCP 连接器名), 还没派生出来时它就是初始的
-   *     "dml-", 那不是"填错了" —— 用户压根改不了它 (只读展示), 标红只会误导。
+   *   · code 是**派生值** (取包名 / MCP 连接器名), 还没派生出来时它是空的,
+   *     那不是"填错了" —— 用户压根改不了它 (只读展示), 标红只会误导。
    */
   it('技能形态: 还没选包 → 不报 code 错, 缺项清单里也不列 code', () => {
     const f = makeForm({ initialKind: () => 'skill' as const });
@@ -258,10 +256,10 @@ describe('上传表单: 没选包时不该提前报错', () => {
 
   it('选了包 → 才有来源, 真错误照报 (包名不合法)', async () => {
     const f = makeForm({ initialKind: () => 'skill' as const });
-    f.pkgFile.value = new File(['x'], 'weekly-report.zip');   // 少了 dml- 前缀
+    f.pkgFile.value = new File(['x'], 'Weekly Report.zip');   // 大写 + 空格
     await nextTick();
     expect(f.hasSource.value).toBe(true);
-    expect(f.pkgNameError.value).toContain('dml-');
+    expect(f.pkgNameError.value).toContain('小写字母');
     expect(f.codeError.value).not.toBe('');
   });
 
@@ -303,7 +301,7 @@ describe('上传表单: MCP 配置栏的状态', () => {
     expect(f.mcpHint.value).toContain('缺启动方式');
   });
 
-  it('更新存量连接器 → 老名字没 dml- 前缀也不报错 (不然它们改不动)', () => {
+  it('更新存量连接器 → 老名字照常合法 (不要求任何前缀)', () => {
     const asset: any = { code: 'review-agent-board', kind: 'mcp', name: 'x', version: '1.0.0',
       summary: 's', description: '', use_when: '', not_for: '', category: '其他',
       icon: '🔌', project: '', featured: false, tags: [], keywords: [],
@@ -316,24 +314,25 @@ describe('上传表单: MCP 配置栏的状态', () => {
     expect(f.missing.value).not.toContain('MCP 配置');
   });
 
-  it('新建连接器 → 还是要 dml- 前缀 (团队命名约定)', () => {
+  it('新建连接器 → 不要求任何前缀', () => {
     const f = makeForm({ initialKind: () => 'mcp' as const });
     f.mcpConfigText.value = '{"mcpServers": {"review-agent-board": {"url": "http://h/mcp"}}}';
-    expect(f.mcpConfigError.value).toContain('dml-');
-    expect(f.missing.value).toContain('MCP 配置');
+    expect(f.mcpConfigError.value).toBe('');
+    expect(f.mcpHintState.value).toBe('ok');
+    expect(f.missing.value).not.toContain('MCP 配置');
   });
 
   it('用模板采用当前规则的连接器示例', () => {
     marketRules.value = {
       ...rulesPayload,
       code: {
-        prefix: 'team-', pattern: '^team-[a-z0-9]+$', example: 'team-demo',
+        pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', example: 'demo-connector',
         min_length: 3, max_length: 64,
       },
     };
     const f = makeForm({ initialKind: () => 'mcp' as const });
     f.useMcpTemplate();
-    expect(f.mcpConfigText.value).toContain('"team-demo"');
+    expect(f.mcpConfigText.value).toContain('"demo-connector"');
     expect(f.mcpConfigText.value).not.toContain('dml-');
     expect(f.mcpConfigError.value).toBe('');
   });

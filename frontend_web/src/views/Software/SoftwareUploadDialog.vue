@@ -15,7 +15,7 @@
              @dragleave.prevent="dragging = false"
              @drop.prevent="onDrop">
           <input ref="fileInput" type="file" class="file-input" @change="onPick" />
-          <button type="button" class="pick-btn" @click="fileInput?.click()">
+          <button type="button" class="pick-btn mini-btn primary" @click="fileInput?.click()">
             <span class="pb-ic">📦</span>选择软件包
           </button>
           <!-- ⚠️ 这里**不能**用两个兄弟节点的 v-if / v-else (chip 一个 / hint 一个):
@@ -814,13 +814,7 @@ function submitErrorText(
   background: rgba(59, 130, 246, .06);
 }
 .file-input { display: none; }
-.pick-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 13px; border-radius: var(--radius-btn);
-  border: 1px solid var(--primary); background: var(--primary);
-  color: #fff; font-size: 12.5px; cursor: pointer; font-family: inherit;
-}
-.pick-btn:hover { opacity: .9; }
+/* 外观复用全局 .mini-btn.primary —— 别再各写一份实心蓝 */
 .pb-ic { font-size: 14px; }
 .file-chip {
   display: inline-flex; align-items: center; gap: 6px;
