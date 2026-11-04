@@ -37,6 +37,9 @@ class SoftwareOut(UTCModel):
     """软件条目 —— 卡片与列表用它."""
 
     code: str
+    # ⚠️ 2026-11-04 (第二十四轮): **下载别名** —— 与版本号无关的永久标识.
+    #    固定下载链接用它 (/software/alias/{alias}/download) → URL 里没有版本号.
+    download_alias: str = ""
     name: str
     icon: str = "🧰"
     version: str = ""

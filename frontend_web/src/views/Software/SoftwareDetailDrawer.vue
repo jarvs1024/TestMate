@@ -158,7 +158,11 @@
 
       <!-- ===== 固定下载链接 (2026-11-03 · 第二十二轮) =====
            这个地址**永远不变** —— 发新版本、换推荐版本都还是它.
-           别的软件/脚本拿它 wget, 所以一行命令就能拉. -->
+           别的软件/脚本拿它 wget, 所以一行命令就能拉.
+
+           ⚠️ 2026-11-04 (第二十四轮): 链接里的路径段从「软件标识」改成
+              「**下载别名**」—— 别名把版本号剥掉了 (aitestx-v2.1 → aitestx),
+              所以 URL 里**没有版本号**, 看着就不会像"这是个 2.1 的链接". -->
       <section v-if="fixedUrl" class="sw-sec">
         <div class="sec-h">
           <span class="sec-no">{{ secNos.fixed }}</span>固定下载链接
@@ -167,6 +171,11 @@
         <p class="fx-tip">
           这个地址<b>不会变</b> —— 以后发新版本、换推荐版本, 都还是它.
           下到的永远是当前<b>推荐</b>的那一版. 免登录, 别的机器可以直接 wget.
+        </p>
+        <p class="fx-tip">
+          ⚠️ 链接里<b>不含版本号</b> —— 它指的是「这个软件」, 不是「这个软件的某个版本」.
+          一个软件挂多个版本时, 给的是你标了<b>推荐</b>的那一个 (没标推荐就给最新的);
+          以后你换推荐版本, 这条链接不用改.
         </p>
         <div class="fx-row">
           <code class="fx-url mono">{{ fixedUrl }}</code>
@@ -220,6 +229,7 @@ import {
 } from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { fmtDate } from '@/utils/format';
+import { copyToClipboard } from '@/utils/clipboard';
 import { formatSize, platformLabel } from './softwareForm';
 
 const props = defineProps<{
@@ -305,12 +315,20 @@ const secNos = computed(() => {
   return out;
 });
 
-/** 复制 (地址 / 命令) —— 剪贴板不可用时降级提示, 别静默失败 */
+/**
+ * 复制 (地址 / 命令) —— 剪贴板不可用时降级, 别静默失败.
+ *
+ * ⚠️ 2026-11-04 (第二十四轮): 改用全局 `copyToClipboard` ——
+ *    原来直接调 `navigator.clipboard.writeText`, 而**内网 IP + HTTP**
+ *    (http://10.20.65.25:8090) 不是安全上下文, `navigator.clipboard` 是
+ *    `undefined` → 一律抛 TypeError → 用户看到「复制失败 —— 请手动选中复制」,
+ *    而且**一次都成功不了**. 现在降级到 execCommand, 任何上下文都能复制.
+ */
 async function copyFixed(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
+  const ok = await copyToClipboard(text);
+  if (ok) {
     ElMessage.success('已复制到剪贴板');
-  } catch {
+  } else {
     ElMessage.warning('复制失败 —— 请手动选中复制');
   }
 }

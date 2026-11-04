@@ -30,6 +30,14 @@ class SoftwareItem(Base):
 
     # code 是唯一标识 —— 同时是存储目录名, 所以**必须**严校验 (见 software_store)
     code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # 下载别名 —— 与版本号无关的**永久**标识 (2026-11-04 第二十四轮)
+    # ⚠️ 为什么要有它: code 是从**文件名**派生的, 文件名里常带版本号
+    #    (`aitestx-v2.1.zip` → code `aitestx-v2.1`) —— 于是固定下载链接里
+    #    就**带着版本号**, 看着像"这是 2.1 的链接", 跟"链接永不变"的承诺打架.
+    #    别名把版本号剥掉 (`aitestx`), 固定链接用它 → URL 里永远没有版本号.
+    # ⚠️ **创建后永不改变** —— 别的软件/脚本拿它 wget, 改了链接就废了.
+    #    唯一 —— 同一个别名只能对应一个软件.
+    download_alias: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     icon: Mapped[str] = mapped_column(String(16), nullable=False, default="🧰")
     # 当前版本指针 —— 发新版本时切过去

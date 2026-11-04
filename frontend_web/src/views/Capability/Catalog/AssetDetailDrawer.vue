@@ -257,6 +257,7 @@ import { downloadFileName } from './assetForm';
 import { isAuthor } from './identity';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { fmtDate } from '@/utils/format';
+import { copyToClipboard } from '@/utils/clipboard';
 
 const props = withDefaults(defineProps<{
   modelValue: boolean;
@@ -313,10 +314,12 @@ async function copyMcpConfig() {
     ElMessage.warning('这个连接器没有 MCP 配置');
     return;
   }
-  try {
-    await navigator.clipboard.writeText(text);
+  // ⚠️ 2026-11-04 (第二十四轮): 用全局 copyToClipboard —— 内网 IP + HTTP
+  //    不是安全上下文, navigator.clipboard 是 undefined → 一律失败.
+  const ok = await copyToClipboard(text);
+  if (ok) {
     ElMessage.success('MCP 配置已复制');
-  } catch {
+  } else {
     ElMessage.error('复制失败, 请手动选中复制');
   }
 }

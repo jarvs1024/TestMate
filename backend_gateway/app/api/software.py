@@ -719,9 +719,96 @@ async def _recommended_version(session, item_id: int) -> SoftwareVersion | None:
     ).scalar_one_or_none()
 
 
+async def _serve_recommended(session, item: SoftwareItem) -> FileResponse:
+    """给一个条目返回「推荐版本」的文件 —— 固定链接两个端点共用.
+
+    ⚠️ 抽出来是因为现在有**两个**固定链接端点 (按 code / 按别名),
+       逻辑必须**逐字一致** —— 不然两个链接给的版本不一样, 用户会以为坏了.
+    """
+    # ⚠️ 排序跟页面上「⬇ 下载」那个按钮**完全一致**: 推荐版本排最前, 其次按时间.
+    ver = await _recommended_version(session, item.id)
+    if ver is None:
+        raise HTTPException(status_code=404, detail="这个软件还没有可下载的文件")
+
+    # ⚠️ 在**所有候选根**里找文件 —— 管理员改过 storage_path 时老文件还在旧根
+    roots = await _roots()
+    path = software_store.locate_under(roots, ver.file_path)
+    if path is None:
+        raise HTTPException(status_code=404, detail="文件不在服务器上了, 请联系管理员")
+
+    # 下载次数 +1 —— 原子自增 (先读后写会丢计数)
+    await session.execute(
+        update(SoftwareItem).where(SoftwareItem.id == item.id)
+        .values(download_count=SoftwareItem.download_count + 1)
+    )
+    await session.execute(
+        update(SoftwareVersion).where(SoftwareVersion.id == ver.id)
+        .values(download_count=SoftwareVersion.download_count + 1)
+    )
+    await session.commit()
+
+    file_name = _fixed_download_name(item.code, ver.file_name)
+    sha = ver.sha256
+    version = ver.version
+
+    return FileResponse(
+        path,
+        filename=file_name,
+        media_type="application/octet-stream",
+        headers={
+            "X-Content-Sha256": sha,
+            # ⚠️ 顺便把**实际下到的版本**说出来 —— 万一有人要确认"这个链接现在给的是哪版"
+            "X-Software-Version": version,
+            # ⚠️ 固定链接的缓存: 别让 CDN/浏览器把某一版缓存住 ——
+            #    推荐版本变了, 下一次 wget 拿到的必须是新的那个.
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+@router.get("/alias/{alias}/download")
+async def download_by_alias(alias: str) -> FileResponse:
+    """**永久**下载链接 (按别名) —— 永远返回「推荐版本」, 这个 URL **永不变**.
+
+    ⚠️ 为什么要有别名版 (2026-11-04 第二十四轮 · 用户要求):
+       固定链接里如果带版本号 (如 `aitestx-v2.1`), 用户会担心
+       "以后更新成 V2.1 这个地址会不会变? 变了就不是固定地址了".
+
+       真实情况: code 是从**上传文件名**派生的, 文件名里常带版本号 ——
+       `aitestx-v2.1.zip` → code `aitestx-v2.1` → 链接里就带着版本号.
+       走"发新版本"时 code 不变 (链接安全), 但走"**重新上架一个新包**"
+       (文件名变成 `aitestx-v2.2.zip`) 时会派生出**新 code** → 新条目 → 旧链接 404.
+       用户没法区分这两种操作 → 链接必须**从结构上**就不含版本号.
+
+       所以这里用**下载别名** (从 code 剥掉版本号后缀派生, `aitestx-v2.1` → `aitestx`):
+       URL 里永远没有版本号, 永远指向"这个软件"而不是"这个软件的某个版本".
+
+    ⚠️ **免登录** (与按 code 的那个端点同口径): 只对**已上架**的软件开放.
+
+    ⚠️ **多版本时给哪个?** —— 给「**推荐版本**」(is_default), 不是"最新的那个".
+       理由: 一个软件挂两个版本、两个都有用时 (如「Windows版」和「LTS版」),
+       "最新"≠"该下的那个" —— 上传者可以手动把某个版本标成推荐.
+       一个版本都没标推荐时, 才回落到时间上最新的 ready 版本.
+       ⚠️ 排序跟页面「⬇ 下载」按钮用的 `_latest_ready_versions` **逐字一致**
+          (is_default DESC, created_at DESC, id DESC) ——
+          所以"页面上推荐哪个, 这个链接就下哪个", 两个链接不会给出不同的版本.
+    """
+    async with AsyncSessionLocal() as session:
+        item = (
+            await session.execute(
+                select(SoftwareItem).where(SoftwareItem.download_alias == alias)
+            )
+        ).scalar_one_or_none()
+        if item is None or item.deleted_at is not None:
+            raise HTTPException(status_code=404, detail=f"软件 {alias} 不存在")
+        if item.publish_status != "published":
+            raise HTTPException(status_code=404, detail=f"软件 {alias} 不存在")
+        return await _serve_recommended(session, item)
+
+
 @router.get("/{code}/download")
 async def download_recommended(code: str) -> FileResponse:
-    """**固定**下载链接 —— 永远返回「推荐版本」, 这个 URL **永不变**.
+    """**固定**下载链接 (按 code) —— 永远返回「推荐版本」, 这个 URL **永不变**.
 
     ⚠️ 为什么要有这个端点 (2026-11-03 用户要求):
        别的软件 / 脚本要用 wget 拉这个包 → 地址必须**固定不变**:
@@ -737,6 +824,10 @@ async def download_recommended(code: str) -> FileResponse:
     ⚠️ 版本选择跟页面上「⬇ 下载」那个按钮**完全一致**:
        优先「推荐版本」(is_default), 没有推荐才取时间上最新的 ready 版本.
        所以"页面上推荐哪个, 这个链接就下哪个".
+
+    ⚠️ 2026-11-04 (第二十四轮): 这个按 code 的端点**保留不动** ——
+       已经贴到别的软件里的地址不能因为加别名就断.
+       新链接走 /software/alias/{别名}/download (URL 里没有版本号).
     """
     async with AsyncSessionLocal() as session:
         item = (
@@ -748,46 +839,7 @@ async def download_recommended(code: str) -> FileResponse:
             # ⚠️ 免登录的端点 —— 只能给**已上架**的软件开.
             #    未上架/已下架的内部工具不该被一条裸链接带出去.
             raise HTTPException(status_code=404, detail=f"软件 {code} 不存在")
-
-        # ⚠️ 排序跟页面上「⬇ 下载」那个按钮**完全一致**: 推荐版本排最前, 其次按时间.
-        ver = await _recommended_version(session, item.id)
-        if ver is None:
-            raise HTTPException(status_code=404, detail="这个软件还没有可下载的文件")
-
-        # ⚠️ 在**所有候选根**里找文件 —— 管理员改过 storage_path 时老文件还在旧根
-        roots = await _roots()
-        path = software_store.locate_under(roots, ver.file_path)
-        if path is None:
-            raise HTTPException(status_code=404, detail="文件不在服务器上了, 请联系管理员")
-
-        # 下载次数 +1 —— 原子自增 (先读后写会丢计数)
-        await session.execute(
-            update(SoftwareItem).where(SoftwareItem.id == item.id)
-            .values(download_count=SoftwareItem.download_count + 1)
-        )
-        await session.execute(
-            update(SoftwareVersion).where(SoftwareVersion.id == ver.id)
-            .values(download_count=SoftwareVersion.download_count + 1)
-        )
-        await session.commit()
-
-        file_name = _fixed_download_name(code, ver.file_name)
-        sha = ver.sha256
-        version = ver.version
-
-    return FileResponse(
-        path,
-        filename=file_name,
-        media_type="application/octet-stream",
-        headers={
-            "X-Content-Sha256": sha,
-            # ⚠️ 顺便把**实际下到的版本**说出来 —— 万一有人要确认"这个链接现在给的是哪版"
-            "X-Software-Version": version,
-            # ⚠️ 固定链接的缓存: 别让 CDN/浏览器把某一版缓存住 ——
-            #    推荐版本变了, 下一次 wget 拿到的必须是新的那个.
-            "Cache-Control": "no-cache",
-        },
-    )
+        return await _serve_recommended(session, item)
 
 
 @router.get("/{code}", response_model=SoftwareDetailOut)
@@ -823,11 +875,16 @@ async def get_software(code: str, user: User = Depends(get_current_user)) -> Sof
     out.versions = [SoftwareVersionOut.model_validate(v) for v in versions]
     # ⚠️ 只有**已上架**的软件才有固定链接 —— 未上架的没有免登录下载这回事
     if item.publish_status == "published" and out.download_version:
-        out.fixed_download_url = (
-            f"{public_base}/api/v1/software/{quote(code, safe='')}/download"
-            if public_base
-            else f"/api/v1/software/{quote(code, safe='')}/download"
-        )
+        # ⚠️ 2026-11-04 (第二十四轮): 固定链接改用**下载别名** (与版本号无关).
+        #    以前是 /software/{code}/download —— 而 code 是从**文件名**派生的,
+        #    文件名里常带版本号 (aitestx-v2.1) → URL 里带着版本号,
+        #    跟"链接永不变"的承诺打架 (用户原话: "变了就不是固定地址了").
+        #    别名把版本号剥掉 → /software/alias/aitestx/download —— 永远没有版本号.
+        # ⚠️ 旧链接 /software/{code}/download **仍然保留** —— 已经贴到别的
+        #    软件里的地址不能因为这次升级就断.
+        alias = (item.download_alias or "").strip() or code
+        path = f"/api/v1/software/alias/{quote(alias, safe='')}/download"
+        out.fixed_download_url = f"{public_base}{path}" if public_base else path
         if rec is not None:
             out.fixed_download_name = _fixed_download_name(code, rec.file_name)
     return out
@@ -855,6 +912,29 @@ async def _unique_code(session, base: str) -> str:
         suffix = str(n)
         code = base[: 64 - len(suffix)] + suffix
     return code
+
+
+async def _unique_alias(session, base: str) -> str:
+    """给 base 找一个**没被占用**的下载别名 —— 撞名就自动加序号 (base2 / base3 …).
+
+    ⚠️ 2026-11-04 (第二十四轮): 别名是**永久**的固定下载链接的一部分,
+       所以必须**唯一** —— 两个软件抢同一个别名, 链接就指错人了.
+       规则跟 :func:`_unique_code` 一样: 自动加序号, 不打断用户.
+    """
+    alias = base
+    n = 1
+    while n < 1000:
+        exists = (
+            await session.execute(
+                select(SoftwareItem).where(SoftwareItem.download_alias == alias)
+            )
+        ).scalar_one_or_none()
+        if exists is None:
+            return alias
+        n += 1
+        suffix = str(n)
+        alias = base[: 64 - len(suffix)] + suffix
+    return alias
 
 
 @router.post("", status_code=201)
@@ -908,11 +988,17 @@ async def create_software(
         #   以前让用户自己填, 现在自动变成 xxx2 / xxx3, 省得用户瞎猜.
         code = await _unique_code(session, code)
 
+        # ⚠️ 2026-11-04 (第二十四轮): **下载别名** —— 与版本号无关的永久标识.
+        #    固定下载链接用它 → URL 里永远没有版本号 (见 /software/alias/{alias}/download).
+        #    从 code 剥版本后缀派生 (aitestx-v2.1 → aitestx), 撞名加序号.
+        alias = await _unique_alias(session, software_store.alias_from_code(code))
+
         # ⚠️ 图标不能跟别的软件重复 (2026-10-28)
         await _assert_icon_free(session, payload.icon)
 
         item = SoftwareItem(
             code=code,
+            download_alias=alias,
             name=payload.name.strip(),
             icon=payload.icon or "🧰",
             version=version,

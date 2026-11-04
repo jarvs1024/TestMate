@@ -41,6 +41,11 @@ export interface SoftwareVersion {
 /** 一个软件条目 (= 卡片) */
 export interface SoftwareItem {
   code: string;
+  /**
+   * 下载别名 —— 与版本号无关的永久标识 (2026-11-04 第二十四轮).
+   * 固定下载链接用它 → URL 里没有版本号.
+   */
+  download_alias?: string;
   name: string;
   icon: string;
   version: string;

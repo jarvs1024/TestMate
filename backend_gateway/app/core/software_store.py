@@ -85,6 +85,33 @@ _UNSAFE_CHARS = re.compile(r"[^\w.\-]", re.UNICODE)
 #: 文件名长度上限 (字节不是字符 —— 磁盘上按字节算)
 MAX_FILE_NAME_LEN = 200
 
+#: **下载别名**的合法形态 —— 比 code 短一点 (人肉好记), 规则一样严.
+#: ⚠️ 别名会进 URL 路径段 → 同样不许 "/" 不许 ".." 不许大写.
+ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
+
+#: code 尾部的**版本号后缀** —— 用来剥出"软件本体名" (2026-11-04 第二十四轮).
+#:
+#: ⚠️ 为什么需要剥: code 是从**文件名**派生的, 而文件名里常带版本号:
+#:    `aitestx-v2.1.zip` → code `aitestx-v2.1`.
+#:    于是固定下载链接变成 `/software/aitestx-v2.1/download` ——
+#:    URL 里**带着版本号**, 看着就像"这是 2.1 的链接", 万一以后重新上架
+#:    一个 `aitestx-v2.2` 就会变成另一个条目, 链接就断了.
+#:    剥掉版本后缀 → 别名 `aitestx` → 链接 `/software/alias/aitestx/download`,
+#:    **永远不指向具体版本**.
+#:
+#: ⚠️ **只认"像版本号"的两种形态** (宁可漏剥也不能错剥):
+#:   · 带点号的: `-2.1` / `-1.2.3` / `._2.1`  → 剥
+#:   · 带 v 前缀的: `-v2` / `-v2.1`            → 剥
+#:   · 纯数字段:  `-6659` / `_2`              → **不剥**
+#:     ⚠️ 为什么纯数字不剥: `img_6659` 这种 code (文件名 `img_6659.png`) 里的
+#:        数字是**名字的一部分** (图片序号), 不是版本号 ——
+#:        剥了会变成 `img`, 跟别的 `img*` 软件撞成一堆.
+#:   · 字母标签: `-beta` / `-final` / `-x64`  → 不剥 (不是版本号)
+_VERSION_SUFFIX_RE = re.compile(
+    r"[-_.](?:v\d+(?:[._]\d+)*|\d+(?:[._]\d+)+)$",
+    re.IGNORECASE,
+)
+
 #: 临时文件后缀
 TMP_SUFFIX = ".part"
 
@@ -237,6 +264,51 @@ def code_from_file_name(file_name: str) -> str:
     if len(base) < 2:
         base = (base or "so")[:2].ljust(2, "0")
     return base
+
+
+def alias_from_code(code: str) -> str:
+    """从 code 派生**下载别名** —— 与版本号无关的稳定标识 (2026-11-04 第二十四轮).
+
+    ⚠️ 为什么要有别名 (用户的原话: "变了就不是固定地址了"):
+       code 是从**文件名**派生的, 而文件名里常带版本号 ——
+       `aitestx-v2.1.zip` → code `aitestx-v2.1` → 固定链接
+       `/software/aitestx-v2.1/download`.
+       看着像"这是 2.1 的链接"; 以后真出了 2.2, 无论是"发新版本"(code 不变)
+       还是"重新上架新包"(code 变成 `aitestx-v2.2`), 用户都会怀疑链接是不是废了.
+
+       剥掉版本号后缀 → 别名 `aitestx` → 链接
+       `/software/alias/aitestx/download` —— **URL 里永远没有版本号**,
+       永远指向"这个软件"而不是"这个软件的某个版本".
+
+    规则:
+      · 剥掉尾部像版本号的一段 (``-v2.1`` / ``-2.1`` / ``-v2``);
+      · 剥完不足 2 位 (或剥空) → 退回用原 code;
+      · 不改变大小写/字符集 —— code 本来就是干净的.
+
+    ⚠️ 只做**派生**, 不保证唯一 —— 唯一性由 api 层加序号保证
+       (见 app/api/software.py 的 _unique_alias).
+    """
+    c = (code or "").strip().lower()
+    if not c:
+        return "software"
+    stripped = _VERSION_SUFFIX_RE.sub("", c).strip("-._")
+    # 剥完没了 (code 本身就是 "v2" 这种) 或者太短 → 用原 code
+    if len(stripped) < 2:
+        stripped = c
+    return stripped[:64].strip("-._") or c[:64]
+
+
+def validate_alias(alias: str) -> str:
+    """校验下载别名 —— 不合法直接抛 :class:`InvalidPath`.
+
+    ⚠️ 别名会进 URL 路径段 (`/software/alias/{alias}/download`) —— 跟 code 一样是安全边界.
+    """
+    a = (alias or "").strip()
+    if not ALIAS_RE.match(a):
+        raise InvalidPath(
+            "下载别名只能是小写字母/数字/点/下划线/连字符, 且以字母或数字开头 (2~64 位)"
+        )
+    return a
 
 
 def resolve_under(root: Path, rel: str) -> Path | None:

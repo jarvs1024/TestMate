@@ -101,6 +101,7 @@ import {
 } from '@/api/mcp';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { parseApiTime } from '@/utils/format';
+import { copyToClipboard } from '@/utils/clipboard';
 
 const tokens = ref<McpToken[]>([]);
 const allowedScopes = ref<McpScope[]>(['extensions:read']);
@@ -209,15 +210,17 @@ async function create() {
 
 async function copyToken(token: McpToken) {
   if (!token.token) return;
-  try {
-    await navigator.clipboard.writeText(token.token);
-    copiedId.value = token.id;
-    ElMessage.success('令牌已复制');
-    window.clearTimeout(copiedTimer);
-    copiedTimer = window.setTimeout(() => { copiedId.value = null; }, 2000);
-  } catch {
+  // ⚠️ 2026-11-04 (第二十四轮): 用全局 copyToClipboard —— 内网 IP + HTTP
+  //    不是安全上下文, navigator.clipboard 是 undefined → 一律失败.
+  const ok = await copyToClipboard(token.token);
+  if (!ok) {
     ElMessage.error('复制失败，请手动选择令牌文本');
+    return;
   }
+  copiedId.value = token.id;
+  ElMessage.success('令牌已复制');
+  window.clearTimeout(copiedTimer);
+  copiedTimer = window.setTimeout(() => { copiedId.value = null; }, 2000);
 }
 
 async function remove(token: McpToken) {

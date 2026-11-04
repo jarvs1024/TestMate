@@ -78,7 +78,10 @@ async def _new_version(client, auth, code, version, filename, *, is_default=None
     assert r.status_code == 201, r.text
 
 
-FIXED_URL = "/api/v1/software/demo-sw/download"
+# ⚠️ 2026-11-04 (第二十四轮): 固定链接改用**下载别名** (与版本号无关).
+#    按 code 的那个端点**仍然保留** —— 已经贴到别的软件里的地址不能废.
+FIXED_URL = "/api/v1/software/alias/demo-sw/download"
+LEGACY_CODE_URL = "/api/v1/software/demo-sw/download"
 
 
 # ---------- 核心: 免登录 + 固定 ----------
@@ -89,6 +92,19 @@ async def test_fixed_download_url_needs_no_login(client, sw_auth, sw_root):
     await _upload(client, sw_auth, "demo-sw", b"hello world")
 
     r = await client.get(FIXED_URL)          # ⚠️ 故意**不带** auth 头
+    assert r.status_code == 200, r.text
+    assert r.content == b"hello world"
+
+
+async def test_legacy_code_url_still_works(client, sw_auth, sw_root):
+    """⚠️ 2026-11-04 (第二十四轮): 旧的按 code 的链接**不能废**.
+
+    已经贴到别的软件/脚本里的地址还在用 —— 加别名是**新增**, 不是替换.
+    """
+    await _create(client, sw_auth)
+    await _upload(client, sw_auth, "demo-sw", b"hello world")
+
+    r = await client.get(LEGACY_CODE_URL)    # ⚠️ 不带 auth 头
     assert r.status_code == 200, r.text
     assert r.content == b"hello world"
 
@@ -170,7 +186,8 @@ async def test_fixed_url_has_no_version_in_it(client, sw_auth, sw_root):
     await _upload(client, sw_auth, "demo-sw", b"hello")
     d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
     assert "1.2.3" not in d["fixed_download_url"]
-    assert d["fixed_download_url"].endswith("/api/v1/software/demo-sw/download")
+    # ⚠️ 2026-11-04: 链接走**下载别名** → URL 里没有版本号, 也没有 code
+    assert d["fixed_download_url"].endswith("/api/v1/software/alias/demo-sw/download")
 
 
 async def test_fixed_download_increments_counter(client, sw_auth, sw_root):
@@ -236,5 +253,5 @@ async def test_fixed_download_url_uses_public_base_url_setting(client, sw_auth, 
     await _create(client, sw_auth)
     await _upload(client, sw_auth, "demo-sw", b"hello")
     d = (await client.get("/api/v1/software/demo-sw", headers=sw_auth)).json()
-    assert d["fixed_download_url"] == "https://tm.internal/api/v1/software/demo-sw/download"
+    assert d["fixed_download_url"] == "https://tm.internal/api/v1/software/alias/demo-sw/download"
     assert d["fixed_download_name"] == "demo-sw.bin"
