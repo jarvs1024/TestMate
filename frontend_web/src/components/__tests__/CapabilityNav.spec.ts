@@ -32,7 +32,7 @@ function cap(over: Partial<Capability> = {}): Capability {
 const CAPS = [
   cap({ id: 1, code: 'log-analysis', name: '日志分析', kind: 'tool' }),
   cap({ id: 2, code: 'code-review', name: '代码检视', kind: 'board', icon: '🧬', route: 'page:code-review' }),
-  cap({ id: 3, code: 'agent-market', name: '扩展', kind: 'platform', icon: '🏪', route: 'page:extensions' }),
+  cap({ id: 3, code: 'agent-market', name: '扩展库', kind: 'platform', icon: '🏪', route: 'page:extensions' }),
   cap({ id: 4, code: 'kb-inventory', name: '知识库', kind: 'platform', icon: '📚', route: 'page:kb-manage' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', kind: 'tool', status: 'draft' }),
 ];
@@ -67,16 +67,31 @@ describe('侧栏能力导航器', () => {
 
   /**
    * 排版层次 (2026-10-25 第三轮: 用户反馈"无层次感"):
-   *   区块标题「能力」 → 总览入口「全部能力」→ 角色组 → 能力条目.
+   *   总览入口「全部能力」→ 角色组 → 能力条目.
    *   顺序错了层次就塌了 —— 所以这里钉死 DOM 顺序.
+   *
+   * ⚠️ 2026-11-04 (第二十三轮): 顶部的「能力」区块标题**去掉**了 ——
+   *   ① 它跟紧接着的「全部能力」语义重复 (同一句话说两遍);
+   *   ② 侧栏下半的「📡 数据 / 工具」本来就有自己的标题, 不靠它分段;
+   *   ③ 改成「能力墙」不对 —— 侧栏是目录 (列能力名), 首页才是墙 (列能力卡).
+   *   所以现在是**三层**, 这里同步钉死.
    */
-  it('四层结构: 区块标题 → 总览入口 → 角色组 → 条目', () => {
+  it('三层结构: 总览入口 → 角色组 → 条目 (顶部不再有「能力」区块标题)', () => {
     const { w } = mountNav();
-    expect(w.find('.nav-cap .nc-lb').text()).toBe('能力');
+    // 旧标题彻底没了 —— 不是改成别的字, 是这个元素本身不存在
+    expect(w.find('.nav-cap').exists()).toBe(false);
+    expect(w.find('.nc-lb').exists()).toBe(false);
     const kids = w.element.children;
-    expect(kids[0].classList.contains('nav-cap')).toBe(true);
-    expect(kids[1].classList.contains('all-link')).toBe(true);
-    expect(kids[2].classList.contains('group')).toBe(true);
+    expect(kids[0].classList.contains('all-link')).toBe(true);
+    expect(kids[1].classList.contains('group')).toBe(true);
+    w.unmount();
+  });
+
+  it('侧栏里不再出现单独的「能力」二字 (「全部能力」不算)', () => {
+    const { w } = mountNav();
+    const texts = w.findAll('.lb, .g-lb, .nc-lb').map((e) => e.text().trim());
+    expect(texts).not.toContain('能力');
+    expect(texts).toContain('全部能力');
     w.unmount();
   });
 
@@ -114,8 +129,8 @@ describe('侧栏能力导航器', () => {
   it('每项能力都列出来了', () => {
     const { w } = mountNav();
     const labels = w.findAll('.item .i-lb').map((i) => i.text());
-    // ⚠️ 资产组排前面 → 顺序跟着变; 「AI 资产市场」已改名「扩展」
-    expect(labels).toEqual(['扩展', '知识库', '日志分析', '文本用例生成', '代码检视']);
+    // ⚠️ 资产组排前面 → 顺序跟着变; 「AI 资产市场」→「扩展」→「扩展库」
+    expect(labels).toEqual(['扩展库', '知识库', '日志分析', '文本用例生成', '代码检视']);
     w.unmount();
   });
 
@@ -142,7 +157,7 @@ describe('侧栏能力导航器', () => {
     const { w } = mountNav();
     expect(router.currentRoute.value.path).toBe('/extensions');
     const active = w.findAll('.item').find((i) => i.classes().includes('active'));
-    expect(active?.text()).toContain('扩展');
+    expect(active?.text()).toContain('扩展库');
     w.unmount();
   });
 });

@@ -2,7 +2,7 @@
   <div class="market">
     <!-- ===== 能力详情统一外壳 ===== -->
     <CapabilityShell
-      name="扩展"
+      name="扩展库"
       icon="🏪"
       kind="platform"
       status="beta"
@@ -90,7 +90,7 @@
     <!-- 规则不可用时上传/编辑统一停用; 抽屉内也复用同一状态提供重试. -->
     <div v-if="marketRulesError" class="sync-bar err market-rules-error">
       <span class="sb-icon">⚠️</span>
-      <span class="sb-text">扩展规则加载失败: {{ marketRulesError }}。上传和编辑已暂停，请重试。</span>
+      <span class="sb-text">扩展库规则加载失败: {{ marketRulesError }}。上传和编辑已暂停，请重试。</span>
       <button class="sb-btn ghost" @click="loadMarketRules">重试</button>
     </div>
 
@@ -108,7 +108,7 @@
          ⚠️ 2026-10-30 (第十二轮): 拆成两条 —— 「包变了」和「只改了信息」要分开,
             紧急程度不一样, 而且只有包变了的那条审核通过后才需要通知扩展群. -->
     <div v-if="isAdmin && othersNewCount > 0" class="my-review-bar admin">
-      <span>📦 有 <b>{{ othersNewCount }}</b> 个资产在等上架审核 —— 通过后才出现在扩展里</span>
+      <span>📦 有 <b>{{ othersNewCount }}</b> 个资产在等上架审核 —— 通过后才出现在扩展库里</span>
       <button class="mrb-btn" @click="toggleOnlyMine('all-pending')">
         {{ onlyMine === 'all-pending' ? '显示全部' : '只看这些' }}
       </button>
@@ -151,7 +151,7 @@
              ⚠️ 2026-10-31 (第十九轮): 但它跟**分类维度互斥** —— 同一个 chip 行里
                 「我的」和「⭐精选」/某个分类不能同时亮 (两个维度打架, 筛选说不清). -->
         <button class="chip mine-chip" :class="{ active: mineOnly }"
-                title="只看我在扩展中传的资产"
+                title="只看我在扩展库里传的资产"
                 @click="selectMine()">
           👤 我的 <span class="count">{{ mineTotal }}</span>
         </button>
@@ -166,7 +166,7 @@
       </div>
 
       <!-- ⚠️ 分类 / 项目取不到 → 筛选维度会凭空消失 (只剩「全部 / ⭐精选」),
-           用户会以为扩展里没有别的分类 —— 得说清楚是"读失败"不是"没有" -->
+           用户会以为扩展库里没有别的分类 —— 得说清楚是"读失败"不是"没有" -->
       <div v-if="filterLoadError" class="filter-err">⚠️ {{ filterLoadError }}</div>
 
       <!-- ===== 项目 + 排序 (合成一个下拉) =====
@@ -236,7 +236,7 @@
       <!-- ⚠️ 页脚这两个按钮以前都叫「刷新」/「重新同步」, 但含义差很远:
            「刷新列表」只重读本地镜像 (快), 「从 GitLab 重新同步（慢）」会全量回灌.
            以前用户点哪个都一样 —— 现在把差别写进文案. -->
-      <button v-if="!syncing" class="link-btn" title="重新读一次扩展数据 (不拉 GitLab, 快)"
+      <button v-if="!syncing" class="link-btn" title="重新读一次扩展库数据 (不拉 GitLab, 快)"
               @click="manualRefresh">刷新列表</button>
       <!-- ⚠️ 「重新同步」= 从 GitLab 全量回灌 + 重新入队 → 后端已收紧成 **admin only**.
            非管理员点了只吃一个 403, 不如直接不显示. -->

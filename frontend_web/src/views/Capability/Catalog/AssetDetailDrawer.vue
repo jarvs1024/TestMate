@@ -22,7 +22,7 @@
       <!-- 上架审核状态 -->
       <el-alert v-if="item.publish_status === 'pending'" type="warning"
                 :closable="false" show-icon class="ad-alert"
-                title="该资产正在等待管理员审核, 审核通过后才会出现在扩展里" />
+                title="该资产正在等待管理员审核, 审核通过后才会出现在扩展库里" />
       <el-alert v-else-if="item.publish_status === 'rejected'" type="error"
                 :closable="false" show-icon class="ad-alert"
                 :title="'审核未通过: ' + (item.review_note || '未说明原因, 请修改后重新提交')" />
@@ -39,13 +39,16 @@
       <!-- ① 安装卡 (吸顶: 无论滚到哪, "下载"和"怎么装"都在眼前) -->
       <div class="ad-install">
         <template v-if="item.kind !== 'mcp'">
+          <!-- ⚠️ 2026-11-04 (第二十三轮): 标题行改成 **标题 | 文件名 | 下载按钮** 一行排完.
+               以前下载按钮独占一行 (还 width:100% 的实心大蓝条), 整个安装卡的重心全被它抢走;
+               现在跟「＋ 上传资产」同一个 .mini-btn.primary, 挤在文件名右边, 一屏看完. -->
           <div class="ins-h">
             <span class="ins-t">⬇ 下载安装包</span>
             <code class="ins-file">{{ item.code }}.zip</code>
+            <!-- ⚠️ 文案必须还是纯「下载」: e2e / 单测按文本精确匹配这个按钮,
+                 下载箭头走 CSS ::before (不进 textContent). -->
+            <button class="mini-btn primary ins-btn" :disabled="busy" @click="doDownload">{{ busy ? '下载中…' : '下载' }}</button>
           </div>
-          <el-button type="primary" class="ins-btn" :loading="busy" @click="doDownload">
-            下载
-          </el-button>
           <!-- ⚠️ 提示写**通用话术** (2026-10-25 用户要求): 别把某个 Agent 的目录
                写死成主提示 —— 不同 Agent 的安装方式不一样, 主提示只说"下载完怎么用".
                手动安装的参考目录收在下面的折叠里, 想看的人点开看. -->
@@ -512,7 +515,7 @@ async function doApplyUnpublish() {
     await ElMessageBox.prompt(
       instant
         ? `下架「${name}」?\n`
-          + `当前「免审核」, 下架「立刻生效」: 资产马上从扩展消失, `
+          + `当前「免审核」, 下架「立刻生效」: 资产马上从扩展库消失, `
           + `卡片会标「已下架」。\n`
           + `GitLab 上的文件会「保留」, 随时可以「重新上架」, 不会丢。\n`
           + `请输入资产 code「${code}」以确认。`
@@ -644,7 +647,7 @@ async function doReview(decision: 'approve' | 'reject') {
   } else {
     try {
       await ElMessageBox.confirm(
-        `确认通过「${name}」的审核? 通过后它会出现在扩展里。`,
+        `确认通过「${name}」的审核? 通过后它会出现在扩展库里。`,
         '通过审核',
         { type: 'success', confirmButtonText: '通过', cancelButtonText: '取消' },
       );
@@ -871,12 +874,18 @@ async function doSubmit() {
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
 }
 .ins-h { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.ins-t { font-size: 12.5px; font-weight: 700; color: var(--ink-900); }
+.ins-t { font-size: 12.5px; font-weight: 700; color: var(--ink-900); flex-shrink: 0; }
 .ins-file {
   font-family: var(--font-mono); font-size: 11px; color: var(--ink-500);
-  margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* ⚠️ 2026-11-04: 文件名现在跟按钮同行 —— 必须能省略, 否则长 code 把按钮挤出卡片 */
+  margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ins-btn { width: 100%; }
+/* ⚠️ 2026-11-04 (第二十三轮): 跟着「＋ 上传资产」同一套 .mini-btn.primary 走,
+   **不再撑满整行** (以前 width:100% 的 el-button 是一整块实心大蓝条).
+   下载箭头走 ::before —— 不进 textContent, e2e/单测按纯文本「下载」匹配不受影响.
+   ⚠️ flex-shrink:0 —— 文件名很长时该被省略的是文件名, 不是按钮. */
+.ins-btn::before { content: '⬇'; font-size: 13px; line-height: 1; }
+.ins-btn { flex-shrink: 0; }
 .ins-dir {
   display: flex; align-items: baseline; gap: 6px; margin-top: 9px;
   font-size: 11.5px; color: var(--ink-600);

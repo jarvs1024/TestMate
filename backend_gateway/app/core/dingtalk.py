@@ -361,7 +361,7 @@ _DEFAULT_LINK_PATH = {
     "software_unpublish": "/software",
 }
 _LINK_TEXT = {
-    "/extensions": "去扩展看看",
+    "/extensions": "去扩展库看看",
     "/software": "去软件库看看",
 }
 

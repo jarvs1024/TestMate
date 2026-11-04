@@ -96,7 +96,8 @@ async def test_publish_message_has_summary_and_market_link(monkeypatch):
     assert "说明: 一键串联" in text
     # ⚠️ 链接指向市场
     assert "http://127.0.0.1:8081/extensions" in text
-    assert "去扩展看看" in text
+    # ⚠️ 2026-11-04 (第二十三轮): 平台里「扩展」改名「扩展库」, 通知里的链接文字同步改
+    assert "去扩展库看看" in text
 
 
 async def test_publish_message_shows_author_not_approver(monkeypatch):

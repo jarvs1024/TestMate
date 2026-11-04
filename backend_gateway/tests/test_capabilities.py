@@ -273,9 +273,14 @@ def test_env_ops_copy_covers_the_intended_scope():
 
 
 def test_agent_market_renamed_to_plugin_skill_connector():
-    """「AI 资产市场」→「扩展」 —— 老名字跟角色名「资产」撞了, 用户分不清."""
+    """「AI 资产市场」→「扩展」→「扩展库」 —— 老名字跟角色名「资产」撞了, 用户分不清.
+
+    ⚠️ 2026-11-04 (第二十三轮): 再改名 "扩展" → "扩展库" (用户要求) ——
+       光叫"扩展"听不出这是个**存放/浏览**的地方; 加"库"字后跟同级的
+       「知识库」「软件库」完全对齐 (三个都是"库").
+    """
     mkt = next(c for c in SEED_AGENTS if c["code"] == "agent-market")
-    assert mkt["name"] == "扩展"
+    assert mkt["name"] == "扩展库"
     assert "AI 资产市场" not in mkt["name"]
     # 改名了, route 同步换成 /extensions
     assert mkt["route"] == "page:extensions"
@@ -301,3 +306,35 @@ def test_software_library_seed():
     # 旧的那套字段清单别再回来 —— 跟 /software 页的页头 lede 保持同一口径
     assert "详情" not in sw["summary"]
     assert "适用场景" not in sw["summary"]
+
+
+def test_extension_library_renamed_consistently():
+    """第二十三轮 (2026-11-04): 「扩展」→「扩展库」, 平台里三处口径要一致.
+
+    用户图3 的箭头同时指向**页头标题**和**侧栏导航** —— 这两处都得是「扩展库」,
+    名字对不上用户会以为点到了别的东西.
+    """
+    mkt = next(c for c in SEED_AGENTS if c["code"] == "agent-market")
+    # ① 能力名 (侧栏导航 + 首页能力卡都读这个字段)
+    assert mkt["name"] == "扩展库"
+    # ② 另一个能力指向它时, 说的也是「扩展库」
+    sw = next(c for c in SEED_AGENTS if c["code"] == "software-library")
+    assert "「扩展库」" in sw["not_for"], sw["not_for"]
+    assert "「扩展」" not in sw["not_for"], sw["not_for"]
+
+
+def test_extension_link_text_renamed():
+    """钉钉通知里的「去扩展看看」也得改成「去扩展库看看」 (用户看到的同一套名字)."""
+    from app.core.dingtalk import _LINK_TEXT
+
+    assert _LINK_TEXT["/extensions"] == "去扩展库看看"
+
+
+def test_dingtalk_channel_label_untouched():
+    """⚠️ 「扩展群」是**钉钉群的名字**, 不能跟着改名 —— 群名在钉钉那边是实体的.
+
+    改的只是**我们平台内的叫法**, 群名照旧.
+    """
+    from app.core.dingtalk import _CHANNEL_LABEL
+
+    assert _CHANNEL_LABEL["extensions"] == "扩展群"

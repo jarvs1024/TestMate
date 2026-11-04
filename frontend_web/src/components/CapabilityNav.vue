@@ -1,12 +1,16 @@
 <template>
   <div class="cap-nav">
-    <!-- ===== ① 区块标题: 先说清楚"这一块是什么" ===== -->
-    <div class="nav-cap">
-      <span class="nc-lb">能力</span>
-      <span class="nc-rule"></span>
-    </div>
+    <!-- ⚠️ 2026-11-04 (第二十三轮): 顶部那个「能力」区块标题**去掉了** (用户要求).
+         理由:
+           ① 语义重复 —— 标题写「能力」, 紧接着第一条就是「全部能力」卡片;
+              同一句话在一屏里说两遍, 后一条还更具体.
+           ② 它区分不了上下半区 —— 侧栏下半的「📡 数据 / 工具」(ServiceStatus)
+              本来就有自己的标题, 不靠这个「能力」来分段.
+           ③ 改成「能力墙」也不对 —— 侧栏是**目录** (列能力名), 首页才是**墙** (列能力卡).
+              名字得跟它实际干的事对得上.
+         留下的视觉层次靠: 「全部能力」卡片 (总览, 有边框+底色+总数) → 角色组标题 → 条目. -->
 
-    <!-- ===== ② 总览入口: 卡片化, 权重高于下面的分组 ===== -->
+    <!-- ===== ① 总览入口: 卡片化, 权重高于下面的分组 ===== -->
     <router-link to="/" class="all-link" :class="{ active: isHome }">
       <span class="ic">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -15,7 +19,7 @@
       <span class="count">{{ store.items.length }}</span>
     </router-link>
 
-    <!-- ===== ③ 角色分组: 组标题 + 细分隔线 + 条目 ===== -->
+    <!-- ===== ② 角色分组: 组标题 + 细分隔线 + 条目 ===== -->
     <div v-for="g in store.grouped" :key="g.meta.value" class="group">
       <div class="g-hd">
         <span class="g-ic">{{ g.meta.icon }}</span>
@@ -55,17 +59,16 @@
  *
  * 分组按**角色** (资产 / 工具 / 看板), 不是按实现形态 —— 角色才回答"这卡干嘛"。
  *
- * ⚠️ 排版为什么要四层 (2026-10-25 第三轮, 用户反馈"无层次感"):
+ * ⚠️ 排版为什么要分层 (2026-10-25 第三轮, 用户反馈"无层次感"):
  *   改之前的侧栏是**平铺**的: 「全部能力」/ 组标题 / 条目三者视觉权重一样,
  *   组标题还是 10.5px 灰色 uppercase (中文 uppercase 没意义, 几乎看不见),
  *   条目跟组标题左边界相同 (看不出父子关系), 三组之间只有 6px 间距 (糊成一坨).
  *   用户看不出"全部能力"是**总览入口**而不是又一个分类.
  *
- *   现在的四层:
- *     ① 区块标题「能力」+ 右侧细线 —— 界定这是哪一块
- *     ② 「全部能力」卡片 —— 总览, 权重高于单个分组 (带边框/底色/总数)
- *     ③ 角色组标题 (13px 加粗深色) + 组下细分隔线 —— 组标题与它的条目成一个单元
- *     ④ 条目缩进到组标题之下 —— 明确的父子关系; 当前项用左侧竖条指示
+ *   现在的三层 (2026-11-04 把顶部的「能力」区块标题去掉了, 理由见模板里的注释):
+ *     ① 「全部能力」卡片 —— 总览, 权重高于单个分组 (带边框/底色/总数)
+ *     ② 角色组标题 (13px 加粗深色) + 组下细分隔线 —— 组标题与它的条目成一个单元
+ *     ③ 条目缩进到组标题之下 —— 明确的父子关系; 当前项用左侧竖条指示
  */
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -105,15 +108,7 @@ function isActive(c: Capability): boolean {
 <style scoped>
 .cap-nav { display: flex; flex-direction: column; }
 
-/* ===== ① 区块标题 ===== */
-.nav-cap { display: flex; align-items: center; gap: 8px; padding: 2px 3px 8px; }
-.nc-lb {
-  font-size: 10.5px; font-weight: 700; letter-spacing: .08em;
-  color: var(--ink-500);
-}
-.nc-rule { flex: 1; height: 1px; background: var(--border); }
-
-/* ===== ② 总览入口 (卡片) ===== */
+/* ===== ① 总览入口 (卡片) ===== */
 .all-link {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 11px; border-radius: 10px;
@@ -145,7 +140,7 @@ function isActive(c: Capability): boolean {
 }
 .all-link.active .count { color: var(--ink-700); }
 
-/* ===== ③ 角色分组 ===== */
+/* ===== ② 角色分组 ===== */
 .group { display: flex; flex-direction: column; margin-top: 15px; }
 .g-hd {
   display: flex; align-items: center; gap: 6px;
@@ -162,7 +157,7 @@ function isActive(c: Capability): boolean {
 /* 组标题下的细线 —— 把"标题 + 它的条目"圈成一个单元, 三组之间自然分开 */
 .g-rule { height: 1px; background: var(--border); margin: 6px 0 4px; }
 
-/* ===== ④ 能力条目 (缩进在组标题之下) ===== */
+/* ===== ③ 能力条目 (缩进在组标题之下) ===== */
 .item {
   display: flex; align-items: center; gap: 9px;
   padding: 6px 10px 6px 24px; border-radius: 8px;

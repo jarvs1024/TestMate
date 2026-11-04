@@ -328,7 +328,7 @@
             commit {{ job.commit_sha.slice(0, 12) }} · {{ job.git_path }}
           </div>
           <div v-if="job.status === 'pushed' && reviewState === 'pending'" class="job-sub">
-            文件已推送, 管理员审核通过后才会出现在扩展里
+            文件已推送, 管理员审核通过后才会出现在扩展库里
           </div>
           <div v-else-if="job.status === 'staged'" class="job-sub">
             文件已落到本地工作区, 后台正在 commit + push

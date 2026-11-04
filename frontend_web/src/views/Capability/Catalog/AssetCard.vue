@@ -27,11 +27,11 @@
               class="ac-badge meta"
               title="只改了信息, 包没变 —— 管理员审核通过后不会通知扩展群">📝 信息待审</span>
         <span v-else-if="item.publish_status === 'pending'" class="ac-badge pending"
-              title="已提交, 等待管理员审核; 通过后才在扩展里可见">📋 待审核</span>
+              title="已提交, 等待管理员审核; 通过后才在扩展库里可见">📋 待审核</span>
         <span v-else-if="item.publish_status === 'rejected'" class="ac-badge rejected"
               :title="item.review_note || '审核未通过'">❌ 已驳回</span>
         <span v-else-if="item.publish_status === 'unpublished'" class="ac-badge off"
-              title="已从扩展下架, 文件仍保留">⚠️ 已下架</span>
+              title="已从扩展库下架, 文件仍保留">⚠️ 已下架</span>
         <span v-else-if="item.publish_status === 'unpublish_pending'" class="ac-badge unp"
               title="已申请下架, 等管理员确认; 确认后资产会被彻底删除">⏳ 待下架审核</span>
         <span v-if="item.sync_status === 'staged'" class="ac-badge staged"

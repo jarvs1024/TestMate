@@ -124,11 +124,11 @@
               💡 资产 = <strong>能被复用、给别人供料</strong>的东西 —— 首页能力墙里这三张卡都属于它.
             </div>
 
-            <!-- 🧩 扩展 -->
+            <!-- 🧩 扩展库 -->
             <div id="sec-asset-market" class="sub-grp sub3">
-              <h4>🧩 扩展 <span class="sub-cnt">{{ marketItems.length }} 项</span></h4>
+              <h4>🧩 扩展库 <span class="sub-cnt">{{ marketItems.length }} 项</span></h4>
               <div class="hint">
-                💡 扩展的后端配置 —— GitLab 仓库在哪、项目列表怎么配、谁能发布、
+                💡 扩展库的后端配置 —— GitLab 仓库在哪、项目列表怎么配、谁能发布、
                 怎么对外暴露 marketplace.json. 改完<strong>立即生效</strong>, 不用重启后端.
               </div>
               <SettingRow v-for="(it, idx) in marketItems" :key="it.key"
@@ -727,7 +727,7 @@ const sections = computed<TocSection[]>(() => {
         label: '📦 资产',
         count: assetTotal.value,
         children: [
-          { id: 'sec-asset-market', label: '🧩 扩展', count: marketItems.value.length },
+          { id: 'sec-asset-market', label: '🧩 扩展库', count: marketItems.value.length },
           { id: 'sec-asset-kb',      label: '📚 知识库',         count: kbTotal.value },
           { id: 'sec-asset-sw',      label: '🧰 软件库',         count: softwareItems.value.length },
         ],

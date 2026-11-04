@@ -89,8 +89,14 @@ SEED_AGENTS: list[dict] = [
         #    老名字里"AI 资产"跟角色名"资产"(platform)撞了 —— 用户分不清
         #    "扩展"卖的是不是"资产"这个角色. 新名字直接说清卖什么:
         #    三种可复用的扩展 (插件 / 技能 / 连接器).
+        #
+        # ⚠️ 2026-11-04 改名: "扩展" → "扩展库" (用户要求).
+        #    为什么: 光叫"扩展"听不出这是个**存放/浏览**的地方 —— 用户第一反应
+        #    是"平台给我的 Agent 加了个扩展"(概念), 不是"这里有个库我能去逛"。
+        #    加上"库"字后跟同级的「知识库」「软件库」完全对齐 (三个都是"库"),
+        #    侧栏里并排三个名字也能看出是同一类东西.
         "code": "agent-market",
-        "name": "扩展",
+        "name": "扩展库",
         "icon": "🏪",
         "category": AgentCategory.ai_market.value,
         "kind": AgentKind.platform.value,
@@ -155,7 +161,7 @@ SEED_AGENTS: list[dict] = [
         "status": AgentStatus.beta.value,
         "summary": "公司内部软件的统一入口: 自研工具与基于开源改造的版本都在这儿, 找到就能下",
         "use_when": "要拿公司内部软件的安装包, 或把自己做的工具发上来给同事用",
-        "not_for": "要找装进 Agent 的插件 / 技能 / 连接器请去「扩展」",
+        "not_for": "要找装进 Agent 的插件 / 技能 / 连接器请去「扩展库」",
         "tags": ["软件", "内部", "工具"],
         "engine": AgentEngine.builtin.value,
         "engine_config": {},

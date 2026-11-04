@@ -78,7 +78,7 @@ function cap(over: any = {}) {
 
 const CAPS = [
   cap({ id: 1, code: 'code-review', name: '代码检视', icon: '🧬', kind: 'board', status: 'stable', category: 'auto-code', route: 'page:code-review' }),
-  cap({ id: 2, code: 'agent-market', name: '扩展', icon: '🏪', kind: 'platform', status: 'beta', category: 'ai-market', route: 'page:extensions', cta: '浏览资产' }),
+  cap({ id: 2, code: 'agent-market', name: '扩展库', icon: '🏪', kind: 'platform', status: 'beta', category: 'ai-market', route: 'page:extensions', cta: '浏览资产' }),
   cap({ id: 3, code: 'kb-inventory', name: '知识库', icon: '📚', kind: 'platform', status: 'stable', category: 'ssd-kb', route: 'page:kb-manage', cta: '检索语料' }),
   cap({ id: 4, code: 'log-analysis', name: '日志分析', icon: '📜', kind: 'tool', status: 'beta', category: 'ssd-trace' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', icon: '🧪', kind: 'tool', status: 'draft', category: 'ssd-spec' }),
@@ -162,7 +162,7 @@ describe('首页 · 能力墙', () => {
     await chip.trigger('click');
     const names = w.findAllComponents({ name: 'CapabilityCard' })
       .map((c) => c.props('capability').name);
-    expect(names.sort()).toEqual(['扩展', '知识库']);
+    expect(names.sort()).toEqual(['扩展库', '知识库']);
     w.unmount();
   });
 
