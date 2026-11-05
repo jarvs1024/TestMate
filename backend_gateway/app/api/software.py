@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import cast, func, or_, select, update, Text
 
 from app.api.auth import get_current_user, get_optional_user
-from app.core import market_policy, software_store
+from app.core import count_dedup, market_policy, software_store
 from app.core.asset_locks import code_lock
 from app.core.dingtalk import notify_extensions
 from app.core.identity import author_forms
@@ -585,6 +585,7 @@ async def check_path(user: User = Depends(require_publisher)) -> dict:
 
 @router.get("/dl")
 async def download_by_ticket(
+    request: Request,
     t: str = Query("", description="短时下载票"),
     v: str = Query("", description="版本号 (与票里的必须一致)"),
 ) -> FileResponse:
@@ -643,15 +644,26 @@ async def download_by_ticket(
         if path is None:
             raise HTTPException(status_code=404, detail="文件不在服务器上了, 请联系管理员")
 
-        # 下载次数 +1 —— 原子自增 (先读后写会丢计数)
-        await session.execute(
-            update(SoftwareItem).where(SoftwareItem.id == item.id)
-            .values(download_count=SoftwareItem.download_count + 1)
+        # 下载次数 +1 —— 原子自增 (先读后写会丢计数).
+        # ⚠️ 2026-11-05: 冷却窗口去重 —— 同一人/同 IP 窗口内重复下载不再计数;
+        #    条目计数按 (key, code), 版本计数按 (key, code@版本) 各自独立.
+        key = (
+            count_dedup.user_key(uid)
+            if uid
+            else count_dedup.ip_key(count_dedup.client_ip(request))
         )
-        await session.execute(
-            update(SoftwareVersion).where(SoftwareVersion.id == ver.id)
-            .values(download_count=SoftwareVersion.download_count + 1)
-        )
+        if await count_dedup.bump_count(session, code, key):
+            await session.execute(
+                update(SoftwareItem).where(SoftwareItem.id == item.id)
+                .values(download_count=SoftwareItem.download_count + 1)
+            )
+        if await count_dedup.bump_count(
+            session, count_dedup.version_scope(code, version), key
+        ):
+            await session.execute(
+                update(SoftwareVersion).where(SoftwareVersion.id == ver.id)
+                .values(download_count=SoftwareVersion.download_count + 1)
+            )
         await session.commit()
 
         file_name = ver.file_name or f"{code}-{version}.bin"
@@ -719,7 +731,9 @@ async def _recommended_version(session, item_id: int) -> SoftwareVersion | None:
     ).scalar_one_or_none()
 
 
-async def _serve_recommended(session, item: SoftwareItem) -> FileResponse:
+async def _serve_recommended(
+    session, item: SoftwareItem, request: Request
+) -> FileResponse:
     """给一个条目返回「推荐版本」的文件 —— 固定链接两个端点共用.
 
     ⚠️ 抽出来是因为现在有**两个**固定链接端点 (按 code / 按别名),
@@ -736,15 +750,22 @@ async def _serve_recommended(session, item: SoftwareItem) -> FileResponse:
     if path is None:
         raise HTTPException(status_code=404, detail="文件不在服务器上了, 请联系管理员")
 
-    # 下载次数 +1 —— 原子自增 (先读后写会丢计数)
-    await session.execute(
-        update(SoftwareItem).where(SoftwareItem.id == item.id)
-        .values(download_count=SoftwareItem.download_count + 1)
-    )
-    await session.execute(
-        update(SoftwareVersion).where(SoftwareVersion.id == ver.id)
-        .values(download_count=SoftwareVersion.download_count + 1)
-    )
+    # 下载次数 +1 —— 原子自增 (先读后写会丢计数).
+    # ⚠️ 2026-11-05: 固定链接是**纯匿名**的 → 按 IP 冷却窗口去重;
+    #    条目计数按 (key, code), 版本计数按 (key, code@版本) 各自独立.
+    key = count_dedup.ip_key(count_dedup.client_ip(request))
+    if await count_dedup.bump_count(session, item.code, key):
+        await session.execute(
+            update(SoftwareItem).where(SoftwareItem.id == item.id)
+            .values(download_count=SoftwareItem.download_count + 1)
+        )
+    if await count_dedup.bump_count(
+        session, count_dedup.version_scope(item.code, ver.version), key
+    ):
+        await session.execute(
+            update(SoftwareVersion).where(SoftwareVersion.id == ver.id)
+            .values(download_count=SoftwareVersion.download_count + 1)
+        )
     await session.commit()
 
     file_name = _fixed_download_name(item.code, ver.file_name)
@@ -767,7 +788,7 @@ async def _serve_recommended(session, item: SoftwareItem) -> FileResponse:
 
 
 @router.get("/alias/{alias}/download")
-async def download_by_alias(alias: str) -> FileResponse:
+async def download_by_alias(alias: str, request: Request) -> FileResponse:
     """**永久**下载链接 (按别名) —— 永远返回「推荐版本」, 这个 URL **永不变**.
 
     ⚠️ 为什么要有别名版 (2026-11-04 第二十四轮 · 用户要求):
@@ -803,11 +824,11 @@ async def download_by_alias(alias: str) -> FileResponse:
             raise HTTPException(status_code=404, detail=f"软件 {alias} 不存在")
         if item.publish_status != "published":
             raise HTTPException(status_code=404, detail=f"软件 {alias} 不存在")
-        return await _serve_recommended(session, item)
+        return await _serve_recommended(session, item, request)
 
 
 @router.get("/{code}/download")
-async def download_recommended(code: str) -> FileResponse:
+async def download_recommended(code: str, request: Request) -> FileResponse:
     """**固定**下载链接 (按 code) —— 永远返回「推荐版本」, 这个 URL **永不变**.
 
     ⚠️ 为什么要有这个端点 (2026-11-03 用户要求):
@@ -839,7 +860,7 @@ async def download_recommended(code: str) -> FileResponse:
             # ⚠️ 免登录的端点 —— 只能给**已上架**的软件开.
             #    未上架/已下架的内部工具不该被一条裸链接带出去.
             raise HTTPException(status_code=404, detail=f"软件 {code} 不存在")
-        return await _serve_recommended(session, item)
+        return await _serve_recommended(session, item, request)
 
 
 @router.get("/{code}", response_model=SoftwareDetailOut)

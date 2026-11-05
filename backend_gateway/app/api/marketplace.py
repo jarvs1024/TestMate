@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import ValidationError
 from fastapi import Response
 from sqlalchemy import Text, cast, select, or_, update, func
@@ -40,6 +40,7 @@ from app.core.dingtalk import (
 )
 from app.core import (
     builtin_assets,
+    count_dedup,
     market_notify,
     market_naming,
     market_policy,
@@ -1080,6 +1081,7 @@ async def record_connector_copy(
        「配置被复制了多少次」, 复用 download_count (原子自增).
        前端详情抽屉里**两个**复制按钮 (吸顶卡 + MCP 配置块) 都调它,
        每次复制成功加一次; 复制失败不调.
+    ⚠️ 2026-11-05 起同一人**冷却窗口内**重复复制不再计数 (误触/刷量防护).
     """
     async with AsyncSessionLocal() as session:
         a = (
@@ -1092,11 +1094,12 @@ async def record_connector_copy(
         is_reviewer = await _is_reviewer(user)
         assert_visible(a, username=user.username or "", is_reviewer=is_reviewer,
                        is_admin=market_policy.is_admin(user))
-        await session.execute(
-            update(Asset)
-            .where(Asset.code == code)
-            .values(download_count=Asset.download_count + 1)
-        )
+        if await count_dedup.bump_count(session, code, count_dedup.user_key(user.id)):
+            await session.execute(
+                update(Asset)
+                .where(Asset.code == code)
+                .values(download_count=Asset.download_count + 1)
+            )
         await session.commit()
         new_count = (
             await session.execute(
@@ -1233,7 +1236,8 @@ def _find_stored_package(base: Path, version: str) -> Path | None:
 
 @router.get("/{code}/versions/{version}/download")
 async def download_package(
-    code: str, version: str, user: User = Depends(get_optional_user)
+    code: str, version: str, request: Request,
+    user: User = Depends(get_optional_user),
 ) -> Response:
     """下载安装包 (原始 zip; 老资产没有存包则即时确定性打包).
 
@@ -1285,12 +1289,18 @@ async def download_package(
     #    本地全是 "1.0.0.zip", 互相覆盖还认不出谁是谁. 统一成 "{code}.zip".
     name = market_naming.download_filename(code, source_name)
 
-    # 下载次数 +1 —— 原子自增 (先读后写会丢计数: 并发下载时互相覆盖)
+    # 下载次数 +1 —— 原子自增 (先读后写会丢计数: 并发下载时互相覆盖).
+    # ⚠️ 2026-11-05: 同一人/同 IP 冷却窗口内重复下载不再计数 (误触/刷量防护).
     async with AsyncSessionLocal() as session:
-        await session.execute(
-            update(Asset).where(Asset.code == code)
-            .values(download_count=Asset.download_count + 1)
-        )
+        if is_anon:
+            key = count_dedup.ip_key(count_dedup.client_ip(request))
+        else:
+            key = count_dedup.user_key(user.id)
+        if await count_dedup.bump_count(session, code, key):
+            await session.execute(
+                update(Asset).where(Asset.code == code)
+                .values(download_count=Asset.download_count + 1)
+            )
         await session.commit()
 
     return Response(
@@ -1381,12 +1391,14 @@ async def download_package_by_asset_ticket(
         raise HTTPException(status_code=404, detail="请求版本的安装包不存在")
     data = stored.read_bytes()
 
+    # ⚠️ 2026-11-05: 票里的 uid 冷却窗口内重复下载不再计数 (误触/刷量防护).
     async with AsyncSessionLocal() as session:
-        await session.execute(
-            update(Asset)
-            .where(Asset.code == code)
-            .values(download_count=Asset.download_count + 1)
-        )
+        if await count_dedup.bump_count(session, code, count_dedup.user_key(uid)):
+            await session.execute(
+                update(Asset)
+                .where(Asset.code == code)
+                .values(download_count=Asset.download_count + 1)
+            )
         await session.commit()
 
     return Response(

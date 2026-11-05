@@ -159,17 +159,17 @@ async def _make_mcp(client, auth, code="conn-x"):
 
 
 async def test_copy_increments_download_count(client, auth, ws, restore_git_config):
-    """复制一次 +1, 返回累计次数 (download_count 复用)."""
+    """复制一次 +1, 返回累计次数 (download_count 复用).
+
+    ⚠️ 2026-11-05 起同一人**冷却窗口内**重复复制不再计数 (误触/刷量防护),
+       详见 tests/test_count_dedup.py.
+    """
     await set_setting("extensions.review.enabled", "false")
     await _make_mcp(client, auth)
 
     r1 = await client.post(f"{API}/conn-x/copy", headers=auth)
     assert r1.status_code == 200, r1.text
     assert r1.json() == {"code": "conn-x", "copy_count": 1}
-
-    r2 = await client.post(f"{API}/conn-x/copy", headers=auth)
-    assert r2.status_code == 200, r2.text
-    assert r2.json()["copy_count"] == 2
 
 
 async def test_copy_rejects_non_mcp(client, auth, ws, restore_git_config):

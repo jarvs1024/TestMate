@@ -246,13 +246,16 @@ async def test_download_increments_download_count(
         )).scalar_one()
         assert a.download_count == 1, a.download_count
 
-    # 再下一次 → 2
-    await client.get(f"{API}/dl-demo/versions/1.0.0/download", headers=auth)
+    # ⚠️ 2026-11-05 起同一人冷却窗口内重复下载不再计数 (误触/刷量防护),
+    #    但包照常出 —— 详见 tests/test_count_dedup.py
+    r2 = await client.get(f"{API}/dl-demo/versions/1.0.0/download", headers=auth)
+    assert r2.status_code == 200, r2.text
+    assert r2.content[:2] == b"PK"
     async with AsyncSessionLocal() as s:
         a = (await s.execute(
             _sel(Asset).where(Asset.code == "dl-demo")
         )).scalar_one()
-        assert a.download_count == 2, a.download_count
+        assert a.download_count == 1, a.download_count
 
 
 # ---------- 审核 ----------

@@ -27,3 +27,6 @@ from app.models.mcp import (  # noqa: F401
     McpOAuthGrant,
     McpToolCall,
 )
+# 下载/复制计数的冷却窗口去重标记.
+# ⚠️ 同上: 必须在这里导出, 否则建表时漏掉这张表.
+from app.models.count import CountMark  # noqa: F401
