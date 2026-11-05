@@ -482,7 +482,10 @@ watch(() => props.modelValue, (open) => {
 });
 
 function splitList(s: string): string[] {
-  return s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+  // 与软件库 splitTags / 后端 market_policy 一致: 中英文逗号、顿号、分号都拆, 去空去重
+  return Array.from(new Set(
+    (s || '').split(/[,;、，\s]+/).map((x) => x.trim()).filter(Boolean),
+  ));
 }
 
 /** 安装步骤: 一行一条 */
