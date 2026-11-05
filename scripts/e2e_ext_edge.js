@@ -140,7 +140,12 @@ async function openUpload(page, kindLabel) {
   await sleep(1500);
 
   // ================= ① 包名不合规 → 体检不通过 + 不让上架 =================
-  const badNameZip = path.join(OUT_DIR, 'weekly-report.zip');
+  // ⚠️ 2026-11-06: 现行规则是「小写字母/数字/连字符分段, **不要求任何前缀**」
+  //    (规则由后端 /extensions/rules 下发, 前端 validatePackageName 按它判).
+  //    以前这里传 weekly-report.zip 并断言体检文案里有 "dml-" —— 那是**旧规则**
+  //    (包名必须 dml- 开头), 规则早就改了, 这条用例一直红着, 是**过时的断言**,
+  //    不是产品缺陷. 现在传一个**按现行规则真的不合法**的包名.
+  const badNameZip = path.join(OUT_DIR, 'Weekly_Report.zip');
   makeZip(badNameZip, [['SKILL.md', '---\nname: x\ndescription: d\n---\n\n# x\n']]);
   await openUpload(page, '技能');
   const fileInput = await page.$('.up-drawer .file-input');
@@ -148,7 +153,7 @@ async function openUpload(page, kindLabel) {
   await sleep(2500);
   let st = await drawerState(page);
   check('E1 包名不合规 → 体检不通过', /装不上/.test(st.pv || ''), st.pv.slice(0, 90));
-  check('E2 体检结论点名包名问题', /dml-/.test(st.pv || ''), st.pv.slice(0, 120));
+  check('E2 体检结论点名包名问题', /安装包名/.test(st.pv || ''), st.pv.slice(0, 120));
   check('E3 包名不合规 → 不让上架', st.disabled === true, `disabled=${st.disabled}`);
 
   // ================= ② 资产 code 是**只读派生值**, 跟着包名自动变 =================
@@ -213,16 +218,18 @@ async function openUpload(page, kindLabel) {
   check('E8 MCP 配置非法 JSON → 实时报错', /JSON/.test(st.mcpMsg || ''), st.mcpMsg.slice(0, 90));
   check('E9 MCP 配置非法 → 不让上架', st.disabled === true, `disabled=${st.disabled}`);
 
-  // 连接器名不以 dml- 开头
+  // 连接器名不合规 (现行规则: 小写字母/数字/连字符分段, **不要求 dml- 前缀**)
+  // ⚠️ 2026-11-06: 原来这里传 xx-xxx 并断言报错里有 "dml-" —— "xx-xxx" 按现行
+  //    规则**是合法的**, 那条断言属于旧规则, 一直红着. 改成传一个真不合法的名字.
   await page.evaluate(() => {
     const ta = document.querySelector('.up-drawer .mcp-json textarea');
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-    setter.call(ta, '{"mcpServers": {"xx-xxx": {"url": "http://host:5050/mcp"}}}');
+    setter.call(ta, '{"mcpServers": {"Bad_Name": {"url": "http://host:5050/mcp"}}}');
     ta.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await sleep(900);
   st = await drawerState(page);
-  check('E10 连接器名不以 dml- 开头 → 实时报错', /dml-/.test(st.mcpMsg || ''), st.mcpMsg.slice(0, 100));
+  check('E10 连接器名不合规 → 实时报错', /只能/.test(st.mcpMsg || ''), st.mcpMsg.slice(0, 100));
   check('E11 连接器名不合法 → 不让上架', st.disabled === true, `disabled=${st.disabled}`);
   await page.screenshot({ path: path.join(OUT_DIR, 'edge-02-bad-mcp.png') });
 

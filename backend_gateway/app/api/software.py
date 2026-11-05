@@ -675,6 +675,10 @@ async def download_by_ticket(
         media_type="application/octet-stream",
         headers={
             "X-Content-Sha256": sha,
+            # ⚠️ 2026-11-06: 跟按 code / 按别名的下载**对齐** ——
+            #    那两条都会带 X-Software-Version (见 _serve_recommended),
+            #    只有票据下载漏了 → 外部脚本/wget 分不清自己下的是哪一版.
+            "X-Software-Version": version,
             # ⚠️ 任意格式的二进制 —— 绝不能让浏览器"猜"类型然后执行
             "X-Content-Type-Options": "nosniff",
         },

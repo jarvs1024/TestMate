@@ -280,6 +280,90 @@ async def test_revert_restores_shelved_version(client, auth, ws,  # noqa: ARG001
     assert await _job_count() == jobs_before + 1, "恢复在架不动 git, 不建 job"
 
 
+async def test_revert_denied_for_non_author(client, auth, ws,  # noqa: ARG001
+                                            restore_git_config, publisher_user,
+                                            stranger_user):
+    """非作者调「恢复在架」→ 403 (跟 delete / unpublish / PUT 同款权限口径).
+
+    ⚠️ 以前这里直接调 ext_state.assert_transition, 而状态机把"身份不够"
+       也抛 TransitionError → 端点统一转 409. 于是同一个"没权限"语义,
+       别的端点是 403, 「恢复在架」却是 409 —— 口径不一致.
+    """
+    await set_setting("extensions.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="rev-authz")
+    assert (await client.get(f"{API}/rev-authz", headers=pauth)).json()[
+        "publish_status"
+    ] == "published"
+
+    # 发新版本 → 待审 (这时才谈得上"恢复在架")
+    await set_setting("extensions.review.enabled", "true")
+    r = await _upload(client, pauth, code="rev-authz", version="2.0.0", new_version=True)
+    assert r.status_code == 202, r.text
+
+    # 陌生人来"恢复在架" → 403 (不是 409, 也不是 200)
+    sauth = {"Authorization": f"Bearer {stranger_user['token']}"}
+    r2 = await client.post(f"{API}/rev-authz/revert", headers=sauth)
+    assert r2.status_code == 403, r2.text
+    assert "恢复在架" in r2.json()["detail"]
+
+    # 状态没被改坏 —— 作者自己来仍然能恢复
+    r3 = await client.post(f"{API}/rev-authz/revert", headers=pauth)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["version"] == "1.0.0"
+
+
+async def test_pending_update_survives_index_backfill(client, auth, ws,  # noqa: ARG001
+                                                       restore_git_config,
+                                                       publisher_user):
+    """待审中的「发新版本」不会被 index.json 回灌冲掉 (2026-11-05 生产实测踩到).
+
+    ⚠️ 这个坑的完整链路:
+        在架资产发新版本 → 内容落**仓库外暂存区**, 不进 git
+        → git 的 index.json 里记的还是**在架老版本** (老版本号 / published)
+        → 后台 sync_puller 定期把 index.json 回灌进 DB 行
+        → publish_status 被冲回 published, version 被冲回老版本号
+        → ① 待审项从审核队列里消失 (审核人根本看不到)
+           ② 「恢复在架」端点按 publish_status 判状态机 → 永远 409, 按钮永远不出现
+    """
+    from app.core.ext_catalog import apply_index_to_db
+
+    await set_setting("extensions.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="rev-pull")
+    # 免审上架 → 这条已经在 index.json 里了 (回灌的"受害者"条件)
+    idx = await read_index()
+    assert any(e.get("code") == "rev-pull" for e in idx.get("assets") or []), \
+        "在架资产应该在 index.json 里"
+
+    # 开审核 → 发新版本 → 待审
+    await set_setting("extensions.review.enabled", "true")
+    r = await _upload(client, pauth, code="rev-pull", version="2.0.0", new_version=True)
+    assert r.status_code == 202, r.text
+    st = await client.get(f"{API}/rev-pull", headers=pauth)
+    assert st.json()["publish_status"] == "pending"
+    assert st.json()["version"] == "2.0.0"
+
+    # ⚠️ 模拟后台反向同步跑一轮 (回灌 index.json)
+    async with AsyncSessionLocal() as session:
+        await apply_index_to_db(session)
+        await session.commit()
+
+    # 待审状态必须**原样保住** —— 没被索引里的老版本覆盖
+    st2 = await client.get(f"{API}/rev-pull", headers=pauth)
+    assert st2.json()["publish_status"] == "pending", \
+        "待审状态被 index.json 回灌冲掉了 (待审项会从审核队列消失)"
+    assert st2.json()["version"] == "2.0.0", \
+        "待审的新版本号被 index.json 里的老版本号覆盖了"
+
+    # 顺带证明「恢复在架」真的能用了 (以前这里是 409)
+    r2 = await client.post(f"{API}/rev-pull/revert", headers=pauth)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["version"] == "1.0.0"
+
+
 # ---------- 删除语义 ----------
 
 

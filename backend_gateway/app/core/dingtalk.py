@@ -542,6 +542,23 @@ async def _flush_event(event: str, window: int) -> int:
         ).scalars().all()
     if not rows:
         return 0
+    # ⚠️ 2026-11-06: 开关也管**攒着的汇总** ——
+    #    重试 worker 早就把关掉开关的队列项标成 skipped 了 (见 retry_failed_notifications:
+    #    "开关关了就不再发 —— 否则管理员把开关关掉, 之前排队的通知还在继续刷屏"),
+    #    聚合 worker 这条路却漏了 → 管理员把「审核通知」关掉, 窗口一到期,
+    #    攒着的那些**照样发出去** (还发给当时的 webhook).
+    #    口径统一: 开关关了 → 这批也标 skipped, 永远不再发.
+    if not to_bool(await get(_SWITCH_KEY.get(event, ""), False)):
+        logger.info("dingtalk 通知开关已关闭, 攒着的汇总不发 (%s)", event)
+        async with AsyncSessionLocal() as session:
+            for r in rows:
+                cur = await session.get(AssetNotification, r.id)
+                if cur is not None:
+                    cur.status = "skipped"
+                    cur.error = "通知开关已关闭, 未发送"
+                    cur.next_retry_at = None
+            await session.commit()
+        return 0
     last = await _last_sent_at(event)
     if last is not None and (now - last).total_seconds() < window:
         return 0        # 窗口还没到, 继续等

@@ -549,8 +549,12 @@ z.close()
 
     const notif = await api('/api/v1/extensions/notifications?limit=50', { token: adminToken });
     const evs = (notif.json.items || []).filter((n) => n.code === ASSET).map((n) => n.event);
-    check('㉔ 通知事件齐全 (待审/驳回/上架)',
-      ['review', 'reject', 'publish'].every((e) => evs.includes(e)), evs.join(','));
+    // ⚠️ 2026-11-06: 驳回**不发钉钉** (只在站内显示状态+理由) —— 这是 59579a6
+    //    明确的产品口径 ("驳回了也只需要站内通知, 不用钉钉通知").
+    //    以前这里还要求有 reject 回执 → 跟产品口径对着干, 这条一直红着.
+    check('㉔ 通知事件齐全 (待审/上架有, 驳回按口径不发钉钉)',
+      ['review', 'publish'].every((e) => evs.includes(e)) && !evs.includes('reject'),
+      evs.join(','));
 
     const sync = await api('/api/v1/extensions/sync-status?client_id=scn', { token: adminToken });
     check('㉕ 同步状态可读', sync.status === 200 && sync.json.pending_count >= 0,

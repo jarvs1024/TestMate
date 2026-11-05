@@ -91,12 +91,28 @@ const FILE_NAME = `${CODE}.bin`;
 
     // ---------- 打软件库页面 ----------
     await page.goto(BASE + '/software', { waitUntil: 'domcontentloaded' });
-    await sleep(1800);
+    // ⚠️ 2026-11-06: 类名全变了 —— 2026-10-31 (第十五轮) 起 CapabilityShell
+    //    **不再渲染任何东西** (只留一个 0 尺寸锚点), 身份条并进了全局 AppHeader:
+    //      · 旧断言用的 `.cap-shell` / `.sh-name` 在现在的前端里**根本不存在**
+    //        (CapabilityShell.spec.ts 里还专门断言 .sh-name 不存在) → 永远 false;
+    //      · 软件库页自己的根节点是 `.software`;
+    //      · 页头标题在 AppHeader 里: `.tm-header .pt-txt`.
+    //    所以这里改成等「软件库页根节点 + 页头标题」都出现才算页面打开.
+    let shellOk = false;
+    for (let i = 0; i < 40; i++) {
+      await sleep(500);
+      const st = await page.evaluate(() => ({
+        root: !!document.querySelector('.software'),
+        head: (document.querySelector('.tm-header .pt-txt')?.textContent || '').trim(),
+        len: (document.body.innerText || '').trim().length,
+      }));
+      if (st.root && st.head && st.len > 50) { shellOk = true; break; }
+    }
     check('E2 /software 页面能打开',
-      await page.evaluate(() => !!document.querySelector('.cap-shell')),
+      shellOk && await page.evaluate(() => !!document.querySelector('.software')),
       await page.evaluate(() => document.body.innerText.slice(0, 80)));
     check('E3 页头是「软件库」',
-      await page.evaluate(() => (document.querySelector('.sh-name')?.textContent || '').includes('软件库')));
+      await page.evaluate(() => (document.querySelector('.tm-header .pt-txt')?.textContent || '').includes('软件库')));
     await page.screenshot({ path: path.join(OUT_DIR, 'sw-1-list.png') });
 
     // ---------- 打开上传抽屉 ----------
@@ -122,9 +138,28 @@ const FILE_NAME = `${CODE}.bin`;
       return true;
     }, placeholder, value);
 
+    // ⚠️ 2026-10-31 起「发新版本」抽屉**默认是「覆盖已有版本」模式** (用户要求),
+    //    提交按钮文案随之变成「覆盖这一版」, 版本号还预填成**要覆盖的那一版**.
+    //    想测「**新增**一个版本」必须先切模式, 再自己填版本号 ——
+    //    否则脚本去找「发布新版本」按钮根本找不到, 点了空气, 版本一条也没多.
+    const pickNewVersionMode = async (ver) => {
+      const switched = await page.evaluate(() => {
+        const b = [...document.querySelectorAll('.sw-up-drawer button')]
+          .find((x) => (x.textContent || '').includes('新增一个版本'));
+        if (!b) return false;
+        b.click();
+        return true;
+      });
+      await sleep(400);
+      const filled = await setValue('如 1.1.0', ver);
+      return switched && filled;
+    };
+
     check('E5 填软件名', await setValue('展示名', 'E2E 演示软件'));
     // ⚠️ 软件标识 2026-10-28 起是**自动生成**的 (由文件名派生, 只读) —— 不能手填.
-    //    这里断言它是只读的自动字段 (选完文件后才有值, 见 E12b).
+    //    ⚠️ 2026-11-06: 界面上**连那个只读框都没了** (2026-10-30 改成
+    //    「code 由文件名派生, 不用手填」→ 抽屉里干脆不显示这个字段).
+    //    所以这里改成断言「**没有**可填的标识输入框」, 派生结果在 E12b 用 API 验.
     const autoCode = await page.evaluate(() => {
       const el = [...document.querySelectorAll('.sw-up-drawer input')]
         .find((e) => (e.placeholder || '').includes('自动生成'));
@@ -132,8 +167,8 @@ const FILE_NAME = `${CODE}.bin`;
         ? { found: true, readonly: !!el.readOnly, value: (el.value || '').trim() }
         : { found: false };
     });
-    check('E6 软件标识是自动生成的 (只读, 不用手填)',
-      autoCode.found && autoCode.readonly === true, JSON.stringify(autoCode));
+    check('E6 软件标识不用手填 (界面上没有可填的标识输入框)',
+      autoCode.found === false, JSON.stringify(autoCode));
     check('E7 填版本号', await setValue('如 1.0.0', '1.0.0'));
     check('E8 填简介', await setValue('一句话说清', 'e2e 走查用的演示软件'));
     check('E9 填功能清单', await setValue('一行一条', '读取 SMART 日志\n定位失败扇区\n导出 CSV'));
@@ -151,23 +186,36 @@ const FILE_NAME = `${CODE}.bin`;
     check('E12 选中了软件包',
       await page.evaluate((c) => (document.querySelector('.file-chip')?.textContent || '').includes(c), CODE));
     // ⚠️ 选完文件 → 标识**自动派生**出来 (由文件名去扩展名转小写)
-    check('E12b 选完文件后标识自动生成',
-      await page.evaluate((c) => {
-        const el = [...document.querySelectorAll('.sw-up-drawer input')]
-          .find((e) => (e.placeholder || '').includes('自动生成'));
-        return !!el && (el.value || '').trim() === c;
-      }, CODE), CODE);
+    //    ⚠️ 2026-11-06: 界面上不再有这个只读字段了 → 改成**上传后用 API 验**
+    //    (服务端拿到的 code 必须等于文件名去扩展名). 见下面的 E13c.
 
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('.sw-up-drawer button, .up-foot button')]
         .find((b) => (b.textContent || '').includes('上架软件'));
       if (btn) btn.click();
     });
-    // 传文件要一会儿 (走的是原始字节流 + 流式落盘)
-    await page.waitForSelector('.asset-card', { timeout: 30000 });
-    await sleep(1500);
-    check('E13 上传后卡片出现',
-      await page.evaluate((c) => [...document.querySelectorAll('.ac-name')].some((n) => n.textContent.includes('E2E 演示软件')), CODE));
+    // ⚠️ 2026-11-06: 别等"任意一张卡片"+固定 sleep —— 上传完列表刷新有延迟,
+    //    机器一忙 1500ms 就不够 → 卡片还没出来就断言, 后面点卡片直接抛
+    //    "Node is either not clickable or not an Element", 整轮脚本挂掉
+    //    (而且清理被跳过 → 条目留在库里 → 下一轮又撞图标 409).
+    //    改成**轮询等自己那张卡**.
+    let cardOk = false;
+    for (let i = 0; i < 40; i++) {
+      await sleep(500);
+      cardOk = await page.evaluate(() =>
+        [...document.querySelectorAll('.ac-name')].some((n) => n.textContent.includes('E2E 演示软件')));
+      if (cardOk) break;
+    }
+    check('E13 上传后卡片出现', cardOk);
+    // ⚠️ 2026-11-06: 标识由文件名派生 —— 上传完用 API 验服务端存的 code.
+    //    (界面上那个只读字段 2026-10-30 就删了, 见 E6.)
+    const derived = await page.evaluate(async (c) => {
+      const t = localStorage.getItem('testmate:token');
+      const r = await fetch('/api/v1/software/' + c, { headers: { Authorization: 'Bearer ' + t } });
+      return r.ok ? await r.json() : null;
+    }, CODE);
+    check('E12b 标识由文件名自动派生 (服务端 code = 文件名去扩展名)',
+      !!derived && derived.code === CODE, `code=${derived && derived.code}`);
 
     // ---------- 图标不许重复 (2026-10-28) ----------
     // 再开一次上架抽屉 → 图标下拉里, **刚才这条用掉的图标**应该
@@ -299,6 +347,10 @@ const FILE_NAME = `${CODE}.bin`;
         return ta ? JSON.stringify(ta.value) : '(找不到输入框)';
       }));
 
+    // 切成「新增一个版本」并把版本号定成 1.0.1 (默认的「覆盖」模式会预填成 1.0.0)
+    check('E20b 切到「新增一个版本」模式并填版本号 1.0.1',
+      await pickNewVersionMode('1.0.1'), 'mode=new version=1.0.1');
+
     await setValue('这次改了什么', '第二个版本: 加了 CSV 导出');
     const fileInput2 = await page.$('.sw-up-drawer input[type=file]');
     await fileInput2.uploadFile(srcFile2);
@@ -360,6 +412,9 @@ const FILE_NAME = `${CODE}.bin`;
     });
     await page.waitForSelector('.sw-up-drawer input[type=file]', { timeout: 10000 });
     await sleep(800);
+    // ⚠️ 默认是「覆盖已有版本」模式 → 提交按钮是「覆盖这一版」, 脚本找不到按钮,
+    //    点了空气版本一条也没多. 这里先切成「新增一个版本」(见 E20b 的说明).
+    await pickNewVersionMode('2.0.0');
     // 版本号改成 2.0.0 (自增建议是 1.0.1), 变体标签填「LTS版」, 并且**不抢推荐位**
     check('E23a 版本号可自定义 (不限于自增建议)',
       await setValue('如 1.1.0', '2.0.0'));
@@ -416,7 +471,14 @@ const FILE_NAME = `${CODE}.bin`;
     check('E24c 变体标签存住了',
       multi.apiVersions.some((v) => v.variant === 'LTS版') && multi.apiVersions.some((v) => v.variant === '通用版'),
       JSON.stringify(multi.apiVersions.map((v) => `${v.version}=${v.variant}`)));
-    check('E24d 详情里两个变体标签都显示', multi.domVariants.length === 2, multi.domVariants.join(' | '));
+    // ⚠️ 2026-11-06: 这条资产现在有**三个**版本 (1.0.0 通用版 / 1.0.1 通用版 /
+    //    2.0.0 LTS版), 详情里**每个版本一行** → 变体标签元素是 3 个.
+    //    原来断言"标签元素 == 2"是按老数据写的 (那时只有两个版本) → 一直红.
+    //    该验的是「**两种不同的变体标签都显示出来了**」, 不是元素个数.
+    check('E24d 详情里两个变体标签都显示',
+      new Set(multi.domVariants).size === 2
+        && multi.domVariants.includes('LTS版') && multi.domVariants.includes('通用版'),
+      multi.domVariants.join(' | '));
     check('E24e 不抢推荐位时, 推荐还是原来那个',
       multi.download_version === '1.0.1',
       `download_version=${multi.download_version}`);
@@ -495,6 +557,18 @@ const FILE_NAME = `${CODE}.bin`;
   } catch (e) {
     check('脚本执行', false, String(e && e.stack || e));
   } finally {
+    // ⚠️ 2026-11-06: 清理必须放在**finally** 里 ——
+    //    以前清理写在 try 的末尾, 中途一抛异常 (比如卡片没渲染出来) 就整段跳过,
+    //    条目留在库里 → 图标 🧰 被占着 → **下一轮跑就 409**, 一轮失败连累下一轮.
+    //    (而且它自己下一轮也起不来 —— 同一个坑。)
+    try {
+      await page.evaluate(async (c) => {
+        const t = localStorage.getItem('testmate:token');
+        await fetch('/api/v1/software/' + c + '/purge', {
+          method: 'DELETE', headers: { Authorization: 'Bearer ' + t },
+        });
+      }, CODE);
+    } catch (e) { /* ignore — 清理失败也不能盖掉真正的失败原因 */ }
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
     await browser.close();
   }

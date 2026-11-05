@@ -165,18 +165,32 @@ async def require_reviewer(user: User = Depends(get_current_user)) -> User:
     raise HTTPException(status_code=403, detail="只有管理员或审核人可以审核上架")
 
 
-async def require_admin(user: User = Depends(get_current_user)) -> User:
-    """管理员 —— 上架审核人 / 下架审核人 / 直接删资产.
-
-    ⚠️ 下架审核**只限管理员**: 通过就等于删了别人的资产,
-    被授权的审核人 (extensions.review.reviewer_usernames) 只能做上架审核.
-    """
+async def _admin_only(user: User, detail: str) -> User:
+    """管理员闸 —— 未登录 401, 非管理员 403 (文案由调用方给)."""
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
     if role == "admin":
         return user
     if role == "anonymous":
         raise HTTPException(status_code=401, detail="未登录")
-    raise HTTPException(status_code=403, detail="只有管理员可以审核 (下架审核 = 删除, 只限管理员)")
+    raise HTTPException(status_code=403, detail=detail)
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """管理员 —— 审计 / 通知回执 / 通知预览 / 直接删资产 / 手动同步.
+
+    ⚠️ 下架审核**只限管理员**: 通过就等于删了别人的资产,
+    被授权的审核人 (extensions.review.reviewer_usernames) 只能做上架审核.
+    """
+    # ⚠️ 2026-11-06: 403 文案原来写死「只有管理员可以审核 (下架审核 = 删除…)」——
+    #    但这个闸被**五个**端点共用 (审计 / 通知回执 / 通知预览 / 同步 / 下架审核),
+    #    于是在「看审计列表」这种跟审核毫无关系的场景, 用户看到的也是
+    #    「下架审核 = 删除」—— 纯误导. 通用闸说通用的话, 审核那个端点自己说.
+    return await _admin_only(user, "只有管理员可以操作 (这个操作限管理员)")
+
+
+async def require_admin_review(user: User = Depends(get_current_user)) -> User:
+    """下架审核专用 —— 403 要说清「下架审核 = 删别人的资产」这件事."""
+    return await _admin_only(user, "只有管理员可以审核 (下架审核 = 删除, 只限管理员)")
 
 
 async def _assert_can_modify(code: str, user: User) -> Asset:
@@ -1919,7 +1933,7 @@ async def review_unpublish_asset(
     code: str,
     decision: str = Form(..., description="approve (只有通过这一种)"),
     comment: str = Form("", description="审核备注 (记入审计)"),
-    user: User = Depends(require_admin),
+    user: User = Depends(require_admin_review),
 ) -> dict[str, Any]:
     """管理员审核**下架申请** —— 通过 = 资产被**彻底删除**.
 
@@ -2293,10 +2307,19 @@ async def revert_asset(
     if builtin_assets.is_builtin_code(a.code or ""):
         raise HTTPException(status_code=400, detail="平台内置资产不能恢复")
     is_admin = ext_policy.is_admin(user)
+    # ⚠️ 权限**先**判, 再让状态机管状态 (与 delete / unpublish / PUT 同款口径).
+    #    以前这里直接调 assert_transition, 而状态机把"身份不够"也抛 TransitionError
+    #    → 端点统一转成 409, 于是越权点「恢复在架」返回的是 409 而不是 403 ——
+    #    同一个"没权限"语义, 在别的端点是 403, 在这里是 409, 口径不一致.
+    is_author = ext_policy.can_modify(a, user)
+    if not (is_author or is_admin):
+        raise HTTPException(
+            status_code=403, detail="只有资产作者本人或管理员可以恢复在架版本"
+        )
     try:
         ext_state.assert_transition(
             "revert", a.publish_status or ext_state.PUBLISHED,
-            is_author=ext_policy.can_modify(a, user),
+            is_author=is_author,
             is_reviewer=await _is_reviewer(user),
             is_admin=is_admin,
         )

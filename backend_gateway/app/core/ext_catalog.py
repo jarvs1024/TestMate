@@ -376,6 +376,36 @@ async def apply_index_to_db(session) -> tuple[int, int]:
             )
             continue
         a = existing.get(code)
+        # ⚠️⚠️ 这行有**在途的待审内容**时, 整行跳过 (2026-11-06 端到端测试查出来的大坑).
+        #
+        #    在架资产发新版本 / 改信息 → 进「待审核」, 内容落**仓库外暂存区**,
+        #    **不进 git** —— 于是 git 的 index.json 里记的还是**在架的老版本**
+        #    (老版本号 / 老字段 / publish_status=published).
+        #
+        #    而 index.json 只收货架状态 (见 INDEX_VISIBLE_STATES: published /
+        #    unpublished / unpublish_pending) —— pending / rejected **压根不在索引里**,
+        #    索引对这条来说就是**过期的**.
+        #
+        #    以前这里无条件把索引里的值回灌进 DB 行 → 结果:
+        #      ① publish_status 被冲回 published —— 待审项从审核队列里**消失**,
+        #         审核人根本看不到它, 审核形同虚设;
+        #      ② version 被冲回老版本号 —— 待审的新版本号看不见了;
+        #      ③ pending_action 不在索引里 → 留在 DB 上 → 状态自相矛盾
+        #         (published + pending_action=update).
+        #    「恢复在架」端点 (POST /{code}/revert) 就是被这个 ① 干死的:
+        #    它按 publish_status 判状态机, 永远是 published → 永远 409,
+        #    前端的「恢复在架版本」按钮也就永远不出现.
+        #
+        #    所以: DB 里状态是 pending / rejected 的行, 一律**不拿索引覆盖** ——
+        #    索引表达不了待审语义, 宁可不动它 (它下次审核通过 / 重新上架时
+        #    会自己写回索引).
+        if a is not None and a.publish_status in (ext_state.PENDING, ext_state.REJECTED):
+            logger.info(
+                "apply_index_to_db 跳过待审中的资产 (索引里是老版本, 不能拿它覆盖): "
+                "code=%s publish_status=%s",
+                code, a.publish_status,
+            )
+            continue
         if a is None:
             a = Asset(code=code)
             session.add(a)

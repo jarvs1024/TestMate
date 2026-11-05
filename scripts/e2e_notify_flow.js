@@ -212,21 +212,28 @@ async function uploadSkill(token, code) {
     check('A0 发布者账号就绪', !!pubToken);
 
     // ---------- ① 上传第一条 → 立刻发 ----------
+    // ⚠️ 2026-11-06: 只数**本次运行自己的**消息 —— 聚合 worker 是全局的,
+    //    上一轮 e2e 脚本攒下的通知会在本轮窗口到期时一起冲出来 (而且是按
+    //    **当前**的 webhook 冲的 → 正好发到本轮的假服务器上).
+    //    消息正文里带的是资产**名字** (「通知流程验证-xxxx」), 不是 code,
+    //    所以按名字过滤 —— 上一轮的消息里没有本次的名字, 会被滤掉.
+    const NAME_MARK = '通知流程验证-';
+    const mine = () => received.filter((m) => `${m.title}\n${m.text}`.includes(NAME_MARK));
     const up1 = await uploadSkill(pubToken, codes[0]);
     check('A1 首条上传受理', up1 === 202, `status=${up1}`);
     await sleep(1500);
     check('A2 窗口内第一条**立刻发出** (管理员马上知道有人上传了)',
-      received.length === 1, `收到 ${received.length} 条`);
+      mine().length === 1, `收到 ${mine().length} 条 (全部 ${received.length} 条)`);
     check('A3 首条消息带资产名',
-      received.length > 0 && received[0].title.includes(codes[0].slice(-4)),
-      received.length ? received[0].title : '(没收到)');
+      mine().length > 0 && mine()[0].title.includes(codes[0].slice(-4)),
+      mine().length ? mine()[0].title : '(没收到)');
 
     // ---------- ② 窗口内再传两条 → 不单独发 ----------
     await uploadSkill(pubToken, codes[1]);
     await uploadSkill(pubToken, codes[2]);
     await sleep(2000);
     check('A4 窗口内的后两条**不单独发** (不刷屏)',
-      received.length === 1, `收到 ${received.length} 条`);
+      mine().length === 1, `收到 ${mine().length} 条 (全部 ${received.length} 条)`);
 
     // 回执状态: 第一条 sent, 后两条 aggregated
     // ⚠️ 只看**本次运行**的 —— 上一轮跑剩的回执还在库里 (同一个 code 前缀),
@@ -246,16 +253,16 @@ async function uploadSkill(token, code) {
     let summary = null;
     for (let i = 0; i < 20; i++) {
       await sleep(1000);
-      if (received.length >= 2) { summary = received[1]; break; }
+      if (mine().length >= 2) { summary = mine()[1]; break; }
     }
     check('A6 窗口到期后发出**一条**汇总', !!summary,
-      `共收到 ${received.length} 条`);
+      `共收到 ${mine().length} 条 (全部 ${received.length} 条)`);
     check('A7 汇总写明「另有 2 个」', !!summary && summary.text.includes('另有 2 个'),
       summary ? summary.text.slice(0, 120) : '(没收到汇总)');
     check('A8 汇总里能看到那两个资产的名字',
       !!summary && summary.text.includes(codes[1].slice(-4)) && summary.text.includes(codes[2].slice(-4)),
       summary ? summary.text.slice(0, 200) : '(没收到汇总)');
-    check('A9 没有刷屏 (总共只发 2 条)', received.length === 2, `收到 ${received.length} 条`);
+    check('A9 没有刷屏 (总共只发 2 条)', mine().length === 2, `收到 ${mine().length} 条`);
 
     // ---------- ④ 管理员在扩展页看到待审提示条 ----------
     browser = await puppeteer.launch({

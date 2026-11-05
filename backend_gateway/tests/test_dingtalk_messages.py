@@ -524,3 +524,60 @@ async def test_notify_does_not_double_at(monkeypatch):
     await dingtalk.notify_extensions(
         "software_publish", name="A", version="1.0.0", kind="software")
     assert sent and sent[0].count("@所有人") == 1, sent[0] if sent else ""
+
+
+# ---------- 聚合汇总: 开关也管得住 ----------
+
+
+async def test_aggregate_flush_respects_switch(monkeypatch):
+    """开关关着 → 攒着的汇总**不发**, 那批回执标成 skipped.
+
+    ⚠️ 2026-11-06 (端到端测试查出来): 以前聚合 worker **不看开关** ——
+       管理员把「审核通知」关掉, 窗口一到期, 之前攒着的那些**照样发出去**
+       (还发给当时的 webhook). 重试 worker 早就有这个口径
+       (retry_failed_notifications: "开关关了就不再发"), 聚合这条路漏了.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+
+    sent: list = []
+
+    async def fake_send(webhook, title, text, **kw):
+        sent.append(title)
+        return {"errcode": 0, "errmsg": "ok"}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({
+            "dingtalk.extensions_webhook": "http://x/hook",
+            "dingtalk.notify_on_review": "false",
+            "dingtalk.aggregate_window_seconds": "1",
+        }),
+    )
+
+    # 造一条「攒着」的回执 (status=aggregated —— 窗口内没单独发的那批)
+    async with AsyncSessionLocal() as s:
+        row = AssetNotification(
+            event="review", code="", asset_name="待审资产",
+            title="📋 新资产待审核", text="某某资产在等审核",
+            status="aggregated",
+        )
+        s.add(row)
+        await s.commit()
+        await s.refresh(row)
+        rid = row.id
+    try:
+        n = await dingtalk.flush_aggregated_notifications()
+        assert n == 0, "开关关着还发了汇总"
+        assert sent == [], "开关关着还发了消息"
+        async with AsyncSessionLocal() as s:
+            got = await s.get(AssetNotification, rid)
+            assert got is not None
+            assert got.status == "skipped", f"回执状态没标成 skipped: {got.status}"
+    finally:
+        async with AsyncSessionLocal() as s:
+            got = await s.get(AssetNotification, rid)
+            if got is not None:
+                await s.delete(got)
+                await s.commit()
