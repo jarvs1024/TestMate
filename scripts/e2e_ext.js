@@ -430,8 +430,12 @@ async function codeByName(page, name) {
       const top = cards[0].getBoundingClientRect().top;
       return cards.filter((c) => Math.abs(c.getBoundingClientRect().top - top) < 4).length;
     });
-    check('C6 卡片一排 4 个 (跟广场的 3 列大卡片区分开)',
-      perRow === 4, `第一行 ${perRow} 张`);
+    // ⚠️ 2026-11-05: 原来断言"一排 4 个" —— 但网格是**自适应**的
+    //    (repeat(auto-fill, minmax(300px, 1fr))), 视口/侧栏宽度一变列数就变,
+    //    写死数字的断言测的是窗口宽度, 不是这个页面.
+    //    改成断言**这页确实是多列网格** (≥2 列) —— 布局没塌成一长条就算对.
+    check('C6 资产卡是多列网格 (布局没塌成一长条)',
+      perRow >= 2, `第一行 ${perRow} 张`);
     await clickByText(page, '.kind-tab', '插件');
     await sleep(1200);
     s = await snap(page);   // 切回插件页签后重新取一次 (后面的用例要用第一张卡)
@@ -590,8 +594,11 @@ async function codeByName(page, name) {
     check('H0-6 表单里没有类型下拉 (只剩分类 + 适用项目)', mcpState.selects === 2,
       `el-select=${mcpState.selects}`);
 
-    // MCP 配置里的连接器名必须是 dml- 开头 ——
+    // MCP 配置里的连接器名 ——
     // 详情页会**原样展示**这份配置, 用户照着加进自己的 MCP 配置里。
+    // ⚠️ 2026-11-05: 原来这里要求名字**必须 dml- 开头** (不满足就实时报错),
+    //    但 0f09cf6 已经把 dml- 前缀的硬性要求去掉了 (改成小写字母/数字/连字符分段即可).
+    //    所以断言**反转** —— 不该再报"必须 dml- 开头"的错.
     await page.evaluate(() => {
       const ta = document.querySelector('.up-drawer .mcp-json textarea');
       if (!ta) return;
@@ -608,8 +615,8 @@ async function codeByName(page, name) {
         msg: (d.querySelector('.mcp-msg')?.textContent || '').replace(/\s+/g, ' ').trim(),
       };
     });
-    check('H0-9 MCP 连接器名不以 dml- 开头 → 实时报错',
-      /dml-/.test(mcpNameErr.err + mcpNameErr.msg),
+    check('H0-9 MCP 连接器名**不再**要求 dml- 前缀 (2026-11-05 移除了该硬性要求)',
+      !/dml-/.test(mcpNameErr.err + mcpNameErr.msg),
       `${mcpNameErr.err} ${mcpNameErr.msg}`.slice(0, 110));
 
     // 「更换类型」→ 退回第 ① 步
@@ -751,17 +758,22 @@ async function codeByName(page, name) {
     check('H4 不合规包被体检拦下', /装不上/.test(s.pvState || ''), s.pvState);
     check('H5 不合规包禁用提交按钮', s.submitDisabled === true, `disabled=${s.submitDisabled}`);
 
-    // ⚠️ 包名不合规 (没 dml- 开头) → 体检也得说不行 ——
-    //    否则用户看到「体检通过」却又提交不了, 前后自相矛盾。
+    // ⚠️ 2026-11-05: 原来这一段测的是「包名不以 dml- 开头 → 体检不通过 + 禁用提交」,
+    //    但 0f09cf6 已经把 **dml- 前缀的硬性要求去掉了** ——
+    //    新规则是「小写字母/数字/连字符分段 (如 my-tool), 长度 3-64, 不能有连续连字符」.
+    //    `weekly-report` 现在是**合法**包名, 所以断言反转: 该通过、该能提交.
     const wrongNameZip = path.join(OUT_DIR, 'weekly-report.zip');
     makeZip(wrongNameZip, { 'SKILL.md': '---\nname: e2e-probe\ndescription: 体检探针\n---\n\n# 体检探针\n' });
     const fileInput3 = await page.$('.file-input');
     await fileInput3.uploadFile(wrongNameZip);
     await sleep(2500);
     s = await snap(page);
-    check('H5b 包名不以 dml- 开头 → 体检不通过', /装不上/.test(s.pvState || ''), s.pvState);
-    check('H5c 体检结论里点名包名问题', /dml-/.test(s.pvState || ''), s.pvState);
-    check('H5d 包名不对时禁用提交按钮', s.submitDisabled === true, `disabled=${s.submitDisabled}`);
+    check('H5b 包名不带 dml- 前缀 → 体检**通过** (2026-11-05 移除了前缀硬性要求)',
+      !/装不上/.test(s.pvState || ''), s.pvState);
+    check('H5c 体检结论里**不再**提 dml- 前缀',
+      !/dml-/.test(s.pvState || ''), s.pvState);
+    check('H5d 包名不带前缀时**不禁用**提交按钮',
+      s.submitDisabled === false, `disabled=${s.submitDisabled}`);
     await page.screenshot({ path: path.join(OUT_DIR, '06-precheck.png') });
     await page.evaluate(() => {
       const b = [...document.querySelectorAll('.el-drawer__footer .el-button')].find((x) => x.textContent.includes('取消'));
