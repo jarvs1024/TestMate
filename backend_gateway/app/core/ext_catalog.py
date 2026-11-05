@@ -28,6 +28,12 @@ from app.models.asset import Asset
 INDEX_PATH = "index.json"
 INDEX_SCHEMA_VERSION = 1
 
+# ⚠️ 2026-11-05: 索引 (index.json) 只收**货架状态**的资产 ——
+#    pending (待审核) / rejected (已驳回) 的资产在审核通过前**不进 git**,
+#    所以也不进索引 (它们的内容还躺在仓库外的暂存区里).
+#    更新待审时, 老版本的在架条目靠 stage_index 的 merge-back 留在索引里.
+INDEX_VISIBLE_STATES: tuple[str, ...] = ("published", "unpublished", "unpublish_pending")
+
 KIND_DIRS = {"plugin": "plugins", "skill": "skills", "mcp": "connectors"}
 VALID_KINDS = set(KIND_DIRS)
 
@@ -284,7 +290,13 @@ async def stage_index(session, override: dict[str, Any] | None = None,
     """
     result = await session.execute(select(Asset))
     assets = list(result.scalars().all())
-    entries = {a.code: asset_to_index_entry(a) for a in assets}
+    # ⚠️ 待审核 / 被驳回的行不进索引 (见 INDEX_VISIBLE_STATES) —— 过滤掉之后,
+    #    下面的 merge-back 会把工作区索引里已有的在架旧条目补回来:
+    #    「在架资产发新版本待审」期间, 索引里**老版本条目原样还在**, 货架不受影响.
+    entries = {
+        a.code: asset_to_index_entry(a) for a in assets
+        if (a.publish_status or "published") in INDEX_VISIBLE_STATES
+    }
     # 补回"工作区索引里有、DB 里还没有"的条目 (本地 DB 落后于远端时)
     old = await read_index()
     for e in (old or {}).get("assets") or []:
@@ -292,7 +304,11 @@ async def stage_index(session, override: dict[str, Any] | None = None,
         if not code or code in entries or code in (exclude or ()):
             continue
         entries[code] = e
-    if override and override.get("code"):
+    if (
+        override
+        and override.get("code")
+        and (override.get("publish_status") or "published") in INDEX_VISIBLE_STATES
+    ):
         entries[override["code"]] = override
     for c in (exclude or ()):
         entries.pop(c, None)

@@ -30,6 +30,8 @@ os.environ.setdefault("EXTENSIONS_SYNC_INTERVAL_SECONDS", "99999")
 #    用 setdefault 会保留它 —— 测试就会往真实仓库里写文件.
 _TEST_WS = tempfile.mkdtemp(prefix="tm-test-ws-")
 os.environ["EXTENSIONS_WORKSPACE"] = _TEST_WS
+# 待审暂存区同样强制覆盖 —— 别让测试往真实的 /workspace_staging 写
+os.environ["EXTENSIONS_STAGING"] = tempfile.mkdtemp(prefix="tm-test-staging-")
 
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
@@ -149,6 +151,9 @@ def ws(tmp_path, monkeypatch) -> Path:
 
     monkeypatch.setattr(git_sync, "WORKSPACE", work)
     monkeypatch.setattr(git_sync, "LOCK_FILE", tmp_path / "ws.lock")
+    # ⚠️ 待审暂存区也在 git 仓库**外**, 每个用例一套 —— 不覆盖的话暂存内容
+    #    会跨用例残留 (approve / revert 读到上一个用例留下的 manifest).
+    monkeypatch.setattr(git_sync, "STAGING", tmp_path / "staging")
     git_sync.set_git_config(remote=str(bare), branch="main")
     return work
 

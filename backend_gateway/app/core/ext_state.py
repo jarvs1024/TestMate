@@ -48,6 +48,12 @@ _ACTIONS: dict[str, tuple[tuple[str, ...], str, str]] = {
     #    这两个状态的东西**从来没对外可见过** (可见性只放行在架的 + 作者自己的),
     #    所以作者直接删掉是安全的, 不需要走下架审核.
     "discard": ((PENDING, REJECTED), "", "author"),
+    # ---- 恢复在架: 在架资产发新版本/改信息待审期间, 作者放弃这次修改 ----
+    # ⚠️ 待审内容在仓库外暂存区, 工作区里**老版本原样没动** —— 恢复只是
+    #    把 DB 行改回老版本 + 清掉暂存区, 不动 git (没有可提交的变化).
+    # ⚠️ "没上架过" 的判定 (索引里有没有在架条目) 在 delete_asset 端点做,
+    #    这里只管状态机 —— 端点裁决用的是工作区索引, 不是纯状态.
+    "revert": ((PENDING, REJECTED), PUBLISHED, "author"),
     # ---- 下架 (申请制) ----
     "unpublish_request": ((PUBLISHED,), UNPUBLISH_PENDING, "author"),
     "unpublish_cancel": ((UNPUBLISH_PENDING,), PUBLISHED, "author"),
@@ -67,6 +73,7 @@ _ACTION_LABEL: dict[str, str] = {
     "approve": "通过审核",
     "reject": "驳回审核",
     "discard": "删除未上架的资产",
+    "revert": "恢复在架版本",
     "unpublish_request": "申请下架",
     "unpublish_cancel": "撤销下架申请",
     "unpublish_approve": "通过下架申请",
@@ -98,6 +105,7 @@ AUDIT_ACTION_LABEL: dict[str, str] = {
     "reject": "审核驳回",
     "submit": "提交审核",
     "discard": "作者删除 (未上架)",
+    "revert": "放弃修改, 恢复在架版本",
     "delete": "管理员删除",
     "conflict_resolved": "同步冲突已解决",
     # 账号操作 (复用同一张审计表, 见 app/api/auth.py 的 _audit_user_action)

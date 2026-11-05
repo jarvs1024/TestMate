@@ -433,6 +433,18 @@ export async function deleteAsset(code: string, comment = ''): Promise<{
 }
 
 /**
+ * 放弃待审的修改, 恢复在架版本 (2026-11-05) ——
+ * 在架资产发新版本/改信息 → 待审核/被驳回期间, 作者可以一键回到货架上的老版本.
+ */
+export async function revertAsset(code: string): Promise<{
+  ok: boolean; code: string; publish_status: string; name: string; version: string;
+}> {
+  return request.post(`/extensions/${encodeURIComponent(code)}/revert`) as unknown as {
+    ok: boolean; code: string; publish_status: string; name: string; version: string;
+  };
+}
+
+/**
  * 下架 —— **走哪条路看审核总开关** (`extensions.review.enabled`).
  *
  * · 开关**开** (默认) → 提交申请, 等管理员确认, 确认通过资产被**彻底删除**.

@@ -32,7 +32,7 @@ function rendered(src: string): string {
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
-    .map((line) => line.replace(/(^|\s)\/\/.*$/, '$1'))
+    .map((line) => line.replace(/\r$/, '').replace(/(^|\s)\/\/.*$/, '$1'))
     .join('\n');
 }
 

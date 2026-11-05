@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 
 # ===== 配置 =====
 WORKSPACE = Path(os.environ.get("EXTENSIONS_WORKSPACE", "/workspace"))
+# ⚠️ 待审核暂存区 —— **仓库外** (2026-11-05):
+#    待审核 / 被驳回的资产在审核通过前**不进 git** (文件不 commit 也不 push),
+#    落在仓库外的这个目录里. 不能放 WORKSPACE 里面 —— 未提交的文件会让
+#    反向同步的安全闸 (工作区脏 → 整轮跳过) 永久卡死 (见 sync_puller).
+#    approve 时由同步 job 把暂存内容拷进工作区再 commit + push.
+STAGING = Path(os.environ.get("EXTENSIONS_STAGING", "/workspace_staging"))
 # 远端与分支是**运行时配置** —— 设置页可以改, 改完立即生效.
 # 为什么不是直接读 settings_store: 这里是**同步**代码, 而 settings_store.get 是 async.
 # 折中: 设置变更时 (settings API) 调 set_git_config() 更新内存值,
@@ -442,6 +448,73 @@ def read_text(rel_path: str) -> str | None:
         return target.read_text(encoding="utf-8")
     except OSError:
         return None
+
+
+# ===== 待审暂存区 (仓库外) =====
+
+def resolve_in_staging(rel_path: str) -> Path | None:
+    """把相对路径解析成暂存区内的绝对路径; 越界就返回 None (与工作区同款闸)."""
+    safe = safe_rel_path(rel_path)
+    if not safe:
+        return None
+    base = STAGING.resolve()
+    target = (base / safe).resolve()
+    if target != base and base not in target.parents:
+        return None
+    return target
+
+
+def write_staging_text(rel_path: str, content: str) -> None:
+    """写文件到暂存区 (自动建目录, 原子写 —— 同 write_text)."""
+    target = STAGING / rel_path
+    tmp = None
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + f".tmp-{os.getpid()}-{threading.get_ident()}")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, target)
+        tmp = None
+    except OSError as e:
+        raise SyncError(f"写入暂存区 {rel_path} 失败: {e.strerror or e}", "disk") from e
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def read_staging_text(rel_path: str) -> str | None:
+    target = STAGING / rel_path
+    if not target.is_file():
+        return None
+    try:
+        return target.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def remove_staging_path(rel_path: str) -> None:
+    target = STAGING / rel_path
+    if target.is_dir():
+        shutil.rmtree(target, ignore_errors=True)
+    elif target.exists():
+        target.unlink()
+
+
+def copy_staging_to_workspace(rel_path: str) -> None:
+    """把暂存区某路径整个拷进工作区 (approve 时: 暂存 → 仓库).
+
+    ⚠️ 先清掉工作区里同路径的旧内容再拷 —— approve 是把**整份待审内容**
+    替换进仓库, 不是叠加 (叠加会留下旧版本文件的残骸).
+    """
+    src = STAGING / rel_path
+    dst = WORKSPACE / rel_path
+    if not src.exists():
+        raise SyncError(f"暂存区没有 {rel_path}", "disk")
+    if dst.is_dir():
+        shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src, dst)
 
 
 # ===== git 操作 =====

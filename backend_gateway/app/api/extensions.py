@@ -318,7 +318,7 @@ async def _audit(
 # ---------- 读 ----------
 
 def _asset_dir(a: Asset) -> Path:
-    """资产在本地工作区里的目录 —— **越界就当"没落盘"** (404).
+    """资产在本地文件系统里的目录 —— **越界就当"没落盘"** (404).
 
     ⚠️ 为什么必须校验: ``git_path`` 来自**远端** index.json (GitLab 仓库里的文件) ——
        谁有仓库写权限, 谁就能改它. 而它会被拼成 ``WORKSPACE / git_path`` 去**读文件**
@@ -327,7 +327,20 @@ def _asset_dir(a: Asset) -> Path:
 
     ⚠️ 这是**读侧**的第二道闸: 落库时 (ext_catalog.apply_index_to_db) 也校验过一次,
        两道都要有 —— 数据库里万一已经有脏数据 (老版本留下的), 读侧也能挡住.
+
+    ⚠️ 2026-11-05 待审暂存区: pending / rejected 的**内容**在仓库外暂存区
+       (审核通过才进 git), 读取优先暂存区. 但**元信息编辑**类待审只暂存了
+       manifest —— files / package 还在工作区老位置 (货架上那份内容没动过),
+       所以暂存区里除 manifest 外没有别的文件时, 回落工作区读老内容.
     """
+    if (a.publish_status or "") in (ext_state.PENDING, ext_state.REJECTED):
+        p = git_sync.resolve_in_staging(a.git_path)
+        if p is not None and p.is_dir():
+            has_content = any(
+                child.name != "manifest.json" for child in p.iterdir()
+            )
+            if has_content:
+                return p
     p = git_sync.resolve_in_workspace(a.git_path)
     if p is None:
         raise HTTPException(status_code=404, detail="资产文件尚未落盘")
@@ -1541,6 +1554,94 @@ _ACTION_COMMIT_TEXT = {
 }
 
 
+def _rewrite_readme(base: str, manifest: dict[str, Any]) -> None:
+    """按最终 manifest 重新生成 README (只改信息的审核通过后用)."""
+    if (manifest.get("kind") or "") == "mcp":
+        git_sync.remove_path(f"{base}/README.md")
+    elif manifest.get("description"):
+        git_sync.write_text(f"{base}/README.md", manifest["description"])
+    else:
+        git_sync.remove_path(f"{base}/README.md")
+
+
+def _promote_staging(a: Asset, prev_pending_action: str) -> str:
+    """审核通过: 把仓库外暂存区的待审内容**提升进工作区** (成为 git 候选).
+
+    ⚠️ 2026-11-05: 待审上传/编辑只落暂存区 (不进 git) —— approve 在这里把内容
+    拷进工作区, 之后 _set_publish_state 照常写 manifest/index 并建同步 job.
+
+      · new / update → 整目录替换 (老目录连提交一起清掉)
+      · meta        → 只叠 manifest (files/package 本来就在工作区, 没动过);
+                       README 由 _rewrite_readme 按最终 manifest 重新生成
+      · 暂存缺失    → 升级前的老数据 (待审时直接落了工作区) —— 什么都不拷,
+                      照常提交 (老内容已经在工作区里了)
+
+    返回要清理的老路径 (分类/类型改过, 目录搬家) —— 空 = 没有.
+    """
+    base = a.git_path or ""
+    staged_manifest = git_sync.read_staging_text(f"{base}/manifest.json")
+
+    # 工作区索引里的在架条目仍指着**老路径** (待审期间索引没动过) ——
+    # 分类/类型改过时, 新路径跟它不一样, 老目录要清掉.
+    old_path = ""
+    idx_entries = read_index_sync()
+    for e in idx_entries:
+        if e.get("code") == a.code:
+            old_path = str(e.get("git_path") or "").strip()
+            break
+    if old_path == base:
+        old_path = ""
+
+    if prev_pending_action == "meta":
+        if staged_manifest is None:
+            return old_path
+        # 分类改过 → live 目录搬去新路径 (内容没进过暂存区, 还在老位置)
+        if old_path and not (git_sync.WORKSPACE / base).exists():
+            _move_asset_dir(old_path, base)
+        try:
+            staged = json.loads(staged_manifest)
+        except json.JSONDecodeError:
+            staged = {}
+        if isinstance(staged, dict):
+            git_sync.write_text(
+                f"{base}/manifest.json",
+                json.dumps(staged, ensure_ascii=False, indent=2),
+            )
+        git_sync.remove_staging_path(base)
+        return old_path
+
+    # new / update: 整目录替换
+    if staged_manifest is None:
+        logger.warning(
+            "approve: 暂存区没有待审内容 code=%s (老数据? 直接按工作区现状提交)", a.code,
+        )
+        return old_path
+    if old_path:
+        git_sync.remove_path(old_path)
+    try:
+        git_sync.copy_staging_to_workspace(base)
+    except git_sync.SyncError as e:
+        raise HTTPException(status_code=500, detail=f"暂存内容提升失败: {e}") from e
+    git_sync.remove_staging_path(base)
+    return old_path
+
+
+def read_index_sync() -> list[dict[str, Any]]:
+    """读工作区 index.json 的条目 (同步版) —— _promote_staging 用.
+
+    ⚠️ read_index 是 async, 而这里只需要**当前工作区磁盘上**那份 ——
+    直接用同步读, 语义一致 (见 ext_catalog.read_index).
+    """
+    raw = git_sync.read_text(INDEX_PATH)
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return [e for e in (data.get("assets") or []) if isinstance(e, dict)]
+
+
 async def _set_publish_state(
     *,
     code: str,
@@ -1551,6 +1652,7 @@ async def _set_publish_state(
     review_note: str | None = None,
     notify: dict[str, Any] | None = None,
     notify_skip_pending_action: str | None = None,
+    sync_git: bool = True,
 ) -> dict[str, Any]:
     """上下架 —— 改 DB + 写单资产 manifest + 更新 index.json + **提交到 GitLab**.
 
@@ -1568,6 +1670,10 @@ async def _set_publish_state(
     ⚠️ notify_skip_pending_action: 变更前在等这个审核 (pending_action) 时**不发**
       公告 —— 审核通过端点用它实现"只改了信息就不发扩展群" (包没变, 发了是假消息).
       判断放在锁内 (pending_action 在这里读), 调用方在外面读会有竞态.
+
+    ⚠️ sync_git=False (驳回 / 重新提交): **纯状态**流转 —— 不改任何文件也不建
+      job. 待审内容在仓库外暂存区 (还没进 git), 在架老版本的文件/索引原样不动;
+      驳回也不发钉钉 (只在站内显示状态+理由).
 
     publish_status 四态: pending(待审核) / published(在架) / rejected(已驳回) / unpublished(已下架)
     """
@@ -1631,6 +1737,28 @@ async def _set_publish_state(
                     prev_pending_action, code, action,
                 )
 
+            if not sync_git:
+                # ⚠️ 纯状态流转 (驳回 / 重新提交): 不碰任何文件、不建 job、
+                #    不发钉钉 —— 待审内容在仓库外暂存区, git 里什么都没有.
+                await _audit(session, code=code, action=action, actor=user,
+                             asset_id=a.id, comment=comment,
+                             detail={"publish_status": publish_status, "version": a.version,
+                                     "review_note": a.review_note})
+                await session.commit()
+                return {
+                    "ok": True, "code": code, "publish_status": publish_status,
+                    "changed": True, "name": a.name, "version": a.version,
+                    "kind": a.kind, "category": a.category, "author": a.author,
+                    "project": a.project or "", "summary": a.summary or "",
+                    "pending_action": prev_pending_action,
+                }
+
+            # ⚠️ approve (pending → published): 先把仓库外暂存区的待审内容
+            #    **提升进工作区** (老数据的资产暂存缺失 → 原样提交, 见 _promote_staging).
+            promote_old_path = ""
+            if publish_status == ext_state.PUBLISHED and prev_pending_action:
+                promote_old_path = _promote_staging(a, prev_pending_action)
+
             # 权威是单资产 manifest.json —— 生命周期状态也写进去
             manifest_path = f"{a.git_path}/manifest.json"
             raw = git_sync.read_text(manifest_path)
@@ -1644,6 +1772,11 @@ async def _set_publish_state(
             if review_note is not None:
                 manifest["review_note"] = review_note
             git_sync.write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2))
+
+            # ⚠️ 只改信息 (meta) 的审核通过: 暂存区里只有 manifest (README 没暂存) ——
+            #    按**最终** manifest 在工作区重新生成 README (连接器没有 README).
+            if publish_status == ext_state.PUBLISHED and prev_pending_action == "meta":
+                _rewrite_readme(a.git_path, manifest)
 
             # index.json 是派生物, 从 DB 重新渲染 (现在它带 publish_status)
             await stage_index(session, asset_to_index_entry(a))
@@ -1661,6 +1794,9 @@ async def _set_publish_state(
                     f"{a.name} {a.version}"
                 ),
             }
+            if promote_old_path:
+                # ⚠️ approve 时分类/类型改过 → 老目录要连提交一起清掉
+                job_payload["old_git_path"] = promote_old_path
             if effective_notify is not None:
                 job_payload["notify"] = effective_notify
             job = AssetJob(
@@ -1904,14 +2040,9 @@ async def review_asset(
     out = await _set_publish_state(
         code=code, publish_status="rejected", action="reject",
         comment=note, user=_user, review_note=note,
-        # ⚠️ 驳回公告同样挂 job —— git 同步成功后才发 ("已驳回"也得是真的).
-        notify={
-            "event": "reject",
-            "actor": _user.username,
-            "detail": note,
-            # 驳回要显示**理由**, 不是资产简介
-            "summary": "",
-        },
+        # ⚠️ 2026-11-05: 驳回**不发钉钉** (只在站内显示状态+理由), 也**不动 git** ——
+        #    待审内容本来就没进过 git (还在仓库外暂存区), 在架老版本原样不动.
+        sync_git=False,
     )
     return out
 
@@ -1942,6 +2073,9 @@ async def submit_for_review(
     out = await _set_publish_state(
         code=code, publish_status="pending", action="submit",
         comment=comment or "重新提交审核", user=_user, review_note="",
+        # ⚠️ 2026-11-05: 重新提交是**纯状态**流转 —— 待审内容还在仓库外暂存区,
+        #    没进过 git, 没有可提交的文件; 通知走下面的审核群即时提醒.
+        sync_git=False,
     )
     if out.get("changed"):
         await ext_notify.notify_asset(
@@ -2058,6 +2192,8 @@ async def _hard_delete_asset(
         async with AsyncSessionLocal() as session:
             await stage_index(session, exclude={code})
         git_sync.remove_path(git_path)
+        # ⚠️ 待审内容在仓库外暂存区 (还没进过 git) —— 一起清掉
+        git_sync.remove_staging_path(git_path)
 
         # 2) commit + push
         #    ⚠️ 只有**被 git 跟踪过**的资产目录才能进 pathspec —— 从没提交过的
@@ -2134,6 +2270,143 @@ async def _hard_delete_asset(
     )
 
 
+@router.post("/{code}/revert")
+async def revert_asset(
+    code: str,
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """放弃待审的修改, 恢复在架版本 (2026-11-05).
+
+    在架资产发新版本 / 改信息 → pending / rejected 期间, 作者可以「恢复在架」:
+      待审内容在仓库外暂存区, 工作区里**老版本原样没动** —— 把 DB 行改回老版本
+      (以工作区里的老 manifest 为准), 清掉暂存区里这次待审的内容, 完事.
+    没有任何文件变化 → 不动 git; 货架也没有增减 → 不发任何通知.
+
+    从没上架过的 (new) 没有老版本可恢复 —— 不想要了直接 DELETE.
+    """
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+    if a is None:
+        raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+    if builtin_assets.is_builtin_code(a.code or ""):
+        raise HTTPException(status_code=400, detail="平台内置资产不能恢复")
+    is_admin = ext_policy.is_admin(user)
+    try:
+        ext_state.assert_transition(
+            "revert", a.publish_status or ext_state.PUBLISHED,
+            is_author=ext_policy.can_modify(a, user),
+            is_reviewer=await _is_reviewer(user),
+            is_admin=is_admin,
+        )
+    except ext_state.TransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+    async with code_lock(code):
+        async with AsyncSessionLocal() as session:
+            a = (
+                await session.execute(select(Asset).where(Asset.code == code))
+            ).scalar_one_or_none()
+            if a is None:
+                raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+            # ⚠️ 锁内复核状态 —— 锁外检查后状态可能被别人改了 (与 delete 同款)
+            try:
+                ext_state.assert_transition(
+                    "revert", a.publish_status or ext_state.PUBLISHED,
+                    is_author=ext_policy.can_modify(a, user),
+                    is_reviewer=await _is_reviewer(user),
+                    is_admin=is_admin,
+                )
+            except ext_state.TransitionError as e:
+                raise HTTPException(status_code=409, detail=str(e)) from e
+
+            staged_base = a.git_path or ""
+            # ⚠️ 旧流程的待审资产没有暂存区 (内容直接落了工作区+git) ——
+            #    这时"恢复"= 把新内容当老版本上架, 形同跳过审核, 不能干.
+            if not staged_base or (
+                git_sync.read_staging_text(f"{staged_base}/manifest.json") is None
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="该资产没有可恢复的待审内容 (旧流程提交的) —— 请联系管理员处理",
+                )
+
+            # 工作区索引里的在架条目指着**老版本路径** (待审期间索引没动过)
+            old_path = ""
+            for e in read_index_sync():
+                if e.get("code") == code:
+                    old_path = str(e.get("git_path") or "").strip()
+                    break
+            if not old_path:
+                raise HTTPException(
+                    status_code=409,
+                    detail="该资产没有在架版本, 无需恢复 —— 不想要了直接删除即可",
+                )
+            raw = git_sync.read_text(f"{old_path}/manifest.json")
+            if not raw:
+                raise HTTPException(
+                    status_code=404,
+                    detail="老版本文件不完整, 无法恢复 —— 请联系管理员处理 (通过或删除)",
+                )
+            try:
+                m = json.loads(raw)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=500, detail="老版本 manifest 损坏, 无法恢复"
+                ) from None
+            if not isinstance(m, dict):
+                raise HTTPException(status_code=500, detail="老版本 manifest 损坏, 无法恢复")
+
+            # DB 行改回老版本 (字段口径与 _stage_asset 落库一致)
+            a.name = m.get("name") or a.code
+            a.icon = m.get("icon") or "🧩"
+            a.kind = m.get("kind") or "skill"
+            a.version = m.get("version") or "0.1.0"
+            a.summary = m.get("summary") or ""
+            a.description = m.get("description") or ""
+            a.use_when = m.get("use_when") or ""
+            a.not_for = m.get("not_for") or ""
+            a.category = m.get("category") or ""
+            a.project = m.get("project") or ""
+            a.mcp_config = m.get("mcp_config") if (a.kind or "") == "mcp" else None
+            a.tags = list(m.get("tags") or [])
+            a.keywords = list(m.get("keywords") or [])
+            a.featured = 1 if m.get("featured") else 0
+            a.homepage = m.get("homepage")
+            a.permissions = dict(m.get("permissions") or {})
+            a.install_steps = list(m.get("install_steps") or [])
+            a.bindings = dict(m.get("bindings") or {})
+            a.git_path = old_path
+            a.publish_status = ext_state.PUBLISHED
+            a.pending_action = ""
+            a.review_note = ""
+            a.sync_status = "synced"
+            a.last_error = ""
+            web_base = (
+                (await _setting("extensions.git.web_url", "")) or ""
+            ).strip().rstrip("/")
+            a.git_web_url = (
+                f"{web_base}/-/tree/{git_sync.git_branch()}/{old_path}" if web_base else ""
+            )
+
+            # 这次待审的内容作废 —— 老路径也顺手清 (一般没有)
+            git_sync.remove_staging_path(staged_base)
+            if old_path != staged_base:
+                git_sync.remove_staging_path(old_path)
+
+            await _audit(
+                session, code=code, action="revert", actor=user, asset_id=a.id,
+                comment=f"放弃修改, 恢复在架版本 {a.name} {a.version}",
+                detail={"old_git_path": old_path, "staged_git_path": staged_base},
+            )
+            await session.commit()
+    return {
+        "ok": True, "code": code, "publish_status": "published",
+        "name": a.name, "version": a.version,
+    }
+
+
 @router.delete("/{code}", response_model=AssetDeleteOut)
 async def delete_asset(
     code: str,
@@ -2178,6 +2451,19 @@ async def delete_asset(
                 )
             except ext_state.TransitionError as e:
                 raise HTTPException(status_code=409, detail=str(e)) from e
+            # ⚠️ 堵删除洞 (2026-11-05): 在架资产发新版本/改信息待审时, 状态是
+            #    pending / rejected, 但它**有在架老版本** —— 作者这时直接删等于
+            #    绕过「申请下架 → 管理员确认」. 索引里有它的在架条目 = 没资格直删:
+            #    想放弃修改走「恢复在架」; 想下架先恢复, 再走「申请下架」.
+            for e in read_index_sync():
+                if e.get("code") == code:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "该资产有在架版本, 不能直接删除 —— "
+                            "想放弃这次修改请点「恢复在架」; 想下架请先恢复, 再「申请下架」"
+                        ),
+                    )
             return await _hard_delete_asset(
                 code=code, user=user,
                 comment=comment or "作者删除未上架的资产",
@@ -2277,6 +2563,18 @@ async def _parse_uploads(files: list[UploadFile] | None) -> dict[str, str]:
     except ManifestError as e:
         # 校验失败是**用户上传内容**的问题 (文件数/体积/路径/后缀), 不是服务端故障
         raise HTTPException(status_code=422, detail=f"上传文件不合规: {e}") from e
+
+
+def _cleanup_local_write(base: str, to_staging: bool) -> None:
+    """落盘失败后的清理 —— 按落盘目的地分流 (2026-11-05).
+
+    待审内容落在仓库外暂存区 → 直接删暂存目录 (工作区没动过);
+    免审内容落在工作区 → 恢复成 HEAD 的样子 (老逻辑, 不能 rmtree).
+    """
+    if to_staging:
+        git_sync.remove_staging_path(base)
+    else:
+        _cleanup_staged_dir(base)
 
 
 def _cleanup_staged_dir(base: str) -> None:
@@ -2419,7 +2717,21 @@ async def _stage_asset_locked(
 
     base = manifest["git_path"]
     author = _author_of(user)
-    files_dir = git_sync.WORKSPACE / base / "files"
+    # ⚠️ 2026-11-05: 待审内容**不进 git** —— 落盘目的地按审核状态分流:
+    #    要审核 → 仓库外暂存区 (approve 时再由同步 job 拷进仓库);
+    #    免审   → 工作区 (照旧, job 直接 commit + push).
+    #    更新已上架的资产时老版本还在工作区/仓库里, 待审的新内容写暂存区,
+    #    两边互不干扰; 审核通过后整目录替换.
+    need_review = await _review_required(user)
+    if need_review:
+        root = git_sync.STAGING
+        write_text = git_sync.write_staging_text
+        remove_path = git_sync.remove_staging_path
+    else:
+        root = git_sync.WORKSPACE
+        write_text = git_sync.write_text
+        remove_path = git_sync.remove_path
+    files_dir = root / base / "files"
     # 老路径 (改了分类/类型才会跟新路径不同) —— 更新时要连它一起清掉
     old_git_path = ""
     if action == "update":
@@ -2477,13 +2789,13 @@ async def _stage_asset_locked(
             #    没有 files/、没有 README.md、没有 package/ —— 配置就写在 manifest 里.
             #    (老目录里的残留一并清掉, 免得仓库里躺着两份配置)
             shutil.rmtree(files_dir, ignore_errors=True)
-            shutil.rmtree(git_sync.WORKSPACE / base / "package", ignore_errors=True)
-            git_sync.remove_path(f"{base}/README.md")
+            shutil.rmtree(root / base / "package", ignore_errors=True)
+            remove_path(f"{base}/README.md")
             manifest["package_sha256"] = ""
             manifest["package_name"] = ""
             manifest["files"] = []
             manifest["doc_file"] = ""
-            git_sync.write_text(
+            write_text(
                 f"{base}/manifest.json",
                 json.dumps(manifest, ensure_ascii=False, indent=2),
             )
@@ -2507,7 +2819,7 @@ async def _stage_asset_locked(
             manifest["files"] = extracted.files
             manifest["doc_file"] = doc_name
             # 原始包也存进 git —— marketplace.json 的 source.url 需要字节稳定的归档
-            pkg_dir = git_sync.WORKSPACE / base / "package"
+            pkg_dir = root / base / "package"
             # ⚠️ **先清空旧档** (2026-10-25 审计): 归档文件名带版本号
             #    (1.0.0.zip / 1.1.0.zip …), 不清的话每次升版都在仓库里多留一份
             #    完整安装包 —— manifest 只指向最新版, 旧的成纯残留, 仓库体积单调增长.
@@ -2519,7 +2831,7 @@ async def _stage_asset_locked(
             # 先清空旧内容 —— 「更新版本」应当**替换**内容, 而不是让新旧文件叠加
             shutil.rmtree(files_dir, ignore_errors=True)
             for rel, content in files.items():
-                git_sync.write_text(f"{base}/files/{rel}", content)
+                write_text(f"{base}/files/{rel}", content)
             manifest["package_sha256"] = ""
             manifest["package_name"] = ""
             manifest["files"] = sorted(files.keys())
@@ -2536,20 +2848,21 @@ async def _stage_asset_locked(
             manifest["doc_file"] = doc_name
 
         if manifest["kind"] != "mcp":
-            git_sync.write_text(
+            write_text(
                 f"{base}/manifest.json",
                 json.dumps(manifest, ensure_ascii=False, indent=2),
             )
             if manifest.get("description"):
-                git_sync.write_text(f"{base}/README.md", manifest["description"])
+                write_text(f"{base}/README.md", manifest["description"])
     except pkg.PackageError as e:
-        _cleanup_staged_dir(base)
+        _cleanup_local_write(base, to_staging=need_review)
         raise HTTPException(status_code=422, detail=f"安装包不合规: {e}") from e
     except git_sync.SyncError as e:
-        # ⚠️ 落盘中途失败 → 这次写的文件留在工作区 → 工作区脏 →
+        # ⚠️ 落盘中途失败 → 这次写的文件留下 → 工作区脏 →
         #    反向同步的安全闸每轮都跳过 → **整个反向同步永久卡死**.
         #    所以这里必须把本次落的东西**全部清干净** (2026-10-25 审计).
-        _cleanup_staged_dir(base)
+        #    (待审内容落在暂存区, 清暂存区即可 —— 工作区没动过.)
+        _cleanup_local_write(base, to_staging=need_review)
         raise HTTPException(status_code=500, detail=f"写入本地工作区失败: {e}") from e
 
     # ---- 2. DB 镜像 + index.json ----
@@ -2595,7 +2908,6 @@ async def _stage_asset_locked(
         a.git_path = base
         # 上架审核: 需要审核 → 进「待审核」(不对普通用户可见), 免审 → 直接上架
         # 更新已上架的资产同样走审核 —— 内容变了, 审核的意义就在这
-        need_review = await _review_required(user)
         if need_review:
             a.publish_status = "pending"
             a.review_note = ""
@@ -2612,13 +2924,19 @@ async def _stage_asset_locked(
             #    审核人那边却没有任何待审项 → 资产永远不可见, 还查不出原因.
             a.publish_status = "published"
             a.review_note = ""
+        if a.publish_status not in (ext_state.PENDING, ext_state.REJECTED):
+            # ⚠️ 内容直接落进了工作区 (免审) → 暂存区里同 code 的旧待审内容作废
+            #    (以前待审时留在暂存区的, 现在被这次免审上传取代了).
+            git_sync.remove_staging_path(base)
+            if old_git_path:
+                git_sync.remove_staging_path(old_git_path)
 
         # ⚠️ manifest.json 是**权威** —— 必须带上 publish_status.
         #    少了它, 同步器 (sync_puller) 读到 None 会当成 published →
         #    **待审核的资产会被自动改成已上架**, 审核形同虚设.
         #    (上下架走 _set_publish_state, 那里本来就写这个字段 —— 上传这条路漏了)
         manifest["publish_status"] = a.publish_status
-        git_sync.write_text(
+        write_text(
             f"{base}/manifest.json",
             json.dumps(manifest, ensure_ascii=False, indent=2),
         )
@@ -2632,16 +2950,19 @@ async def _stage_asset_locked(
         await session.commit()
         await session.refresh(a)
 
-        try:
-            await stage_index(session, asset_to_index_entry(a))
-        except git_sync.SyncError as e:
-            # ⚠️ 补偿: 索引写失败 → DB 行已提交、文件在工作区、**却没有 job**
-            #    → 没人会去提交这些文件 → 工作区永远脏 → 反向同步永久卡死.
-            #    这里把本次操作留下的东西全部清干净 (见 _compensate_staged_asset).
-            await _compensate_staged_asset(
-                manifest["code"], base, old_snapshot, existed=(existing is not None),
-            )
-            raise HTTPException(status_code=500, detail=f"更新 index.json 失败: {e}") from e
+        if a.publish_status != "pending":
+            # ⚠️ 待审资产**不写索引** —— 还没进 git, 索引也不该出现它
+            #    (索引只收货架状态, 见 ext_catalog.INDEX_VISIBLE_STATES).
+            try:
+                await stage_index(session, asset_to_index_entry(a))
+            except git_sync.SyncError as e:
+                # ⚠️ 补偿: 索引写失败 → DB 行已提交、文件在工作区、**却没有 job**
+                #    → 没人会去提交这些文件 → 工作区永远脏 → 反向同步永久卡死.
+                #    这里把本次操作留下的东西全部清干净 (见 _compensate_staged_asset).
+                await _compensate_staged_asset(
+                    manifest["code"], base, old_snapshot, existed=(existing is not None),
+                )
+                raise HTTPException(status_code=500, detail=f"更新 index.json 失败: {e}") from e
 
         job_payload: dict[str, Any] = {
             "manifest": manifest,
@@ -2656,7 +2977,12 @@ async def _stage_asset_locked(
             #    否则 GitLab 里留一份残骸副本 (index.json 指向新的, 老的那份还在).
             "old_git_path": old_git_path,
         }
-        if a.publish_status != "pending":
+        if a.publish_status == "pending":
+            # ⚠️ 待审内容只落暂存区 (仓库外), **不进 git** —— 同步 job 不碰仓库,
+            #    直接记完成 (见 asset_jobs._process 的 stage_only 分支).
+            #    approve 时会另建真同步 job, 把暂存内容拷进仓库再 commit + push.
+            job_payload["stage_only"] = True
+        else:
             # ⚠️ 上架/更新公告挂到同步 job 上 —— git 推送成功后才发
             #    ("已上架"得是真的; push 失败时扩展群不该收到公告).
             #    ⚠️ 2026-10-30 (第十一轮): 正文带上**简介** ——
@@ -2954,7 +3280,7 @@ async def _stage_asset_meta(
          · 只重写 manifest.json + README.md;
          · **不碰** files/ 与 package/ 目录.
     """
-    # ---- 1. 读旧 manifest (工作区里的那份) ----
+    # ---- 1. 读旧 manifest ----
     async with AsyncSessionLocal() as session:
         existing = (
             await session.execute(select(Asset).where(Asset.code == code))
@@ -2964,21 +3290,29 @@ async def _stage_asset_meta(
 
     old_base = existing.git_path or ""
     if not old_base:
-        raise HTTPException(status_code=409, detail="这个资产在工作区里没有目录, 请先同步一次")
+        raise HTTPException(status_code=409, detail="这个资产在本地没有目录, 请先同步一次")
 
-    old_manifest_path = git_sync.WORKSPACE / old_base / "manifest.json"
+    # ⚠️ 2026-11-05: 待审/被驳回资产的内容在**仓库外暂存区** (还没进 git) ——
+    #    读旧 manifest 按状态分流, 写也一样 (见下面第 3 步).
+    now_in_staging = existing.publish_status in (ext_state.PENDING, ext_state.REJECTED)
+    need_review = await _review_required(user)
+    # 最终要不要留在暂存区: 要审核 → 一定在; 已是待审 (免审编辑不改变状态) → 保持.
+    to_staging = need_review or existing.publish_status == ext_state.PENDING
+    src_root = git_sync.STAGING if now_in_staging else git_sync.WORKSPACE
+
+    old_manifest_path = src_root / old_base / "manifest.json"
     try:
         old_manifest = json.loads(old_manifest_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        # ⚠️ 工作区里没有这份资产 —— 不能凭空造一个 (files/package 都不在,
+        # ⚠️ 本地没有这份资产 —— 不能凭空造一个 (files/package 都不在,
         #    造出来的 manifest 指向空目录, 仓库里就多了一份坏资产).
         raise HTTPException(
             status_code=409,
-            detail="工作区里找不到这个资产 (manifest.json 不在) —— 请先点「重新同步」",
+            detail="本地找不到这个资产 (manifest.json 不在) —— 请先点「重新同步」",
         ) from None
     except (json.JSONDecodeError, OSError) as e:
         raise HTTPException(
-            status_code=409, detail=f"工作区里这个资产的 manifest 读不出来 ({e}) —— 请先点「重新同步」",
+            status_code=409, detail=f"本地这个资产的 manifest 读不出来 ({e}) —— 请先点「重新同步」",
         ) from e
 
     # ---- 2. 合并: 老的元信息 + 这次传上来的改动 ----
@@ -3028,38 +3362,53 @@ async def _stage_asset_meta(
     # ⚠️ 分类改了 → 仓库目录变了 → 老目录要一起清掉 (job 提交时会删掉它)
     old_git_path = old_base if old_base != base else ""
 
-    # ---- 3. 落盘: 只写 manifest.json + README.md, **不碰 files/ package/** ----
+    # ---- 3. 落盘: 只写 manifest.json (+ README.md), **不碰 files/ package/** ----
+    if to_staging:
+        dst_root = git_sync.STAGING
+        write_text = git_sync.write_staging_text
+        remove_path = git_sync.remove_staging_path
+    else:
+        dst_root = git_sync.WORKSPACE
+        write_text = git_sync.write_text
+        remove_path = git_sync.remove_path
+    moved_within_root = False
     try:
-        if old_git_path:
-            # 目录搬家 —— 先把整个目录挪过去 (同一个文件系统 = 原子 rename),
-            # 再在新位置改 manifest. ⚠️ 挪的是**整个目录**, files/package 一起走.
-            _move_asset_dir(old_git_path, base)
-        git_sync.write_text(
+        if old_git_path and src_root == dst_root:
+            # 目录搬家 (同根内) —— 待审资产在暂存区里搬, 在架资产在工作区里搬.
+            # ⚠️ 挪的是**整个目录**, files/package 一起走.
+            _move_asset_dir(old_git_path, base, root=src_root)
+            moved_within_root = True
+        elif now_in_staging and not to_staging:
+            # 被驳回的资产 + 免审编辑 → 直接重新上架 —— 内容还在暂存区,
+            # 先整体拷进工作区 (approve 同款逻辑), 否则货架上是个空目录.
+            if old_git_path:
+                _move_asset_dir(old_git_path, base, root=git_sync.STAGING)
+            git_sync.copy_staging_to_workspace(base)
+            git_sync.remove_staging_path(base)
+        write_text(
             f"{base}/manifest.json",
             json.dumps(manifest, ensure_ascii=False, indent=2),
         )
         # ⚠️ 连接器 (mcp) 是**配置型**资产 —— 目录里只有 manifest.json, **没有 README**
         #    (跟上传那条路保持一致, 别给它凭空造一个 README).
-        if kind == "mcp":
-            git_sync.remove_path(f"{base}/README.md")
+        # ⚠️ 待审时 README **不落暂存区** —— 暂存区只有 manifest.json 一份,
+        #    approve 时按最终 manifest 在工作区重新生成 README.
+        if to_staging:
+            pass
+        elif kind == "mcp":
+            remove_path(f"{base}/README.md")
         elif manifest.get("description"):
-            git_sync.write_text(f"{base}/README.md", manifest["description"])
+            write_text(f"{base}/README.md", manifest["description"])
         else:
             # 描述被清空了 → README 也得清掉 (否则仓库里留着旧说明)
-            git_sync.remove_path(f"{base}/README.md")
+            remove_path(f"{base}/README.md")
     except git_sync.SyncError as e:
+        _meta_cleanup_local(to_staging, moved_within_root, old_git_path, base)
         # ⚠️ 落盘中途失败 → 工作区脏 → 反向同步的安全闸每轮都跳过 →
         #    **整个反向同步永久卡死**. 必须清干净.
-        # ⚠️ 目录搬过家的话**先搬回去** —— 否则 clean_path 会把搬过去的
-        #    files/ package/ 当成"未跟踪残留"删掉.
-        if old_git_path:
-            _move_back(old_git_path, base)
-        _cleanup_staged_dir(old_git_path or base)
         raise HTTPException(status_code=500, detail=f"写入本地工作区失败: {e}") from e
     except OSError as e:
-        if old_git_path:
-            _move_back(old_git_path, base)
-        _cleanup_staged_dir(old_git_path or base)
+        _meta_cleanup_local(to_staging, moved_within_root, old_git_path, base)
         raise HTTPException(status_code=500, detail=f"写入本地工作区失败: {e}") from e
 
     # ---- 4. DB 镜像 + index.json ----
@@ -3088,7 +3437,6 @@ async def _stage_asset_meta(
         a.bindings = dict(manifest.get("bindings") or {})
         a.git_path = base
         # ⚠️ 审核口径跟"发新版本"一致 —— 内容变了就得重新过审.
-        need_review = await _review_required(user)
         if need_review:
             a.publish_status = "pending"
             a.review_note = ""
@@ -3102,15 +3450,13 @@ async def _stage_asset_meta(
         # ⚠️ manifest.json 必须带上 publish_status (同步器会读它)
         manifest["publish_status"] = a.publish_status
         try:
-            git_sync.write_text(
+            write_text(
                 f"{base}/manifest.json",
                 json.dumps(manifest, ensure_ascii=False, indent=2),
             )
         except git_sync.SyncError as e:
             # ⚠️ 这里写失败了 → 落盘是**半截**的 → 必须回滚 (工作区脏 = 反向同步卡死)
-            if old_git_path:
-                _move_back(old_git_path, base)
-            _cleanup_staged_dir(old_git_path or base)
+            _meta_cleanup_local(to_staging, moved_within_root, old_git_path, base)
             await session.rollback()
             raise HTTPException(status_code=500, detail=f"写入本地工作区失败: {e}") from e
         web_base = ((await _setting("extensions.git.web_url", "")) or "").strip().rstrip("/")
@@ -3122,35 +3468,42 @@ async def _stage_asset_meta(
         await session.commit()
         await session.refresh(a)
 
-        try:
-            await stage_index(session, asset_to_index_entry(a))
-        except git_sync.SyncError as e:
-            # ⚠️ 索引写失败 → 补偿 (工作区/DB/index.json 全部还原)
-            # ⚠️ **目录搬过家的话必须先搬回去** ——
-            #    _cleanup_staged_dir 对新目录做 `git clean -fd` 会把搬过去的
-            #    files/ package/ 当成"未跟踪的残留"**直接删掉** —— 资产内容就没了.
-            if old_git_path:
-                _move_back(old_git_path, base)
-            await _compensate_staged_asset(
-                code, old_git_path or base, old_snapshot, existed=True,
-            )
-            raise HTTPException(status_code=500, detail=f"更新 index.json 失败: {e}") from e
+        if a.publish_status != "pending":
+            # ⚠️ 待审资产**不写索引** —— 还没进 git, 索引也不该出现它.
+            try:
+                await stage_index(session, asset_to_index_entry(a))
+            except git_sync.SyncError as e:
+                # ⚠️ 索引写失败 → 补偿 (工作区/DB/index.json 全部还原)
+                # ⚠️ **目录搬过家的话必须先搬回去** ——
+                #    _cleanup_staged_dir 对新目录做 `git clean -fd` 会把搬过去的
+                #    files/ package/ 当成"未跟踪的残留"**直接删掉** —— 资产内容就没了.
+                if old_git_path:
+                    _move_back(old_git_path, base)
+                await _compensate_staged_asset(
+                    code, old_git_path or base, old_snapshot, existed=True,
+                )
+                raise HTTPException(status_code=500, detail=f"更新 index.json 失败: {e}") from e
 
         author = _author_of(user)
+        job_payload: dict[str, Any] = {
+            "manifest": manifest,
+            "files": {},
+            "publish_status": a.publish_status,
+            "author": [author[0], author[1]],
+            "commit_message": f"docs(ext): 修改资产信息 {a.name} {a.version}",
+            "old_git_path": old_git_path,
+        }
+        if a.publish_status == "pending":
+            # ⚠️ 待审内容只落暂存区 (仓库外), **不进 git** —— 同步 job 不碰仓库
+            #    (见 asset_jobs._process 的 stage_only 分支).
+            job_payload["stage_only"] = True
         job = AssetJob(
             action="update_meta",
             status="staged",
             code=a.code,
             asset_name=a.name,
             kind=a.kind,
-            payload={
-                "manifest": manifest,
-                "files": {},
-                "publish_status": a.publish_status,
-                "author": [author[0], author[1]],
-                "commit_message": f"docs(ext): 修改资产信息 {a.name} {a.version}",
-                "old_git_path": old_git_path,
-            },
+            payload=job_payload,
             git_path=a.git_path,
             created_by=user.id,
         )
@@ -3190,18 +3543,39 @@ async def _stage_asset_meta(
     return out
 
 
-def _move_asset_dir(old_base: str, new_base: str) -> None:
+def _meta_cleanup_local(
+    to_staging: bool, moved_within_root: bool, old_git_path: str, base: str
+) -> None:
+    """元信息编辑落盘失败后的清理 —— 按落盘目的地分流 (2026-11-05)."""
+    if to_staging:
+        # 暂存区: 搬过家就先搬回去, 再把这次写的东西清掉 (工作区没动过).
+        if moved_within_root and old_git_path:
+            _move_asset_dir(base, old_git_path, root=git_sync.STAGING)
+        git_sync.remove_staging_path(base)
+    else:
+        if old_git_path:
+            _move_back(old_git_path, base)
+        _cleanup_staged_dir(old_git_path or base)
+
+
+def _move_asset_dir(
+    old_base: str, new_base: str, root: Path | None = None
+) -> None:
     """把资产目录整体搬到新位置 (分类改了 → 仓库路径变了).
 
+    ⚠️ root 指定搬哪个根 (工作区 / 仓库外暂存区) —— 待审资产在暂存区里搬.
+    ⚠️ root 缺省在**调用时**解析 (不能写成默认参数 —— 那会在 import 时冻住,
+       测试里 monkeypatch git_sync.WORKSPACE 就失效了).
     ⚠️ 搬的是**整个目录** —— files/ 与 package/ 一起走, 不会丢.
     ⚠️ 同一个文件系统里 shutil.move 就是一次 rename (原子) —— 中途失败不会留半截.
     """
-    src = git_sync.WORKSPACE / old_base
-    dst = git_sync.WORKSPACE / new_base
+    root = root or git_sync.WORKSPACE
+    src = root / old_base
+    dst = root / new_base
     if not src.is_dir():
         raise HTTPException(
             status_code=409,
-            detail="工作区里找不到这个资产的目录 —— 请先点「重新同步」",
+            detail="本地找不到这个资产的目录 —— 请先点「重新同步」",
         )
     if dst.exists():
         raise HTTPException(status_code=409, detail="目标目录已经存在, 请先点「重新同步」")

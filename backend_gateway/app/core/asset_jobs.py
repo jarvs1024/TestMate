@@ -96,6 +96,16 @@ async def _process(job_id: int) -> None:
         await session.commit()
 
         payload = dict(job.payload or {})
+        # ⚠️ 2026-11-05: 待审上传/编辑的 job 是 **stage-only** —— 内容只落在
+        #    仓库外暂存区, 审核通过前**不进 git** (approve 时才真正 commit + push,
+        #    见 extensions._set_publish_state 的暂存提升). 这里直接记完成,
+        #    让前端轮询结束 (commit_sha 留空, 前端不再显示"已推送").
+        if payload.get("stage_only"):
+            job.status = "pushed"
+            job.error = ""
+            job.pushed_at = datetime.utcnow()
+            await session.commit()
+            return
         asset_path = job.git_path or payload.get("manifest", {}).get("git_path", "")
         # author 存的是 [name, email]; 兼容历史上写成 "name <email>" 字符串的旧记录
         raw_author = payload.get("author")

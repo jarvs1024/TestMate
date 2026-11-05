@@ -117,11 +117,37 @@ class _FakeAsset:
 
 
 def test_index_entry_carries_publish_status():
-    """发布状态必须进索引 —— 别的实例才知道这个资产被下架/待审了."""
+    """条目构造时**带上** publish_status —— 但 2026-11-05 起只有**在架状态**
+    (published/unpublished/unpublish_pending) 会真的写进索引, 见下面那个用例."""
     e = mc.asset_to_index_entry(_FakeAsset(publish_status="pending"))
     assert e["publish_status"] == "pending"
     e2 = mc.asset_to_index_entry(_FakeAsset(publish_status="unpublished"))
     assert e2["publish_status"] == "unpublished"
+
+
+async def test_stage_index_excludes_pending_and_rejected(ws, restore_git_config):  # noqa: ARG001
+    """待审核 / 被驳回的资产**不进索引** (2026-11-05) —— 还没审核通过的东西
+    不算货架内容; 在架状态 (含已下架) 照常进."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        for code, status in (
+            ("p-demo", "pending"), ("r-demo", "rejected"), ("u-demo", "unpublished"),
+        ):
+            s.add(Asset(
+                code=code, name=f"资产-{code}", kind="skill", version="1.0.0",
+                publish_status=status, git_path=f"assets/skills/misc/{code}",
+            ))
+        await s.commit()
+
+    async with AsyncSessionLocal() as s:
+        await mc.stage_index(s)
+    raw = (ws / mc.INDEX_PATH).read_text(encoding="utf-8")
+    codes = [x["code"] for x in json.loads(raw)["assets"]]
+    assert "u-demo" in codes
+    assert "p-demo" not in codes
+    assert "r-demo" not in codes
 
 
 def test_index_entry_defaults_published():
@@ -141,21 +167,25 @@ def test_render_index_entries_is_deterministic():
 
 
 async def test_stage_index_and_apply_back(ws, restore_git_config):  # noqa: ARG001
-    """索引写出去再读回来, 资产不该丢."""
+    """索引写出去再读回来, 资产不该丢.
+
+    ⚠️ 2026-11-05: 待审核/被驳回的资产**不进索引** (还没上过货架) ——
+    这里用「已下架」验往返还原 (下架状态必须跨实例还原, 不然会错误重新上架).
+    """
     from app.db.session import AsyncSessionLocal
     from app.models.asset import Asset
 
     async with AsyncSessionLocal() as s:
         s.add(Asset(
             code="idx-demo", name="索引演示", kind="skill", version="1.0.0",
-            publish_status="rejected", git_path="assets/skills/trace/idx-demo",
+            publish_status="unpublished", git_path="assets/skills/trace/idx-demo",
         ))
         await s.commit()
 
     async with AsyncSessionLocal() as s:
         await mc.stage_index(
             s, override=mc.asset_to_index_entry(
-                _FakeAsset(code="idx-demo", publish_status="rejected")
+                _FakeAsset(code="idx-demo", publish_status="unpublished")
             ),
         )
     raw = (ws / mc.INDEX_PATH).read_text(encoding="utf-8")
@@ -176,7 +206,7 @@ async def test_stage_index_and_apply_back(ws, restore_git_config):  # noqa: ARG0
         from sqlalchemy import select
 
         a = (await s.execute(select(Asset).where(Asset.code == "idx-demo"))).scalar_one()
-        assert a.publish_status == "rejected"
+        assert a.publish_status == "unpublished"
 
 
 async def test_apply_index_to_db_creates_missing(ws, restore_git_config):  # noqa: ARG001
@@ -232,8 +262,9 @@ def test_build_manifest_carries_project():
 async def test_project_and_review_note_survive_index_roundtrip(ws, restore_git_config):  # noqa: ARG001
     """适用范围与审核意见要能经 index.json 往返还原.
 
-    ⚠️ 少了这一步: 别的实例同步过来后, 资产是"6100 特有"却变成通用,
-    或者"已驳回"却看不到驳回理由 —— 跨实例就丢信息了.
+    ⚠️ 2026-11-05: 待审核/被驳回的资产不进索引 (review_note 是站内信息, 不需要
+    跨实例), 这里用**在架**资产验往返 —— 审核通过时管理员的话也会存进 review_note,
+    跨实例同步时不该丢.
     """
     from app.db.session import AsyncSessionLocal
     from app.models.asset import Asset
@@ -242,7 +273,7 @@ async def test_project_and_review_note_survive_index_roundtrip(ws, restore_git_c
     async with AsyncSessionLocal() as s:
         s.add(Asset(
             code="rt-demo", name="往返演示", kind="skill", version="1.0.0",
-            publish_status="rejected", review_note="权限声明不完整",
+            publish_status="published", review_note="权限声明不完整",
             git_path="assets/skills/misc/rt-demo", project="6100",
         ))
         await s.commit()
@@ -250,7 +281,7 @@ async def test_project_and_review_note_survive_index_roundtrip(ws, restore_git_c
     async with AsyncSessionLocal() as s:
         await mc.stage_index(
             s, override=mc.asset_to_index_entry(
-                _FakeAsset(code="rt-demo", publish_status="rejected",
+                _FakeAsset(code="rt-demo", publish_status="published",
                            review_note="权限声明不完整", project="6100")
             ),
         )

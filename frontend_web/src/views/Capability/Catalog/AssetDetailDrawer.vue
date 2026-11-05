@@ -237,9 +237,16 @@
                    class="ad-btn" type="primary" plain :loading="busy" @click="doRepublish">
           重新上架
         </el-button>
-        <!-- ⚠️ 作者删自己**没上架过**的资产 (待审核 / 被驳回):
-             这两种状态的东西从来没对外可见过, 直接删是安全的, 不用走下架审核.
-             以前没这条出口 → 作者传错了只能干等, 文件还永久躺在 GitLab 里. -->
+        <!-- ⚠️ 2026-11-05: 在架资产发新版本/改信息 → 待审核/被驳回期间,
+             作者可以「恢复在架」—— 放弃这次修改, 回到货架上的老版本
+             (待审内容只存在暂存区, 恢复 = 作废它, 老版本本来就没动过). -->
+        <el-button v-if="canRevert" class="ad-btn" type="primary" plain :loading="busy" @click="doRevert">
+          恢复在架版本
+        </el-button>
+        <!-- ⚠️ 作者删自己**从没上架过**的资产 (待审核 / 被驳回, 且是新建):
+             没对外可见过, 直接删是安全的, 不用走下架审核.
+             在架资产发新版本/改信息待审的**不能删** (canDiscard 已挡) ——
+             那种要放弃修改走上面的「恢复在架」. -->
         <el-button v-if="canDiscard" class="ad-btn danger" :loading="busy" @click="doDiscard">
           删除
         </el-button>
@@ -258,7 +265,7 @@ import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   cancelUnpublish, deleteAsset, downloadAssetPackage, getAssetDoc, publishAsset,
-  recordMcpCopy, reviewAsset, reviewUnpublish, submitForReview,
+  recordMcpCopy, revertAsset, reviewAsset, reviewUnpublish, submitForReview,
   unpublishAsset,
   type AssetDoc, type AssetItem,
 } from '@/api/assets';
@@ -363,19 +370,31 @@ const canSubmit = computed(() => {
 });
 
 /**
- * 作者能不能直接删掉这个资产 —— 只限**还没上架过**的 (待审核 / 被驳回).
+ * 作者能不能直接删掉这个资产 —— 只限**从没上架过**的 (待审核 / 被驳回, 且是新建).
  *
- * ⚠️ 这两种状态的东西从来没对外可见过 (可见性只放行在架的 + 作者自己的),
- *    所以作者直接删是安全的, 不需要走下架审核.
- *    在架的资产**仍然不行**: 那种必须走「申请下架 → 管理员确认」, 有人拍板.
+ * ⚠️ 2026-11-05: 在架资产发新版本/改信息待审时 (pending_action = update / meta),
+ *    它**有在架老版本** —— 那时不能直接删 (等于绕过下架审核), 要走「恢复在架」.
+ *    pending_action 空 = 旧流程数据, 按可删显示 (真删会被后端按索引拦下来).
  */
 const canDiscard = computed(() => {
   const a = props.item;
   if (!a) return false;
   const ps = a.publish_status;
   if (ps !== 'pending' && ps !== 'rejected') return false;
+  if (a.pending_action === 'update' || a.pending_action === 'meta') return false;
   if (isAdmin.value) return true;
   // ⚠️ 走 isAuthor (短名/全邮箱都认) —— 别写 `author === me`
+  return isAuthor(a.author, userStore.user?.username);
+});
+
+/** 作者能不能「恢复在架」—— 在架资产发新版本/改信息待审期间, 放弃这次修改 */
+const canRevert = computed(() => {
+  const a = props.item;
+  if (!a) return false;
+  const ps = a.publish_status;
+  if (ps !== 'pending' && ps !== 'rejected') return false;
+  if (a.pending_action !== 'update' && a.pending_action !== 'meta') return false;
+  if (isAdmin.value) return true;
   return isAuthor(a.author, userStore.user?.username);
 });
 
@@ -385,7 +404,7 @@ async function doDiscard() {
   if (!it) return;
   try {
     await ElMessageBox.confirm(
-      `确定删除「${it.name}」吗？它还没上架过, 删除后 GitLab 上的文件也会一起清掉, 不可恢复。`,
+      `确定删除「${it.name}」吗？它还没上架过, 这次提交的内容会一起清掉, 不可恢复。`,
       '删除未上架的资产',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     );
@@ -400,6 +419,31 @@ async function doDiscard() {
     emit('changed');
   } catch (e: any) {
     ElMessage.error('删除失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** 放弃待审的修改, 恢复在架版本 (2026-11-05) */
+async function doRevert() {
+  const it = props.item;
+  if (!it) return;
+  try {
+    await ElMessageBox.confirm(
+      `放弃这次修改, 恢复在架版本？待审的内容会被丢弃, 资产回到货架上的老版本。`,
+      '恢复在架版本',
+      { type: 'warning', confirmButtonText: '恢复', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;   // 用户取消了
+  }
+  busy.value = true;
+  try {
+    await revertAsset(it.code);
+    ElMessage.success('已恢复在架版本');
+    emit('changed');
+  } catch (e: any) {
+    ElMessage.error('恢复失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
   } finally {
     busy.value = false;
   }

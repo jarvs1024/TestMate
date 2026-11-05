@@ -311,20 +311,22 @@
         <div>
           <div class="job-title">
             {{ job.status === 'pushed'
-               ? (reviewState === 'checking' ? '已同步到 GitLab, 正在确认上架状态…'
+               ? (reviewState === 'checking' ? '已提交, 正在确认上架状态…'
                   : reviewState === 'pending' ? '已提交, 等待管理员审核' : '已同步到 GitLab')
                : job.status === 'failed' ? '同步失败'
-               : job.status === 'staged' ? '已保存到本地, 准备同步…'
+               : job.status === 'staged' ? '已保存到服务端, 准备处理…'
                : '正在推送到 GitLab…' }}
           </div>
-          <div v-if="job.status === 'pushed'" class="job-sub mono">
+          <div v-if="job.status === 'pushed' && job.commit_sha" class="job-sub mono">
             commit {{ job.commit_sha.slice(0, 12) }} · {{ job.git_path }}
           </div>
           <div v-if="job.status === 'pushed' && reviewState === 'pending'" class="job-sub">
-            文件已推送, 管理员审核通过后才会出现在扩展库里
+            {{ job.commit_sha
+                ? '文件已推送, 管理员审核通过后才会出现在扩展库里'
+                : '内容已提交, 审核通过后会自动发布到扩展库' }}
           </div>
           <div v-else-if="job.status === 'staged'" class="job-sub">
-            文件已落到本地工作区, 后台正在 commit + push
+            内容已保存到服务端, 后台正在处理…
           </div>
         </div>
       </div>

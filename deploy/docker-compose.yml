@@ -125,9 +125,12 @@ services:
       # GitLab — AI 扩展库的真实存储层.
       # 同步走 SSH + 本地 git 工作区 (不再依赖 REST API / PAT):
       #   EXTENSIONS_WORKSPACE  容器内的工作区路径, 对应宿主 DATA_ROOT/market, 本身就是 git 仓库根
+      #   EXTENSIONS_STAGING    仓库**外**的待审暂存区 —— 待审核/被驳回的内容先落这里,
+      #                         审核通过才拷进工作区进 git (还没审的东西不进仓库)
       #   EXTENSIONS_GIT_REMOTE  SSH 远端地址 (GitLab SSH 在 8922, 必须带端口)
       #   EXTENSIONS_GIT_BRANCH 目标分支
       EXTENSIONS_WORKSPACE: /workspace
+      EXTENSIONS_STAGING: /workspace_staging
       EXTENSIONS_GIT_REMOTE: ${EXTENSIONS_GIT_REMOTE:-ssh://git@host.docker.internal:8922/root/testmate-extensions.git}
       EXTENSIONS_GIT_BRANCH: ${EXTENSIONS_GIT_BRANCH:-main}
       EXTENSIONS_SYNC_INTERVAL_SECONDS: ${EXTENSIONS_SYNC_INTERVAL_SECONDS:-30}
@@ -142,6 +145,9 @@ services:
       # 扩展库工作区 — 宿主 DATA_ROOT/market, 容器内 /workspace.
       # 里面就是一个 root/testmate-extensions 的 git working copy, 上传先落这里, 后台再 push
       - ${DATA_ROOT:-/opt/testmate/data}/market:/workspace
+      # 待审暂存区 — 宿主 DATA_ROOT/market_staging, 容器内 /workspace_staging.
+      # ⚠️ 必须在 git 仓库**外面** (不然待审文件会把工作区弄脏, 反向同步被卡死)
+      - ${DATA_ROOT:-/opt/testmate/data}/market_staging:/workspace_staging
       # 软件库存储 — 宿主 DATA_ROOT/software, 容器内 /data/software.
       # ⚠️ 软件包**不进** tmctl.sh backup (体积太大) —— 这一目录要单独备份.
       - ${DATA_ROOT:-/opt/testmate/data}/software:/data/software

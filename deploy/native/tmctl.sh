@@ -968,6 +968,8 @@ emit_env() {
     emit_env CORS_ORIGINS "[\"http://localhost:${fe_port}\",\"http://127.0.0.1:${fe_port}\"]"
     echo
     emit_env EXTENSIONS_WORKSPACE "$(cfg EXTENSIONS_DIR "$runtime/market")"
+    # 待审暂存区 —— 必须在 git 工作区**外面** (待审内容不进仓库, 也不弄脏工作区)
+    emit_env EXTENSIONS_STAGING "$(cfg EXTENSIONS_STAGING_DIR "$runtime/market_staging")"
     emit_env EXTENSIONS_GIT_REMOTE "$(cfg EXTENSIONS_GIT_REMOTE)"
     emit_env EXTENSIONS_GIT_BRANCH "$(cfg EXTENSIONS_GIT_BRANCH main)"
     emit_env EXTENSIONS_SYNC_INTERVAL_SECONDS "$(cfg EXTENSIONS_SYNC_INTERVAL_SECONDS 30)"
