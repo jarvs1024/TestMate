@@ -986,6 +986,18 @@ _PREVIEW_SCENES: list[dict[str, Any]] = [
             "detail": "简介写得太笼统, 请补充说明能解决什么问题",
         },
     },
+    {
+        # ⚠️ 2026-11-05 (第十七轮): 代码检视评审失败 —— 发**代码检视群** (第三频道).
+        #    不 @所有人, 正文里一行「MR 作者」; 检测来自 review_failure_notifier 轮询.
+        "event": "review_failure",
+        "label": "代码检视 · 评审失败 (代码检视群)",
+        "kw": {
+            "name": "!1247 修复 SSD 日志解析超时",
+            "author": "zhangsan",
+            "detail": "[improve] qoder-sdk reported error (subtype=error_during_execution): Sorry, something went wrong.",
+            "link": "http://gitlab.example.com/ssd/ssd-test/-/merge_requests/1247",
+        },
+    },
 ]
 
 

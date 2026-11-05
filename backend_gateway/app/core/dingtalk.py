@@ -230,6 +230,9 @@ _EVENT_TEXT = {
     "unpublish": "🗑 资产已下架",
     "delete": "🗑 资产已删除",
     "reject": "❌ 资产审核未通过",
+    # ⚠️ 2026-11-05 (第十七轮): 代码检视 (ReviewAgent) 评审失败 ——
+    #    发**代码检视群** (第三频道, 独立机器人), 跟资产类通知分开.
+    "review_failure": "❌ 代码检视失败",
 }
 
 # 窗口合并时用的汇总标题 (按事件分开 —— 审核和下架是两件事, 混一起会让人看不懂)
@@ -257,13 +260,18 @@ _SWITCH_KEY = {
     "software_publish": "dingtalk.notify_on_software",
     "software_update": "dingtalk.notify_on_software",
     "software_unpublish": "dingtalk.notify_on_software",
+    # ⚠️ 2026-11-05 (第十七轮): 代码检视失败 —— 独立开关
+    #    (跟资产/软件的通知开关分开, 想只看检视失败就只开这一个).
+    "review_failure": "dingtalk.notify_on_review_failure",
 }
 
-# ---------- 两个通知频道 (两个群) ----------
+# ---------- 三个通知频道 (三个群) ----------
 # 审核群: 需要管理员处理的事 (上架审核 / 下架申请)
 # 扩展群: 资产已经变了的事 (上架 / 更新 / 彻底下架 / 审核不通过 / 删除)
+# 代码检视群: ReviewAgent 评审失败 (2026-11-05 第十七轮加的第三频道 ——
+#   失败是"去看代码/重跑"的事, 跟资产公告、管理审核都不是一类, 单独一个群)
 #
-# 每个频道有自己的一套 webhook / 加签密钥 / 关键词 —— 两个群通常是两个不同的机器人,
+# 每个频道有自己的一套 webhook / 加签密钥 / 关键词 —— 三个群通常是三个不同的机器人,
 # 密钥和关键词校验都不一样. (测试环境可以把两边配成一样的)
 _CHANNEL_OF_EVENT = {
     # 审核群
@@ -283,6 +291,8 @@ _CHANNEL_OF_EVENT = {
     "software_update": "extensions",
     # ⚠️ 2026-10-31 (第十三轮): 软件下架也走扩展群 (同一个机器人)
     "software_unpublish": "extensions",
+    # ⚠️ 2026-11-05 (第十七轮): 检视失败走**独立的代码检视群**
+    "review_failure": "code_review",
 }
 
 _CHANNEL_KEYS = {
@@ -296,9 +306,15 @@ _CHANNEL_KEYS = {
         "dingtalk.review_secret",
         "dingtalk.review_keyword",
     ),
+    # ⚠️ 2026-11-05 (第十七轮): 代码检视群 —— 第三频道
+    "code_review": (
+        "dingtalk.code_review_webhook",
+        "dingtalk.code_review_secret",
+        "dingtalk.code_review_keyword",
+    ),
 }
 
-_CHANNEL_LABEL = {"extensions": "扩展群", "review": "审核群"}
+_CHANNEL_LABEL = {"extensions": "扩展群", "review": "审核群", "code_review": "代码检视群"}
 
 # 资产类型 → 中文 (通知里要说明"这是个啥": skill 还是插件)
 # ⚠️ 跟 UI 的说法**保持一致** (页签/形态选择器/上传表单都叫「技能」) ——
@@ -337,6 +353,9 @@ _EVENT_AT = {
     "software_publish": {"at_all": True, "show_author": False},
     "software_update": {"at_all": True, "show_author": False},
     "software_unpublish": {"at_all": True, "show_author": False},
+    # ⚠️ 2026-11-05 (第十七轮): 检视失败**不 @所有人** —— 这不是"资产变了"的广播,
+    #    是"这个 MR 的评审没跑成". 正文里写一行「MR 作者」, 让作者自己去处理.
+    "review_failure": {"at_all": False, "show_author": True, "author_label": "MR 作者"},
 }
 
 # ⚠️ 2026-10-30 (第十一轮): 通知里「说明/更新」那一行的**标签** ——
@@ -348,6 +367,8 @@ _NOTE_LABEL = {
     "software_update": "更新",
     # ⚠️ 2026-10-31 (第十三轮): 下架说的是"这个软件没了", 不是"它干嘛的"
     "software_unpublish": "下架说明",
+    # ⚠️ 2026-11-05 (第十七轮): 检视失败那行说的是"这次为什么没跑成"
+    "review_failure": "错误",
 }
 
 # 通知里「查看详情」链接的**相对路径** (按事件) + 链接文字.
@@ -830,6 +851,71 @@ async def notify_extensions(
     return ok
 
 
+async def notify_review_failure(
+    *,
+    code: str,
+    name: str,
+    author: str = "",
+    detail: str = "",
+    link: str = "",
+) -> bool:
+    """代码检视 (ReviewAgent) 评审失败 → **代码检视群**.
+
+    ⚠️ **幂等**: ``code`` = "project_id:mr_id:run_id" —— 同一条失败**只发一次**.
+       轮询 worker 每轮都会扫到同一条失败, 不查重的话每 2 分钟往群里刷一条.
+       查重落在回执表里: 只要这条 code 有过回执 (无论最终送达/失败重试中/已跳过),
+       都算"处理过了" —— 发送失败的重试归 retry worker, 不会再造第二条.
+
+    ⚠️ 2026-11-05 (第十七轮): **检测**在 review_failure_notifier 轮询 worker ——
+       ReviewAgent 是外部服务, TestMate 只读它的 telemetry API, 失败没有推送通道,
+       只能靠"扫最近的 run"发现. 这里只负责"送出去".
+    """
+    event = "review_failure"
+    async with AsyncSessionLocal() as session:
+        dup = (
+            await session.execute(
+                select(AssetNotification).where(
+                    AssetNotification.event == event,
+                    AssetNotification.code == code,
+                )
+            )
+        ).scalars().first()
+    if dup is not None:
+        logger.info("dingtalk 检视失败已通知过, 跳过: code=%s", code)
+        return False
+
+    channel = _CHANNEL_OF_EVENT[event]
+    try:
+        webhook, secret, keyword = await _channel_config(channel)
+        if not to_bool(await get(_SWITCH_KEY[event], False)):
+            logger.info("dingtalk 通知开关已关闭, 跳过 (%s)", event)
+            return False
+        if not webhook:
+            logger.info(
+                "dingtalk 未配置 %s 频道的 webhook, 跳过通知 (%s)",
+                _CHANNEL_LABEL.get(channel, channel), event,
+            )
+            return False
+    except Exception as e:  # noqa: BLE001
+        logger.warning("dingtalk 读取配置失败, 跳过通知: %s", e)
+        return False
+
+    # ⚠️ MR 标题是**外部数据** (GitLab), 可能很长 —— 回执 title 列是 String(256),
+    #    超长会插不进去, 截到安全长度 (正文不受影响).
+    name = (name or "").strip()[:120] or f"MR {code}"
+
+    lines, _body_bits, event_text = await _render_market_body(
+        event, name=name, author=author, detail=detail, link=link,
+    )
+    text = "\n".join(lines)
+    title = f"{event_text} · {name}"
+    if keyword:
+        text = f"{keyword}\n{text}"
+        title = f"{keyword} · {title}"
+    row = await _create_receipt(event, code, name, title, text)
+    return await _attempt(row, webhook, secret, at_user_ids=[], is_at_all=False)
+
+
 async def _create_receipt(
     event: str, code: str, asset_name: str, title: str, text: str,
     status: str = "pending",
@@ -948,7 +1034,8 @@ async def send_test_extensions_message(channel: str = "extensions") -> tuple[boo
     用当前配置 (webhook / 关键词 / 加签密钥) 走**完整**的发送路径 ——
     配置对不对, 一按就知道, 不用靠猜.
 
-    channel: market(扩展群) | review(审核群) —— 两个群各配各的, 所以要分别自检.
+    channel: extensions(扩展群) | review(审核群) | code_review(代码检视群)
+    —— 三个群各配各的, 所以要分别自检.
     """
     channel = channel if channel in _CHANNEL_KEYS else "extensions"
     label = _CHANNEL_LABEL.get(channel, channel)
@@ -956,16 +1043,18 @@ async def send_test_extensions_message(channel: str = "extensions") -> tuple[boo
     if not webhook:
         return False, f"未配置钉钉 webhook (dingtalk.{channel}_webhook)", None
 
+    _CHANNEL_TEST_DESC = {
+        # ⚠️ 2026-10-30 (第十一轮): 扩展群现在还收**软件库**的上架/发版本
+        "extensions": "- 上架 / 更新 / 彻底下架 / 软件库上架 / 软件库新版本 通知发到这个群",
+        "review": "- 待审核 / 驳回 / 删除 通知发到这个群",
+        # ⚠️ 2026-11-05 (第十七轮): 代码检视群 —— 收 ReviewAgent 评审失败
+        "code_review": "- 代码检视 (ReviewAgent) 评审失败 通知发到这个群",
+    }
     title = "TestMate 通知配置自检"
     text = (
         f"### ✅ TestMate 通知配置自检（{label}）\n"
         "这是一条来自 TestMate 的**测试消息**, 看到即说明配置正确。\n"
-        + (
-            # ⚠️ 2026-10-30 (第十一轮): 扩展群现在还收**软件库**的上架/发版本
-            "- 上架 / 更新 / 彻底下架 / 软件库上架 / 软件库新版本 通知发到这个群"
-            if channel == "extensions"
-            else "- 待审核 / 驳回 / 删除 通知发到这个群"
-        )
+        + _CHANNEL_TEST_DESC.get(channel, "")
     )
     if keyword:
         text = f"{keyword}\n{text}"

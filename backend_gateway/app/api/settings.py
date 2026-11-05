@@ -313,7 +313,7 @@ async def test_gitlab(_user: User = Depends(get_current_user)) -> SettingTestOut
 
 @router.post("/test/dingtalk", response_model=SettingTestOut)
 async def test_dingtalk(
-    channel: str = Query("extensions", pattern="^(extensions|review)$"),
+    channel: str = Query("extensions", pattern="^(extensions|review|code_review)$"),
     _user: User = Depends(get_current_user),
 ) -> SettingTestOut:
     """用当前 DB 的钉钉配置真发一条消息.
@@ -322,7 +322,7 @@ async def test_dingtalk(
       - 配对了 → 群里立刻收到一条自检消息
       - 配错了 → 返回钉钉的原始 errcode 与原因 (比如「关键词不匹配」)
 
-    ⚠️ 两个频道各配各的 (扩展群 / 审核群), 所以要分别自检 —— channel 参数选群.
+    ⚠️ 三个频道各配各的 (扩展群 / 审核群 / 代码检视群), 所以要分别自检 —— channel 参数选群.
     """
     if _user.role.value != "admin":
         raise HTTPException(status_code=403, detail="admin only")

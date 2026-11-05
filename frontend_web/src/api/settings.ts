@@ -58,7 +58,7 @@ export async function testReviewAgent(): Promise<TestResult> {
  *
  * ⚠️ 两个频道各配各的: extensions(扩展群: 上架/更新/彻底下架) / review(审核群: 待审核/驳回/删除)
  */
-export async function testDingTalk(channel: 'extensions' | 'review' = 'extensions'): Promise<TestResult> {
+export async function testDingTalk(channel: 'extensions' | 'review' | 'code_review' = 'extensions'): Promise<TestResult> {
   return (await request.post('/settings/test/dingtalk', null, { params: { channel } })) as TestResult;
 }
 

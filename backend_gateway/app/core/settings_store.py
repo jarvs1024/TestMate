@@ -643,6 +643,47 @@ SETTING_SCHEMA: list[dict] = [
         ),
         "is_secret": False,
     },
+    # ===== 代码检视通知频道 (第三个群 · 2026-11-05 第十七轮) =====
+    # ReviewAgent 评审失败发这个群 —— 失败是"去看代码/重跑"的事,
+    # 跟资产公告 (扩展群)、管理审核 (审核群) 都不是一类, 单独一个机器人.
+    {
+        "key": "dingtalk.code_review_webhook",
+        "category": "notification",
+        "value_type": "url",
+        "default": "",
+        "description": "代码检视通知的钉钉机器人 webhook (ReviewAgent 评审失败发到这个群)",
+        "is_secret": False,
+    },
+    {
+        "key": "dingtalk.code_review_secret",
+        "category": "notification",
+        "value_type": "secret",
+        "default": "",
+        "description": "代码检视群机器人的加签密钥 (SEC 开头; 留空表示未开加签)",
+        "is_secret": True,
+    },
+    {
+        "key": "dingtalk.code_review_keyword",
+        "category": "notification",
+        "value_type": "string",
+        "default": "",
+        "description": (
+            "代码检视群机器人的关键词 (该群开了关键词校验才需要填; 留空表示不启用)"
+        ),
+        "is_secret": False,
+    },
+    {
+        "key": "dingtalk.notify_on_review_failure",
+        "category": "notification",
+        "value_type": "bool",
+        "default": True,
+        "description": (
+            "**代码检视 (ReviewAgent) 评审失败**时通知代码检视群 (默认开启). "
+            "后台每 2 分钟扫一次 ReviewAgent 的最近运行记录, 失败的 run 发一条; "
+            "同一条失败只发一次. 正文里写一行「MR 作者」, 不 @所有人."
+        ),
+        "is_secret": False,
+    },
     # ===== 软件库 =====
     # ⚠️ 存储根目录是**部署形态**相关的:
     #    裸机 (tmctl.sh) 会把 SOFTWARE_STORAGE_PATH 写进 backend.env;

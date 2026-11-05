@@ -342,44 +342,108 @@
             <span class="grp-cnt">{{ notificationItems.length }} 项</span>
           </h2>
           <div class="hint">
-            💡 通知分<strong>两个群</strong>:
-            <strong>审核群</strong>收「上架待审核」「下架申请」—— 需要管理员处理的事;
-            <strong>扩展群</strong>收「上架成功」「版本更新」「彻底下架」(都 @所有人)
-            和「审核不通过」(⚠️ 不 @具体的人 —— 正文里写一行「发布人: xxx」)。
-            <strong>软件库</strong>的上架和发布新版本也发这个群, 共用「软件库上架 / 发布新版本」那一个开关。
-            两个群的 webhook / 加签密钥 / 关键词各配各的 —— 测试环境可以把两边配成一样的。
-            <br />下架要走审核: 申请阶段通知<b>审核群</b>, 等管理员确认、资产真的被移除才在<b>扩展群</b>通知一次。
+            💡 通知按业务分<strong>三组</strong>，每组各配各的机器人:
+            <strong>🧩 扩展库</strong> —— 扩展群收「上架成功」「版本更新」「彻底下架」(都 @所有人)
+            和「审核不通过」(⚠️ 不 @具体的人 —— 正文里写一行「发布人: xxx」);
+            审核群收「上架待审核」「下架申请」—— 需要管理员处理的事。
+            <strong>🧰 软件库</strong> —— 上架 / 发布新版本 / 下架共用一个开关，也发扩展群。
+            <strong>📈 代码检视</strong> —— ReviewAgent 评审失败发代码检视群（后台每 2 分钟扫一次，
+            同一条失败只发一次，正文写「MR 作者」，不 @所有人）。
+            下架要走审核: 申请阶段通知<b>审核群</b>, 等管理员确认、资产真的被移除才在<b>扩展群</b>通知一次。
             配好 webhook 后点对应的「测试发送」自检一下; 群里立刻收到一条自检消息, 配不对会直接告诉你原因。
           </div>
 
-          <SettingRow v-for="(it, idx) in notificationItems" :key="it.key"
-            :item="it" :is-first="idx === 0" :is-admin="isAdmin"
-            :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
-            :saving="saving === it.key" :secret-display="getInputValue(it)"
-            @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+          <!-- 🔗 公共 -->
+          <div class="sub-grp">
+            <h3>🔗 公共 <span class="sub-cnt">{{ notifSharedItems.length }} 项</span></h3>
+            <div class="hint">
+              💡 所有通知共用的配置 —— 「查看详情」链接的基地址（留空 = 自动按实际访问地址推断）。
+            </div>
+            <SettingRow v-for="(it, idx) in notifSharedItems" :key="it.key"
+              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+              :saving="saving === it.key" :secret-display="getInputValue(it)"
+              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+          </div>
 
-          <!-- ⚠️ 测试发送 = admin only (后端已收紧) -->
+          <!-- 🧩 扩展库 -->
+          <div class="sub-grp">
+            <h3>🧩 扩展库 <span class="sub-cnt">{{ notifMarketItems.length }} 项</span></h3>
+            <div class="hint">
+              💡 扩展资产的通知开关，以及<strong>两个群</strong>的机器人配置:
+              <strong>扩展群</strong>收「资产已经变了」的通告, <strong>审核群</strong>收「要管理员处理」的事。
+              测试环境可以把两边配成一样的。
+            </div>
+            <SettingRow v-for="(it, idx) in notifMarketItems" :key="it.key"
+              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+              :saving="saving === it.key" :secret-display="getInputValue(it)"
+              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+
+            <!-- ⚠️ 测试发送 = admin only (后端已收紧) -->
+            <div v-if="isAdmin" class="test-row">
+              <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-extensions')">
+                {{ testing === 'dingtalk-extensions' ? '发送中…' : '📨 测试扩展群' }}
+              </button>
+              <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-review')">
+                {{ testing === 'dingtalk-review' ? '发送中…' : '📨 测试审核群' }}
+              </button>
+              <div v-if="testResults['dingtalk-extensions']" class="test-result" :class="`s-${testResults['dingtalk-extensions']?.status}`">
+                <span class="dot"></span>
+                <span class="msg">{{ testResults['dingtalk-extensions']?.message }}</span>
+              </div>
+              <div v-if="testResults['dingtalk-review']" class="test-result" :class="`s-${testResults['dingtalk-review']?.status}`">
+                <span class="dot"></span>
+                <span class="msg">{{ testResults['dingtalk-review']?.message }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 🧰 软件库 -->
+          <div class="sub-grp">
+            <h3>🧰 软件库 <span class="sub-cnt">{{ notifSoftwareItems.length }} 项</span></h3>
+            <div class="hint">
+              💡 软件库的<strong>上架 / 发布新版本 / 下架</strong>共用一个开关（用户要求「上架和发布新版本共有一个配置」），
+              也发到扩展群 —— 跟扩展通知用同一个机器人。
+            </div>
+            <SettingRow v-for="(it, idx) in notifSoftwareItems" :key="it.key"
+              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+              :saving="saving === it.key" :secret-display="getInputValue(it)"
+              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+          </div>
+
+          <!-- 📈 代码检视 -->
+          <div class="sub-grp">
+            <h3>📈 代码检视 <span class="sub-cnt">{{ notifCodeReviewItems.length }} 项</span></h3>
+            <div class="hint">
+              💡 <strong>ReviewAgent 评审失败</strong>的钉钉通知 —— 后台每 2 分钟扫一次 ReviewAgent 的最近运行，
+              失败的 run 发一条到<strong>代码检视群</strong>; 同一条失败只发一次。
+              正文里写一行「MR 作者」, 不 @所有人。配好 webhook 后点「测试发送」自检。
+            </div>
+            <SettingRow v-for="(it, idx) in notifCodeReviewItems" :key="it.key"
+              :item="it" :is-first="idx === 0" :is-admin="isAdmin"
+              :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
+              :saving="saving === it.key" :secret-display="getInputValue(it)"
+              @update="setDraft" @toggle-show="toggleShow" @save="onSave" @revert="revert" />
+
+            <!-- ⚠️ 测试发送 = admin only (后端已收紧) -->
+            <div v-if="isAdmin" class="test-row">
+              <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-code-review')">
+                {{ testing === 'dingtalk-code-review' ? '发送中…' : '📨 测试代码检视群' }}
+              </button>
+              <div v-if="testResults['dingtalk-code-review']" class="test-result" :class="`s-${testResults['dingtalk-code-review']?.status}`">
+                <span class="dot"></span>
+                <span class="msg">{{ testResults['dingtalk-code-review']?.message }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ⚠️ 2026-10-30 (第十一轮): 「预览」—— **只渲染, 一条都不发**. -->
           <div v-if="isAdmin" class="test-row">
-            <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-extensions')">
-              {{ testing === 'dingtalk-extensions' ? '发送中…' : '📨 测试扩展群' }}
-            </button>
-            <button class="test-btn" :disabled="!!testing" @click="onTest('dingtalk-review')">
-              {{ testing === 'dingtalk-review' ? '发送中…' : '📨 测试审核群' }}
-            </button>
-            <!-- ⚠️ 2026-10-30 (第十一轮): 「预览」—— **只渲染, 一条都不发**.
-                 消息长什么样是要给人看的 (简洁明了、好看), 但为了看一眼就往
-                 **公司真实群**里发测试消息, 那是骚扰. -->
             <button class="test-btn" :disabled="previewLoading" @click="togglePreview()">
               {{ previewLoading ? '加载中…' : (previewOpen ? '👀 收起预览' : '👀 预览消息') }}
             </button>
-            <div v-if="testResults['dingtalk-extensions']" class="test-result" :class="`s-${testResults['dingtalk-extensions']?.status}`">
-              <span class="dot"></span>
-              <span class="msg">{{ testResults['dingtalk-extensions']?.message }}</span>
-            </div>
-            <div v-if="testResults['dingtalk-review']" class="test-result" :class="`s-${testResults['dingtalk-review']?.status}`">
-              <span class="dot"></span>
-              <span class="msg">{{ testResults['dingtalk-review']?.message }}</span>
-            </div>
           </div>
 
           <!-- 消息预览 (不发送) -->
@@ -518,6 +582,29 @@ const chatItems = computed(() => itemsByCategory('chat'));
 const generalItems = computed(() => itemsByCategory('general'));
 // 通知 (钉钉机器人: webhook / 关键词 / 加签 / 触发开关)
 const notificationItems = computed(() => itemsByCategory('notification'));
+// ⚠️ 2026-11-05 (第十七轮): 通知按业务拆三个子组 —— 扩展库 / 软件库 / 代码检视,
+//    各配各的机器人 (扩展群 / 审核群 / 代码检视群), 公共的 (链接基地址) 单列.
+const _NOTIF_MARKET_KEYS = [
+  'dingtalk.notify_on_publish',
+  'dingtalk.notify_on_update',
+  'dingtalk.notify_on_unpublish',
+  'dingtalk.notify_on_unpublish_request',
+  'dingtalk.notify_on_review',
+  'dingtalk.notify_on_delete',
+  'dingtalk.notify_on_reject',
+  'dingtalk.aggregate_window_seconds',
+];
+const notifSharedItems = computed(() =>
+  notificationItems.value.filter(it => it.key === 'dingtalk.notify_base_url'));
+const notifMarketItems = computed(() =>
+  notificationItems.value.filter(it =>
+    it.key.startsWith('dingtalk.extensions_') || it.key.startsWith('dingtalk.review_')
+    || _NOTIF_MARKET_KEYS.includes(it.key)));
+const notifSoftwareItems = computed(() =>
+  notificationItems.value.filter(it => it.key === 'dingtalk.notify_on_software'));
+const notifCodeReviewItems = computed(() =>
+  notificationItems.value.filter(it =>
+    it.key.startsWith('dingtalk.code_review_') || it.key === 'dingtalk.notify_on_review_failure'));
 // 扩展 (GitLab 仓库 / 安装目录 / 发布白名单 / 对外暴露方式)
 const marketItems = computed(() => itemsByCategory('extensions'));
 // 软件库 (存储根目录 / 单包上限 / 保留版本数 / 公开下载)
@@ -597,6 +684,9 @@ const NOTIFY_EVENTS: Record<string, string> = {
   //    (走的是同一个机器人, 但说的是"软件包", 不是插件/技能/连接器)
   software_publish: '新软件上架',
   software_update: '软件新版本',
+  software_unpublish: '软件已下架',
+  // ⚠️ 2026-11-05 (第十七轮): 代码检视评审失败 —— 发代码检视群 (第三频道)
+  review_failure: '代码检视失败',
 };
 /**
  * 回执状态 → 中文.
@@ -904,6 +994,8 @@ const _testClients: Record<string, () => Promise<TestResult>> = {
   // 钉钉分两个频道 (扩展群 / 审核群), 各配各的 webhook → 也要分别自检
   'dingtalk-extensions': () => testDingTalk('extensions'),
   'dingtalk-review': () => testDingTalk('review'),
+  // ⚠️ 2026-11-05 (第十七轮): 代码检视群 —— 第三个频道, 收 ReviewAgent 评审失败
+  'dingtalk-code-review': () => testDingTalk('code_review'),
   'gitlab': testGitLab,
   // 软件库存储目录体检 (admin only)
   'software-storage': testSoftwareStorage,
