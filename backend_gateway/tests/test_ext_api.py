@@ -288,8 +288,13 @@ async def test_approve_notification_carries_asset_summary_and_author(
 
     ⚠️ 2026-11-01: 通知里显示「操作人: admin」(点通过的审核人), 说明是套话;
        用户要求显示作者 + 一句话描述.
+    ⚠️ 2026-11-05: 公告**不再**在审核端点即时发 —— 挂到 job.payload["notify"],
+       git 同步成功后才发 (见 asset_jobs._send_deferred_notify); 简介/作者由
+       worker 从 DB 资产行现取. 这里断言: 端点零通知 + job 上挂的配置.
     """
     from app.api import extensions as mk_api
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetJob
     from tests.conftest import set_setting
 
     await set_setting("extensions.review.enabled", "true")
@@ -311,11 +316,17 @@ async def test_approve_notification_carries_asset_summary_and_author(
         headers=auth,
     )
     assert r.status_code == 200, r.text
-    assert [e for e, _, _ in captured] == ["publish"], captured
-    _, asset, kw = captured[0]
-    assert asset["summary"] == "摘要", asset
-    assert asset["author"] == publisher_user["username"], asset
-    assert kw["actor"] == "admin_t", "审核人是 admin_t, 但通知要展示作者"
+    # git 还没同步, 扩展群公告不能在这时候发
+    assert captured == [], captured
+
+    async with AsyncSessionLocal() as s:
+        job = await s.get(AssetJob, r.json()["job_id"])
+        assert job is not None
+        # 公告配置挂在同步 job 上: 事件 publish + 操作人=审核人 (admin_t).
+        # 简介 (summary) 与作者 (author) 由 worker 从资产行取 (见 test_availability).
+        assert job.payload.get("notify") == {
+            "event": "publish", "actor": "admin_t", "detail": "ok",
+        }, job.payload
 
 
 async def test_review_flow_reject_then_resubmit(client, auth, ws,  # noqa: ARG001

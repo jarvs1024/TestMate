@@ -338,12 +338,26 @@ async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_
     )
     assert r.status_code == 200, r.text
     assert sent == [], f"只改了信息, 审核通过**不该**通知扩展群 (包没变): {sent}"
+    # job 上也不该挂公告 —— 挂上去的话 git 一同步完扩展群照样收到假消息
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetJob
+
+    async with AsyncSessionLocal() as s:
+        job = await s.get(AssetJob, r.json()["job_id"])
+        assert job is not None
+        assert "notify" not in (job.payload or {}), job.payload
 
 
 async def test_new_asset_approve_still_notifies_ext(client, auth, ws, restore_git_config,  # noqa: ARG001
                                                        publisher_user, monkeypatch):
-    """对照: **新资产**审核通过 → 扩展群**照样**要发 publish (包真的变了)."""
+    """对照: **新资产**审核通过 → 扩展群**照样**要发 publish (包真的变了).
+
+    ⚠️ 2026-11-05 起公告不即时发 —— 挂在 job.payload["notify"] 上,
+       git 同步成功后才发 (见 asset_jobs._send_deferred_notify). 这里断言挂载.
+    """
     from app.api import extensions as mk_api
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetJob
 
     sent: list[tuple[str, dict]] = []
 
@@ -366,7 +380,11 @@ async def test_new_asset_approve_still_notifies_ext(client, auth, ws, restore_gi
         headers=auth,
     )
     assert r.status_code == 200, r.text
-    assert [e for e, _ in sent] == ["publish"], sent
+    assert sent == [], f"审核端点不再即时发扩展群公告 (git 还没同步): {sent}"
+    async with AsyncSessionLocal() as s:
+        job = await s.get(AssetJob, r.json()["job_id"])
+        assert job is not None
+        assert job.payload.get("notify", {}).get("event") == "publish", job.payload
 
 
 async def test_pending_action_recorded(client, auth, ws, restore_git_config,  # noqa: ARG001

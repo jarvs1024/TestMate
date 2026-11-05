@@ -41,9 +41,12 @@ async def notify_asset(
       · Asset 对象 (DB 里的镜像)
       · manifest / out 字典 (落盘阶段资产还没提交到 DB)
 
-    ⚠️ 通知在 **enqueue() 之后**立即发 —— push 失败时扩展群照样收到"上架"公告.
-      这是已知取舍 (通知比 GitLab 推送更重要: 团队要知道"有人在做什么"),
-      真要严格一致得等 job 终态再发, 代价是延迟变长.
+    ⚠️ 通知时机 (2026-11-05): **扩展群公告** (publish/update/unpublish/reject/delete)
+      不在这里即时发 —— 这些通知声称"资产已经变了", 端点把 notify 配置挂到
+      AssetJob.payload["notify"], worker 在 **git 同步成功之后**才调这个函数
+      (见 asset_jobs._send_deferred_notify). push 失败时扩展群收不到假公告.
+      例外: **审核群任务提醒** (review / unpublish_request) 要审的东西在数据库里,
+      不用等 git, 仍在端点即时发.
 
     ⚠️ detail 是**这次操作发生了什么** (如"新资产已上架") —— 不是资产的简介.
        把简介塞进来, 群里读起来像重复了一遍卡片副标题, 看不出发生了什么.

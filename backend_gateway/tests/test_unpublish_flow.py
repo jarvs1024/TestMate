@@ -375,17 +375,23 @@ async def test_cancel_request_sends_no_notification(
     await _make_published(client, pauth, "unp-cancel-notify", auth)
 
     await _apply_unpublish(client, pauth, "unp-cancel-notify")
+
+    async def events_of():
+        async with AsyncSessionLocal() as s:
+            rows = (await s.execute(
+                select(AssetNotification).where(AssetNotification.code == "unp-cancel-notify")
+            )).scalars().all()
+        return [x.event for x in rows]
+
+    before = events_of()
     r = await client.post(f"{API}/unp-cancel-notify/unpublish-cancel", data={}, headers=pauth)
     assert r.status_code == 200, r.text
-
-    async with AsyncSessionLocal() as s:
-        rows = (await s.execute(
-            select(AssetNotification).where(AssetNotification.code == "unp-cancel-notify")
-        )).scalars().all()
-    evs = [x.event for x in rows]
-    # 上架那条 publish 是上传时发的; 撤销**不能**再发任何一条
-    assert evs.count("publish") == 1, f"撤销不该再发通知: {evs}"
-    assert "unpublish" not in evs, f"撤销不该发下架通知: {evs}"
+    after = events_of()
+    # ⚠️ 2026-11-05 起 publish 公告改由同步 worker 发 (git 同步成功后才发),
+    #    单测里没有 worker → 前面的上架 publish 收据本来就不会有.
+    #    这里比的是**撤销前后有没有新增** —— 撤销不能发任何一条.
+    assert after == before, f"撤销不该发通知: {before} → {after}"
+    assert "unpublish" not in after, f"撤销不该发下架通知: {after}"
 
 
 # ---------- 列表筛选 ----------

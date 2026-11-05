@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from app.core import git_sync
+from app.core import ext_notify, git_sync
 from app.db.session import AsyncSessionLocal
 from app.models.asset import Asset, AssetJob
 
@@ -182,6 +182,51 @@ async def _process(job_id: int) -> None:
                     a.sync_status = "pushed"
                     a.last_error = ""
                     await s2.commit()
+
+        # ⚠️ 公告通知 (扩展群: "资产已经变了") 在**同步成功之后**才发 ——
+        #    端点把 notify 配置挂在 payload 上, 这里按配置发 (2026-11-05).
+        #    审核群的任务提醒 (review / unpublish_request) 不走这里, 端点即时发:
+        #    要审的东西在数据库里, 不用等 git.
+        notify_cfg = payload.get("notify")
+        if isinstance(notify_cfg, dict):
+            await _send_deferred_notify(job, notify_cfg)
+
+
+async def _send_deferred_notify(job: AssetJob, cfg: dict) -> None:
+    """同步成功后发公告 (job.payload["notify"]).
+
+    ⚠️ 永不抛出 —— git 已经成功了, 通知失败不能让 job 回到失败态.
+       (钉钉侧的通知收据有自己的重试 worker, 见 dingtalk.py)
+    ⚠️ 已知极小窗口: 进程在「pushed 已落库」与「通知发出」之间崩掉, 这条通知会丢
+       (重启后 pushed 的 job 不再入队). 换来的保证是 push 失败绝不发假公告.
+    """
+    event = str(cfg.get("event") or "").strip()
+    if not event:
+        return
+    try:
+        async with AsyncSessionLocal() as s:
+            a = (
+                await s.execute(select(Asset).where(Asset.code == job.code))
+            ).scalar_one_or_none()
+        if a is None:
+            logger.warning(
+                "deferred notify: asset gone code=%s event=%s", job.code, event,
+            )
+            return
+        await ext_notify.notify_asset(
+            event, a,
+            actor=str(cfg.get("actor") or ""),
+            detail=str(cfg.get("detail") or ""),
+            link=str(cfg.get("link") or ""),
+            author=cfg.get("author"),
+            title_override=str(cfg.get("title_override") or ""),
+            # ⚠️ 跟 notify_asset 的语义一致: 缺 key = 取资产简介; 显式 "" = 用 detail
+            summary=cfg.get("summary"),
+            release_notes=str(cfg.get("release_notes") or ""),
+        )
+        logger.info("deferred notify sent code=%s event=%s", job.code, event)
+    except Exception:  # noqa: BLE001 — 通知失败不影响 job 终态
+        logger.exception("deferred notify failed code=%s event=%s", job.code, event)
 
 
 async def _handle_failure(session, job: AssetJob, err: git_sync.SyncError) -> None:

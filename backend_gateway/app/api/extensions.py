@@ -1549,6 +1549,8 @@ async def _set_publish_state(
     comment: str,
     user: User,
     review_note: str | None = None,
+    notify: dict[str, Any] | None = None,
+    notify_skip_pending_action: str | None = None,
 ) -> dict[str, Any]:
     """上下架 —— 改 DB + 写单资产 manifest + 更新 index.json + **提交到 GitLab**.
 
@@ -1558,6 +1560,14 @@ async def _set_publish_state(
       所以这里也建 job, 走同一条 commit + push 队列.
 
     文件**保留** —— 在用的人还能继续用, 只是列表里标「已下架」.
+
+    ⚠️ notify (2026-11-05 改造): **公告类通知不在这里发**, 而是挂到 job payload
+      的 notify 字段上 —— 扩展群的通知声称"资产已经变了", 必须等 git 同步成功
+      后再发 (见 asset_jobs._send_deferred_notify). 审核群的任务提醒 (review /
+      unpublish_request) 不经过这里, 仍在各端点即时发.
+    ⚠️ notify_skip_pending_action: 变更前在等这个审核 (pending_action) 时**不发**
+      公告 —— 审核通过端点用它实现"只改了信息就不发扩展群" (包没变, 发了是假消息).
+      判断放在锁内 (pending_action 在这里读), 调用方在外面读会有竞态.
 
     publish_status 四态: pending(待审核) / published(在架) / rejected(已驳回) / unpublished(已下架)
     """
@@ -1608,6 +1618,19 @@ async def _set_publish_state(
                 a.pending_action = ""
             await session.commit()
 
+            # 公告通知的"跳过"判断放锁内 (prev_pending_action 刚读出来, 无竞态)
+            effective_notify = notify
+            if (
+                notify is not None
+                and notify_skip_pending_action
+                and prev_pending_action == notify_skip_pending_action
+            ):
+                effective_notify = None
+                logger.info(
+                    "公告通知跳过 (pending_action=%s): code=%s action=%s",
+                    prev_pending_action, code, action,
+                )
+
             # 权威是单资产 manifest.json —— 生命周期状态也写进去
             manifest_path = f"{a.git_path}/manifest.json"
             raw = git_sync.read_text(manifest_path)
@@ -1631,19 +1654,22 @@ async def _set_publish_state(
                                  "review_note": a.review_note})
             await session.commit()
 
+            job_payload: dict[str, Any] = {
+                "author": list(_author_of(user)),
+                "commit_message": (
+                    f"chore(ext): {_ACTION_COMMIT_TEXT.get(action, '更新')}资产 "
+                    f"{a.name} {a.version}"
+                ),
+            }
+            if effective_notify is not None:
+                job_payload["notify"] = effective_notify
             job = AssetJob(
                 action=action,
                 status="staged",
                 code=a.code,
                 asset_name=a.name,
                 kind=a.kind,
-                payload={
-                    "author": list(_author_of(user)),
-                    "commit_message": (
-                        f"chore(ext): {_ACTION_COMMIT_TEXT.get(action, '更新')}资产 "
-                        f"{a.name} {a.version}"
-                    ),
-                },
+                payload=job_payload,
                 git_path=a.git_path,
                 created_by=user.id,
             )
@@ -1716,18 +1742,18 @@ async def unpublish_asset(
         out = await _set_publish_state(
             code=code, publish_status="unpublished", action="take_down",
             comment=comment or "自助下架 (免审核)", user=user, review_note="",
-        )
-        if out.get("changed"):
-            await ext_notify.notify_asset(
-                "unpublish", out,
-                actor=user.username,
-                detail=comment or "作者自助下架 (免审核), 文件保留, 可重新上架",
+            # 公告挂到同步 job 上 —— git 同步成功后才发 (下架公告说"已下架", 得是真的)
+            notify={
+                "event": "unpublish",
+                "actor": user.username,
+                "detail": comment or "作者自助下架 (免审核), 文件保留, 可重新上架",
                 # 下架说的是"发生了什么", 别用资产简介顶掉它
-                summary="",
+                "summary": "",
                 # ⚠️ 事件 key 仍是 unpublish (开关映射靠 key, 不能乱换),
                 #    只换标题 —— 免审下架**不是**彻底删除, 标题别再写 🗑.
-                title_override="📦 资产已下架 (文件保留)",
-            )
+                "title_override": "📦 资产已下架 (文件保留)",
+            },
+        )
         return {
             "ok": True, "code": code, "publish_status": "unpublished",
             "changed": out.get("changed", False), "needs_review": False,
@@ -1857,36 +1883,36 @@ async def review_asset(
         out = await _set_publish_state(
             code=code, publish_status="published", action="approve",
             comment=comment or "审核通过", user=_user, review_note=comment or "",
-        )
-        if out.get("changed"):
+            # ⚠️ 上架公告挂到同步 job 上 —— git 推送成功后才发 ("已上架"得是真的).
+            notify={
+                "event": "publish",
+                "actor": _user.username,
+                "detail": comment or "审核通过, 已上架",
+            },
             # ⚠️ 2026-10-30 (第十二轮): **只改了信息**的资产审核通过 →
             #    **不通知扩展群**.
             #    用户原话「审核通过, 这个编辑信息没涉及到包变化就不用通知到扩展群」.
             #    道理也站得住: 包跟上次一模一样, 群里那条"新资产上架"是**假消息** ——
             #    用户白点一次下载, 装到的东西完全没变.
             #    (管理员自己刚点的通过, 他知道结果; 编辑人刷新页面能看到状态回来了.)
-            if out.get("pending_action") == "meta":
-                logger.info(
-                    "资产信息修改审核通过, 不通知扩展群 (包没变): code=%s", code,
-                )
-            else:
-                await ext_notify.notify_asset(
-                    "publish", out, actor=_user.username,
-                    detail=comment or "审核通过, 已上架",
-                )
+            #    判断在 _set_publish_state 锁内做 (读 pending_action 无竞态).
+            notify_skip_pending_action="meta",
+        )
         return out
 
     note = comment or "审核未通过, 请修改后重新提交"
     out = await _set_publish_state(
         code=code, publish_status="rejected", action="reject",
         comment=note, user=_user, review_note=note,
-    )
-    if out.get("changed"):
-        await ext_notify.notify_asset(
-            "reject", out, actor=_user.username, detail=note,
+        # ⚠️ 驳回公告同样挂 job —— git 同步成功后才发 ("已驳回"也得是真的).
+        notify={
+            "event": "reject",
+            "actor": _user.username,
+            "detail": note,
             # 驳回要显示**理由**, 不是资产简介
-            summary="",
-        )
+            "summary": "",
+        },
+    )
     return out
 
 
@@ -1949,16 +1975,18 @@ async def publish_asset(
     out = await _set_publish_state(
         code=code, publish_status="published", action="publish",
         comment=comment, user=user,
+        # ⚠️ 重新上架公告挂 job —— git 同步成功后才发.
+        notify={
+            "event": "publish",
+            "actor": user.username,
+            "detail": comment or "重新上架",
+            # ⚠️ 事件 key 还是 publish (开关映射不变), 只是标题别写成「新资产上架」——
+            #    这条是**重新**上架, 不是新资产.
+            "title_override": "🎉 资产重新上架",
+        },
     )
     if not out.get("changed"):
         return out
-    await ext_notify.notify_asset(
-        "publish", out, actor=user.username,
-        detail=comment or "重新上架",
-        # ⚠️ 事件 key 还是 publish (开关映射不变), 只是标题别写成「新资产上架」——
-        #    这条是**重新**上架, 不是新资产.
-        title_override="🎉 资产重新上架",
-    )
     return {"ok": True, "code": code, "publish_status": "published"}
 
 
@@ -2615,25 +2643,39 @@ async def _stage_asset_locked(
             )
             raise HTTPException(status_code=500, detail=f"更新 index.json 失败: {e}") from e
 
+        job_payload: dict[str, Any] = {
+            "manifest": manifest,
+            "files": files,
+            "publish_status": a.publish_status,
+            "author": [author[0], author[1]],
+            "commit_message": (
+                f"{'chore(ext): 更新资产' if action == 'update' else 'feat(ext): 上架资产'}"
+                f" {a.name} {a.version}"
+            ),
+            # ⚠️ 改了分类 / 类型 → 目录路径变了 → **老目录要清掉**,
+            #    否则 GitLab 里留一份残骸副本 (index.json 指向新的, 老的那份还在).
+            "old_git_path": old_git_path,
+        }
+        if a.publish_status != "pending":
+            # ⚠️ 上架/更新公告挂到同步 job 上 —— git 推送成功后才发
+            #    ("已上架"得是真的; push 失败时扩展群不该收到公告).
+            #    ⚠️ 2026-10-30 (第十一轮): 正文带上**简介** ——
+            #    用户要求「上架补充发描述, 比如是干嘛的」.
+            #    detail 是"发生了什么"的套话 (跟标题重复), summary 才是"这玩意儿干嘛的".
+            #    ⚠️ 扩展**没有**「更新说明」这个字段 (manifest/Asset 都没有),
+            #    所以「发布新版本」只能带新简介 —— 标签会自动变成「更新:」.
+            job_payload["notify"] = {
+                "event": "publish" if action == "create" else "update",
+                "actor": user.username,
+                "summary": manifest.get("summary", "") or "",
+            }
         job = AssetJob(
             action=action,
             status="staged",
             code=a.code,
             asset_name=a.name,
             kind=a.kind,
-            payload={
-                "manifest": manifest,
-                "files": files,
-                "publish_status": a.publish_status,
-                "author": [author[0], author[1]],
-                "commit_message": (
-                    f"{'chore(ext): 更新资产' if action == 'update' else 'feat(ext): 上架资产'}"
-                    f" {a.name} {a.version}"
-                ),
-                # ⚠️ 改了分类 / 类型 → 目录路径变了 → **老目录要清掉**,
-                #    否则 GitLab 里留一份残骸副本 (index.json 指向新的, 老的那份还在).
-                "old_git_path": old_git_path,
-            },
+            payload=job_payload,
             git_path=a.git_path,
             created_by=user.id,
         )
@@ -2650,9 +2692,10 @@ async def _stage_asset_locked(
 
     # ---- 3. 入队, 后台 commit + push ----
     enqueue(out.id)
-    # 通知: 待审核的资产通知"有人提交了, 请审核"; 直接上架的才通知"已上架"
-    # ⚠️ detail 是**这次操作发生了什么**, 不是资产的简介 ——
-    #    把简介塞进来, 群里读起来像重复了一遍卡片副标题, 看不出发生了什么.
+    # 待审核的资产即时通知"有人提交了, 请审核" —— 这是**审核群**的任务提醒,
+    # 要审的东西已经在数据库里了, 不用等 git.
+    # 上架/更新公告不在这里发 —— 挂在 job 的 notify 字段上, git 同步成功后才发
+    # (见 asset_jobs._send_deferred_notify).
     if a.publish_status == "pending":
         await ext_notify.notify_asset(
             "review", manifest,
@@ -2662,17 +2705,6 @@ async def _stage_asset_locked(
                 if action == "create" else "更新了资产, 等管理员审核"
             ),
             author=manifest.get("author", "") or user.username,
-        )
-    else:
-        # ⚠️ 2026-10-30 (第十一轮): 正文带上**简介** ——
-        #    用户要求「上架补充发描述, 比如是干嘛的」.
-        #    detail 是"发生了什么"的套话 (跟标题重复), summary 才是"这玩意儿干嘛的".
-        #    ⚠️ 扩展**没有**「更新说明」这个字段 (manifest/Asset 都没有),
-        #    所以「发布新版本」只能带新简介 —— 标签会自动变成「更新:」.
-        await ext_notify.notify_asset(
-            "publish" if action == "create" else "update", manifest,
-            actor=user.username,
-            summary=manifest.get("summary", "") or "",
         )
     return out
 

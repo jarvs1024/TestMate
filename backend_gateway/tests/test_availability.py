@@ -176,3 +176,102 @@ def _fake_get(values: dict[str, str]):
         return values.get(key, default if default is not None else "")
 
     return _get
+
+
+# ---------- 公告通知与 git 同步的时序 ----------
+
+async def _seed_asset_with_job(ws: Path, code: str, notify: dict):
+    """造一个已落盘、待同步的资产 + 带 notify 配置的 job (直接喂给 worker)."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset, AssetJob
+
+    base = f"assets/skills/misc/{code}"
+    (ws / f"{base}/files").mkdir(parents=True)
+    (ws / f"{base}/files/SKILL.md").write_text(
+        "---\nname: x\ndescription: d\n---\n", encoding="utf-8",
+    )
+    (ws / "index.json").write_text("[]", encoding="utf-8")
+
+    async with AsyncSessionLocal() as s:
+        a = Asset(
+            code=code, name=f"资产-{code}", kind="skill", version="1.0.0",
+            summary="一句话简介", author="发布者甲", category="misc",
+            publish_status="published", git_path=base, sync_status="staged",
+        )
+        s.add(a)
+        await s.commit()
+        await s.refresh(a)
+        job = AssetJob(
+            action="create", status="staged", code=code, asset_name=a.name,
+            kind="skill", git_path=base,
+            payload={
+                "manifest": {"git_path": base, "version": "1.0.0"},
+                "author": ["发布者甲", "a@local"],
+                "notify": notify,
+            },
+        )
+        s.add(job)
+        await s.commit()
+        await s.refresh(job)
+    return job
+
+
+async def test_worker_sends_deferred_notify_after_push(ws, restore_git_config, monkeypatch):  # noqa: ARG001
+    """公告通知 (job.payload["notify"]) 只在 git 同步**成功**后发.
+
+    ⚠️ 2026-11-05: 扩展群公告声称"资产已经变了" —— push 失败时不该发假公告.
+    直接跑 worker 的 _process, 验证 pushed 之后 notify 才被调用.
+    """
+    sent: list[tuple[str, object, dict]] = []
+
+    async def fake_notify(event, asset=None, **kw):
+        sent.append((event, asset, kw))
+        return True
+
+    monkeypatch.setattr(asset_jobs.ext_notify, "notify_asset", fake_notify)
+
+    job = await _seed_asset_with_job(
+        ws, "defer-notify",
+        {"event": "publish", "actor": "admin_t", "detail": "已上架"},
+    )
+
+    await asset_jobs._process(job.id)
+
+    assert [e for e, _, _ in sent] == ["publish"], sent
+    _, asset, kw = sent[0]
+    # 简介与作者从**资产行**现取 —— 审核人是 admin_t, 通知要展示作者与简介
+    assert asset.summary == "一句话简介"
+    assert asset.author == "发布者甲"
+    assert kw["actor"] == "admin_t"
+    assert kw["detail"] == "已上架"
+
+
+async def test_worker_skips_deferred_notify_on_push_failure(ws, restore_git_config, monkeypatch):  # noqa: ARG001
+    """push 失败 → 扩展群**不**收到公告, job 停在 failed."""
+    sent: list[tuple[str, object, dict]] = []
+
+    async def fake_notify(event, asset=None, **kw):
+        sent.append((event, asset, kw))
+        return True
+
+    monkeypatch.setattr(asset_jobs.ext_notify, "notify_asset", fake_notify)
+
+    async def boom(*a, **kw):
+        raise git_sync.SyncError("push 被拒", "internal", hint="服务端 bug")
+
+    monkeypatch.setattr(git_sync, "sync_paths", boom)
+
+    job = await _seed_asset_with_job(
+        ws, "fail-notify",
+        {"event": "publish", "actor": "admin_t", "detail": "已上架"},
+    )
+
+    await asset_jobs._process(job.id)
+
+    assert sent == [], f"push 失败不该发公告: {sent}"
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetJob
+
+    async with AsyncSessionLocal() as s:
+        j2 = await s.get(AssetJob, job.id)
+        assert j2.status == "failed", j2.status
