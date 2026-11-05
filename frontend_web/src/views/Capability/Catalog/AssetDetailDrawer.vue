@@ -67,7 +67,12 @@
             <span class="ins-t">⚙️ 连接器配置</span>
             <button type="button" class="mini-btn primary" @click="copyMcpConfig">📋 复制 JSON</button>
           </div>
-          <p class="ins-tip">
+          <p v-if="item.builtin" class="ins-tip">
+            复制下面的 JSON, 把 server 条目加到 Agent 的连接器配置里 (Qoder: 设置 → 连接器 → 添加连接器 → 自定义).
+            内网 HTTP 下客户端拒绝明文 OAuth —— 按下方「安装步骤」新建 API Token,
+            把配置里的 <code>&lt;你的API Token&gt;</code> 替换成真实 token 即可.
+          </p>
+          <p v-else class="ins-tip">
             连接器是配置型资产 —— 它就是一段 MCP 配置.
             复制下面的 JSON, 把里面的 server 条目加到 Agent 的 MCP 配置里即可.
           </p>

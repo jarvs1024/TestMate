@@ -5,7 +5,10 @@
     · **静态展示** —— 永远在连接器分类里, 不参与上传/审核/下架流程;
     · **配置随环境自适应** —— MCP 地址 (base + /mcp/skill) 不入库,
       每次返回时按当前部署的 public_base_url / 请求地址现拼,
-      本地 8081 和生产域名各自正确.
+      本地 8081 和生产域名各自正确;
+    · **纯 HTTP 部署引导走 API Token** —— 官方 MCP SDK 客户端 (Qoder 等)
+      会拒绝明文 http 的 OAuth token 端点, OAuth 走不通, 所以生成配置时
+      预置 headers 的 token 占位符 + install_steps 讲清换 token 流程.
 
 实现: 启动时幂等种一条 Asset 行 (种子数据), 元信息每次启动刷新回常量
 (内置内容以代码为准), 但**保留运行时指标** (download_count / created_at).
@@ -46,10 +49,11 @@ BUILTIN_FIELDS: dict[str, Any] = {
     "homepage": None,
     "permissions": {},
     "install_steps": [
-        "在宿主 MCP 配置中新增 server: testmate-extensions",
-        "url 填本平台的 /mcp/skill 地址 (下方配置里已带好)",
-        "按 Agent 提示完成 OAuth 授权",
-        "重启 Agent 会话",
+        "复制本页的 MCP 配置 JSON, 把 server 条目加到 Agent 的连接器配置里 (Qoder: 设置 → 连接器 → 添加连接器 → 自定义)",
+        "新建 API Token: 登录 TestMate → 个人中心 → 授权管理 → 新建 Token, 勾选 extensions:read",
+        "把配置里 headers.Authorization 的「<你的API Token>」替换成刚建的 token",
+        "重启 Agent 会话即可使用",
+        "备注: token 绑定账号, 改密码会失效, 失效后换新 token 重新替换即可; 平台若改走 HTTPS, 可跳过第 2-3 步, 直接按 Agent 提示完成 OAuth 授权",
     ],
     "bindings": {},
     "git_path": "",
@@ -68,10 +72,23 @@ def is_builtin_code(code: str) -> bool:
     return (code or "").strip() == BUILTIN_CODE
 
 
+BUILTIN_TOKEN_PLACEHOLDER = "<你的API Token>"
+
+
 def builtin_mcp_config(base: str) -> dict[str, Any]:
-    """按部署地址现拼 MCP 配置 —— base 是"平台从外面访问的根地址". """
+    """按部署地址现拼 MCP 配置 —— base 是"平台从外面访问的根地址".
+
+    纯 HTTP 部署: 官方 MCP SDK 客户端会拒绝明文 http 的 OAuth token 端点
+    (InsecureTokenEndpointError), OAuth 走不通 —— 只能走静态 API token,
+    所以预置 headers 占位符, 用户替换成真实 token 即可.
+    HTTPS 部署: OAuth 可用, 不预置 —— 配置里的 headers 会盖过 OAuth 后来
+    签发的新 access token, 留个假占位反而把 OAuth 弄坏.
+    """
     b = (base or "").strip().rstrip("/")
-    return {"mcpServers": {BUILTIN_MCP_SERVER: {"url": f"{b}{BUILTIN_MCP_PATH}"}}}
+    server: dict[str, Any] = {"url": f"{b}{BUILTIN_MCP_PATH}"}
+    if not b.startswith("https://"):
+        server["headers"] = {"Authorization": f"Bearer {BUILTIN_TOKEN_PLACEHOLDER}"}
+    return {"mcpServers": {BUILTIN_MCP_SERVER: server}}
 
 
 async def ensure_builtin_asset(session: AsyncSession) -> Asset | None:

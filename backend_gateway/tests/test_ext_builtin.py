@@ -110,18 +110,27 @@ async def test_list_marks_builtin_and_adapts_to_public_base_url(
     assert it["mcp_config"]["mcpServers"]["testmate-extensions"]["url"] == (
         "https://tm.example.com/mcp/skill"
     )
+    # HTTPS 部署 OAuth 可用 → 不预置 headers (占位 header 会盖过 OAuth 签发的 token)
+    assert "headers" not in it["mcp_config"]["mcpServers"]["testmate-extensions"]
 
 
 async def test_list_without_setting_falls_back_to_request_base(
     client, auth, builtin_seeded, clear_base_url_cache,
 ):
-    """没配 public_base_url → 按「当前请求进来的地址」拼 (本机 8081 / 内网 IP 都对)."""
+    """没配 public_base_url → 按「当前请求进来的地址」拼 (本机 8081 / 内网 IP 都对).
+
+    纯 HTTP 部署 OAuth 会被官方 SDK 客户端拒绝 → 预置 API Token 的 headers 占位.
+    """
+    from app.core.builtin_assets import BUILTIN_TOKEN_PLACEHOLDER
+
     r = await client.get(API, headers=auth, params={"kind": "mcp"})
     assert r.status_code == 200, r.text
     items = r.json()["items"]
     assert items
-    url = items[0]["mcp_config"]["mcpServers"]["testmate-extensions"]["url"]
+    server = items[0]["mcp_config"]["mcpServers"]["testmate-extensions"]
+    url = server["url"]
     assert url.startswith("http://test") and url.endswith("/mcp/skill")
+    assert server["headers"] == {"Authorization": f"Bearer {BUILTIN_TOKEN_PLACEHOLDER}"}
 
 
 async def test_get_builtin_detail(client, auth, builtin_seeded, clear_base_url_cache):

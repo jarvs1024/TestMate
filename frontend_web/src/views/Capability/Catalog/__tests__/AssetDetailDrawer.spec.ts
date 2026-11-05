@@ -223,6 +223,16 @@ describe('资产详情抽屉 · 适用项目与适用场景', () => {
     expect(w.find('.ins-more').exists()).toBe(true);
     expect(w.find('.ins-more').text()).toContain('~/.qoder-cn');
   });
+
+  it('内置连接器 (builtin) 提示引导 API Token; 普通连接器仍是通用话术', async () => {
+    const w = await mountDrawer({ it: item({ kind: 'mcp', builtin: true }) });
+    const tip = w.findAll('.ins-tip')[0].text();
+    expect(tip).toContain('API Token');
+    expect(tip).toContain('<你的API Token>');
+
+    const plain = await mountDrawer({ it: item({ kind: 'mcp', builtin: false }) });
+    expect(plain.findAll('.ins-tip')[0].text()).toContain('连接器是配置型资产');
+  });
 });
 
 /**
