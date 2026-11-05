@@ -3442,7 +3442,23 @@ async def _stage_asset_meta(
             a.review_note = ""
             # ⚠️ 2026-10-30 (第十二轮): 记下这是「**只改了信息**」的审核 ——
             #    包没变, 审核通过后**不通知扩展群** (见 review_asset 的 approve 分支).
-            a.pending_action = "meta"
+            #
+            # ⚠️ 2026-11-05: 但**这个资产本来就在待审/被驳回状态**时不能这么标 ——
+            #    它的包内容在**仓库外暂存区**, 这次编辑信息**没碰那个包** →
+            #    「有待审的包」这个事实没变 (now_in_staging=True), 原样保留 new/update.
+            #
+            #    标成 "meta" 的后果 (实测踩过, 用户报的「审核通过后资产包被破坏 +
+            #    没有上架通知」):
+            #      ① approve 走 _promote_staging 的 meta 分支 → 只叠 manifest.json,
+            #         files/ package/ **从没进工作区** → 资产残缺
+            #         (详情页报「资产包内没有 SKILL.md」, 文件列表只剩 manifest.json);
+            #      ② approve 的「只改信息就不发公告」判断命中 → **上架公告被吞**;
+            #      ③ meta 分支还会 remove_staging_path 把暂存区里的包**删掉** → 内容丢失.
+            #
+            #    在架资产编辑信息 (now_in_staging=False) 才是真正的「只改了信息」——
+            #    它的包本来就在工作区, 没动过 → 标 meta, 不发公告 (老行为不变).
+            if not now_in_staging:
+                a.pending_action = "meta"
         elif a.publish_status in (ext_state.REJECTED, ext_state.UNPUBLISHED):
             a.publish_status = "published"
             a.review_note = ""

@@ -309,10 +309,16 @@ async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_
     monkeypatch.setattr(mk_api.ext_notify, "notify_asset", fake_notify)
 
     # ⚠️ 审核要**开着**, 否则压根不进审核流程 (也就没有审核通知)
-    await set_setting("extensions.review.enabled", "true")
+    await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    # ⚠️ 2026-11-05: 前置改成「**已经在架**的资产」——
+    #    「只改了信息 → 审核通过不通知扩展群」说的是**包没变**的那种改动.
+    #    原来这里拿「刚上传待审」当前置, 等于把**新资产**也当成"只改信息"了 ——
+    #    新资产通过审核是要通知扩展群的 (那是真的上新).
+    #    用户当天明确报过「驳回后重新提交 → 审核通过 → 没有上架通知」是**问题**.
     await _upload(client, pauth, code="meta-notify")
+    await set_setting("extensions.review.enabled", "true")
 
     # 上架本身要发 review 通知 (新资产) —— 先记下, 后面用差值断言
     sent.clear()
@@ -390,7 +396,13 @@ async def test_new_asset_approve_still_notifies_ext(client, auth, ws, restore_gi
 async def test_pending_action_recorded(client, auth, ws, restore_git_config,  # noqa: ARG001
                                        publisher_user):
     """⚠️ 待审的类型要被记下来 (new / update / **meta**) ——
-    审核台据此显示「📝 信息待审」, 管理员才分得出"上新包"还是"改简介"."""
+    审核台据此显示「📝 信息待审」, 管理员才分得出"上新包"还是"改简介".
+
+    ⚠️ 2026-11-05: 待审/被驳回资产上**再编辑一次信息**, pending_action 仍是
+    new/update —— 因为它的**新包还在仓库外暂存区**, 这次编辑没碰那个包.
+    标成 "meta" 会让 approve 误判成「包没变」→ 只叠 manifest 不拷包 (资产残缺)
+    + 吞掉上架公告 (见 test_ext_pending_flow 的对应用例).
+    """
     from app.db.session import AsyncSessionLocal
     from app.models.asset import Asset
     from sqlalchemy import select
@@ -407,7 +419,7 @@ async def test_pending_action_recorded(client, auth, ws, restore_git_config,  # 
         assert a.pending_action == "new", a.pending_action
         assert a.publish_status == "pending", a.publish_status
 
-    # 只改信息 → pending_action 变成 meta
+    # 改信息 → pending_action **不变** (待审的新包还在暂存区, 这次没动它)
     r = await client.patch(
         f"{API}/pa-demo",
         json={"summary": "只改简介"},
@@ -418,13 +430,17 @@ async def test_pending_action_recorded(client, auth, ws, restore_git_config,  # 
         a = (await s.execute(
             select(Asset).where(Asset.code == "pa-demo"))).scalar_one_or_none()
         assert a is not None
-        assert a.pending_action == "meta", a.pending_action
+        assert a.pending_action == "new", a.pending_action
 
 
 async def test_reject_keeps_pending_action_for_resubmit(client, auth, ws, restore_git_config,  # noqa: ARG001
                                                         publisher_user):
     """驳回时要**留着** pending_action —— 否则「驳回 → 改了重新提交」这条路上,
-    重新提交就不知道是改信息还是改包了 (审核通过后要不要通知扩展群就判错了)."""
+    重新提交就不知道是改信息还是改包了 (审核通过后要不要通知扩展群就判错了).
+
+    ⚠️ 2026-11-05: 留着的是 "new" (待审的新包还在暂存区), 不是 "meta" ——
+    标成 "meta" 会让 approve 只叠 manifest 不拷包, 资产就残缺了.
+    """
     from app.db.session import AsyncSessionLocal
     from app.models.asset import Asset
     from sqlalchemy import select
@@ -448,4 +464,4 @@ async def test_reject_keeps_pending_action_for_resubmit(client, auth, ws, restor
             select(Asset).where(Asset.code == "pa-reject"))).scalar_one_or_none()
         assert a is not None
         assert a.publish_status == "rejected", a.publish_status
-        assert a.pending_action == "meta", a.pending_action
+        assert a.pending_action == "new", a.pending_action

@@ -374,3 +374,75 @@ async def test_meta_edit_pending_reads_fall_back_to_workspace(client, auth, ws, 
         assert row is not None
         assert row.action == "approve"
         assert not row.payload.get("notify"), "只改信息的通过不发上架公告"
+
+
+# ---------- 驳回后编辑信息: 包不能丢, 公告不能吞 ----------
+
+
+async def test_edit_meta_after_reject_keeps_package_and_publishes_notice(
+    client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
+):
+    """驳回 → 编辑信息 → 审核通过: 待审的包必须完整进工作区, 上架公告必须发.
+
+    ⚠️ 2026-11-05 实测踩过的坑:
+       驳回后「编辑信息」把 pending_action 覆盖成了 "meta", 于是 approve 误判成
+       「只改了信息、包没变」——
+         ① 只叠 manifest.json, files/ package/ **从没进工作区** → 资产残缺
+            (详情页报「资产包内没有 SKILL.md」, 文件列表只剩 manifest.json);
+         ② 命中「只改信息不发公告」的跳过判断 → **上架公告被吞**;
+         ③ meta 分支还把暂存区里的包删了 → 内容丢失.
+
+       修法: 「这个资产本来就在待审/被驳回状态」→ 它的包还在暂存区,
+       这次编辑信息**没碰那个包** → 「有待审的包」这个事实没变, 不能标成 meta.
+    """
+    await set_setting("extensions.review.enabled", "true")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="meta-after-reject")
+
+    # 驳回 —— 待审内容还在暂存区
+    r = await client.post(f"{API}/meta-after-reject/review",
+                          data={"decision": "reject", "comment": "改改再交"},
+                          headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["publish_status"] == "rejected"
+    assert (_staging_dir("meta-after-reject") / "files" / "SKILL.md").is_file(), \
+        "驳回后待审的包还在暂存区"
+
+    # 编辑信息 —— 包没重传, 但**待审的包还在** → 不能当成「只改了信息」
+    r2 = await client.patch(f"{API}/meta-after-reject",
+                            json={"summary": "改了简介"},
+                            headers=pauth)
+    assert r2.status_code == 202, r2.text
+    st = await client.get(f"{API}/meta-after-reject", headers=pauth)
+    assert st.json()["publish_status"] == "pending"
+    assert st.json()["pending_action"] != "meta", \
+        "待审资产上编辑信息, 不能把 pending_action 覆盖成 meta (包还在暂存区)"
+
+    # 审核通过
+    r3 = await client.post(f"{API}/meta-after-reject/review",
+                           data={"decision": "approve", "comment": "通过"},
+                           headers=auth)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["publish_status"] == "published"
+
+    # ① 包完整进了工作区 (不能只剩 manifest.json + README.md)
+    wsdir = _ws_dir(ws, "meta-after-reject")
+    assert (wsdir / "files" / "SKILL.md").is_file(), \
+        "待审的包必须完整进工作区"
+    assert not _staging_dir("meta-after-reject").exists(), "通过后暂存区应清掉"
+
+    # ①b 详情页要能读到展示文档 (用户看到的「资产包内没有 SKILL.md」就是
+    #     GET /{code}/doc 抛的 404 —— files/ 没进工作区时必然读不到)
+    doc = await client.get(f"{API}/meta-after-reject/doc", headers=pauth)
+    assert doc.status_code == 200, doc.text
+    assert doc.json()["filename"] == "SKILL.md"
+
+    # ② 上架公告必须挂上 (由 worker 在 git 推送成功后发)
+    async with AsyncSessionLocal() as s:
+        row = await s.get(AssetJob, r3.json()["job_id"])
+        assert row is not None
+        assert row.action == "approve"
+        notify = (row.payload or {}).get("notify")
+        assert notify, "上架公告被吞了 (payload 里没有 notify)"
+        assert notify.get("event") == "publish"
