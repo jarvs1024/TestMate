@@ -6,11 +6,11 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from app.core.settings_store import get
 from app.mcp.common.oauth import (
     OAuthError,
     exchange_code,
     register_client,
+    resolve_public_base,
     revoke_token,
     validate_authorization,
 )
@@ -40,7 +40,7 @@ def _required(form: dict[str, Any], field: str) -> str:
 
 
 async def _public_base() -> str:
-    return str(await get("extensions.public_base_url", "") or "").rstrip("/")
+    return await resolve_public_base()
 
 
 @router.post("/oauth/register", status_code=201)

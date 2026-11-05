@@ -11,18 +11,20 @@ from mcp.server.auth.provider import AccessToken, TokenVerifier
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.settings_store import get
 from app.db.session import AsyncSessionLocal
 from app.mcp.common.context import Principal
-from app.mcp.common.oauth import OAuthError, allowed_scopes, normalize_scope
+from app.mcp.common.oauth import (
+    OAuthError,
+    allowed_scopes,
+    normalize_scope,
+    resolve_public_base,
+)
 from app.models.mcp import McpApiToken, McpOAuthGrant
 from app.models.user import User
 
 
 async def _mcp_audience(public_base: str | None = None) -> str | None:
-    if public_base is None:
-        public_base = await get("extensions.public_base_url", "")
-    base = str(public_base or "").strip().rstrip("/")
+    base = await resolve_public_base(public_base)
     return f"{base}/mcp" if base else None
 
 

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import market_policy
 from app.core.config import settings
+from app.core.dingtalk import get_request_base_url
 from app.core.settings_store import get
 from app.db.session import AsyncSessionLocal
 from app.models.mcp import McpOAuthClient, McpOAuthGrant
@@ -42,6 +43,22 @@ class OAuthError(Exception):
         super().__init__(description)
         self.error = error
         self.description = description
+
+
+async def resolve_public_base(public_base: str | None = None) -> str:
+    """对外基地址: 显式参数 > extensions.public_base_url 设置 > 请求来源推断.
+
+    与 marketplace.json 的「留空则用请求来源」保持一致; 元数据、签发、校验
+    三处共用这一个解析, 保证 access token 的 aud 两边算出来是同一个值.
+    """
+    if public_base:
+        return str(public_base).strip().rstrip("/")
+    configured = (
+        str(await get("extensions.public_base_url", "") or "").strip().rstrip("/")
+    )
+    if configured:
+        return configured
+    return get_request_base_url().strip().rstrip("/")
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,11 +278,12 @@ async def issue_access_token(
     public_base: str | None = None,
 ) -> str:
     """Issue an OAuth JWT with no exp; grant and user versions provide revocation."""
-    if public_base is None:
-        public_base = await get("extensions.public_base_url", "")
-    base = str(public_base or "").strip().rstrip("/")
+    base = await resolve_public_base(public_base)
     if not base:
-        raise OAuthError("invalid_request", "未配置 extensions.public_base_url")
+        raise OAuthError(
+            "invalid_request",
+            "未配置 extensions.public_base_url 且无法从请求来源推断基地址",
+        )
     payload = {
         "sub": str(user.id),
         "client_id": grant.client_id,
