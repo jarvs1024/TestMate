@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""插件·技能·连接 (原「AI 资产市场」) — 种子数据灌入脚本.
+"""插件·技能·连接 (原「AI 扩展库」) — 种子数据灌入脚本.
 
 把团队基线的 13 条资产通过**真实上传接口**写入 (而不是直接改库/改 git),
 这样能顺带验证: 落盘 → index.json → git commit → push 的完整链路.
@@ -9,7 +9,7 @@
 连接器 .mcp.json) —— 只有元数据的资产装不上, 市场的旗舰位不能是摆设.
 
 用法:
-    python3 scripts/seed_market.py [--base http://localhost:18000] \
+    python3 scripts/seed_extensions.py [--base http://localhost:18000] \
         [--user admin] [--password 'Admin@123']
 
 ⚠️ 需要发布者权限 (admin 恒可发布, 其他用户要在 extensions.publisher_ids 里).

@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import cast, func, or_, select, update, Text
 
 from app.api.auth import get_current_user, get_optional_user
-from app.core import count_dedup, market_policy, software_store
+from app.core import count_dedup, ext_policy, software_store
 from app.core.asset_locks import code_lock
 from app.core.dingtalk import notify_extensions
 from app.core.identity import author_forms
@@ -152,11 +152,11 @@ async def require_publisher(user: User = Depends(get_current_user)) -> User:
     ⚠️ 为什么不新设一个设置项: 同一批人 (测试工程 + 白名单), 少一套配置少一处
        "两边不一致" 的坑 —— 用户在扩展中能发, 在软件库里发不了, 只会觉得是 bug.
     """
-    if not await market_policy.can_publish(user):
-        role = market_policy.role_of(user)
+    if not await ext_policy.can_publish(user):
+        role = ext_policy.role_of(user)
         if role == "anonymous":
             raise HTTPException(status_code=401, detail="未登录")
-        roles = ", ".join(sorted(await market_policy.publisher_roles())) or "(空)"
+        roles = ", ".join(sorted(await ext_policy.publisher_roles())) or "(空)"
         raise HTTPException(
             status_code=403,
             detail=(
@@ -168,7 +168,7 @@ async def require_publisher(user: User = Depends(get_current_user)) -> User:
 
 
 def _is_admin(user: User) -> bool:
-    return market_policy.is_admin(user)
+    return ext_policy.is_admin(user)
 
 
 def _is_author(item: SoftwareItem, user: User) -> bool:
@@ -359,7 +359,7 @@ async def list_software(
                     SoftwareItem.summary.like(like),
                     SoftwareItem.description.like(like),
                     # ⚠️ tags/keywords 是 JSON 列 —— 直接 LIKE 会让 MySQL 报错,
-                    #    得先 CAST 成文本 (与 marketplace.py 里的做法一致)
+                    #    得先 CAST 成文本 (与 extensions.py 里的做法一致)
                     cast(SoftwareItem.tags, Text).like(like),
                     cast(SoftwareItem.keywords, Text).like(like),
                 )
@@ -484,7 +484,7 @@ async def get_config(user: User = Depends(get_current_user)) -> SoftwareConfigOu
     root = software_store.resolve_root(configured)
     out = SoftwareConfigOut(
         max_bytes=await _max_bytes(),
-        can_publish=await market_policy.can_publish(user),
+        can_publish=await ext_policy.can_publish(user),
         is_admin=is_admin,
         public_download=await _setting_bool("software.public_download", False),
         storage_source=_storage_source(configured),

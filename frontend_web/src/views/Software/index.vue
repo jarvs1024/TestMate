@@ -461,7 +461,7 @@ onMounted(async () => {
 <style scoped>
 /* ⚠️ 版式与「扩展」那一页保持一致 (mk-actions / kind-tabs / grid /
    state) —— 两个页面要看起来是一套东西.
-   ⚠️ 2026-10-31 (第十七轮): 间距也统一了 —— 那边是 `.market { gap: 14px }`
+   ⚠️ 2026-10-31 (第十七轮): 间距也统一了 —— 那边是 `.ext-catalog { gap: 14px }`
    让**子元素自己排**, 这边以前是每个元素各写各的 margin-bottom —— 改一处漏一处. */
 .software { display: flex; flex-direction: column; gap: 14px; }
 

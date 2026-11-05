@@ -65,7 +65,7 @@ describe('能力卡片', () => {
   });
 
   it('CTA 用卡片自带的 cta (资产组里"浏览资产" vs "检索语料")', () => {
-    const mkt = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ai-market', cta: '浏览资产' }) } });
+    const mkt = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ext-library', cta: '浏览资产' }) } });
     expect(mkt.find('.cc-cta').text()).toContain('浏览资产');
     const kb = mount(CapabilityCard, { props: { capability: cap({ kind: 'platform', category: 'ssd-kb', cta: '检索语料' }) } });
     expect(kb.find('.cc-cta').text()).toContain('检索语料');

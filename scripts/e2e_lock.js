@@ -8,7 +8,7 @@
  *
  * 用法: 在脚本最开头 (做任何事之前) 调 acquire()
  *   const lock = require('./e2e_lock');
- *   const release = lock.acquire('e2e_market.js');
+ *   const release = lock.acquire('e2e_ext.js');
  *   ... 脚本主体 ...
  *   release();   // 进程退出时也会自动释放
  */

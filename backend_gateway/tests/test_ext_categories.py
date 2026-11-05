@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core import market_categories as mc
+from app.core import ext_categories as mc
 
 # 正式分类 (顺序 = 按协作角色: 兜底 → 提效 → 守流程 → 管协同)
 EXPECTED = [
@@ -206,10 +206,10 @@ def test_copy_patches_only_touch_known_assets():
 # ---------- 种子脚本与迁移表必须一致 ----------
 
 def _load_seed_module():
-    """加载 scripts/seed_market.py (种子资产定义)."""
+    """加载 scripts/seed_extensions.py (种子资产定义)."""
     root = Path(__file__).resolve().parents[2]
-    path = root / "scripts" / "seed_market.py"
-    spec = importlib.util.spec_from_file_location("seed_market", path)
+    path = root / "scripts" / "seed_extensions.py"
+    spec = importlib.util.spec_from_file_location("seed_extensions", path)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

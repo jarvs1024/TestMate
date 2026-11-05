@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import market_policy
+from app.core import ext_policy
 from app.core.config import settings
 from app.core.dingtalk import get_request_base_url
 from app.core.settings_store import get
@@ -245,7 +245,7 @@ async def allowed_scopes(user: User) -> list[str]:
     if not getattr(user, "is_active", False):
         return []
     scopes = ["extensions:read"]
-    if await market_policy.can_publish(user):
+    if await ext_policy.can_publish(user):
         scopes.append("extensions:write")
     return scopes
 

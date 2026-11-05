@@ -1,6 +1,6 @@
 """MCP 配置校验 —— 连接器是**配置型**资产 (只有一段 JSON, 没有包).
 
-规则 (前后端一致, 见 frontend_web/src/views/Market/mcpConfig.ts):
+规则 (前后端一致, 见 frontend_web/src/views/Capability/Catalog/mcpConfig.ts):
     必须是 JSON 对象
     必须有 mcpServers (对象, 非空)
     每个连接器: 要么 command (进程型), 要么 url (远程型, http/https)

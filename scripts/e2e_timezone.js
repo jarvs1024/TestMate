@@ -64,7 +64,7 @@ function check(name, ok, detail) {
       JSON.stringify(apiCheck.slice(0, 2)));
 
     // ---------- 页面层: 显示的是本地时间 ----------
-    await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await sleep(2200);
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('button')]
@@ -112,7 +112,7 @@ function check(name, ok, detail) {
       return m ? m[0] : null;
     });
     console.log('资产卡片上的日期:', cardDate);
-    await page.screenshot({ path: path.join(OUT_DIR, '02-market-card-local-date.png') });
+    await page.screenshot({ path: path.join(OUT_DIR, '02-ext-card-local-date.png') });
 
     check('T3 页面无 JS 错误', jsErrors.length === 0, jsErrors.join(' | '));
   } finally {

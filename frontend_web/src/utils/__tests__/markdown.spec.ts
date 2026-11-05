@@ -2,7 +2,7 @@
  * Markdown 渲染与消毒 —— **存储型 XSS 的最后一道防线**.
  *
  * 资产正文 (SKILL.md / README.md) 来自用户上传, 团队成员之间互传, 属于不可信输入.
- * 直接 v-html 渲染 = 任何人都能在市场里种一个 XSS.
+ * 直接 v-html 渲染 = 任何人都能在扩展库里种一个 XSS.
  */
 import { describe, expect, it } from 'vitest';
 import { markdownToText, renderMarkdown } from '../markdown';

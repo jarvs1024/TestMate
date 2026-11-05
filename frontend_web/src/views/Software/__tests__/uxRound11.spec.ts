@@ -119,7 +119,7 @@ describe('③ 软件详情页: 「编辑」按钮只对有权限的人显示', (
     expect(idx).toMatch(/isAuthor\(it\.author, userStore\.user\?\.username\)/);
   });
 
-  it('isAuthor 要放在公共位置 (@/utils/author) —— 不能从资产市场目录反向 import', () => {
+  it('isAuthor 要放在公共位置 (@/utils/author) —— 不能从扩展库目录反向 import', () => {
     const idx = strip(read('src/views/Software/index.vue'));
     expect(idx).toMatch(/from '@\/utils\/author'/);
     expect(idx).not.toMatch(/from '.*Capability\/Catalog\/identity'/);

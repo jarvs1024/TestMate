@@ -141,7 +141,7 @@ class PackagePreviewOut(BaseModel):
     warnings: list[str] = []
 
 
-class MarketConfigOut(BaseModel):
+class ExtConfigOut(BaseModel):
     """扩展当前**生效**的配置 (只读) —— 设置页用来展示"仓库在哪 / 装到哪 / 谁能发"."""
 
     workspace: str = ""
@@ -248,7 +248,7 @@ class AssetAuditOut(UTCModel):
     comment: str = ""
     detail: dict[str, Any] = {}
     created_at: datetime | None = None
-    # ⚠️ 动作的中文说明 —— 由**后端**给 (见 market_state.audit_action_label).
+    # ⚠️ 动作的中文说明 —— 由**后端**给 (见 ext_state.audit_action_label).
     #    前端原来自己翻译了一份, 结果漏了几个动作、还多一个永远不会出现的,
     #    同一个动作三套说法 —— 中文只有一个真源, 前端直接渲染.
     action_label: str = ""

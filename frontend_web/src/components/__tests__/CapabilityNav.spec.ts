@@ -32,7 +32,7 @@ function cap(over: Partial<Capability> = {}): Capability {
 const CAPS = [
   cap({ id: 1, code: 'log-analysis', name: '日志分析', kind: 'tool' }),
   cap({ id: 2, code: 'code-review', name: '代码检视', kind: 'board', icon: '🧬', route: 'page:code-review' }),
-  cap({ id: 3, code: 'agent-market', name: '扩展库', kind: 'platform', icon: '🏪', route: 'page:extensions' }),
+  cap({ id: 3, code: 'ext-library', name: '扩展库', kind: 'platform', icon: '🏪', route: 'page:extensions' }),
   cap({ id: 4, code: 'kb-inventory', name: '知识库', kind: 'platform', icon: '📚', route: 'page:kb-manage' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', kind: 'tool', status: 'draft' }),
 ];
@@ -52,7 +52,7 @@ beforeEach(async () => {
   //    没有 active pinia 会直接抛错, 导航被中止 (第一版就是这么"路由没跳过去"的)
   const pinia = createPinia();
   setActivePinia(pinia);
-  // 带登录态 —— /market 这类页面要鉴权, 否则守卫会把我踢去 /login
+  // 带登录态 —— /extensions 这类页面要鉴权, 否则守卫会把我踢去 /login
   useUserStore(pinia).token = 'test-token';
   await router.replace('/');
 });

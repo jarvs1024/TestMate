@@ -40,7 +40,7 @@ class Asset(Base):
 
     category: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
     # 适用项目: 空 = **通用** (所有项目都能用); "6100" = 6100 项目特有.
-    # 项目列表在设置项 extensions.projects 里 —— 见 app/core/market_projects.py
+    # 项目列表在设置项 extensions.projects 里 —— 见 app/core/ext_projects.py
     project: Mapped[str] = mapped_column(String(32), nullable=False, default="", index=True)
     tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     keywords: Mapped[list] = mapped_column(JSON, nullable=False, default=list)

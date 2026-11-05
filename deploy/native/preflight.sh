@@ -275,9 +275,9 @@ preflight_run() {
   check_dep nginx "nginx" "" \
     "nginx 用来托管前端静态文件 + 反代 /api/; 装: $(pkg_name nginx "$PKG_MGR")" || true
   check_dep git "git" "" \
-    "git 是资产市场 commit/push 的硬依赖; 装: $(pkg_name git "$PKG_MGR")" || true
+    "git 是扩展库 commit/push 的硬依赖; 装: $(pkg_name git "$PKG_MGR")" || true
   check_dep ssh "SSH 客户端" "" \
-    "资产市场走 SSH 连 GitLab; 装: $(pkg_name ssh "$PKG_MGR")" || true
+    "扩展库走 SSH 连 GitLab; 装: $(pkg_name ssh "$PKG_MGR")" || true
 
   # ============ 三、数据存储 ============
   section "三、数据存储"
@@ -491,7 +491,7 @@ preflight_run() {
   # ============ 九、Docker 主机名 (仅 local driver) ============
   # local driver 的进程跑在**宿主**上, 而 host.docker.internal 是**容器里**访问宿主用的名字.
   # 在宿主上它解析到 Docker 的虚拟网卡 (macOS 上 198.18.x.x), 从宿主侧连不通 ——
-  # 于是代码检视连不上、资产市场推不到 GitLab.
+  # 于是代码检视连不上、扩展库推不到 GitLab.
   if [[ "${PREFLIGHT_DRIVER:-systemd}" == "local" ]]; then
     section "九、Docker 主机名 (local 模式专属)"
     local alias broken_alias=""

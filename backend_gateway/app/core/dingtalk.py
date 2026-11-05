@@ -225,7 +225,7 @@ _EVENT_TEXT = {
     # ⚠️ 2026-10-31 (第十三轮): 软件**下架**也要通知 ——
     #    之前软件库根本没有"下架"这条通知 (静默下架, 谁都不知道那个软件没了).
     "software_unpublish": "🗑 软件已下架",
-    # ⚠️ unpublish = **彻底下架** (资产已从市场移除), 不是"有人申请下架".
+    # ⚠️ unpublish = **彻底下架** (资产已从扩展库移除), 不是"有人申请下架".
     #    申请阶段走 unpublish_request 事件 (发审核群).
     "unpublish": "🗑 资产已下架",
     "delete": "🗑 资产已删除",
@@ -284,7 +284,7 @@ _CHANNEL_OF_EVENT = {
     "reject": "extensions",
     "delete": "extensions",
     # ⚠️ 2026-10-30 (第十一轮): 软件库**也走扩展群** ——
-    #    用户原话「钉钉在设置中配置……为了测试, 可以用市场的通知中配置的钉钉信息」.
+    #    用户原话「钉钉在设置中配置……为了测试, 可以用扩展的通知中配置的钉钉信息」.
     #    也就是说: 不新增第三个机器人, 直接复用扩展那套 webhook/加签/关键词.
     #    以后想分开群, 再加一套独立配置也不迟 —— 那时只要改这里的映射.
     "software_publish": "extensions",
@@ -609,7 +609,7 @@ async def flush_aggregated_notifications() -> int:
     return n
 
 
-async def _render_market_body(
+async def _render_asset_body(
     event: str,
     *,
     name: str,
@@ -631,7 +631,7 @@ async def _render_market_body(
 
     ⚠️ **抽出来是为了两件事** (2026-10-30 第十一轮):
         ① `notify_extensions` 发送时用;
-        ② `preview_market_message` **干跑预览**时用 ——
+        ② `preview_asset_message` **干跑预览**时用 ——
            消息长什么样要能**单独看**, 不能为了看一眼就得真往群里发一条.
 
     body_bits 是**汇总用的**: 审核类通知在窗口里会合并成一条汇总,
@@ -687,7 +687,7 @@ async def _render_market_body(
         body_bits.append(detail)
     # ---- 链接 ----
     # ⚠️ 2026-10-30 (第十一轮): 没显式传 link 时**按事件给默认链接** ——
-    #    用户要求「最后附上链接: 插件相关的 /market, 软件库相关的 /software」.
+    #    用户要求「最后附上链接: 插件相关的 /extensions, 软件库相关的 /software」.
     #    没有对外基地址就**不给链接** (别发一个打不开的地址).
     link_path = ""
     if not link:
@@ -717,13 +717,13 @@ async def _render_market_body(
     return lines, body_bits, event_text
 
 
-async def preview_market_message(event: str, **kw) -> dict[str, Any]:
+async def preview_asset_message(event: str, **kw) -> dict[str, Any]:
     """**干跑**: 只渲染消息, **不发送** —— 用来预览/自检消息长什么样.
 
     ⚠️ 绝对不碰 webhook —— 这个函数只拼字符串, 一行网络请求都不发.
        (线上要真发, 走 notify_extensions.)
     """
-    lines, body_bits, event_text = await _render_market_body(event, **kw)
+    lines, body_bits, event_text = await _render_asset_body(event, **kw)
     title = f"{event_text} · {kw.get('name', '')}"
     return {
         "event": event,
@@ -802,7 +802,7 @@ async def notify_extensions(
     at_rule = _EVENT_AT.get(event, {"at_all": False, "show_author": False})
     do_at_all = at_rule["at_all"] if at_all is None else at_all
 
-    lines, body_bits, event_text = await _render_market_body(
+    lines, body_bits, event_text = await _render_asset_body(
         event,
         name=name, version=version, actor=actor, detail=detail, link=link,
         code=code, kind=kind, category=category, project=project,
@@ -904,7 +904,7 @@ async def notify_review_failure(
     #    超长会插不进去, 截到安全长度 (正文不受影响).
     name = (name or "").strip()[:120] or f"MR {code}"
 
-    lines, _body_bits, event_text = await _render_market_body(
+    lines, _body_bits, event_text = await _render_asset_body(
         event, name=name, author=author, detail=detail, link=link,
     )
     text = "\n".join(lines)

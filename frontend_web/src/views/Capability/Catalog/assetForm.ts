@@ -3,14 +3,14 @@ import { ref } from 'vue';
 import request from '@/utils/request';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
-export interface MarketRequiredRules {
+export interface ExtRequiredRules {
   common: string[];
   skill: string[];
   plugin: string[];
   mcp: string[];
 }
 
-export interface MarketRules {
+export interface ExtRules {
   code: {
     pattern: string;
     example: string;
@@ -20,8 +20,8 @@ export interface MarketRules {
   segment: { pattern: string; min_length: number; max_length: number };
   package: { suffixes: string[] };
   required: {
-    create: MarketRequiredRules;
-    update: MarketRequiredRules;
+    create: ExtRequiredRules;
+    update: ExtRequiredRules;
     edit: string[];
   };
   categories: { name: string; slug: string; desc?: string; order?: number }[];
@@ -35,26 +35,26 @@ export interface MarketRules {
 }
 
 /** 当前扩展上传表单共享的规则状态; 页面错误条与上传抽屉看到同一次加载结果. */
-export const marketRules = ref<MarketRules | null>(null);
-export const marketRulesError = ref('');
-export const marketRulesLoading = ref(false);
+export const extRules = ref<ExtRules | null>(null);
+export const extRulesError = ref('');
+export const extRulesLoading = ref(false);
 let rulesRequest: Promise<void> | null = null;
 
 /** 加载或重试规则; 失败时清空旧规则, 绝不回退到前端硬编码校验. */
-export async function loadMarketRules(): Promise<void> {
+export async function loadExtRules(): Promise<void> {
   if (rulesRequest) return rulesRequest;
-  marketRulesLoading.value = true;
-  marketRules.value = null;
-  marketRulesError.value = '';
+  extRulesLoading.value = true;
+  extRules.value = null;
+  extRulesError.value = '';
   rulesRequest = (async () => {
     try {
-      marketRules.value = (await request.get('/extensions/rules')) as unknown as MarketRules;
-      marketRulesError.value = '';
+      extRules.value = (await request.get('/extensions/rules')) as unknown as ExtRules;
+      extRulesError.value = '';
     } catch (e: any) {
-      marketRules.value = null;
-      marketRulesError.value = httpErrorText(errorStatus(e), errorDetail(e), '未知错误');
+      extRules.value = null;
+      extRulesError.value = httpErrorText(errorStatus(e), errorDetail(e), '未知错误');
     } finally {
-      marketRulesLoading.value = false;
+      extRulesLoading.value = false;
       rulesRequest = null;
     }
   })();
@@ -72,11 +72,11 @@ function activePattern(source: string | undefined): { test(value: string): boole
 /** mcpConfig 沿用这个入口, 实际表达式始终来自当前后端规则. */
 export const SEGMENT_PATTERN = {
   test(value: string): boolean {
-    return activePattern(marketRules.value?.segment.pattern).test(value);
+    return activePattern(extRules.value?.segment.pattern).test(value);
   },
 };
 
-function packagePattern(rules: MarketRules): RegExp {
+function packagePattern(rules: ExtRules): RegExp {
   const suffixes = rules.package.suffixes
     .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('|');
@@ -86,9 +86,9 @@ function packagePattern(rules: MarketRules): RegExp {
 /** 校验安装包文件名; 没有后端规则时明确失败, 不使用本地兜底. */
 export function validatePackageName(
   filename: string,
-  opts: { rules?: MarketRules | null } = {},
+  opts: { rules?: ExtRules | null } = {},
 ): string {
-  const rules = opts.rules === undefined ? marketRules.value : opts.rules;
+  const rules = opts.rules === undefined ? extRules.value : opts.rules;
   const name = (filename || '').trim();
   if (!name) return '请选择安装包';
   if (!rules) return '扩展规则尚未加载, 请重试';
@@ -108,7 +108,7 @@ export function validatePackageName(
 /** 从安装包文件名推导出资产 code; 未加载规则时不猜测后缀. */
 export function codeFromPackageName(
   filename: string,
-  rules: MarketRules | null = marketRules.value,
+  rules: ExtRules | null = extRules.value,
 ): string {
   const name = (filename || '').trim();
   if (!name || !rules) return '';
@@ -118,7 +118,7 @@ export function codeFromPackageName(
 /**
  * 下载到本地时的文件名 —— **不带版本号** (如 ssd-log-doctor.zip).
  *
- * ⚠️ 与后端 `market_naming.download_filename` **同一套规则** ——
+ * ⚠️ 与后端 `ext_naming.download_filename` **同一套规则** ——
  *    前后端各有一份实现 (本文件头注释就说了这规矩), 改规则时**两边都要改**.
  *
  * ⚠️ 为什么去掉版本号: 存的原始包叫 "1.0.0.zip" —— 一屏下三四个扩展,
@@ -136,7 +136,7 @@ export function downloadFileName(code: string, contentType = ''): string {
 /** 校验资产 code, 返回空串 = 通过. */
 export function validateCode(
   code: string,
-  rules: MarketRules | null = marketRules.value,
+  rules: ExtRules | null = extRules.value,
 ): string {
   const c = (code || '').trim();
   if (!c) return '资产 code 必填';

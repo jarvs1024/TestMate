@@ -8,7 +8,7 @@
  *
  * ✅ 修法:
  *   ① `--panel-surface-sunken` 从 #E2E8F0 (蓝灰, 跟 --ink-200 同值) 改成 #EDF1F7 (近白灰);
- *   ② 首页 / 资产市场的网格从「按视口断点」改成「按容器宽度自适应」(auto-fill + minmax).
+ *   ② 首页 / 扩展库的网格从「按视口断点」改成「按容器宽度自适应」(auto-fill + minmax).
  *
  * ⚠️ CSS 没法在 jsdom 里真渲染, 所以这里用**源码断言**锁住关键规则 ——
  *    这些规则一旦被改回去, 这个测试就会红.
@@ -81,7 +81,7 @@ describe('网格: 必须按**容器宽度**自适应, 不能按视口断点', ()
     expect(homeCss).toMatch(/\.grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(/);
   });
 
-  it('资产市场 .grid 用 auto-fill + minmax', () => {
+  it('扩展库 .grid 用 auto-fill + minmax', () => {
     expect(catalogCss).toMatch(/\.grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(/);
   });
 
@@ -92,9 +92,9 @@ describe('网格: 必须按**容器宽度**自适应, 不能按视口断点', ()
     expect(m, '首页还有按视口断列数的 .grid 规则').toBeFalsy();
   });
 
-  it('资产市场不能再有按视口断列数的媒体查询', () => {
+  it('扩展库不能再有按视口断列数的媒体查询', () => {
     const m = catalogCss.match(/@media[^{]*\{[^}]*\.grid\s*\{[^}]*grid-template-columns/g);
-    expect(m, '资产市场还有按视口断列数的 .grid 规则').toBeFalsy();
+    expect(m, '扩展库还有按视口断列数的 .grid 规则').toBeFalsy();
   });
 });
 

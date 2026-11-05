@@ -31,7 +31,7 @@ sudo ./deploy/native/tmctl.sh install --auto    # Linux
 
 ### ⚠️ 同一台机器上切模式
 
-Docker 模式和裸机 local **不能同时跑**——两个后端会抢同一批资产市场 job(队列在进程内, 不跨进程) → git `index.lock` 冲突 / 重复推 GitLab。所以切模式要把另一套的**后端停掉**:
+Docker 模式和裸机 local **不能同时跑**——两个后端会抢同一批扩展库 job(队列在进程内, 不跨进程) → git `index.lock` 冲突 / 重复推 GitLab。所以切模式要把另一套的**后端停掉**:
 
 ```bash
 # 切到本地部署 (macOS)

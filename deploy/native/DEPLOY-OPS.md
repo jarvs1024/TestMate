@@ -42,7 +42,7 @@
 │   │       ├── venv/         Python 虚拟环境
 │   │       ├── frontend/     前端构建产物 (nginx 实际服务的)
 │   │       ├── config/       backend.env + nginx.conf
-│   │       ├── market/       资产市场 git 工作区
+│   │       ├── market/       扩展库 git 工作区
 │   │       ├── data/software/ 软件包落盘
 │   │       └── logs/         日志
 │   └── README.md             Docker 模式文档
@@ -72,7 +72,7 @@ sudo ./deploy/native/tmctl.sh install --auto --yes
 `--auto` = 缺什么依赖自己装;`--yes` = 非交互。
 
 9 步依次是:体检 → 生成配置 → 服务用户 → 本机 MySQL → 本机 Redis →
-Python 依赖 → 前端构建 → 资产市场 SSH 身份 → 注册 systemd + 启动 + 建 admin。
+Python 依赖 → 前端构建 → 扩展库 SSH 身份 → 注册 systemd + 启动 + 建 admin。
 
 **装完会打印**:
 
@@ -88,7 +88,7 @@ API 文档:   http://10.20.65.25:8090/docs
 | # | 事项 | 怎么做 |
 |---|---|---|
 | 1 | **记下 admin 口令** | install 结束时打印;`.env` 里的 `ADMIN_DEFAULT_PASSWORD` 也是它 |
-| 2 | **填资产市场 GitLab 地址** | 设置页 → 扩展市场 → 仓库地址(见 §5.1) |
+| 2 | **填扩展库 GitLab 地址** | 设置页 → 扩展库 → 仓库地址(见 §5.1) |
 | 3 | **配钉钉/通知** | 设置页 → 通知(可选) |
 
 ---
@@ -279,7 +279,7 @@ base64 -d /tmp/file.b64 > <目标路径>.tmp && mv <目标路径>.tmp <目标路
 
 ---
 
-## 5. 资产市场(GitLab)配置
+## 5. 扩展库(GitLab)配置
 
 ### 5.1 仓库地址 —— SSH URL 格式容易错
 
@@ -351,7 +351,7 @@ sudo deploy/native/tmctl.sh restore <备份目录>
 | 目录 | 内容 | 体积 |
 |---|---|---|
 | `runtime/data/software/` | 软件包落盘(最多 5G/个) | 大 |
-| `runtime/market/` | 资产市场 git 工作区 | 中 |
+| `runtime/market/` | 扩展库 git 工作区 | 中 |
 | `runtime/frontend/` | 前端产物(可从源码重建) | 小 |
 | `runtime/venv/` | Python venv(可从 requirements.lock 重建) | ~135M |
 

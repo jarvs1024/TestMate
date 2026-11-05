@@ -23,7 +23,7 @@
 #   doctor      深度排障 (比 check 看得深)
 #   admin       建 / 改 admin 账号
 #   uninstall   卸载 (默认保留数据)
-#   ssh show    看资产市场的 SSH 身份 (公钥) + 已钉的 host key
+#   ssh show    看扩展库的 SSH 身份 (公钥) + 已钉的 host key
 #   ssh trust   钉住 git 远端主机的 host key (换公司 GitLab 时用)
 #   help        本帮助
 #
@@ -34,7 +34,7 @@
 #   launchd status      macOS: 看 launchd 状态
 #   local hosts check   macOS: 看 host.docker.internal 在宿主上通不通
 #   local hosts fix     macOS: 往宿主 /etc/hosts 加映射 (代码检视 / 市场推送要用)
-#   ssh show            看资产市场用的 SSH 身份 (公钥) + 已钉的 host key
+#   ssh show            看扩展库用的 SSH 身份 (公钥) + 已钉的 host key
 #   ssh trust <host>    钉住 git 远端主机的 host key (换公司 GitLab 时用)
 #
 # 选项:
@@ -223,7 +223,7 @@ cfg() {
   local key="$1" def="${2:-}" v legacy
   v="$(env_get "$ENV_FILE" "$key" || true)"
   # ⚠️ 兼容旧变量名 (2026-11-02) ——
-  #    扩展市场从 MARKET_* 改名成 EXTENSIONS_* 之后, 老的 .env 里还是 MARKET_*,
+  #    扩展库从 MARKET_* 改名成 EXTENSIONS_* 之后, 老的 .env 里还是 MARKET_*,
   #    cfg EXTENSIONS_GIT_REMOTE 会读到空 → backend.env 里 EXTENSIONS_GIT_REMOTE 也是空
   #    → 后端启动时 git_sync 只能退回 DEFAULT_GIT_REMOTE (指向不存在的本机 gitlab),
   #    资产上架就永远推不出去。
@@ -856,7 +856,7 @@ build_frontend() {
 }
 
 # ---- SSH key ----
-ensure_market_ssh() {
+ensure_ext_ssh() {
   local key known key_dest known_dest
   key="$(cfg EXTENSIONS_SSH_KEY)"
   known="$(cfg EXTENSIONS_SSH_KNOWN_HOSTS)"
@@ -873,7 +873,7 @@ ensure_market_ssh() {
     done
   fi
   if [[ -z "$key" || ! -f "$key" ]]; then
-    warn "没找到资产市场用的 SSH 私钥 —— 上架/推送会失败; 装好后填 .env 的 EXTENSIONS_SSH_KEY"
+    warn "没找到扩展库用的 SSH 私钥 —— 上架/推送会失败; 装好后填 .env 的 EXTENSIONS_SSH_KEY"
     echo "" > "$known_dest"
     return 0
   fi
@@ -906,9 +906,9 @@ render_app_configs() {
   mkdir -p "$runtime"/{config,logs,run,data,frontend,market}
   # ⚠️ EXTENSIONS_DIR 也得建 —— systemd 的 ReadWritePaths 指向的路径不存在时,
   #    单元会直接起不来 (Failed to set up mount namespacing)
-  local market_dir
-  market_dir="$(cfg EXTENSIONS_DIR "$runtime/market")"
-  mkdir -p "$market_dir"
+  local ext_dir
+  ext_dir="$(cfg EXTENSIONS_DIR "$runtime/market")"
+  mkdir -p "$ext_dir"
   backend_env="$runtime/config/backend.env"
   nginx_conf="$runtime/config/nginx.conf"
   nginx_prefix="$runtime"
@@ -972,7 +972,7 @@ emit_env() {
     emit_env EXTENSIONS_GIT_BRANCH "$(cfg EXTENSIONS_GIT_BRANCH main)"
     emit_env EXTENSIONS_SYNC_INTERVAL_SECONDS "$(cfg EXTENSIONS_SYNC_INTERVAL_SECONDS 30)"
     # 软件库存放根目录 (软件包本体落这儿, 最多 5G/个).
-    # ⚠️ 默认在 runtime/data/software —— 跟 market 工作区一样属于"运行时数据",
+    # ⚠️ 默认在 runtime/data/software —— 跟扩展库工作区一样属于"运行时数据",
     #    **不进** backup (体积太大), 要备份得单独拷这个目录.
     emit_env SOFTWARE_STORAGE_PATH "$(cfg SOFTWARE_STORAGE_PATH "$runtime/data/software")"
     mkdir -p "$(cfg SOFTWARE_STORAGE_PATH "$runtime/data/software")"
@@ -1012,7 +1012,7 @@ emit_env() {
 # ---- 生成 systemd 单元 (只有 systemd driver 用得到) ----
 render_systemd_configs() {
   local runtime run_user run_group be_port bind_addr workers
-  local backend_env nginx_conf nginx_prefix nginx_bin market_dir
+  local backend_env nginx_conf nginx_prefix nginx_bin ext_dir
   runtime="$RUNTIME_DIR"
   run_user="$(cfg RUN_USER testmate)"
   run_group="$(cfg RUN_GROUP "$run_user")"
@@ -1023,7 +1023,7 @@ render_systemd_configs() {
   nginx_conf="$runtime/config/nginx.conf"
   nginx_prefix="$runtime"
   nginx_bin="$(command -v nginx || echo /usr/sbin/nginx)"
-  market_dir="$(cfg EXTENSIONS_DIR "$runtime/market")"
+  ext_dir="$(cfg EXTENSIONS_DIR "$runtime/market")"
 
   # ---- systemd 单元 ----
   need_root
@@ -1045,7 +1045,7 @@ render_systemd_configs() {
     "RUNTIME_DIR" "$runtime" \
     "DATA_DIR" "$runtime/data" \
     "LOG_DIR" "$runtime/logs" \
-    "EXTENSIONS_DIR" "$market_dir" \
+    "EXTENSIONS_DIR" "$ext_dir" \
     "SOFTWARE_DIR" "$(cfg SOFTWARE_STORAGE_PATH "$runtime/data/software")" \
     "RUN_DIR" "$runtime/run"
 
@@ -1063,13 +1063,13 @@ render_systemd_configs() {
   # 目录归属给服务用户
   chown -R "$run_user:$run_group" "$runtime" 2>/dev/null || true
   # ⚠️ EXTENSIONS_DIR 可能在 runtime 之外 (用户自定义路径) —— 上面的 chown -R 覆盖不到,
-  #    而它是资产市场 git 工作区, 服务用户必须能写 (后端会自己 init + fetch 建仓库,
+  #    而它是扩展库 git 工作区, 服务用户必须能写 (后端会自己 init + fetch 建仓库,
   #    写不了的话上传/推送全挂).
-  [[ "$market_dir" != "$runtime"/* ]] && chown -R "$run_user:$run_group" "$market_dir" 2>/dev/null || true
+  [[ "$ext_dir" != "$runtime"/* ]] && chown -R "$run_user:$run_group" "$ext_dir" 2>/dev/null || true
 
   # ---- 单元自检 ----
   # ⚠️ systemd 对**非法 / 不存在**的 ReadWritePaths 只警告并忽略那一项, 单元照样起得来 ——
-  #    但对应目录随后就是只读的. 资产市场工作区在那儿 → 上传/推送全挂, 而且报错点离根因极远.
+  #    但对应目录随后就是只读的. 扩展库工作区在那儿 → 上传/推送全挂, 而且报错点离根因极远.
   #    所以装的时候就地验一遍, 别等开机才发现.
   if have_cmd systemd-analyze; then
     local vout
@@ -1384,7 +1384,7 @@ warn_concurrent_backend() {
   [[ -n "$cid" ]] || return 0
   running="$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo false)"
   [[ "$running" == "true" ]] || return 0
-  warn "⚠️ Docker 模式的 backend 容器也在跑 —— 两个后端会**同时**消费资产市场的 job 队列"
+  warn "⚠️ Docker 模式的 backend 容器也在跑 —— 两个后端会**同时**消费扩展库的 job 队列"
   warn "   (队列是进程内的, 不跨进程) → 同一个 job 被两个进程抢 → git index.lock 冲突 / 重复推 GitLab."
   warn "   建议先停它:  cd deploy && docker compose --env-file .env stop backend"
   warn "   (mysql/redis 容器跟本地模式无关 —— 本地模式连的是**本机**的 MySQL/Redis)"
@@ -1436,7 +1436,7 @@ local_launchd_loaded() {
 #
 # 背景见 lib.sh 的说明: `host.docker.internal` 是**容器里**访问宿主用的名字.
 # 本地部署的进程跑在**宿主**上, 同一个名字在宿主上连不通 —— 于是代码检视连不上、
-# 资产市场推不到 GitLab、设置页里填的这类地址也全连不上.
+# 扩展库推不到 GitLab、设置页里填的这类地址也全连不上.
 #
 # 解法: 宿主的 /etc/hosts 里让它指回 127.0.0.1. 容器不受影响 (容器有自己的 hosts).
 #
@@ -1446,7 +1446,7 @@ local_launchd_loaded() {
 #      · 在宿主上 → host.docker.internal 换成 127.0.0.1
 #    (见 backend_gateway/app/core/settings_store.py 的 _rewrite_loopback
 #      与 app/core/git_sync.py 的 _rewrite_remote)
-#    所以**改 /etc/hosts 已经不再是必需的** —— 代码检视、资产市场推送、
+#    所以**改 /etc/hosts 已经不再是必需的** —— 代码检视、扩展库推送、
 #    设置页里的地址, 两种部署模式下都能用同一个值.
 #
 #    这条命令保留下来是给"别的工具也要用这个别名"用的 (curl / ssh / 浏览器直接访问).
@@ -1585,7 +1585,7 @@ ssh_do_trust() {
 ssh_do_show() {
   local kh="$RUNTIME_DIR/ssh/known_hosts"
   local key="$RUNTIME_DIR/ssh/id_ed25519"
-  echo "── 资产市场 SSH 身份 ──"
+  echo "── 扩展库 SSH 身份 ──"
   if [[ -f "$key" ]]; then
     echo "  私钥: $key"
     echo "  公钥 (贴到 GitLab 账号的 SSH Keys 里):"
@@ -1849,7 +1849,7 @@ local_install() {
 
   # ⚠️ 这一步**不再阻塞安装** (2026-10-27) ——
   #    后端现在自己改写地址 (host.docker.internal ↔ 127.0.0.1), 代码检视、
-  #    资产市场推送、设置页里的地址两种模式下都能用同一个值.
+  #    扩展库推送、设置页里的地址两种模式下都能用同一个值.
   #    /etc/hosts 那条路是给"别的工具也要用这个别名"准备的.
   log "2/9 宿主名解析"
   hosts_do_check || true
@@ -1868,8 +1868,8 @@ local_install() {
   log "6/9 前端构建"
   build_frontend
 
-  log "7/9 资产市场 SSH 身份"
-  ensure_market_ssh
+  log "7/9 扩展库 SSH 身份"
+  ensure_ext_ssh
 
   log "8/9 生成应用配置"
   render_app_configs
@@ -2030,7 +2030,7 @@ render_launchd_units() {
 plist_env_vars() {
   local f="$RUNTIME_DIR/config/backend.env"
   # ⚠️ launchd 的默认 PATH 只有 /usr/bin:/bin —— homebrew 的 git / ssh / nginx 都在
-  #    /opt/homebrew/bin. 不给的话, 资产市场的 git push 会 "command not found"
+  #    /opt/homebrew/bin. 不给的话, 扩展库的 git push 会 "command not found"
   #    (systemd 那边默认 PATH 够宽, 所以只有 launchd 需要显式给).
   printf '        <key>PATH</key>\n        <string>%s</string>\n' \
     "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -2178,8 +2178,8 @@ cmd_install() {
   log "7/9 前端构建"
   build_frontend
 
-  log "8/9 资产市场 SSH 身份"
-  ensure_market_ssh
+  log "8/9 扩展库 SSH 身份"
+  ensure_ext_ssh
 
   log "9/9 注册 systemd 服务"
   render_app_configs

@@ -122,7 +122,7 @@ services:
       REVIEW_AGENT_BASE_URL: ${REVIEW_AGENT_BASE_URL:-http://host.docker.internal:3000}
       REVIEW_AGENT_API_TOKEN: ${REVIEW_AGENT_API_TOKEN:-}
 
-      # GitLab — AI 资产市场的真实存储层.
+      # GitLab — AI 扩展库的真实存储层.
       # 同步走 SSH + 本地 git 工作区 (不再依赖 REST API / PAT):
       #   EXTENSIONS_WORKSPACE  容器内的工作区路径, 对应宿主 DATA_ROOT/market, 本身就是 git 仓库根
       #   EXTENSIONS_GIT_REMOTE  SSH 远端地址 (GitLab SSH 在 8922, 必须带端口)
@@ -139,7 +139,7 @@ services:
 
       ADMIN_DEFAULT_PASSWORD: ${ADMIN_DEFAULT_PASSWORD:-ChangeMe@2026}
     volumes:
-      # 资产市场工作区 — 宿主 DATA_ROOT/market, 容器内 /workspace.
+      # 扩展库工作区 — 宿主 DATA_ROOT/market, 容器内 /workspace.
       # 里面就是一个 root/testmate-extensions 的 git working copy, 上传先落这里, 后台再 push
       - ${DATA_ROOT:-/opt/testmate/data}/market:/workspace
       # 软件库存储 — 宿主 DATA_ROOT/software, 容器内 /data/software.

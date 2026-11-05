@@ -9,9 +9,9 @@
 import request from '@/utils/request';
 import { getClientId } from '@/utils/clientId';
 
-export type MarketKind = 'plugin' | 'skill' | 'mcp';
+export type ExtKind = 'plugin' | 'skill' | 'mcp';
 
-export interface MarketPermissions {
+export interface ExtPermissions {
   filesystem_read?: string[];
   filesystem_write?: string[];
   network?: string[];
@@ -23,7 +23,7 @@ export interface AssetItem {
   code: string;
   name: string;
   icon: string;
-  kind: MarketKind;
+  kind: ExtKind;
   version: string;
   summary: string;
   description: string;
@@ -37,7 +37,7 @@ export interface AssetItem {
   author: string;
   featured: boolean;
   homepage: string | null;
-  permissions: MarketPermissions;
+  permissions: ExtPermissions;
   install_steps: string[];
   bindings: Record<string, any>;
   git_path: string;
@@ -176,7 +176,7 @@ export interface AssetNotification {
 }
 
 /** 扩展当前生效的配置 (只读) —— 设置页展示用 */
-export interface MarketConfig {
+export interface ExtConfig {
   workspace: string;
   remote: string;
   branch: string;
@@ -224,13 +224,13 @@ export interface AssetAudit {
   comment: string;
   detail: Record<string, any>;
   created_at: string | null;
-  /** 动作的中文说明 —— **后端给的** (唯一真源, 见 market_state.audit_action_label) */
+  /** 动作的中文说明 —— **后端给的** (唯一真源, 见 ext_state.audit_action_label) */
   action_label?: string;
 }
 
 export interface UploadForm {
   code?: string;
-  kind: MarketKind;
+  kind: ExtKind;
   name: string;
   version: string;
   summary: string;
@@ -246,7 +246,7 @@ export interface UploadForm {
   keywords?: string[];
   /** 连接器 (mcp) 的 MCP 配置 (JSON 文本) —— 非连接器留空 */
   mcp_config?: string;
-  permissions: MarketPermissions;
+  permissions: ExtPermissions;
   install_steps: string[];
   featured: boolean;
   /** 压缩包 (zip / tar.gz) — 与 files 二选一 */
@@ -275,7 +275,7 @@ async function apiDelete<T>(url: string, params?: Record<string, unknown>): Prom
 // ---------- 读 ----------
 
 export async function listAssets(params: {
-  kind?: MarketKind; category?: string; q?: string; sort?: 'hot' | 'new' | 'name';
+  kind?: ExtKind; category?: string; q?: string; sort?: 'hot' | 'new' | 'name';
   /** 按项目过滤: 留空=不过滤; __general=只看通用; 6100=该项目特有 + 通用 */
   project?: string;
   include_unpublished?: boolean; limit?: number; offset?: number;
@@ -384,8 +384,8 @@ export async function previewNotifications(): Promise<NotifyPreview[]> {
 }
 
 /** 扩展当前生效的配置 (只读) */
-export async function getMarketConfig(): Promise<MarketConfig> {
-  return apiGet<MarketConfig>('/extensions/config');
+export async function getExtConfig(): Promise<ExtConfig> {
+  return apiGet<ExtConfig>('/extensions/config');
 }
 
 /** 上传前体检: 这个包装不装得上 */
@@ -549,7 +549,7 @@ export interface AssetMetaForm {
   project?: string;
   tags?: string[];
   keywords?: string[];
-  permissions?: MarketPermissions;
+  permissions?: ExtPermissions;
   install_steps?: string[];
   bindings?: Record<string, unknown>;
   /** 连接器 (mcp) 的 MCP 配置 —— 只有连接器才有 */

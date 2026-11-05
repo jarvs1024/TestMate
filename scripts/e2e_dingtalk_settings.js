@@ -376,12 +376,12 @@ function check(name, ok, detail) {
   check('S10 通知回执列表有内容', logCount > 0, `${logCount} 条`);
 
   // ---------- 市场通知真链路: 上架 → 申请下架 → 彻底下架 ----------
-  // (市场脚本 e2e_market.js 测试期间会静音通知, 所以这条专门在这里验)
+  // (扩展脚本 e2e_ext.js 测试期间会静音通知, 所以这条专门在这里验)
   //
   // ⚠️ 通知开关默认是**开**的 (上架/更新/下架) —— 但这条链路要分别验
   //    "什么时候发": 上架发一次 / 申请下架**不发** / 彻底下架才发.
   //    验完**必须还原** (改生产设置一定要在 try/finally 里).
-  let marketNotify;
+  let extNotify;
   try {
     // 这条链路用到三个事件: 上架 / 申请下架 / 彻底下架
     await setSwitches({
@@ -390,19 +390,19 @@ function check(name, ok, detail) {
       'dingtalk.notify_on_unpublish_request': true,
     });
 
-    marketNotify = await runUnpublishFlow('e2e-notify-live');
+    extNotify = await runUnpublishFlow('e2e-notify-live');
     check('S12 上架/申请下架/通过 三步都成功',
-      marketNotify.un === 200 && marketNotify.ap === 200 && marketNotify.gone === 404,
-      `apply=${marketNotify.un} approve=${marketNotify.ap} 资产=${marketNotify.gone}`);
+      extNotify.un === 200 && extNotify.ap === 200 && extNotify.gone === 404,
+      `apply=${extNotify.un} approve=${extNotify.ap} 资产=${extNotify.gone}`);
     check('S13 上架时通知一次 (publish)',
-      marketNotify.dUpload.filter((e) => e === 'publish').length === 1,
-      `上架后新通知: ${JSON.stringify(marketNotify.dUpload)}`);
+      extNotify.dUpload.filter((e) => e === 'publish').length === 1,
+      `上架后新通知: ${JSON.stringify(extNotify.dUpload)}`);
     check('S13b 申请下架通知**审核群** (unpublish_request)',
-      marketNotify.dApply.filter((e) => e === 'unpublish_request').length === 1,
-      `申请下架后新通知: ${JSON.stringify(marketNotify.dApply)}`);
+      extNotify.dApply.filter((e) => e === 'unpublish_request').length === 1,
+      `申请下架后新通知: ${JSON.stringify(extNotify.dApply)}`);
     check('S13c 彻底下架后才通知 (unpublish)',
-      marketNotify.dApprove.filter((e) => e === 'unpublish').length === 1,
-      `彻底下架后新通知: ${JSON.stringify(marketNotify.dApprove)}`);
+      extNotify.dApprove.filter((e) => e === 'unpublish').length === 1,
+      `彻底下架后新通知: ${JSON.stringify(extNotify.dApprove)}`);
   } finally {
     // 还原开关 —— 不然真实环境就变成"一直发通知"了
     // ⚠️ 复位到**产品默认值** (而不是"跑之前的值" —— 那可能就是上一轮崩溃留下的脏值)

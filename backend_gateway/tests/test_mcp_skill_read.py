@@ -11,7 +11,7 @@ from mcp.server.auth.provider import AccessToken, TokenVerifier
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
-from app.core import git_sync, market_categories, market_projects
+from app.core import git_sync, ext_categories, ext_projects
 from app.db.session import AsyncSessionLocal
 from app.mcp.common.context import Principal
 from app.mcp.common.server import build_dispatcher, run_mcp_lifespan
@@ -104,7 +104,7 @@ async def _client(principals):
 
 @pytest.fixture
 def asset_workspace(tmp_path, monkeypatch):
-    workspace = tmp_path / "market-workspace"
+    workspace = tmp_path / "ext-workspace"
     workspace.mkdir()
     monkeypatch.setattr(git_sync, "WORKSPACE", workspace)
     return workspace
@@ -216,7 +216,7 @@ async def test_tools_list_keeps_nine_accurate_read_schemas(principals):
         ("extension_job_status", {"job_id": 1}),
     ],
 )
-async def test_every_read_tool_requires_market_read_scope(
+async def test_every_read_tool_requires_ext_read_scope(
     principals, tool_name, arguments
 ):
     async with _client(principals) as client:
@@ -309,7 +309,7 @@ async def test_invisible_and_missing_assets_have_identical_safe_not_found(
     assert owner["code"] == "dml-private-pending"
 
 
-async def test_get_doc_files_and_exact_text_file_use_existing_market_data(
+async def test_get_doc_files_and_exact_text_file_use_existing_ext_data(
     principals, asset_workspace
 ):
     asset = await _seed_asset("dml-read-files")
@@ -493,13 +493,13 @@ async def test_package_info_rejects_package_symlink_to_outside_target(
 
 
 async def test_categories_and_projects_come_from_current_single_rule_source(principals):
-    await set_setting(market_projects.SETTINGS_KEY, "7000, 7100")
+    await set_setting(ext_projects.SETTINGS_KEY, "7000, 7100")
 
     async with _client(principals) as client:
         categories = await _call(client, OTHER_TOKEN, "extension_categories")
         projects = await _call(client, OTHER_TOKEN, "extension_projects")
 
-    assert categories == {"items": market_categories.table()}
+    assert categories == {"items": ext_categories.table()}
     assert projects == {"items": ["7000", "7100"]}
 
 

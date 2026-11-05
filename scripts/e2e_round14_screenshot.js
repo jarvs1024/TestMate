@@ -156,7 +156,7 @@ async function switchKind(page, kind) {
   await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(2600);
   await switchKind(page, '连接器');
-  await shot(page, 'market-mcp-no-dl', '资产市场 · 连接器页签 (没有安装包, 不显示下载计数)');
+  await shot(page, 'ext-mcp-no-dl', '扩展库 · 连接器页签 (没有安装包, 不显示下载计数)');
   const mcpCards = await page.evaluate(() => {
     const cards = [...document.querySelectorAll('.asset-card')];
     return {
@@ -173,7 +173,7 @@ async function switchKind(page, kind) {
   // ---- 技能/插件要有下载计数 (切到目标资产所在的那个页签) ----
   const kindTab = target.kind === 'plugin' ? '插件' : '技能';
   await switchKind(page, kindTab);
-  await shot(page, 'market-skill-dl-count', `资产市场 · ${kindTab}页签 (显示下载计数, 累计不清零)`);
+  await shot(page, 'ext-skill-dl-count', `扩展库 · ${kindTab}页签 (显示下载计数, 累计不清零)`);
   const sk = await cardDl(page, target.name);
   report.skillCard = sk;
   check(`${kindTab}卡片上**有**下载计数`, !!(sk && sk.hasDl), sk ? sk.dlText : `没找到卡片「${target.name}」`);

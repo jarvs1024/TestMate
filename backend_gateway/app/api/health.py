@@ -93,26 +93,26 @@ async def health_ready(response: Response) -> dict:
     overall_ok = mysql_ok and redis_ok
     if not overall_ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    market = await _check_marketplace()
+    ext = await _check_extensions()
     # ⚠️ 出口统一脱敏 —— 探针返回的是**原文**(内部日志要看), 这里对外只说"哪个不可用".
     if mysql_err:
         mysql_err = _public_error("MySQL", mysql_err)
     if redis_err:
         redis_err = _public_error("Redis", redis_err)
-    market = _sanitize_market(market)
+    ext = _sanitize_extensions(ext)
     return {
         "status": "ok" if overall_ok else "degraded",
         "checks": {
             "mysql": {"ok": mysql_ok, "error": mysql_err or None},
             "redis": {"ok": redis_ok, "error": redis_err or None},
-            "extensions": market,
+            "extensions": ext,
         },
     }
 
 
-def _sanitize_market(market: dict) -> dict:
+def _sanitize_extensions(ext: dict) -> dict:
     """扩展链路状态脱敏 (git 报错里有 SSH 仓库地址)."""
-    out = dict(market)
+    out = dict(ext)
     git = out.get("gitlab") or {}
     if git.get("error"):
         out["gitlab"] = {**git, "error": _public_error("GitLab", str(git["error"]))}
@@ -124,15 +124,15 @@ def _sanitize_market(market: dict) -> dict:
 # ---------------- 扩展链路 ----------------
 
 # GitLab 探针走 SSH 握手, 不能每次健康检查都打 —— 缓存 30s
-_market_probe_cache: dict = {}
-_market_probe_ttl = 30.0
+_ext_probe_cache: dict = {}
+_ext_probe_ttl = 30.0
 
 
 async def _probe_gitlab() -> Tuple[bool, str]:
     """探 GitLab 远端可达性 (ls-remote). 带 30s 缓存."""
     now = time.monotonic()
-    cached = _market_probe_cache.get("gitlab")
-    if cached and now - cached["ts"] < _market_probe_ttl:
+    cached = _ext_probe_cache.get("gitlab")
+    if cached and now - cached["ts"] < _ext_probe_ttl:
         return cached["ok"], cached["err"]
 
     ok, err = True, ""
@@ -151,11 +151,11 @@ async def _probe_gitlab() -> Tuple[bool, str]:
         # ⚠️ git 的报错里带 SSH 仓库地址 (内网 host + 仓库路径) —— 原文进日志, 不外发
         logger.warning("readiness: gitlab 探针失败: %s", err)
 
-    _market_probe_cache["gitlab"] = {"ok": ok, "err": err, "ts": now}
+    _ext_probe_cache["gitlab"] = {"ok": ok, "err": err, "ts": now}
     return ok, err
 
 
-async def _check_marketplace() -> dict:
+async def _check_extensions() -> dict:
     """扩展链路状态: GitLab 可达性 + 同步任务积压.
 
     ⚠️ **判定口径**: 扩展链路"坏没坏"看的是 `failed_assets` ——

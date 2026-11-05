@@ -4,7 +4,7 @@
  * 前端只是**提前提示** (别让用户填完一整张表单才被 422 拦下),
  * 真正的拦截在后端 —— 两边规则要一样, 不然会出现"前端说行、后端说不行".
  */
-import { SEGMENT_PATTERN, marketRules } from './assetForm';
+import { SEGMENT_PATTERN, extRules } from './assetForm';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 export interface McpParseOk {
   ok: true;
@@ -62,7 +62,7 @@ export function parseMcpConfig(text: string): McpParseResult {
     // ⚠️ 连接器名 = 资产 code 的约定: 小写字母/数字/连字符分段.
     //    详情页会**原样展示**这份配置, 用户照着加进自己的 MCP 配置里 ——
     //    名字起得像 "xx-xxx" 会跟扩展里的资产对不上, 也分不清是谁。
-    const rules = marketRules.value;
+    const rules = extRules.value;
     if (!rules) return { ok: false, error: '扩展规则尚未加载, 请重试' };
     if (!SEGMENT_PATTERN.test(name)) {
       return {
@@ -111,7 +111,7 @@ export function formatMcpConfig(text: string): string {
 
 /** 新建连接器的配置模板 —— 连接器名始终采用当前扩展示例. */
 export function mcpConfigTemplate(): string {
-  const example = marketRules.value?.code.example;
+  const example = extRules.value?.code.example;
   if (!example) return '';
   return JSON.stringify({
     mcpServers: {

@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from app.core import market_projects as mp
+from app.core import ext_projects as mp
 
 
 # ---------- 解析配置 ----------

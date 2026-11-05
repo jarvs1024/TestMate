@@ -225,7 +225,7 @@ async def test_publisher_whitelist_accepts_both_forms(client, whitelist):
     token = r.json()["access_token"]
     h = {"Authorization": f"Bearer {token}"}
 
-    from app.core.market_policy import can_publish
+    from app.core.ext_policy import can_publish
     async with AsyncSessionLocal() as s:
         user = (await s.execute(select(User).where(User.username == "zhangsan@twsc.com.cn"))).scalar_one()
         assert await can_publish(user) is True

@@ -5,11 +5,11 @@
  * 真正的拦截在后端 —— 两边规则不一样就会出现"前端说行、后端说不行".
  */
 import { beforeEach, describe, expect, it } from 'vitest';
-import { marketRules } from '../assetForm';
+import { extRules } from '../assetForm';
 import { formatMcpConfig, parseMcpConfig } from '../mcpConfig';
 
 beforeEach(() => {
-  marketRules.value = {
+  extRules.value = {
     code: {
       pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$',
       example: 'ssd-log-doctor', min_length: 3, max_length: 64,
@@ -91,8 +91,8 @@ describe('MCP 配置解析', () => {
   });
 
   it('命名校验消息使用当前规则的示例', () => {
-    marketRules.value = {
-      ...marketRules.value!,
+    extRules.value = {
+      ...extRules.value!,
       code: {
         pattern: '^[a-z0-9]+$', example: 'demo',
         min_length: 3, max_length: 64,

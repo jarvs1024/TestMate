@@ -137,7 +137,7 @@ const SCENES = [
     route: '/software',
     desc: '软件库 · 详情抽屉 (720px)',
     async open(page) {
-      // ⚠️ 软件卡片用的是 `.asset-card` (跟资产市场同款 class, 见 SoftwareCard.vue)
+      // ⚠️ 软件卡片用的是 `.asset-card` (跟扩展库同款 class, 见 SoftwareCard.vue)
       await page.waitForSelector('.asset-card', { timeout: 15000 });
       await sleep(1200);
       await page.evaluate(() => {
@@ -147,9 +147,9 @@ const SCENES = [
     },
   },
   {
-    key: 'market',
-    route: '/market',
-    desc: '资产市场 · 详情抽屉',
+    key: 'ext',
+    route: '/extensions',
+    desc: '扩展库 · 详情抽屉',
     async open(page) {
       await page.waitForSelector('.asset-card', { timeout: 15000 });
       await sleep(1500);

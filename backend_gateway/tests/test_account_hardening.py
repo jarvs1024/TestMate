@@ -509,7 +509,7 @@ async def test_public_download_setting_is_admin_only(client, stranger_user):
     })
     assert "extensions.public_download" not in _schema_keys(r.json())
 
-    r2 = await client.put(f"{SETTINGS}/marketplace.public_download", headers={
+    r2 = await client.put(f"{SETTINGS}/extensions.public_download", headers={
         "Authorization": f"Bearer {stranger_user['token']}"
     }, json={"value": "true"})
     assert r2.status_code == 403, r2.text

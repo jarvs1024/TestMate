@@ -79,7 +79,7 @@ describe('能力角色常量', () => {
   it('业务域标签: 已知映射 + 未知回退原值 + 空值兜底', () => {
     expect(categoryLabel('ssd-trace')).toBe('Trace 诊断');
     expect(categoryLabel('ssd-kb')).toBe('知识库');
-    expect(categoryLabel('ai-market')).toBe('插件技能');
+    expect(categoryLabel('ext-library')).toBe('插件技能');
     expect(categoryLabel('sw-library')).toBe('软件库');
     expect(categoryLabel('what-ever')).toBe('what-ever');
     expect(categoryLabel('')).toBe('—');
@@ -92,7 +92,7 @@ describe('能力角色常量', () => {
  *
  * ⚠️ 这是本轮修的用户投诉: 状态徽标的 class 以前按**原始 status** 生成,
  *    而看板 / 资产两种角色的 beta 和 stable **文案都是「正常」** ——
- *    同一句话两个颜色 (code-review 绿 / agent-market 橙), 用户看着莫名其妙.
+ *    同一句话两个颜色 (code-review 绿 / ext-library 橙), 用户看着莫名其妙.
  *    现在颜色按**语义色调**走: 「正常」一律绿色.
  */
 describe('状态语义色调', () => {

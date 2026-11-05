@@ -106,7 +106,7 @@ async def _mcp_client(principals):
 
 @pytest.fixture
 def asset_workspace(tmp_path, monkeypatch):
-    workspace = tmp_path / "market-workspace"
+    workspace = tmp_path / "ext-workspace"
     workspace.mkdir()
     monkeypatch.setattr(git_sync, "WORKSPACE", workspace)
     return workspace

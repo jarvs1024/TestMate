@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 资产市场 —— 真实业务场景端到端验收.
+ * 扩展库 —— 真实业务场景端到端验收.
  *
  * 场景: 团队新同事「小王」入职, 要把自研的技能分享到市场;
  *       管理员要审核; 同事「小李」把它装到自己机器上; 后来资产被下架再重新上架,
@@ -12,7 +12,7 @@
  * 覆盖: 上传 → 待审核 → 驳回 → 重新提交 → 通过 → 上架可见 → 安装 →
  *       可更新 → 下架(已装的仍可见) → 重新上架 → 彻底删除 → 审计/回执/状态统计.
  *
- * 用法: node scripts/e2e_market_scenarios.js
+ * 用法: node scripts/e2e_ext_scenarios.js
  */
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
@@ -184,7 +184,7 @@ z.close()
     });
     // ===== ① 小王上传技能包 → 进入待审核 =====
     const pub = await openAs(browser, pubToken, { id: 0, username: PUBLISHER.username, role: 'tester' });
-    await pub.page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await pub.page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await pub.page.waitForSelector('.mini-btn.primary', { timeout: 15000 });
     // 上传入口: 先选形态 (技能) → 进安装包表单
     await openUpload(pub.page, '技能');
@@ -278,7 +278,7 @@ z.close()
 
     // ===== ② 审核台: 管理员能看到并驳回 =====
     const adm = await openAs(browser, adminToken, { id: 1, username: ADMIN, role: 'admin' });
-    await adm.page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await adm.page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await adm.page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1500);
     await adm.page.evaluate(() => {
@@ -385,7 +385,7 @@ z.close()
 
     // ===== ④ 小李(安装者) 装这个技能 =====
     const ins = await openAs(browser, insToken, { id: 0, username: INSTALLER.username, role: 'viewer' });
-    await ins.page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await ins.page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await ins.page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1500);
     await ins.page.evaluate(() => {
@@ -420,7 +420,7 @@ z.close()
     await sleep(700);
     const chipTexts = await ins.page.evaluate(() =>
       [...document.querySelectorAll('.filter-panel .fp-item')].map((c) => c.textContent.replace(/\s+/g, ' ').trim()));
-    check('⑬c 市场页有项目筛选 (下拉菜单里)', chipTexts.length >= 2, chipTexts.join(' | '));
+    check('⑬c 扩展页有项目筛选 (下拉菜单里)', chipTexts.length >= 2, chipTexts.join(' | '));
     await ins.page.evaluate(() => {
       const chip = [...document.querySelectorAll('.filter-panel .fp-item')]
         .find((x) => x.textContent.includes('6100'));
@@ -511,7 +511,7 @@ z.close()
     await pub.page.reload({ waitUntil: 'domcontentloaded' });
     await pub.page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1500);
-    // ⚠️ 市场页默认停在「插件」tab —— 场景资产是 skill, 得切过去才看得见
+    // ⚠️ 扩展页默认停在「插件」tab —— 场景资产是 skill, 得切过去才看得见
     await pub.page.evaluate(() => {
       const t = [...document.querySelectorAll('.kind-tab')].find((x) => x.textContent.includes('技能'));
       t && t.click();

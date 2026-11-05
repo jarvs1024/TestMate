@@ -42,7 +42,7 @@ function makeRouter() {
   });
 }
 
-async function mountHeader(path = '/market') {
+async function mountHeader(path = '/extensions') {
   // ⚠️ 页头里有 userStore (pinia) —— 不装 pinia 会直接抛错
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -70,7 +70,7 @@ describe('页头 · 能力身份条', () => {
   it('身份信息渲染在**标题行**里 (图标 + 版本 + 角色·分类 + 状态)', async () => {
     setCapIdentity({
       icon: '🏪', name: '扩展', version: 'v0.1.0',
-      kind: 'platform', category: 'ai-market', status: 'beta',
+      kind: 'platform', category: 'ext-library', status: 'beta',
     });
     const { w } = await mountHeader('/extensions');
     const name = w.find('.pt-name');
@@ -167,7 +167,7 @@ describe('页头 · 平台名称/副标题/版本号走设置项', () => {
 describe('页头 · 状态徽标按语义色调上色', () => {
   it('资产的 beta 文案是「正常」→ class 是 st-ok (不是 st-beta)', async () => {
     setCapIdentity({
-      icon: '🏪', name: '扩展', kind: 'platform', category: 'ai-market', status: 'beta',
+      icon: '🏪', name: '扩展', kind: 'platform', category: 'ext-library', status: 'beta',
     });
     const { w } = await mountHeader('/extensions');
     const badge = w.find('.pt-badge');

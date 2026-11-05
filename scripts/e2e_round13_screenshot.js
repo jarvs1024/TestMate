@@ -119,13 +119,13 @@ async function receiptCount(token) {
   // 不同访问地址 → 通知里的链接跟着变
   const pvIp = await preview(token, { 'X-Forwarded-Host': '10.0.0.5:8081' });
   const ipLink = (pvIp[0]?.text || '').match(/http:\/\/[^)\s]+/)?.[0] || '';
-  check('用 10.0.0.5:8081 访问 → 链接就是 http://10.0.0.5:8081/market',
-    ipLink === 'http://10.0.0.5:8081/market', ipLink);
+  check('用 10.0.0.5:8081 访问 → 链接就是 http://10.0.0.5:8081/extensions',
+    ipLink === 'http://10.0.0.5:8081/extensions', ipLink);
 
   const pvHost = await preview(token, { 'X-Forwarded-Host': 'testmate.company.com' });
   const hostLink = (pvHost[0]?.text || '').match(/http:\/\/[^)\s]+/)?.[0] || '';
   check('用域名访问 → 链接就是那个域名 (端口不乱加)',
-    hostLink === 'http://testmate.company.com/market', hostLink);
+    hostLink === 'http://testmate.company.com/extensions', hostLink);
 
   // ⚠️ Host 头是客户端可控的 —— 恶意值必须被清洗掉
   const pvEvil = await preview(token, { 'X-Forwarded-Host': 'evil.com/#x' });

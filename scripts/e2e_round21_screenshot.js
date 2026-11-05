@@ -98,7 +98,7 @@ async function shot(page, name, desc) {
 
   // ---------- ② 打开详情抽屉 (先点卡, 再按**这张卡**反查 code) ----------
   console.log('\n── ② 打开详情抽屉 ──');
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1800);
 
@@ -116,7 +116,7 @@ async function shot(page, name, desc) {
   await page.waitForSelector('.ins-file', { timeout: 15000 });
   await sleep(700);
 
-  // ⚠️ 必须按**点开的这张卡**去反查 code —— 市场页有分页/排序,
+  // ⚠️ 必须按**点开的这张卡**去反查 code —— 扩展页有分页/排序,
   //    预先从 API 挑一个资产再去找它的卡, 很容易点开的是另一张.
   const asset = assets.find((a) => a.name === opened.name && a.version === opened.version)
     || assets.find((a) => a.name === opened.name);

@@ -104,7 +104,7 @@ describe('软件库顶部: 两行融合成一行', () => {
     expect(w.find('.cat-chips').exists()).toBe(false);
   });
 
-  it('分类 tab 用的是市场那一套 .kind-tab (不是旧的 .chip)', async () => {
+  it('分类 tab 用的是扩展那一套 .kind-tab (不是旧的 .chip)', async () => {
     const w = await mountList();
     const tabs = w.findAll('.mk-actions .kind-tabs .kind-tab');
     expect(tabs.length).toBeGreaterThan(0);
@@ -135,7 +135,7 @@ describe('.kind-tab 样式是全局的 (两页共用一份)', () => {
     expect(css).toContain('var(--primary-grad)');
   });
 
-  it('市场页那份 scoped 样式删了 (别各抄一份, 会漂移)', () => {
+  it('扩展页那份 scoped 样式删了 (别各抄一份, 会漂移)', () => {
     const src = read('src/views/Capability/Catalog/index.vue');
     // 只留分类 chip 的 .count, 类型 tab 的样式全在全局
     expect(src).not.toMatch(/^\.kind-tab\s*\{/m);
@@ -147,9 +147,9 @@ describe('.kind-tab 样式是全局的 (两页共用一份)', () => {
  * 顶部动作条跟「扩展」那一页**同一个面板** (2026-10-31 第十七轮).
  *
  * ⚠️ 用户原话「图1 的样式保持和图2 的样式一致」——
- *    以前市场那行是**白底圆角面板 + 粘顶**, 软件库是**裸的一行**, 两页不是一套东西.
+ *    以前扩展那行是**白底圆角面板 + 粘顶**, 软件库是**裸的一行**, 两页不是一套东西.
  */
-describe('顶部动作条: 跟市场页同一个面板', () => {
+describe('顶部动作条: 跟扩展页同一个面板', () => {
   it('面板样式在全局 main.css 里 (两页共用一份)', () => {
     const css = read('src/styles/main.css');
     expect(css).toMatch(/^\.mk-actions\s*\{/m);
@@ -165,7 +165,7 @@ describe('顶部动作条: 跟市场页同一个面板', () => {
     expect(css).toMatch(/^\.mk-actions \.search\s*\{/m);
   });
 
-  it('市场页那份 scoped 副本删了 (白底面板/搜索框都走全局)', () => {
+  it('扩展页那份 scoped 副本删了 (白底面板/搜索框都走全局)', () => {
     const src = read('src/views/Capability/Catalog/index.vue');
     expect(src).not.toMatch(/^\.mk-actions\s*\{/m);
     expect(src).not.toMatch(/^\.ma-right\s*\{/m);
@@ -183,6 +183,6 @@ describe('顶部动作条: 跟市场页同一个面板', () => {
     const sw = read('src/views/Software/index.vue');
     const mk = read('src/views/Capability/Catalog/index.vue');
     expect(sw).toMatch(/\.software\s*\{[^}]*flex-direction:\s*column[^}]*gap:\s*14px/);
-    expect(mk).toMatch(/\.market\s*\{[^}]*flex-direction:\s*column[^}]*gap:\s*14px/);
+    expect(mk).toMatch(/\.ext-catalog\s*\{[^}]*flex-direction:\s*column[^}]*gap:\s*14px/);
   });
 });

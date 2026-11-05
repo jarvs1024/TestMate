@@ -12,9 +12,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from app.api import marketplace
+from app.api import extensions
 from app.core import git_sync
-from app.core.market_catalog import build_manifest
+from app.core.ext_catalog import build_manifest
 from app.db.session import AsyncSessionLocal
 from app.mcp.common.auth import McpTokenVerifier
 from app.mcp.common.context import McpContext, Principal
@@ -54,7 +54,7 @@ def notifications(monkeypatch):
         )
         return True
 
-    monkeypatch.setattr(marketplace.market_notify, "notify_asset", fake_notify)
+    monkeypatch.setattr(extensions.ext_notify, "notify_asset", fake_notify)
     return sent
 
 
@@ -104,7 +104,7 @@ async def _transport_client():
     assert isinstance(server._token_verifier, McpTokenVerifier)
     dispatcher = build_dispatcher({"extensions": server})
     app = FastAPI()
-    app.include_router(marketplace.router, prefix=API)
+    app.include_router(extensions.router, prefix=API)
     app.mount("/mcp", dispatcher)
     async with run_mcp_lifespan(dispatcher):
         async with AsyncClient(
@@ -702,8 +702,8 @@ async def test_publish_adapter_maps_every_explicit_route_parameter(monkeypatch):
         calls["route"] = kwargs
         return _job(kwargs["code"])
 
-    monkeypatch.setattr(marketplace, "require_publisher", require_publisher)
-    monkeypatch.setattr(marketplace, "upload_asset", upload_asset)
+    monkeypatch.setattr(extensions, "require_publisher", require_publisher)
+    monkeypatch.setattr(extensions, "upload_asset", upload_asset)
     files = {"SKILL.md": "skill body", "docs/note.txt": "note body"}
     await adapter.publish(
         ctx,
@@ -788,9 +788,9 @@ async def test_update_adapter_maps_every_explicit_route_parameter(monkeypatch):
         calls["route"] = kwargs
         return _job(kwargs["code"], "update")
 
-    monkeypatch.setattr(marketplace, "get_asset", get_asset)
-    monkeypatch.setattr(marketplace, "require_publisher", require_publisher)
-    monkeypatch.setattr(marketplace, "update_asset", update_asset)
+    monkeypatch.setattr(extensions, "get_asset", get_asset)
+    monkeypatch.setattr(extensions, "require_publisher", require_publisher)
+    monkeypatch.setattr(extensions, "update_asset", update_asset)
     files = {"SKILL.md": "new body"}
     await adapter.update(
         ctx,
@@ -855,8 +855,8 @@ async def test_edit_meta_adapter_maps_every_explicit_route_parameter(monkeypatch
         calls["route"] = kwargs
         return _job(kwargs["code"], "meta_only")
 
-    monkeypatch.setattr(marketplace, "require_publisher", require_publisher)
-    monkeypatch.setattr(marketplace, "update_asset_meta", update_asset_meta)
+    monkeypatch.setattr(extensions, "require_publisher", require_publisher)
+    monkeypatch.setattr(extensions, "update_asset_meta", update_asset_meta)
     changes = {
         "name": "Meta name",
         "icon": "M",
@@ -894,8 +894,8 @@ async def test_submit_review_adapter_maps_code_comment_and_any_user_name(monkeyp
         calls["route"] = kwargs
         return {"ok": True, "code": kwargs["code"], "changed": True}
 
-    monkeypatch.setattr(marketplace, "require_publisher", require_publisher)
-    monkeypatch.setattr(marketplace, "submit_for_review", submit_for_review)
+    monkeypatch.setattr(extensions, "require_publisher", require_publisher)
+    monkeypatch.setattr(extensions, "submit_for_review", submit_for_review)
     await adapter.submit_review(ctx, code="mapping-submit", comment="Exact comment")
 
     call = calls["route"]
@@ -915,8 +915,8 @@ async def test_unpublish_adapter_maps_confirmation_and_reason(monkeypatch):
         calls["route"] = kwargs
         return {"ok": True, "code": kwargs["code"], "changed": True}
 
-    monkeypatch.setattr(marketplace, "require_publisher", require_publisher)
-    monkeypatch.setattr(marketplace, "unpublish_asset", unpublish_asset)
+    monkeypatch.setattr(extensions, "require_publisher", require_publisher)
+    monkeypatch.setattr(extensions, "unpublish_asset", unpublish_asset)
     await adapter.unpublish_request(ctx, code="mapping-unpublish", reason="Exact reason")
 
     call = calls["route"]

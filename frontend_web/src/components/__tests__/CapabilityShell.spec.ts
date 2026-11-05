@@ -32,12 +32,12 @@ describe('能力身份条 (2026-10-31 第十五轮)', () => {
     mount(CapabilityShell, {
       props: {
         name: '扩展库', icon: '🏪', kind: 'platform', status: 'beta',
-        version: 'v0.1.0', category: 'ai-market',
+        version: 'v0.1.0', category: 'ext-library',
       },
     });
     expect(capIdentity.value).toEqual({
       icon: '🏪', name: '扩展库', version: 'v0.1.0',
-      kind: 'platform', category: 'ai-market', status: 'beta',
+      kind: 'platform', category: 'ext-library', status: 'beta',
     });
   });
 

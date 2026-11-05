@@ -322,7 +322,7 @@ def write_text(rel_path: str, content: str) -> None:
 
     ⚠️ **原子写** (2026-10-25): 以前是 `target.write_text(...)` —— 直接截断重写.
        两个线程同时写 index.json 时会写出**截断的 JSON**, 而 read_index 遇解析失败
-       是静默返回 None 的 (market_catalog.py:282-290) → 回灌无声无息地什么都不做.
+       是静默返回 None 的 (ext_catalog.py:282-290) → 回灌无声无息地什么都不做.
        现在先写同目录的临时文件, 再 os.replace 原子替换 —— 读者要么看到旧内容,
        要么看到新内容, 不会是半截的.
     """

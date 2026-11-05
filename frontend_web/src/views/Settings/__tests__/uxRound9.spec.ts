@@ -58,7 +58,7 @@ vi.mock('@/api/settings', () => ({
 }));
 
 vi.mock('@/api/assets', () => ({
-  getMarketConfig: vi.fn(async () => ({ workspace: '/tmp/ws', remote: 'git@x:y.git' })),
+  getExtConfig: vi.fn(async () => ({ workspace: '/tmp/ws', remote: 'git@x:y.git' })),
   listNotifications: vi.fn(async () => ({ items: [] })),
 }));
 

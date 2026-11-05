@@ -37,7 +37,7 @@ class AgentCategory(str, enum.Enum):
     ssd_report = "ssd-report"         # 测试报告 / 周报
     ssd_ops = "ssd-ops"               # 机台/环境运维
     auto_code = "auto-code"           # 自动化代码 (代码检视 / PR-Agent / 静态分析等)
-    ai_market = "ai-market"           # 插件/技能/连接器扩展入口 (跳 /market 页)
+    ext_library = "ext-library"           # 插件/技能/连接器扩展入口 (跳 /extensions 页)
     ssd_kb = "ssd-kb"                 # 知识库 (RAGFlow 数据集 / 文档 / 检索)
     sw_library = "sw-library"         # 软件库 (公司内部软件: 功能 / 详情 / 适用 / 更新说明)
 
@@ -60,7 +60,7 @@ class AgentKind(str, enum.Enum):
                  可复用资产 (插件 / 技能 / 连接器) + RAG 语料 + 内部软件
 
     ⚠️ 资产组里的几张卡怎么区分? 靠 **category** (业务域):
-       ai-market (插件技能) / ssd-kb (知识库) / sw-library (软件库).
+       ext-library (插件技能) / ssd-kb (知识库) / sw-library (软件库).
        细分信息没丢, 只是不该由角色徽标来背.
 
     ⚠️ 名字与值故意一致 (都无连字符): MySQL ENUM 存的是 enum **name**,

@@ -20,8 +20,8 @@ from typing import Any
 from sqlalchemy import select
 
 from app.core import git_sync
-from app.core import market_categories
-from app.core import market_state
+from app.core import ext_categories
+from app.core import ext_state
 from app.core.mcp_config import validate_mcp_config
 from app.models.asset import Asset
 
@@ -33,9 +33,9 @@ VALID_KINDS = set(KIND_DIRS)
 
 logger = logging.getLogger(__name__)
 
-# 分类 → 目录 slug: **唯一真源在 market_categories** (分类表 / 校验 / 目录 / 前端 chip 共用)
-# 这里保留两个别名是为了不破坏既有引用 (app/api/marketplace.py 等)
-from app.core.market_categories import (  # noqa: E402
+# 分类 → 目录 slug: **唯一真源在 ext_categories** (分类表 / 校验 / 目录 / 前端 chip 共用)
+# 这里保留两个别名是为了不破坏既有引用 (app/api/extensions.py 等)
+from app.core.ext_categories import (  # noqa: E402
     MISC_SLUG as DEFAULT_CATEGORY_SLUG,
     slug_of as _category_slug_of,
 )
@@ -68,7 +68,7 @@ def category_slug(category: str) -> str:
 
 
 # 兼容旧引用 (只读)
-CATEGORY_SLUGS = {c["name"]: c["slug"] for c in market_categories.table()}
+CATEGORY_SLUGS = {c["name"]: c["slug"] for c in ext_categories.table()}
 
 
 def asset_git_path(kind: str, category: str, code: str) -> str:
@@ -161,7 +161,7 @@ def build_manifest(
         raise ManifestError("summary 必填且不超过 500 字符")
     # ⚠️ 分类归一: 不在分类表里的一律归「其它」——
     #    自定义分类不该在 GitLab 里开新目录, 也不该在前端留一个筛不出来的孤儿分类.
-    category = market_categories.normalize(category)
+    category = ext_categories.normalize(category)
 
     # 适用项目 (空 = 通用) —— 只校验长度, 归一在上传入口做
     # (项目列表是配置, manifest 是真源: 项目从列表里删掉了, 老资产的归属也不该丢)
@@ -391,13 +391,13 @@ async def apply_index_to_db(session) -> tuple[int, int]:
         #    会让资产在所有列表里不可见且极难排查. 不在白名单的一律归 unpublished
         #    (宁可不展示, 也不错误上架), 同时记日志给运维留线索.
         raw_status = e.get("publish_status") or "published"
-        if raw_status not in market_state.ALL_STATES:
+        if raw_status not in ext_state.ALL_STATES:
             logger.warning(
                 "index.json 里的 publish_status 不合法, 已按 unpublished 处理: "
                 "code=%s status=%r",
                 code, str(raw_status)[:40],
             )
-            raw_status = market_state.UNPUBLISHED
+            raw_status = ext_state.UNPUBLISHED
         a.publish_status = raw_status
         # 审核意见 (索引里没有这一项的旧数据 = 没有意见)
         a.review_note = e.get("review_note") or ""

@@ -80,7 +80,7 @@ async def test_admin_still_sees_credentials(client, admin_user):
 async def test_normal_user_cannot_change_settings(client, stranger_user):
     """改设置一直是 admin only —— 补一条回归."""
     r = await client.put(
-        f"{SETTINGS}/marketplace.sync.interval_seconds",
+        f"{SETTINGS}/extensions.sync.interval_seconds",
         json={"value": "999"}, headers=_stranger_headers(stranger_user),
     )
     assert r.status_code == 403, r.text
@@ -145,7 +145,7 @@ async def test_normal_user_sync_status_hides_system_counts(
     restore_git_config, publisher_user,
 ):
     """普通用户看 sync-status → 系统级计数归零, 但"我自己"的还在."""
-    from tests.test_market_api import _enable_publisher, _upload
+    from tests.test_ext_api import _enable_publisher, _upload
 
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}

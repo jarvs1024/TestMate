@@ -1,4 +1,4 @@
-"""资产市场 —— **只改元信息** (PATCH /assets/{code}) 的单元测试 (2026-10-30 · 第十一轮 · 问题6).
+"""扩展库 —— **只改元信息** (PATCH /assets/{code}) 的单元测试 (2026-10-30 · 第十一轮 · 问题6).
 
 用户报的问题: "插件技能连接器支持编辑相关信息（同样是作者和管理才能编辑）".
 
@@ -297,7 +297,7 @@ async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_
       ② 审核通过 → **一条都不发** (包没变, 扩展群那条是假消息);
       ③ 对照: 新资产上架 → 审核通过 → **要发** publish (包真的变了).
     """
-    from app.api import marketplace as mk_api
+    from app.api import extensions as mk_api
 
     sent: list[tuple[str, dict]] = []
 
@@ -306,7 +306,7 @@ async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_
         sent.append((event, kw))
         return True
 
-    monkeypatch.setattr(mk_api.market_notify, "notify_asset", fake_notify)
+    monkeypatch.setattr(mk_api.ext_notify, "notify_asset", fake_notify)
 
     # ⚠️ 审核要**开着**, 否则压根不进审核流程 (也就没有审核通知)
     await set_setting("extensions.review.enabled", "true")
@@ -340,10 +340,10 @@ async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_
     assert sent == [], f"只改了信息, 审核通过**不该**通知扩展群 (包没变): {sent}"
 
 
-async def test_new_asset_approve_still_notifies_market(client, auth, ws, restore_git_config,  # noqa: ARG001
+async def test_new_asset_approve_still_notifies_ext(client, auth, ws, restore_git_config,  # noqa: ARG001
                                                        publisher_user, monkeypatch):
     """对照: **新资产**审核通过 → 扩展群**照样**要发 publish (包真的变了)."""
-    from app.api import marketplace as mk_api
+    from app.api import extensions as mk_api
 
     sent: list[tuple[str, dict]] = []
 
@@ -352,7 +352,7 @@ async def test_new_asset_approve_still_notifies_market(client, auth, ws, restore
         sent.append((event, kw))
         return True
 
-    monkeypatch.setattr(mk_api.market_notify, "notify_asset", fake_notify)
+    monkeypatch.setattr(mk_api.ext_notify, "notify_asset", fake_notify)
 
     await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)

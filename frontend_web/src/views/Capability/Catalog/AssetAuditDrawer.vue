@@ -88,7 +88,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>();
  * 审计动作的**筛选选项**.
  *
  * ⚠️ 这里只是"筛哪些动作"的下拉项 —— 显示的中文由**后端**给 (item.action_label,
- *    见 market_state.audit_action_label), 前端不再自己翻译:
+ *    见 ext_state.audit_action_label), 前端不再自己翻译:
  *    以前两边各写一份, 结果漏了几个动作 (create/update/approve/reject/submit),
  *    还多一个**永远不会出现**的 unpublish_reject (状态机里没这个迁移).
  */

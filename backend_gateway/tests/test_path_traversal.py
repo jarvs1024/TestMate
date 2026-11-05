@@ -9,7 +9,7 @@
     **仓库写权限 ≠ 服务器文件读权限** —— 中间不能有这一步跳跃.
 
 两道闸:
-    ① 落库侧: market_catalog.apply_index_to_db 校验, 不安全的条目直接跳过
+    ① 落库侧: ext_catalog.apply_index_to_db 校验, 不安全的条目直接跳过
     ② 读侧:   git_sync.resolve_in_workspace 校验, 越界当"没落盘" (404)
 """
 from __future__ import annotations
@@ -88,7 +88,7 @@ def test_resolve_in_workspace_blocks_symlink_escape(monkeypatch, tmp_path):
 
 async def test_apply_index_skips_unsafe_git_path(monkeypatch):
     """index.json 里带穿越路径的资产 → 不入库."""
-    from app.core import market_catalog
+    from app.core import ext_catalog
 
     index = {
         "assets": [
@@ -100,14 +100,14 @@ async def test_apply_index_skips_unsafe_git_path(monkeypatch):
     async def _fake_read_index():
         return index
 
-    monkeypatch.setattr(market_catalog, "read_index", _fake_read_index)
+    monkeypatch.setattr(ext_catalog, "read_index", _fake_read_index)
 
     from app.db.session import AsyncSessionLocal
     from app.models.asset import Asset
     from sqlalchemy import select
 
     async with AsyncSessionLocal() as s:
-        added, updated = await market_catalog.apply_index_to_db(s)
+        added, updated = await ext_catalog.apply_index_to_db(s)
 
     assert added == 1, added
     async with AsyncSessionLocal() as s:

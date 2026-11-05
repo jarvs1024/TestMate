@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * 资产市场的**异常与边界**端到端验收 (真实 Chrome).
+ * 扩展库的**异常与边界**端到端验收 (真实 Chrome).
  *
- * 正常路径由 e2e_market.js 覆盖; 这里专挑"容易出事"的地方:
+ * 正常路径由 e2e_ext.js 覆盖; 这里专挑"容易出事"的地方:
  *   ① 包名不合规 → 体检要说不装不上, 且不让上架
  *   ② code 与包名不一致 → 报错 + 不让上架
  *   ③ MCP 配置非法 / 连接器名不合法 → 实时报错 + 不让上架
@@ -135,7 +135,7 @@ async function openUpload(page, kindLabel) {
     localStorage.setItem('testmate:token', t);
     localStorage.setItem('testmate:user', JSON.stringify(u));
   }, tk, me);
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1500);
 
@@ -269,7 +269,7 @@ async function openUpload(page, kindLabel) {
   //    ⚠️ 语义: 选某项目 = 该项目特有 **+ 通用** —— 所以通用资产仍然显示是**对的**
   const emptyState = await page.evaluate(() => ({
     cards: document.querySelectorAll('.asset-card').length,
-    state: (document.querySelector('.market .state')?.textContent || '').trim(),
+    state: (document.querySelector('.ext-catalog .state')?.textContent || '').trim(),
     allGeneral: [...document.querySelectorAll('.asset-card .ac-badge.proj')].length === 0,
   }));
   check('E14 项目筛选 → 只剩通用资产, 页面不报错',
@@ -326,7 +326,7 @@ async function openUpload(page, kindLabel) {
     if (st.status === 200) break;
   }
 
-  // 在市场页找到它 → 发布新版本
+  // 在扩展页找到它 → 发布新版本
   // ⚠️ 必须**刷新** —— 资产是刚上传的, 页面上的列表还是旧的
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.asset-card', { timeout: 15000 });
@@ -343,7 +343,7 @@ async function openUpload(page, kindLabel) {
     c.click();
     return true;
   }, LEGACY_NAME);
-  check('E18 市场页能找到这个存量资产', opened);
+  check('E18 扩展页能找到这个存量资产', opened);
   await page.waitForSelector('.el-drawer', { timeout: 10000 });
   await sleep(1200);
   await page.evaluate(() => {
@@ -432,7 +432,7 @@ async function openUpload(page, kindLabel) {
   // ================= ⑥ 未登录 / 无权访问详情 =================
   const anon = await browser.createBrowserContext();
   const anonPage = await anon.newPage();
-  await anonPage.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await anonPage.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(1200);
   const anonState = await anonPage.evaluate(async () => {
     const r = await fetch('/api/v1/extensions/definitely-not-exists', {

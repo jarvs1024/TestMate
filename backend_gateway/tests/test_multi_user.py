@@ -10,7 +10,7 @@
 """
 from __future__ import annotations
 
-from tests.test_market_api import _enable_publisher, _upload
+from tests.test_ext_api import _enable_publisher, _upload
 
 API = "/api/v1/extensions"
 

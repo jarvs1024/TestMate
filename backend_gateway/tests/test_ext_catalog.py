@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core import market_catalog as mc
+from app.core import ext_catalog as mc
 
 
 # ---------- 文件校验 ----------
@@ -68,7 +68,7 @@ def test_validate_version():
 
 
 def test_category_slug_and_path():
-    # 分类 → 目录 slug (分类表是唯一真源, 详见 test_market_categories.py)
+    # 分类 → 目录 slug (分类表是唯一真源, 详见 test_ext_categories.py)
     # ⚠️ 2026-10-26 分类重排: 目录 slug 也跟着换了
     #    (质量诊断/diagnose → 质量保障/quality, 方案用例/cases → 效率工具/efficiency …)
     assert mc.category_slug("质量保障") == "quality"

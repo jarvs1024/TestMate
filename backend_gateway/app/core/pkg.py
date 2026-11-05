@@ -49,7 +49,7 @@ class ExtractedPackage:
 
     files: list[str]           # 相对解压根目录的路径列表
     total_bytes: int
-    package_sha256: str        # 原始压缩包的 sha256 (字节稳定, 用于 marketplace source.sha256)
+    package_sha256: str        # 原始压缩包的 sha256 (字节稳定, 用于 marketplace.json 的 source.sha256)
     suffix: str                # 原始包扩展名
 
 
@@ -352,7 +352,7 @@ def build_zip(src_dir: Path, prefix: str = "") -> bytes:
       - 每个条目的时间戳固定为 1980-01-01 (zip 格式的最早时间)
       - 压缩方式与级别固定
 
-    为什么要确定性: Qoder 原生 marketplace 的 source.sha256 必须与实际下载到的
+    为什么要确定性: Qoder 市场清单 (marketplace.json) 的 source.sha256 必须与实际下载到的
     字节一致. 若每次请求都重新打包, sha256 会随实现细节漂移 → Qoder 校验失败.
     """
     import io

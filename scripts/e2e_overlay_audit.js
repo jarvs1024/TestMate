@@ -119,7 +119,7 @@ const SCENES = [
     },
   },
   {
-    key: 'extensions', route: '/extensions', desc: '资产市场 · 详情抽屉',
+    key: 'extensions', route: '/extensions', desc: '扩展库 · 详情抽屉',
     async open(page) {
       await page.waitForSelector('.asset-card', { timeout: 15000 });
       await sleep(1500);

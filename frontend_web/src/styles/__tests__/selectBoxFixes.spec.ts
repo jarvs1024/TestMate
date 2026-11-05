@@ -160,7 +160,7 @@ vi.mock('@/api/software', () => ({
   })),
 }));
 
-/** 分类表 —— 跟后端 market_categories.py 的 5 类一致 (desc 是本轮改短后的) */
+/** 分类表 —— 跟后端 ext_categories.py 的 5 类一致 (desc 是本轮改短后的) */
 const CATEGORIES = [
   { name: '质量保障', slug: 'quality', desc: '兜住质量 · 定位问题、给判据' },
   { name: '效率工具', slug: 'efficiency', desc: '提效 · 自动化、造数、脚本' },

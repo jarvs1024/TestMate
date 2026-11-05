@@ -78,7 +78,7 @@ function cap(over: any = {}) {
 
 const CAPS = [
   cap({ id: 1, code: 'code-review', name: '代码检视', icon: '🧬', kind: 'board', status: 'stable', category: 'auto-code', route: 'page:code-review' }),
-  cap({ id: 2, code: 'agent-market', name: '扩展库', icon: '🏪', kind: 'platform', status: 'beta', category: 'ai-market', route: 'page:extensions', cta: '浏览资产' }),
+  cap({ id: 2, code: 'ext-library', name: '扩展库', icon: '🏪', kind: 'platform', status: 'beta', category: 'ext-library', route: 'page:extensions', cta: '浏览资产' }),
   cap({ id: 3, code: 'kb-inventory', name: '知识库', icon: '📚', kind: 'platform', status: 'stable', category: 'ssd-kb', route: 'page:kb-manage', cta: '检索语料' }),
   cap({ id: 4, code: 'log-analysis', name: '日志分析', icon: '📜', kind: 'tool', status: 'beta', category: 'ssd-trace' }),
   cap({ id: 5, code: 'testcase-gen', name: '文本用例生成', icon: '🧪', kind: 'tool', status: 'draft', category: 'ssd-spec' }),
@@ -220,7 +220,7 @@ describe('首页 · 能力墙', () => {
   it('匿名用户: 点非公开能力 → 去登录 (带 redirect)', async () => {
     const { w } = await mountHome({ loggedIn: false });
     const card = w.findAllComponents({ name: 'CapabilityCard' })
-      .find((c) => c.props('capability').code === 'agent-market')!;
+      .find((c) => c.props('capability').code === 'ext-library')!;
     await card.find('.cc-cta').trigger('click');
     expect(pushSpy).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'login', query: { redirect: expect.any(String) } }),
@@ -231,7 +231,7 @@ describe('首页 · 能力墙', () => {
   it('登录用户: 点任意能力直接进对应页', async () => {
     const { w } = await mountHome({ loggedIn: true });
     const card = w.findAllComponents({ name: 'CapabilityCard' })
-      .find((c) => c.props('capability').code === 'agent-market')!;
+      .find((c) => c.props('capability').code === 'ext-library')!;
     await card.find('.cc-cta').trigger('click');
     expect(pushSpy).toHaveBeenCalledWith({ name: 'extensions' });
     w.unmount();

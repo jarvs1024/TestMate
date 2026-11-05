@@ -99,7 +99,7 @@ async function shot(page, name, desc) {
 
   // ================= 页面层 =================
   console.log('\n── ② 页面: 选分类后别的分类数字不消失 ──');
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(2800);
 
   const chipCounts = () => page.evaluate(() => {
@@ -150,7 +150,7 @@ async function shot(page, name, desc) {
     JSON.stringify({ before: catsBefore, after: catsAfter }));
   check('⚠️ 数字没消失 (每个分类 chip 都还有徽标)',
     Object.values(catsAfter).every((v) => v.text !== null), JSON.stringify(catsAfter));
-  await shot(page, 'market-cat-selected', `市场页 · 选中「${target}」后, 其它分类的数字仍在`);
+  await shot(page, 'ext-cat-selected', `扩展页 · 选中「${target}」后, 其它分类的数字仍在`);
 
   await browser.close();
 

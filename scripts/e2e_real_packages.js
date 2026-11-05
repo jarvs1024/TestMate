@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * 资产市场 —— **真实包**端到端验收.
+ * 扩展库 —— **真实包**端到端验收.
  *
- * 与 e2e_market_scenarios.js 的区别: 那个造的是占位级包 (一个 SKILL.md),
+ * 与 e2e_ext_scenarios.js 的区别: 那个造的是占位级包 (一个 SKILL.md),
  * 测不出多文件目录结构、隐藏目录 (.qoder-plugin/)、安装产物是否逐字一致.
  * 这里用 scripts/make_real_packages.py 造的两个**结构完整、内容真实**的包:
  *   1. ssd-log-triage    —— skill:   SKILL.md + references/ + scripts/ + assets/
@@ -655,7 +655,7 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
       defaultViewport: { width: 1600, height: 1000 },
     });
-    // 前端真实页面看一眼: 上架后市场页能看到这个包
+    // 前端真实页面看一眼: 上架后扩展页能看到这个包
     const ctx = await browser.createBrowserContext();
     const page = await ctx.newPage();
     const jsErrors = [];
@@ -709,8 +709,8 @@ async function runRetryScenario(adminToken, pubToken, pkg) {
     await page.waitForSelector('.asset-card, .empty-state', { timeout: 15000 });
     await sleep(1500);
     const cards = await page.evaluate(() => document.querySelectorAll('.asset-card').length);
-    check('X8 市场页正常渲染', cards > 0, `${cards} 张卡片`);
-    await page.screenshot({ path: path.join(OUT_DIR, 'real-packages-market.png'), fullPage: false });
+    check('X8 扩展页正常渲染', cards > 0, `${cards} 张卡片`);
+    await page.screenshot({ path: path.join(OUT_DIR, 'real-packages-ext.png'), fullPage: false });
 
     check('X9 全程无 JS 错误', jsErrors.length === 0, jsErrors.slice(0, 2).join(' ; '));
   } finally {

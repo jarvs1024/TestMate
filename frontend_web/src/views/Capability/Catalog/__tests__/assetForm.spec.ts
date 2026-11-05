@@ -12,14 +12,14 @@ import {
   ICON_POOLS,
   checkCodeSync,
   codeFromPackageName,
-  marketRules,
+  extRules,
   pickIcon,
   validateCode,
   validatePackageName,
 } from '../assetForm';
 
 beforeEach(() => {
-  marketRules.value = {
+  extRules.value = {
     code: {
       pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$',
       example: 'ssd-log-doctor', min_length: 3, max_length: 64,

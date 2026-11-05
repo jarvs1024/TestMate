@@ -1,6 +1,6 @@
 """资产命名契约 —— code / 安装包名 / MCP 连接器名 三者的关系.
 
-⚠️ 前后端**各有一份**实现 (前端 frontend_web/src/views/Market/assetForm.ts),
+⚠️ 前后端**各有一份**实现 (前端 frontend_web/src/views/Capability/Catalog/assetForm.ts),
    改规则时**两边都要改** —— 这里定的是"宽松到不破坏存量"的那一版:
 
      · code 的**格式**: 只要求小写字母/数字/连字符分段 —— **没有前缀要求**;
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-# ⚠️ code 的**格式**规则不在这里 —— 唯一真源是 market_catalog.CODE_RE
+# ⚠️ code 的**格式**规则不在这里 —— 唯一真源是 ext_catalog.CODE_RE
 #    (与前端 assetForm.CODE_PATTERN / SEGMENT_PATTERN 同一套分段规则).
 #    这里以前自己留了一份**宽松的旧正则** —— 没人引用, 还跟权威版本不一致
 #    (它收 "dml--x", 权威版本拒) → 已删, 免得两处规则各说各话.
@@ -86,7 +86,7 @@ def download_filename(code: str, source_name: str = "") -> str:
 
     ⚠️ code 会被过滤成"只留字母/数字/点/下划线/连字符" —— 因为这个串要进
        HTTP 的 ``Content-Disposition`` 头, 里面出现引号/换行就是**头注入**.
-       ⚠️ 实际上 code 早就被 market_catalog.CODE_RE 校验过
+       ⚠️ 实际上 code 早就被 ext_catalog.CODE_RE 校验过
           (小写字母/数字/连字符分段), 这里是纵深防御 —— 万一哪天校验放宽了,
           这里还能兜住.
     """

@@ -81,7 +81,7 @@ SEED_AGENTS: list[dict] = [
     },
     {
         # 扩展: 能力墙入口卡片, 点击跳 /extensions 页 (仿 Qoder 插件市场的浏览页).
-        # 原型期数据为前端静态 (frontend_web/src/views/Market/marketCatalog.ts), 后端只提供这张入口卡.
+        # 原型期数据为前端静态 (frontend_web/src/views/Capability/Catalog/extCatalog.ts), 后端只提供这张入口卡.
         # route 走 "page:" 前缀 → Home/index.vue onOpen 会 router.push({ name: 'extensions' }).
         # ⚠️ status 不能是 draft: CapabilityCard 对 draft 直接 return 不跳转 + 盖"规划中"遮罩.
         #
@@ -95,10 +95,10 @@ SEED_AGENTS: list[dict] = [
         #    是"平台给我的 Agent 加了个扩展"(概念), 不是"这里有个库我能去逛"。
         #    加上"库"字后跟同级的「知识库」「软件库」完全对齐 (三个都是"库"),
         #    侧栏里并排三个名字也能看出是同一类东西.
-        "code": "agent-market",
+        "code": "ext-library",
         "name": "扩展库",
         "icon": "🏪",
-        "category": AgentCategory.ai_market.value,
+        "category": AgentCategory.ext_library.value,
         "kind": AgentKind.platform.value,
         "cta": "浏览资产",
         "version": "v0.1.0",

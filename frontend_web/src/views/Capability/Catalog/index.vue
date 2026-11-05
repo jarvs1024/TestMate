@@ -1,5 +1,5 @@
 <template>
-  <div class="market">
+  <div class="ext-catalog">
     <!-- ===== 能力详情统一外壳 ===== -->
     <CapabilityShell
       name="扩展库"
@@ -7,12 +7,12 @@
       kind="platform"
       status="beta"
       version="v0.1.0"
-      category="ai-market" />
+      category="ext-library" />
 
     <!-- ===== 动作条: 类型 Tab + 搜索 + 主操作 (一栏装下) ===== -->
     <div class="mk-actions">
       <div class="kind-tabs">
-        <button v-for="k in MARKET_KINDS" :key="k.value"
+        <button v-for="k in EXT_KINDS" :key="k.value"
           class="kind-tab" :class="{ active: kind === k.value }"
           @click="kind = k.value">
           {{ k.label }}
@@ -88,10 +88,10 @@
     </div>
 
     <!-- 规则不可用时上传/编辑统一停用; 抽屉内也复用同一状态提供重试. -->
-    <div v-if="marketRulesError" class="sync-bar err market-rules-error">
+    <div v-if="extRulesError" class="sync-bar err ext-rules-error">
       <span class="sb-icon">⚠️</span>
-      <span class="sb-text">扩展库规则加载失败: {{ marketRulesError }}。上传和编辑已暂停，请重试。</span>
-      <button class="sb-btn ghost" @click="loadMarketRules">重试</button>
+      <span class="sb-text">扩展库规则加载失败: {{ extRulesError }}。上传和编辑已暂停，请重试。</span>
+      <button class="sb-btn ghost" @click="loadExtRules">重试</button>
     </div>
 
     <!-- ===== 我提交但还没过审的资产: 给个显眼入口, 免得被埋在列表里 ===== -->
@@ -174,7 +174,7 @@
            现在收进一个菜单: 按钮上显示当前选择 (如「6100 · 最新」),
            面板里分「项目」「排序」两组, 点一下就生效.
            语义跟原来一致: 选某项目 = 该项目特有 **+ 通用**; 选「通用」= 只看通用. -->
-      <MarketFilterMenu
+      <ExtFilterMenu
         :project="projectFilter"
         :sort="sortBy"
         :projects="projects"
@@ -267,18 +267,18 @@ import AssetCard from './AssetCard.vue';
 import AssetDetailDrawer from './AssetDetailDrawer.vue';
 import AssetUploadDialog from './AssetUploadDialog.vue';
 import AssetAuditDrawer from './AssetAuditDrawer.vue';
-import MarketFilterMenu from './MarketFilterMenu.vue';
+import ExtFilterMenu from './ExtFilterMenu.vue';
 import CapabilityShell from '@/components/CapabilityShell.vue';
 import { useUserStore } from '@/stores/user';
 import { parseApiTime } from '@/utils/format';
-import { MARKET_KINDS, type MarketProjectItem, type MarketSort } from './marketCatalog';
+import { EXT_KINDS, type ExtProjectItem, type ExtSort } from './extCatalog';
 import { KIND_META } from './kindMeta';
 import {
-  listAssets, listCategories, listJobs, listProjects, getSyncStatus, getMarketConfig, retryJob, syncFromGit,
-  type AssetItem, type AssetJob, type MarketKind, type SyncStatus,
+  listAssets, listCategories, listJobs, listProjects, getSyncStatus, getExtConfig, retryJob, syncFromGit,
+  type AssetItem, type AssetJob, type ExtKind, type SyncStatus,
 } from '@/api/assets';
 import { isAuthor } from './identity';
-import { loadMarketRules, marketRulesError } from './assetForm';
+import { loadExtRules, extRulesError } from './assetForm';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 /**
@@ -317,13 +317,13 @@ const LOAD_TIMEOUT_MS = 15000;
  * ⚠️ 跟 `resetFilters()` 里的默认值必须**一致** —— "清空筛选"回到的就是初始态,
  *    两处不一样的话, 清完筛选 tab 会跳到另一个类型, 用户以为页面自己动了.
  */
-const DEFAULT_KIND: MarketKind = 'skill';
+const DEFAULT_KIND: ExtKind = 'skill';
 
-const kind = ref<MarketKind>(DEFAULT_KIND);
+const kind = ref<ExtKind>(DEFAULT_KIND);
 
 const category = ref('');
 const keyword = ref('');
-const sortBy = ref<MarketSort>('hot');
+const sortBy = ref<ExtSort>('hot');
 /**
  * 「只看这些」的模式 —— 三条提示条要分开:
  *   review      → 我提交的、还等审核或被驳回的
@@ -507,7 +507,7 @@ const current = ref<AssetItem | null>(null);
 const uploadOpen = ref(false);
 const uploadMode = ref<'create' | 'update' | 'edit'>('create');
 /** 上传入口选定的形态 (空 = 没选, 抽屉里再选) */
-const uploadKind = ref<MarketKind | ''>('');
+const uploadKind = ref<ExtKind | ''>('');
 /** 上传入口的形态菜单是否展开 */
 const pickOpen = ref(false);
 const pickWrap = ref<HTMLElement | null>(null);
@@ -575,7 +575,7 @@ const syncSubHint = computed(() => {
    ⚠️ 以前用硬编码的分类清单: 用户自建的分类**没有 chip** → 筛不出来. */
 const categories = ref<{ name: string; slug: string; desc?: string; total: number }[]>([]);
 /** 项目列表 (通用 + 各项目) —— 筛选菜单用 */
-const projects = ref<MarketProjectItem[]>([]);
+const projects = ref<ExtProjectItem[]>([]);
 /** 项目筛选: '' = 全部, 'general' = 只看通用, '6100' = 该项目特有 + 通用 */
 const projectFilter = ref('');
 
@@ -641,7 +641,7 @@ const kindCountsError = ref('');
 async function loadKindCounts() {
   try {
     const counts: Record<string, number> = {};
-    for (const k of MARKET_KINDS) {
+    for (const k of EXT_KINDS) {
       const r = await listAssets({ kind: k.value, limit: 500 });
       counts[k.value] = r?.total ?? r?.items?.length ?? 0;
     }
@@ -823,7 +823,7 @@ function onProjectChange(v: string) {
   projectFilter.value = v;
   load();
 }
-function onSortChange(v: MarketSort) {
+function onSortChange(v: ExtSort) {
   sortBy.value = v;
   load();
 }
@@ -874,9 +874,9 @@ const gitRemoteText = computed(() => {
  *    做出不可逆的操作.
  */
 const reviewEnabled = ref(true);
-async function loadMarketConfig() {
+async function loadExtConfig() {
   try {
-    const c = await getMarketConfig();
+    const c = await getExtConfig();
     gitRemote.value = c?.remote || '';
     reviewEnabled.value = c?.review_enabled !== false;
   } catch {
@@ -982,7 +982,7 @@ async function onAssetChanged() {
  * 形态决定了表单长什么样 (技能/插件传安装包, 连接器填 MCP JSON),
  * 所以在入口就定下来, 免得进了表单还要自己找类型下拉。
  */
-function startCreate(k: MarketKind) {
+function startCreate(k: ExtKind) {
   pickOpen.value = false;
   uploadMode.value = 'create';
   uploadKind.value = k;
@@ -1019,8 +1019,8 @@ function onDocClick(e: MouseEvent) {
  * Esc → 关掉形态菜单.
  *
  * ⚠️ 2026-10-30: 以前这个菜单**没有** Esc 支持 —— 键盘用户打开后只能点外面或 Tab 走人.
- *    同一页的项目筛选菜单 (MarketFilterMenu) 是支持的, 两边不一致.
- *    这里照抄那边的写法 (见 MarketFilterMenu.vue 的 onKey).
+ *    同一页的项目筛选菜单 (ExtFilterMenu) 是支持的, 两边不一致.
+ *    这里照抄那边的写法 (见 ExtFilterMenu.vue 的 onKey).
  */
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && pickOpen.value) pickOpen.value = false;
@@ -1072,7 +1072,7 @@ let autoTimer: number | null = null;
 onMounted(async () => {
   await Promise.all([
     load(), loadKindCounts(), loadSyncStatus(), loadCategories(), loadProjects(),
-    loadMarketConfig(), loadMarketRules(),
+    loadExtConfig(), loadExtRules(),
   ]);
   timer = window.setInterval(pollJobs, 5000);
   autoTimer = window.setInterval(autoRefresh, AUTO_REFRESH_MS);
@@ -1089,7 +1089,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.market { display: flex; flex-direction: column; gap: 14px; }
+.ext-catalog { display: flex; flex-direction: column; gap: 14px; }
 
 /* ===== 同步状态条 ===== */
 .sync-bar {

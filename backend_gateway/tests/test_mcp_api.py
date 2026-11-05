@@ -478,7 +478,7 @@ async def test_deleting_missing_static_token_returns_404(client, publisher_user)
         {"name": "   "},
         {"scopes": []},
         {"scopes": "extensions:read"},
-        {"scopes": ["extensions:read", "market:delete"]},
+        {"scopes": ["extensions:read", "extensions:delete"]},
         {"expires_at": "not-a-date"},
         {"expires_at": "2000-01-01T00:00:00Z"},
     ],

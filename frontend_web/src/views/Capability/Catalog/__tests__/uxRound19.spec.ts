@@ -1,5 +1,5 @@
 /**
- * **第十九轮 · 市场页「👤 我的」跟分类 chip 互斥** (2026-10-31).
+ * **第十九轮 · 扩展页「👤 我的」跟分类 chip 互斥** (2026-10-31).
  *
  * 用户报的毛病: 「👤 我的」和「⭐ 精选」/某个分类能**同时点亮** ——
  *    两个维度一起发给后端 (status=mine + category=xxx), 返回的既不是"我的全部"
@@ -28,7 +28,7 @@ vi.mock('@/api/assets', () => ({
   listJobs: vi.fn(async () => ({ items: [] })),
   listProjects: vi.fn(async () => ({ items: [] })),
   getSyncStatus: vi.fn(async () => ({})),
-  getMarketConfig: vi.fn(async () => ({ remote: 'root/testmate-extensions.git', review_enabled: true })),
+  getExtConfig: vi.fn(async () => ({ remote: 'root/testmate-extensions.git', review_enabled: true })),
   retryJob: vi.fn(async () => ({})),
   syncFromGit: vi.fn(async () => ({ added: 0, updated: 0 })),
 }));
@@ -41,7 +41,7 @@ vi.mock('../AssetDetailDrawer.vue', () => ({ default: { template: '<div />' } })
 vi.mock('../AssetUploadDialog.vue', () => ({ default: { template: '<div />' } }));
 vi.mock('../AssetAuditDrawer.vue', () => ({ default: { template: '<div />' } }));
 
-// ⚠️ 市场页会用 useRoute() 读 `?status=pending` —— 少了这个 mock 组件初始化就抛
+// ⚠️ 扩展页会用 useRoute() 读 `?status=pending` —— 少了这个 mock 组件初始化就抛
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
   useRoute: () => ({ query: {} }),
@@ -51,7 +51,7 @@ const stubs = {
   'el-tooltip': { template: '<div><slot/></div>' },
 };
 
-/** 造一条市场资产 */
+/** 造一条扩展资产 */
 function asset(code: string, category = '质量保障') {
   return {
     code, name: code, kind: 'plugin', version: '1.0.0',
@@ -64,13 +64,13 @@ function asset(code: string, category = '质量保障') {
   } as any;
 }
 
-async function mountMarket() {
+async function mountExt() {
   const pinia = createPinia();
   setActivePinia(pinia);
   const store = useUserStore(pinia);
   store.user = { id: 1, username: 'jarvs', role: 'tester' } as any;
-  const Market = (await import('../index.vue')).default;
-  const w = mount(Market, { global: { plugins: [pinia], stubs } });
+  const Ext = (await import('../index.vue')).default;
+  const w = mount(Ext, { global: { plugins: [pinia], stubs } });
   await flushPromises();
   await flushPromises();
   return w;
@@ -112,9 +112,9 @@ beforeEach(() => {
   });
 });
 
-describe('市场页 · 「👤 我的」跟分类 chip 互斥 (同一维度只能选一个)', () => {
+describe('扩展页 · 「👤 我的」跟分类 chip 互斥 (同一维度只能选一个)', () => {
   it('点「👤 我的」→ 「全部」chip 不再高亮 (category 被清空)', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     expect(isActive(chip(w, '全部'))).toBe(true);
     expect(isActive(chip(w, '我的'))).toBe(false);
 
@@ -131,7 +131,7 @@ describe('市场页 · 「👤 我的」跟分类 chip 互斥 (同一维度只�
   });
 
   it('点某个分类 → 「我的」不再高亮 (两个维度不能同时开)', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
 
     await chip(w, '我的').trigger('click');
     await flushPromises();
@@ -150,7 +150,7 @@ describe('市场页 · 「👤 我的」跟分类 chip 互斥 (同一维度只�
   });
 
   it('点「⭐ 精选」→ 「我的」让路 (精选也是分类维度的一员)', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
 
     await chip(w, '我的').trigger('click');
     await flushPromises();
@@ -163,7 +163,7 @@ describe('市场页 · 「👤 我的」跟分类 chip 互斥 (同一维度只�
   });
 
   it('再点一次「👤 我的」→ 切回「全部」(两个都不亮, 不留残留状态)', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
 
     await chip(w, '我的').trigger('click');
     await flushPromises();
@@ -177,15 +177,15 @@ describe('市场页 · 「👤 我的」跟分类 chip 互斥 (同一维度只�
   });
 });
 
-describe('市场页 · chip 上的两个计数 (后端 all_total / mine_total)', () => {
+describe('扩展页 · chip 上的两个计数 (后端 all_total / mine_total)', () => {
   it('「👤 我的」后面显示 mine_total', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     expect(chip(w, '我的').find('.count').text()).toBe('3');
     w.unmount();
   });
 
   it('「全部」显示 all_total (不是当前这一批的条数)', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     // ⚠️ 列表只回来 1 条, 但「全部」该显示后端给的总数 12
     expect(chip(w, '全部').find('.count').text()).toBe('12');
     w.unmount();
@@ -193,7 +193,7 @@ describe('市场页 · chip 上的两个计数 (后端 all_total / mine_total)',
 
   it('后端没给这两个字段 → 回退旧口径, 不白屏', async () => {
     listAssets.mockResolvedValue({ items: [asset('a'), asset('b')], total: 2 });
-    const w = await mountMarket();
+    const w = await mountExt();
     // 「全部」回退到当前列表的条数
     expect(chip(w, '全部').find('.count').text()).toBe('2');
     // 「我的」拿不到数 → 0 (不能空着, 空着会让人以为没有这个维度)
@@ -202,7 +202,7 @@ describe('市场页 · chip 上的两个计数 (后端 all_total / mine_total)',
   });
 });
 
-describe('市场页 · 进入后默认停在「技能」 (2026-10-31 第十九轮, 用户指定)', () => {
+describe('扩展页 · 进入后默认停在「技能」 (2026-10-31 第十九轮, 用户指定)', () => {
   /** 类型 tab (插件 / 技能 / 连接器) —— 按文字找 */
   function kindTab(w: any, text: string) {
     const t = w.findAll('.kind-tabs .kind-tab').find((x: any) => x.text().includes(text));
@@ -211,14 +211,14 @@ describe('市场页 · 进入后默认停在「技能」 (2026-10-31 第十九�
   }
 
   it('一进来「技能」是选中的, 「插件」不是', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     expect(kindTab(w, '技能').classes()).toContain('active');
     expect(kindTab(w, '插件').classes()).not.toContain('active');
     w.unmount();
   });
 
   it('首屏列表请求带 kind=skill', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     expect(lastRealListCall().kind).toBe('skill');
     w.unmount();
   });
@@ -226,7 +226,7 @@ describe('市场页 · 进入后默认停在「技能」 (2026-10-31 第十九�
   it('「清空筛选」也回到「技能」(跟初始态一致, 别跳到别的类型)', async () => {
     // 空列表 → 空态里有「清空筛选」按钮
     listAssets.mockResolvedValue({ items: [], total: 0, all_total: 0, mine_total: 0 });
-    const w = await mountMarket();
+    const w = await mountExt();
 
     // 先切到「插件」, 再点「清空筛选」
     await kindTab(w, '插件').trigger('click');

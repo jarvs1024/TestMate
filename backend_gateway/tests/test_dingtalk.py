@@ -847,7 +847,7 @@ async def test_aggregated_flush_sends_one_summary(monkeypatch):
     ]
 
 
-async def test_market_events_are_not_aggregated(monkeypatch):
+async def test_ext_events_are_not_aggregated(monkeypatch):
     """扩展群的「资产已经变了」**不合并** —— 谁上架了什么都要看得见."""
     sent, fake_send = _collector()
     monkeypatch.setattr(dingtalk, "send_markdown", fake_send)

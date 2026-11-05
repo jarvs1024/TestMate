@@ -217,7 +217,7 @@ async function receiptCount(token) {
       /插件/.test(all) && /连接器/.test(all) && /软件包/.test(all) && /技能/.test(all), '');
     check('上架带「说明」(是干嘛的)', /说明: /.test(all), '');
     check('更新带「更新」(这次改了啥)', /更新: /.test(all), '');
-    check('带市场链接 /market', /\/market\)/.test(all), '');
+    check('带扩展链接 /extensions', /\/extensions\)/.test(all), '');
     check('带软件库链接 /software', /\/software\)/.test(all), '');
     check('消息带版本号与操作人', /版本: `/.test(all) && /操作人: /.test(all), '');
   } else {
@@ -237,7 +237,7 @@ async function receiptCount(token) {
 
   // ================= ② 资产「编辑信息」按钮还在 =================
   console.log('\n── ② 资产详情: 「编辑信息」按钮 ──');
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(2600);
   const mcard = await page.evaluate(() => {
     const c = document.querySelector('.asset-card');
@@ -285,8 +285,8 @@ async function receiptCount(token) {
   await shot(page, 'home-no-overlap', '首页 · 吸顶条不再压住能力卡片');
 
   // ================= ⑥ 「👤 我的」筛选 =================
-  console.log('\n── ⑥ 「👤 我的」筛选 (资产市场 / 软件库) ──');
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  console.log('\n── ⑥ 「👤 我的」筛选 (扩展库 / 软件库) ──');
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(2600);
   const mineChip = await page.evaluate(() => {
     const b = [...document.querySelectorAll('.cat-chips .chip')]
@@ -296,9 +296,9 @@ async function receiptCount(token) {
     return true;
   });
   await sleep(2200);
-  check('资产市场有「👤 我的」筛选入口', mineChip, '');
+  check('扩展库有「👤 我的」筛选入口', mineChip, '');
   if (mineChip) {
-    await shot(page, 'market-mine', '资产市场 · 「👤 我的」筛选');
+    await shot(page, 'ext-mine', '扩展库 · 「👤 我的」筛选');
     const authors = await page.evaluate(() =>
       [...document.querySelectorAll('.asset-card')].map((c) => {
         const t = [...c.querySelectorAll('*')].map((e) => (e.textContent || '').trim());

@@ -1,4 +1,4 @@
-"""Real Streamable HTTP contract tests for the five marketplace write tools."""
+"""Real Streamable HTTP contract tests for the five extensions write tools."""
 from __future__ import annotations
 
 import base64
@@ -16,8 +16,8 @@ from sqlalchemy import func, select
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
-from app.api import marketplace
-from app.core import market_projects
+from app.api import extensions
+from app.core import ext_projects
 from app.db.session import AsyncSessionLocal
 from app.mcp.common.context import Principal
 from app.mcp.common.server import build_dispatcher, run_mcp_lifespan
@@ -173,7 +173,7 @@ def notifications(monkeypatch):
         sent.append((event, asset, kwargs))
         return True
 
-    monkeypatch.setattr(marketplace.market_notify, "notify_asset", fake_notify)
+    monkeypatch.setattr(extensions.ext_notify, "notify_asset", fake_notify)
     return sent
 
 
@@ -317,7 +317,7 @@ async def _asset(code: str) -> Asset:
         return asset
 
 
-async def _market_counts() -> tuple[int, int, int]:
+async def _ext_counts() -> tuple[int, int, int]:
     async with AsyncSessionLocal() as session:
         return (
             await session.scalar(select(func.count()).select_from(Asset)),
@@ -429,7 +429,7 @@ async def test_publish_missing_required_fields_have_no_side_effects(
         result = await call_tool(client, OWNER_TOKEN, "extension_publish", arguments)
 
     assert _error(result) == "Invalid tool arguments."
-    assert await _market_counts() == (0, 0, 0)
+    assert await _ext_counts() == (0, 0, 0)
     assert notifications == []
 
 
@@ -455,7 +455,7 @@ async def test_publish_requires_exactly_one_nonempty_package_source(
         result = await call_tool(client, OWNER_TOKEN, "extension_publish", arguments)
 
     assert _error(result) == "Invalid tool arguments."
-    assert await _market_counts() == (0, 0, 0)
+    assert await _ext_counts() == (0, 0, 0)
     assert notifications == []
 
 
@@ -474,7 +474,7 @@ async def test_publish_rejects_non_strict_base64_before_side_effects(
         result = await call_tool(client, OWNER_TOKEN, "extension_publish", arguments)
 
     assert _error(result) == "Tool request failed (HTTP 422)."
-    assert await _market_counts() == (0, 0, 0)
+    assert await _ext_counts() == (0, 0, 0)
     assert notifications == []
 
 
@@ -495,7 +495,7 @@ async def test_malformed_publish_archive_leaves_workspace_unchanged(
 
     assert _error(result) == "Tool request failed (HTTP 422)."
     assert _workspace_snapshot(ws) == before
-    assert await _market_counts() == (0, 0, 0)
+    assert await _ext_counts() == (0, 0, 0)
     assert notifications == []
 
 
@@ -549,7 +549,7 @@ async def test_publish_rejects_oversized_decoded_package_before_side_effects(
         result = await call_tool(client, OWNER_TOKEN, "extension_publish", arguments)
 
     assert _error(result) == "Tool request failed (HTTP 413)."
-    assert await _market_counts() == (0, 0, 0)
+    assert await _ext_counts() == (0, 0, 0)
     assert notifications == []
 
 
@@ -592,7 +592,7 @@ async def test_update_rejects_missing_package_version_same_version_and_bad_base6
     principals, notifications, arguments, expected_error
 ):
     await _seed_asset("mcp-update-negative")
-    before = await _market_counts()
+    before = await _ext_counts()
     async with _client(principals) as client:
         result = await call_tool(client, OWNER_TOKEN, "extension_update", arguments)
 
@@ -600,7 +600,7 @@ async def test_update_rejects_missing_package_version_same_version_and_bad_base6
     asset = await _asset("mcp-update-negative")
     assert asset.version == "1.0.0"
     assert asset.summary == "Original summary mcp-update-negative"
-    assert await _market_counts() == before
+    assert await _ext_counts() == before
     assert notifications == []
 
 
@@ -608,7 +608,7 @@ async def test_edit_meta_requires_an_editable_field_and_forbids_version_featured
     principals, notifications
 ):
     await _seed_asset("mcp-edit-negative")
-    before = await _market_counts()
+    before = await _ext_counts()
     async with _client(principals) as client:
         empty = await call_tool(client, OWNER_TOKEN, "extension_edit_meta", {"code": "mcp-edit-negative"})
         version = await call_tool(
@@ -627,7 +627,7 @@ async def test_edit_meta_requires_an_editable_field_and_forbids_version_featured
     assert _error(empty) == "Invalid tool arguments."
     assert _error(version) == "Invalid tool arguments."
     assert _error(featured) == "Invalid tool arguments."
-    assert await _market_counts() == before
+    assert await _ext_counts() == before
     assert notifications == []
 
 
@@ -654,14 +654,14 @@ def _write_arguments(tool: str) -> dict:
 
 
 @pytest.mark.parametrize("tool", sorted(WRITE_TOOL_NAMES))
-async def test_every_write_tool_requires_market_write_scope(
+async def test_every_write_tool_requires_ext_write_scope(
     principals, notifications, tool
 ):
     async with _client(principals) as client:
         result = await call_tool(client, READ_ONLY_TOKEN, tool, _write_arguments(tool))
 
     assert _error(result) == "Insufficient scope for this tool."
-    assert await _market_counts() == (0, 0, 0)
+    assert await _ext_counts() == (0, 0, 0)
     audits = await _tool_audits(tool)
     assert len(audits) == 1
     assert audits[0].read_only is False
@@ -676,7 +676,7 @@ async def test_non_publisher_is_denied_before_every_write_route(
 ):
     if tool != "extension_publish":
         await _seed_asset("mcp-non-publisher", author="mcp-write-viewer")
-    before = await _market_counts()
+    before = await _ext_counts()
     arguments = _write_arguments(tool)
     if tool != "extension_publish":
         arguments["code"] = "mcp-non-publisher"
@@ -684,7 +684,7 @@ async def test_non_publisher_is_denied_before_every_write_route(
         result = await call_tool(client, NON_PUBLISHER_TOKEN, tool, arguments)
 
     assert _error(result) == "Tool request failed (HTTP 403)."
-    assert await _market_counts() == before
+    assert await _ext_counts() == before
     assert notifications == []
 
 
@@ -696,14 +696,14 @@ async def test_existing_object_level_authorization_still_denies_other_publishers
     principals, notifications, tool
 ):
     await _seed_asset("mcp-object-auth", author="mcp-write-owner")
-    before = await _market_counts()
+    before = await _ext_counts()
     arguments = _write_arguments(tool)
     arguments["code"] = "mcp-object-auth"
     async with _client(principals) as client:
         result = await call_tool(client, OTHER_PUBLISHER_TOKEN, tool, arguments)
 
     assert _error(result) == "Tool request failed (HTTP 403)."
-    assert await _market_counts() == before
+    assert await _ext_counts() == before
     assert notifications == []
 
 
@@ -711,7 +711,7 @@ async def test_publish_files_presences_and_defaults_are_not_guessed(
     principals, ws, restore_git_config, notifications
 ):
     await set_setting("extensions.review.enabled", "false")
-    await set_setting(market_projects.SETTINGS_KEY, "6100,7000")
+    await set_setting(ext_projects.SETTINGS_KEY, "6100,7000")
     async with _client(principals) as client:
         explicit = await _publish(
             client,
@@ -814,7 +814,7 @@ async def test_update_retains_every_omitted_metadata_field(
     principals, ws, restore_git_config, notifications
 ):
     await set_setting("extensions.review.enabled", "false")
-    await set_setting(market_projects.SETTINGS_KEY, "6100,7000")
+    await set_setting(ext_projects.SETTINGS_KEY, "6100,7000")
     async with _client(principals) as client:
         await _publish(
             client,
@@ -1042,7 +1042,7 @@ async def test_publish_connector_kind_uses_config_only_and_stays_readable(princi
 
 
 async def test_publish_rejects_connector_package_and_non_connector_config(principals):
-    before = await _market_counts()
+    before = await _ext_counts()
     async with _client(principals) as client:
         packaged = await call_tool(
             client,
@@ -1074,7 +1074,7 @@ async def test_publish_rejects_connector_package_and_non_connector_config(princi
         )
     assert packaged.get("isError") is True
     assert configured.get("isError") is True
-    assert await _market_counts() == before
+    assert await _ext_counts() == before
 
 
 async def test_update_connector_infers_nothing_and_requires_matching_kind(principals):

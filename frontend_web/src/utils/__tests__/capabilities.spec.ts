@@ -103,7 +103,7 @@ describe('能力工具函数', () => {
   });
 
   it('资产取数来源: 扩展数资产, 知识库数语料', () => {
-    expect(PLATFORM_META_SOURCE['agent-market']).toBe('assets');
+    expect(PLATFORM_META_SOURCE['ext-library']).toBe('assets');
     expect(PLATFORM_META_SOURCE['kb-inventory']).toBe('kb');
   });
 

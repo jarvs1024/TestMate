@@ -28,7 +28,7 @@ vi.mock('@/api/settings', () => ({
 }));
 
 vi.mock('@/api/assets', () => ({
-  getMarketConfig: vi.fn(async () => ({ workspace: '/tmp/ws', remote: 'git@x:y.git' })),
+  getExtConfig: vi.fn(async () => ({ workspace: '/tmp/ws', remote: 'git@x:y.git' })),
   listNotifications: vi.fn(async () => ({ items: [] })),
 }));
 
@@ -56,7 +56,7 @@ function schema(withSoftware = true) {
       { key: 'chat.app_url', value: 'http://x/chat', value_type: 'string',
         description: '知识对话页地址', is_secret: false, is_default: true, default: '' },
     ] },
-    { category: 'extensions', label: '🧩 资产市场', items: [
+    { category: 'extensions', label: '🧩 扩展库', items: [
       { key: 'extensions.git.branch', value: 'main', value_type: 'string',
         description: 'Git 分支', is_secret: false, is_default: true, default: 'main' },
     ] },

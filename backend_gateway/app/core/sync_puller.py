@@ -28,7 +28,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.core import git_sync
-from app.core.market_catalog import INDEX_PATH, apply_index_to_db
+from app.core.ext_catalog import INDEX_PATH, apply_index_to_db
 from app.db.session import AsyncSessionLocal
 from app.models.asset import Asset, AssetAudit
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * 资产市场设置 —— 前端端到端验收.
+ * 扩展库设置 —— 前端端到端验收.
  *
- * 覆盖: 设置页「能力墙 → 🧩 资产市场」子分组 / GitLab 仓库连接测试 /
- *       工作区与远端只读展示 / 市场页「在 GitLab 查看」链接.
+ * 覆盖: 设置页「能力墙 → 🧩 扩展库」子分组 / GitLab 仓库连接测试 /
+ *       工作区与远端只读展示 / 扩展页「在 GitLab 查看」链接.
  *
- * 用法: node scripts/e2e_market_settings.js
+ * 用法: node scripts/e2e_ext_settings.js
  */
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
@@ -62,7 +62,7 @@ function check(name, ok, detail) {
     localStorage.setItem('testmate:user', JSON.stringify(u));
   }, login.token, login.user);
 
-  // ---------- A. 设置页「能力墙 → 资产市场」 ----------
+  // ---------- A. 设置页「能力墙 → 扩展库」 ----------
   await page.goto(BASE + '/settings', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.set-layout', { timeout: 15000 });
   await sleep(1500);
@@ -88,7 +88,7 @@ function check(name, ok, detail) {
     'extensions.publisher_roles', 'extensions.public_download',
   ];
   const missing = expect.filter((k) => !keys.includes(k));
-  check('A2 资产市场配置项全部渲染出来', missing.length === 0,
+  check('A2 扩展库配置项全部渲染出来', missing.length === 0,
     missing.length ? '缺: ' + missing.join(',') : `${expect.length} 项齐全`);
 
   // ⚠️ 服务端写盘通道下线 → 安装目录不再可配, 这三项必须**消失**
@@ -106,7 +106,7 @@ function check(name, ok, detail) {
     return el ? el.textContent.replace(/\s+/g, ' ').trim() : '';
   });
   check('A3 展示当前生效的工作区与远端', /工作区/.test(ws) && /远端/.test(ws), ws.slice(0, 110));
-  await page.screenshot({ path: path.join(OUT_DIR, '09-market-settings.png'), fullPage: false });
+  await page.screenshot({ path: path.join(OUT_DIR, '09-ext-settings.png'), fullPage: false });
 
   // ---------- B. 测试仓库连接 ----------
   const clicked = await page.evaluate(() => {
@@ -124,8 +124,8 @@ function check(name, ok, detail) {
   check('B1 「测试仓库连接」有结果', clicked && !!probe, probe ? probe.msg : '(无结果)');
   check('B2 仓库连接测试通过', !!probe && /s-ok/.test(probe.cls), probe ? probe.msg : '(无结果)');
 
-  // ---------- C. 市场页「在 GitLab 查看」 ----------
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  // ---------- C. 扩展页「在 GitLab 查看」 ----------
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1200);
   await page.evaluate(() => {

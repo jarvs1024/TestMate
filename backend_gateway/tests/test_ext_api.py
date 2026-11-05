@@ -1,4 +1,4 @@
-"""资产市场 API 单元测试 —— 走真实的 HTTP 接口 + 真实的 git 提交流程.
+"""扩展库 API 单元测试 —— 走真实的 HTTP 接口 + 真实的 git 提交流程.
 
 覆盖: 上传落库 / 审核状态机 / 可见性 / 权限边界 / 包预检 / 安装与卸载 /
       上下架 / 删除 / 审计 / 回执 / 同步状态计数.
@@ -289,7 +289,7 @@ async def test_approve_notification_carries_asset_summary_and_author(
     ⚠️ 2026-11-01: 通知里显示「操作人: admin」(点通过的审核人), 说明是套话;
        用户要求显示作者 + 一句话描述.
     """
-    from app.api import marketplace as mk_api
+    from app.api import extensions as mk_api
     from tests.conftest import set_setting
 
     await set_setting("extensions.review.enabled", "true")
@@ -303,7 +303,7 @@ async def test_approve_notification_carries_asset_summary_and_author(
         captured.append((event, asset or {}, kw))
         return True
 
-    monkeypatch.setattr(mk_api.market_notify, "notify_asset", fake_notify)
+    monkeypatch.setattr(mk_api.ext_notify, "notify_asset", fake_notify)
 
     r = await client.post(
         f"{API}/notify-approve/review",

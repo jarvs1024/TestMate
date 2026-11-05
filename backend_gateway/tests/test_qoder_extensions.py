@@ -5,12 +5,12 @@ import json
 
 import pytest
 
-from app.core import pkg, qoder_marketplace as qm
+from app.core import pkg, qoder_extensions as qm
 
 
 async def _mk_asset(session, code: str, kind: str = "plugin",
                     publish_status: str = "published", version: str = "1.0.0"):
-    """建一个资产, 并在工作区里放上它的内容文件 (否则 marketplace 会因无包而跳过)."""
+    """建一个资产, 并在工作区里放上它的内容文件 (否则市场清单会因无包而跳过)."""
     from app.models.asset import Asset
 
     git_path = f"assets/plugins/auto-code/{code}"
@@ -39,7 +39,7 @@ def ws_files(ws):
 _WS = None
 
 
-async def test_marketplace_only_contains_published_plugins(ws_files, restore_git_config):  # noqa: ARG001
+async def test_manifest_only_contains_published_plugins(ws_files, restore_git_config):  # noqa: ARG001
     from app.db.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as s:
@@ -49,12 +49,12 @@ async def test_marketplace_only_contains_published_plugins(ws_files, restore_git
         await _mk_asset(s, "a-skill", kind="skill")
         await _mk_asset(s, "a-conn", kind="mcp")
 
-    m = await qm.build_marketplace("http://test", name="testmate")
+    m = await qm.build_extensions_manifest("http://test", name="testmate")
     codes = [p["name"] for p in m["plugins"]]
     assert codes == ["pub-plugin"], f"只应收 published 的 plugin, 实际 {codes}"
 
 
-async def test_marketplace_structure_and_sha(ws_files, restore_git_config):  # noqa: ARG001
+async def test_manifest_structure_and_sha(ws_files, restore_git_config):  # noqa: ARG001
     """sha256 必须与实际下载到的字节一致 —— Qoder 会拿它校验包."""
     from app.db.session import AsyncSessionLocal
 
@@ -65,7 +65,7 @@ async def test_marketplace_structure_and_sha(ws_files, restore_git_config):  # n
     async with AsyncSessionLocal() as s:
         await _mk_asset(s, "sha-demo")
 
-    m = await qm.build_marketplace("http://test", name="testmate")
+    m = await qm.build_extensions_manifest("http://test", name="testmate")
     assert m["name"] == "testmate"
     assert m["owner"]["name"]
     p = m["plugins"][0]
@@ -79,7 +79,7 @@ async def test_marketplace_structure_and_sha(ws_files, restore_git_config):  # n
     assert p["source"]["sha256"] == pkg.sha256_bytes(data)
 
 
-async def test_marketplace_skips_asset_without_package(ws_files, restore_git_config):  # noqa: ARG001
+async def test_manifest_skips_asset_without_package(ws_files, restore_git_config):  # noqa: ARG001
     """没有内容文件的资产 → 跳过, 不能生成指向 404 的下载链接."""
     from app.db.session import AsyncSessionLocal
 
@@ -93,7 +93,7 @@ async def test_marketplace_skips_asset_without_package(ws_files, restore_git_con
         s.add(a)
         await s.commit()
 
-    m = await qm.build_marketplace("http://test", name="testmate")
+    m = await qm.build_extensions_manifest("http://test", name="testmate")
     assert m["plugins"] == []
 
 

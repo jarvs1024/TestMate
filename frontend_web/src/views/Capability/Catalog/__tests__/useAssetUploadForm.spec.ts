@@ -7,7 +7,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import { useAssetUploadForm } from '../useAssetUploadForm';
-import { marketRules, marketRulesError, marketRulesLoading } from '../assetForm';
+import { extRules, extRulesError, extRulesLoading } from '../assetForm';
 
 const { requestGet } = vi.hoisted(() => ({ requestGet: vi.fn() }));
 
@@ -60,9 +60,9 @@ const rulesPayload = {
 beforeEach(() => {
   requestGet.mockReset();
   requestGet.mockResolvedValue(rulesPayload);
-  marketRules.value = rulesPayload;
-  marketRulesError.value = '';
-  marketRulesLoading.value = false;
+  extRules.value = rulesPayload;
+  extRulesError.value = '';
+  extRulesLoading.value = false;
 });
 
 function makeForm(over: Partial<Parameters<typeof useAssetUploadForm>[0]> = {}) {
@@ -73,12 +73,12 @@ function makeForm(over: Partial<Parameters<typeof useAssetUploadForm>[0]> = {}) 
     open: () => true,
     ...over,
   };
-  const loadedRules = marketRules.value;
+  const loadedRules = extRules.value;
   const f = useAssetUploadForm(opts as any);
   f.reset();
   // 非加载用例从已加载快照开始; 加载/刷新用例会显式等待真实请求状态.
-  marketRules.value = loadedRules;
-  marketRulesLoading.value = false;
+  extRules.value = loadedRules;
+  extRulesLoading.value = false;
   return f;
 }
 
@@ -323,7 +323,7 @@ describe('上传表单: MCP 配置栏的状态', () => {
   });
 
   it('用模板采用当前规则的连接器示例', () => {
-    marketRules.value = {
+    extRules.value = {
       ...rulesPayload,
       code: {
         pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$', example: 'demo-connector',

@@ -141,7 +141,7 @@ function check(name, ok, detail) {
 
     await page.screenshot({ path: path.join(OUT_DIR, 'wall-2-capabilities.png'), fullPage: true });
 
-    // 点「插件·技能·连接」→ 应该跳到市场页, 标题是新名字
+    // 点「插件·技能·连接」→ 应该跳到扩展页, 标题是新名字
     await page.evaluate(() => {
       const el = [...document.querySelectorAll('.item')].find((i) => i.textContent.includes('插件·技能·连接'));
       if (el) el.click();
@@ -152,9 +152,9 @@ function check(name, ok, detail) {
       const el = document.querySelector('.sh-name, .shell-name, h1, .sh-title');
       return el ? el.textContent.trim() : '';
     });
-    check('点「插件·技能·连接」跳到市场页', url.includes('/market'), url);
-    check('市场页标题是「插件·技能·连接」', shellName.includes('插件·技能·连接'), shellName);
-    await page.screenshot({ path: path.join(OUT_DIR, 'wall-3-market.png') });
+    check('点「插件·技能·连接」跳到扩展页', url.includes('/extensions'), url);
+    check('扩展页标题是「插件·技能·连接」', shellName.includes('插件·技能·连接'), shellName);
+    await page.screenshot({ path: path.join(OUT_DIR, 'wall-3-ext.png') });
 
     check('全程无 JS 错误', errors.length === 0, errors.slice(0, 3).join(' | '));
 

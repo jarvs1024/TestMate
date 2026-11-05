@@ -1,5 +1,5 @@
 /**
- * 市场页的「项目 + 排序」合并筛选菜单 (2026-10-25).
+ * 扩展页的「项目 + 排序」合并筛选菜单 (2026-10-25).
  *
  * 为什么有这两个测试:
  *   ① 按钮文案要能一眼看出"现在筛的是什么" (项目 + 排序都在按钮上);
@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
-import MarketFilterMenu from '../MarketFilterMenu.vue';
+import ExtFilterMenu from '../ExtFilterMenu.vue';
 
 const PROJECTS = [
   { code: 'general', name: '通用', total: 15 },
@@ -21,13 +21,13 @@ const PROJECTS = [
 ];
 
 function mountMenu(props: Record<string, any> = {}) {
-  return mount(MarketFilterMenu, {
+  return mount(ExtFilterMenu, {
     props: { project: '', sort: 'hot', projects: PROJECTS, ...props },
     attachTo: document.body,
   });
 }
 
-describe('市场筛选菜单', () => {
+describe('扩展筛选菜单', () => {
   it('按钮上同时显示当前项目和排序', () => {
     const w = mountMenu();
     expect(w.find('.filter-trigger').text()).toContain('全部项目');

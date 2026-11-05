@@ -10,7 +10,7 @@
  *   两者同属一类: 给上面两类能力**供料**的一组东西.
  *
  *   所以角色只回答三件事: 供料 / 干活 / 看数.
- *   细分信息没丢 —— 靠 category (业务域: ai-market / ssd-kb / sw-library) 区分, 不该由徽标来背.
+ *   细分信息没丢 —— 靠 category (业务域: ext-library / ssd-kb / sw-library) 区分, 不该由徽标来背.
  *
  * ⚠️ 2026-10-27 角色名从「底座」改成「资产」:
  *    "底座"说的是**架构位置**(谁垫在底下), 用户看不懂; "资产"说的是
@@ -107,7 +107,7 @@ export const STATUS_LABELS: Record<CapabilityKind, Record<string, string>> = {
  * ⚠️ 2026-10-31 (第十九轮) 为什么要有这层:
  *    以前徽标的 class 是按**原始 status** 生成的 (`st-${status}`),
  *    而看板 / 资产两种角色的 `beta` 和 `stable` **文案都是「正常」** ——
- *    于是同一句话出现两个颜色 (code-review 绿 / agent-market 橙), 用户看着莫名其妙.
+ *    于是同一句话出现两个颜色 (code-review 绿 / ext-library 橙), 用户看着莫名其妙.
  *    现在 class 按**色调**生成 (`st-${statusTone(...)}`), 所有「正常」都是绿色.
  */
 export type StatusTone = 'ok' | 'warn' | 'muted' | 'danger';
@@ -199,7 +199,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
   'ssd-report': '测试报告',
   'ssd-ops': '机台运维',
   'auto-code': '自动化代码',
-  'ai-market': '插件技能',
+  'ext-library': '插件技能',
   'ssd-kb': '知识库',
   'sw-library': '软件库',
 };

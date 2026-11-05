@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 资产市场的**UI 全流程走查** (真实 Chrome) —— 走一遍用户真会走的路, 每步留截图.
+ * 扩展库的**UI 全流程走查** (真实 Chrome) —— 走一遍用户真会走的路, 每步留截图.
  *
  * 与 e2e 断言不同: 这里不看断言, 只看**界面在每一步是否正常** (截图给人看).
  * 用途: 单测和断言都绿, 但界面可能已经歪了 —— 这个脚本专门抓那种.
@@ -48,7 +48,7 @@ async function shot(page, name, desc) {
   page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('[console] ' + m.text()); });
 
-  // ---- ① 登录 → 市场页 ----
+  // ---- ① 登录 → 扩展页 ----
   await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded' });
   // ⚠️ 前端身份用真实的 /auth/me (写死 'admin' 会在换账号时失真)
   const me = await page.evaluate(async (t) => {
@@ -59,10 +59,10 @@ async function shot(page, name, desc) {
     localStorage.setItem('testmate:token', t);
     localStorage.setItem('testmate:user', JSON.stringify(u));
   }, token, me);
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1800);
-  await shot(page, '01-market', '市场页: 类型 tab + 分类 chip + 项目 chip + 搜索');
+  await shot(page, '01-ext', '扩展页: 类型 tab + 分类 chip + 项目 chip + 搜索');
 
   // ---- ② 切类型 tab ----
   await page.evaluate(() => {
@@ -186,7 +186,7 @@ async function shot(page, name, desc) {
     i.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await sleep(1800);
-  await shot(page, '10-search', '市场页: 搜索');
+  await shot(page, '10-search', '扩展页: 搜索');
 
   // ---- ⑪ 操作记录抽屉 ----
   await page.evaluate(() => {

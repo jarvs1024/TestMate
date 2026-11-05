@@ -124,7 +124,7 @@ async function cardInfo(page, sel = '.asset-card') {
   // ================= ② 身份条并进页头 =================
   console.log('\n── ② 身份条并进页头 + 去掉「返回工作台」 ──');
   const PAGES = [
-    { path: '/market', name: '资产', title: '插件·技能·连接' },
+    { path: '/extensions', name: '资产', title: '插件·技能·连接' },
     { path: '/software', name: '软件库', title: '软件库' },
     { path: '/code-review', name: '看板', title: '代码检视' },
   ];
@@ -165,10 +165,10 @@ async function cardInfo(page, sel = '.asset-card') {
   report.homeCard = homeCard;
   await shot(page, 'home-cap-wall', '首页 · 能力墙 (卡片的基准样式)');
 
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(2600);
   const mktCard = await cardInfo(page);
-  report.marketCard = mktCard;
+  report.extCard = mktCard;
   console.log(`  首页卡 = ${JSON.stringify(homeCard)}\n  市场卡 = ${JSON.stringify(mktCard)}`);
   check('市场卡片有全局 `card` 类 (白底/圆角/阴影)',
     mktCard.hasCardClass && mktCard.radius !== '0px' && mktCard.shadow !== 'none',
@@ -181,7 +181,7 @@ async function cardInfo(page, sel = '.asset-card') {
   check('⚠️ 市场卡片**更紧凑** (padding/高度比首页小 —— 一屏放更多)',
     mktCard.padding !== homeCard.padding && mktCard.h < homeCard.h,
     `市场 ${mktCard.padding}/${mktCard.h}px vs 首页 ${homeCard.padding}/${homeCard.h}px`);
-  await shot(page, 'market-cards', '资产市场 · 卡片 (对齐首页能力墙的样式)');
+  await shot(page, 'ext-cards', '扩展库 · 卡片 (对齐首页能力墙的样式)');
 
   // ---- 悬停: 上浮 + 蓝色光环 ----
   const hovered = await page.evaluate(async () => {
@@ -207,7 +207,7 @@ async function cardInfo(page, sel = '.asset-card') {
     hoverState.transform);
   check('悬停时卡片有**蓝色光环** (box-shadow 里带 primary-soft)',
     /59,\s*130,\s*246/.test(hoverState.shadow), hoverState.shadow.slice(0, 90));
-  await shot(page, 'market-card-hover', '资产市场 · 卡片悬停 (上浮 + 蓝色光环)');
+  await shot(page, 'ext-card-hover', '扩展库 · 卡片悬停 (上浮 + 蓝色光环)');
 
   // ---- 软件库卡片同样 ----
   await page.goto(BASE + '/software', { waitUntil: 'domcontentloaded' });

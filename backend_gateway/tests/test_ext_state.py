@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core import market_state as ms
+from app.core import ext_state as ms
 
 
 def test_pending_cannot_be_published_by_author():

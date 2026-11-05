@@ -31,7 +31,7 @@ MAX_CONFIG_BYTES = 64 * 1024
 
 # 连接器名的**字符规则**: 小写字母/数字/连字符分段.
 #
-# ⚠️ 与 market_catalog.CODE_RE / market_naming 的口径**必须一致**:
+# ⚠️ 与 ext_catalog.CODE_RE / ext_naming 的口径**必须一致**:
 #    只要求"字符集 + 分段", **不要求任何前缀** ——
 #    前缀只是历史命名习惯, 不是技术限制, 也由前端保持同一口径.
 CONNECTOR_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")

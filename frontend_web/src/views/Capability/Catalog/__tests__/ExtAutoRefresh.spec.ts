@@ -1,5 +1,5 @@
 /**
- * 市场页的**自动刷新** (2026-10-25 用户要求: 首页数据要能自动更新).
+ * 扩展页的**自动刷新** (2026-10-25 用户要求: 首页数据要能自动更新).
  *
  * 三个要点:
  *   ① 20s 定时静默刷新一次 (不闪 spinner, 失败不动页面);
@@ -39,7 +39,7 @@ vi.mock('../AssetCard.vue', () => ({
 vi.mock('../AssetDetailDrawer.vue', () => ({ default: { template: '<div />' } }));
 vi.mock('../AssetUploadDialog.vue', () => ({ default: { template: '<div />' } }));
 vi.mock('../AssetAuditDrawer.vue', () => ({ default: { template: '<div />' } }));
-// ⚠️ 市场页会用 useRoute() 读 `?status=pending` (钉钉通知里的「去审核台」链接直达待审列表),
+// ⚠️ 扩展页会用 useRoute() 读 `?status=pending` (钉钉通知里的「去审核台」链接直达待审列表),
 //    所以这个 mock 必须把 useRoute 也给出 —— 少了它组件初始化就抛, 一整份 spec 全挂.
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -50,7 +50,7 @@ const stubs = {
   'el-tooltip': { template: '<div><slot/></div>' },
 };
 
-/** 造一条市场资产 (code 用来断言页面上是哪一份数据) */
+/** 造一条扩展资产 (code 用来断言页面上是哪一份数据) */
 function asset(code: string) {
   return {
     code, name: code, kind: 'plugin', version: '1.0.0',
@@ -63,7 +63,7 @@ function asset(code: string) {
   };
 }
 
-async function mountMarket(opts: { role?: 'admin' | 'tester' } = {}) {
+async function mountExt(opts: { role?: 'admin' | 'tester' } = {}) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const store = useUserStore(pinia);
@@ -71,8 +71,8 @@ async function mountMarket(opts: { role?: 'admin' | 'tester' } = {}) {
     id: 1, username: 'jarvs',
     role: opts.role === 'admin' ? 'admin' : 'tester',
   } as any;
-  const Market = (await import('../index.vue')).default;
-  const w = mount(Market, { global: { plugins: [pinia], stubs } });
+  const Ext = (await import('../index.vue')).default;
+  const w = mount(Ext, { global: { plugins: [pinia], stubs } });
   // 让首次加载的 promise 链跑完 (fake timers 下 flushPromises 用的 setTimeout 不会自己走)
   await vi.advanceTimersByTimeAsync(0);
   return w;
@@ -124,9 +124,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('市场页 · 自动刷新', () => {
+describe('扩展页 · 自动刷新', () => {
   it('20s 后自动静默刷新一次', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     const before = listAssets.mock.calls.length;
     expect(before).toBeGreaterThan(0);
     await vi.advanceTimersByTimeAsync(20000);
@@ -135,7 +135,7 @@ describe('市场页 · 自动刷新', () => {
   });
 
   it('页面不可见时**不**刷新 (没人看, 白费请求)', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     const before = listAssets.mock.calls.length;
     const orig = Object.getOwnPropertyDescriptor(document, 'hidden');
     Object.defineProperty(document, 'hidden', { value: true, configurable: true });
@@ -150,7 +150,7 @@ describe('市场页 · 自动刷新', () => {
   });
 
   it('切回可见时立刻补刷一次', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     const before = listAssets.mock.calls.length;
     const orig = Object.getOwnPropertyDescriptor(document, 'hidden');
     Object.defineProperty(document, 'hidden', { value: true, configurable: true });
@@ -178,7 +178,7 @@ describe('市场页 · 自动刷新', () => {
         review_note: '', can_review: false }],
       total: 1,
     });
-    const w = await mountMarket();
+    const w = await mountExt();
     const foot = w.find('.foot-hint').text();
     expect(foot).toContain('本页上次刷新');
     expect(foot).not.toContain('· 最近对齐 ');
@@ -189,7 +189,7 @@ describe('市场页 · 自动刷新', () => {
     // ⚠️ 以前 pollJobs 调的是**非静默**的 load() —— 每 5s 遇到一个同步中的任务
     //    就整页切 loading 态, 列表反复消失.
     listJobs.mockResolvedValue({ items: [{ id: 1, status: 'syncing' }] });
-    const w = await mountMarket();
+    const w = await mountExt();
     // 让后续的列表请求一直悬着 —— 走非静默路径的话页面会卡在 loading 态
     listAssets.mockImplementation(() => new Promise(() => {}));
     await vi.advanceTimersByTimeAsync(5000);
@@ -200,7 +200,7 @@ describe('市场页 · 自动刷新', () => {
   it('快速切分类 → 旧响应不覆盖新结果 (只认最后一次请求)', async () => {
     // ⚠️ 以前没有请求序号 —— 慢的旧响应回来后会把列表覆盖成旧结果
     //    (Tab 高亮已经是新分类, 列表却是旧分类的).
-    const w = await mountMarket();
+    const w = await mountExt();
     // 确认挂载期的请求都落地了 (后面 mock 的"下一次调用"才是我们要控制的那个)
     const settled = listAssets.mock.calls.length;
     await vi.advanceTimersByTimeAsync(0);
@@ -226,16 +226,16 @@ describe('市场页 · 自动刷新', () => {
   });
 });
 
-describe('市场页 · 管理员专属入口', () => {
+describe('扩展页 · 管理员专属入口', () => {
   it('普通用户看不到「操作记录」(审计 = 运营数据, 后端也收紧了)', async () => {
-    const w = await mountMarket({ role: 'tester' });
+    const w = await mountExt({ role: 'tester' });
     const labels = w.findAll('.mini-btn').map((b) => b.text()).join(' | ');
     expect(labels).not.toContain('操作记录');
     w.unmount();
   });
 
   it('管理员看得到「操作记录」', async () => {
-    const w = await mountMarket({ role: 'admin' });
+    const w = await mountExt({ role: 'admin' });
     const labels = w.findAll('.mini-btn').map((b) => b.text()).join(' | ');
     expect(labels).toContain('操作记录');
     w.unmount();
@@ -248,11 +248,11 @@ describe('市场页 · 管理员专属入口', () => {
 //    管理员只能扫卡片上的「📋 待审核」徽标, 别人传了什么全靠眼睛找.
 //    后端 `awaiting_review_count` 早就算好下发了, 前端根本没用它.
 
-describe('市场页 · 管理员待审提示条', () => {
+describe('扩展页 · 管理员待审提示条', () => {
   it('管理员: 别人上传的资产在等审核 → 顶部有提示条', async () => {
     syncStatus.awaiting_review_count = 3;
     syncStatus.my_pending_count = 0;
-    const w = await mountMarket({ role: 'admin' });
+    const w = await mountExt({ role: 'admin' });
     const bar = w.findAll('.my-review-bar').map((b) => b.text()).join(' | ');
     expect(bar).toContain('3 个资产在等上架审核');
     w.unmount();
@@ -260,7 +260,7 @@ describe('市场页 · 管理员待审提示条', () => {
 
   it('普通用户看不到这条 (系统级计数是运营数据)', async () => {
     syncStatus.awaiting_review_count = 3;
-    const w = await mountMarket({ role: 'tester' });
+    const w = await mountExt({ role: 'tester' });
     const bar = w.findAll('.my-review-bar').map((b) => b.text()).join(' | ');
     expect(bar).not.toContain('在等上架审核');
     w.unmount();
@@ -269,7 +269,7 @@ describe('市场页 · 管理员待审提示条', () => {
   it('自己的待审数要扣掉 (别跟「我的」那条报同一个数)', async () => {
     syncStatus.awaiting_review_count = 3;
     syncStatus.my_pending_count = 1;
-    const w = await mountMarket({ role: 'admin' });
+    const w = await mountExt({ role: 'admin' });
     const bar = w.findAll('.my-review-bar').map((b) => b.text()).join(' | ');
     expect(bar).toContain('2 个资产在等上架审核');
     w.unmount();
@@ -277,7 +277,7 @@ describe('市场页 · 管理员待审提示条', () => {
 
   it('点「只看这些」→ 列表请求带 status=pending (后端过滤, 不是前端)', async () => {
     syncStatus.awaiting_review_count = 3;
-    const w = await mountMarket({ role: 'admin' });
+    const w = await mountExt({ role: 'admin' });
     const btn = w.findAll('.mrb-btn').find((b) => b.text().includes('只看这些'));
     expect(btn).toBeTruthy();
     listAssets.mockClear();
@@ -289,7 +289,7 @@ describe('市场页 · 管理员待审提示条', () => {
   });
 
   it('没有待审资产时不显示这条', async () => {
-    const w = await mountMarket({ role: 'admin' });
+    const w = await mountExt({ role: 'admin' });
     const bar = w.findAll('.my-review-bar').map((b) => b.text()).join(' | ');
     expect(bar).not.toContain('在等上架审核');
     w.unmount();

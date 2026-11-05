@@ -71,7 +71,7 @@ async function shot(page, name, desc) {
 
   // ================= ① 扩展详情抽屉 =================
   console.log('\n── ① 扩展详情抽屉 (图1) ──');
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(2200);
 

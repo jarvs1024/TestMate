@@ -27,7 +27,7 @@ vi.mock('@/api/assets', () => ({
   listJobs: vi.fn(async () => ({ items: [] })),
   listProjects: vi.fn(async () => ({ items: [] })),
   getSyncStatus: vi.fn(async () => ({})),
-  getMarketConfig: vi.fn(async () => ({ remote: 'root/testmate-extensions.git', review_enabled: true })),
+  getExtConfig: vi.fn(async () => ({ remote: 'root/testmate-extensions.git', review_enabled: true })),
   retryJob: vi.fn(async () => ({})),
   syncFromGit: vi.fn(async () => ({ added: 0, updated: 0 })),
 }));
@@ -61,13 +61,13 @@ function asset(code: string, category = '质量保障') {
 /** 三个分类: 两个有货, 一个 0 条 */
 const CAT_COUNTS: Record<string, number> = { 质量保障: 3, 效率工具: 4 };
 
-async function mountMarket() {
+async function mountExt() {
   const pinia = createPinia();
   setActivePinia(pinia);
   const store = useUserStore(pinia);
   store.user = { id: 1, username: 'jarvs', role: 'tester' } as any;
-  const Market = (await import('../index.vue')).default;
-  const w = mount(Market, { global: { plugins: [pinia], stubs } });
+  const Ext = (await import('../index.vue')).default;
+  const w = mount(Ext, { global: { plugins: [pinia], stubs } });
   await flushPromises();
   await flushPromises();
   return w;
@@ -117,9 +117,9 @@ beforeEach(() => {
   });
 });
 
-describe('市场页 · 分类 chip 的计数恒定 (第二十轮)', () => {
+describe('扩展页 · 分类 chip 的计数恒定 (第二十轮)', () => {
   it('初始: 每个分类都有计数 (0 也照样显示)', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     expect(countOf(w, '质量保障')).toBe('3');
     expect(countOf(w, '效率工具')).toBe('4');
     // ⚠️ 0 不是"没统计" —— 徽标必须在, 只是数字是 0
@@ -128,7 +128,7 @@ describe('市场页 · 分类 chip 的计数恒定 (第二十轮)', () => {
   });
 
   it('⚠️ 选了某个分类 → **别的分类的计数不变** (原来会全变成 0 然后消失)', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     expect(countOf(w, '效率工具')).toBe('4');
 
     await chip(w, '质量保障').trigger('click');
@@ -144,7 +144,7 @@ describe('市场页 · 分类 chip 的计数恒定 (第二十轮)', () => {
   });
 
   it('选了「⭐ 精选」也一样 —— 别的分类计数不动', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     await chip(w, '精选').trigger('click');
     await flushPromises();
     expect(countOf(w, '效率工具')).toBe('4');
@@ -153,7 +153,7 @@ describe('市场页 · 分类 chip 的计数恒定 (第二十轮)', () => {
   });
 
   it('选了「👤 我的」也一样 —— 别的分类计数不动', async () => {
-    const w = await mountMarket();
+    const w = await mountExt();
     await chip(w, '我的').trigger('click');
     await flushPromises();
     expect(countOf(w, '效率工具')).toBe('4');
@@ -168,7 +168,7 @@ describe('市场页 · 分类 chip 的计数恒定 (第二十轮)', () => {
       const items = cat ? [asset('a1')] : [asset('a1'), asset('b1', '效率工具')];
       return { items, total: items.length, all_total: 7, mine_total: 5 };
     });
-    const w = await mountMarket();
+    const w = await mountExt();
     expect(countOf(w, '效率工具')).toBe('1');
 
     await chip(w, '质量保障').trigger('click');

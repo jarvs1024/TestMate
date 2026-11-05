@@ -6,7 +6,7 @@
  *   ① 审核类通知 (待上架审核 / 待下架确认) 在 60 秒窗口内**只发第一条**,
  *      其余攒起来, 窗口末发一条「另有 N 个」的汇总 —— 十几个���同时上架
  *      不该把审核群刷屏;
- *   ② 管理员在市场页顶部能看见「有 N 个资产在等上架审核」, 点一下直接筛出待审列表
+ *   ② 管理员在扩展页顶部能看见「有 N 个资产在等上架审核」, 点一下直接筛出待审列表
  *      (以前只有下架有这条提示, 上架审核没有).
  *
  * ⚠️ **绝不能往公司真实群里发测试消息**:
@@ -257,7 +257,7 @@ async function uploadSkill(token, code) {
       summary ? summary.text.slice(0, 200) : '(没收到汇总)');
     check('A9 没有刷屏 (总共只发 2 条)', received.length === 2, `收到 ${received.length} 条`);
 
-    // ---------- ④ 管理员在市场页看到待审提示条 ----------
+    // ---------- ④ 管理员在扩展页看到待审提示条 ----------
     browser = await puppeteer.launch({
       executablePath: CHROME, headless: true,
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
@@ -273,12 +273,12 @@ async function uploadSkill(token, code) {
       localStorage.setItem('testmate:token', t);
       localStorage.setItem('testmate:user', JSON.stringify(u));
     }, adminToken, { id: 1, username: ADMIN, role: 'admin' });
-    await page.goto(BASE + '/market', { waitUntil: 'networkidle2' });
+    await page.goto(BASE + '/extensions', { waitUntil: 'networkidle2' });
     await sleep(2500);
 
     const bars = await page.evaluate(() =>
       [...document.querySelectorAll('.my-review-bar')].map((b) => b.textContent.replace(/\s+/g, ' ').trim()));
-    check('B1 管理员市场页有「N 个资产在等上架审核」的提示条',
+    check('B1 管理员扩展页有「N 个资产在等上架审核」的提示条',
       bars.some((b) => b.includes('在等上架审核')), JSON.stringify(bars));
 
     // ⚠️ 期望值从接口取 —— 生产库里**本来就可能有别的待审资产**

@@ -1,6 +1,6 @@
 """git 远端地址的「本机」改写 —— **双向**改 (容器 ↔ 宿主).
 
-背景 (2026-10-27): 裸机部署 (deploy/native) 的后端**跑在宿主上**, 但资产市场
+背景 (2026-10-27): 裸机部署 (deploy/native) 的后端**跑在宿主上**, 但扩展库
 的 git 远端默认是 `ssh://git@host.docker.internal:8922/...` —— 那个名字在宿主上
 解析到 Docker 虚拟网卡 (198.18.x.x), 从宿主侧**连不通** (GitLab 的 SSH 端口
 是 Docker 映射出来的, 宿主上真正能连的是 127.0.0.1:8922).
@@ -80,7 +80,7 @@ def test_容器里_127_0_0_1_换成_host_docker_internal(raw, expected, in_conta
     [
         "ssh://git@gitlab.example.com:8922/root/testmate-extensions.git",
         "ssh://git@10.0.0.5:8922/root/testmate-extensions.git",
-        "file:///Users/jarvs/testmate-data/market-remote.git",
+        "file:///Users/jarvs/testmate-data/ext-remote.git",
         "",
     ],
 )

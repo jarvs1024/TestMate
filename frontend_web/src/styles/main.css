@@ -224,7 +224,7 @@ html, html[data-theme] {
  *
  * ⚠️ 而且 class 的口径变了: 以前按**原始 status** 生成 (st-beta / st-stable),
  *    而 board / platform 两种角色的 beta 和 stable **文案都是「正常」** ——
- *    同一句话两个颜色 (code-review 绿 / agent-market 橙), 用户看着莫名其妙.
+ *    同一句话两个颜色 (code-review 绿 / ext-library 橙), 用户看着莫名其妙.
  *    现在按**语义色调** (statusTone) 生成, 所有「正常」都是绿色.
  * ------------------------------------------------------------ */
 .st-ok { background: rgba(16, 185, 129, 0.12); color: var(--ok); }

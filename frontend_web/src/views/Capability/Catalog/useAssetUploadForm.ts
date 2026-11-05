@@ -14,12 +14,12 @@
 import { computed, reactive, ref, watch } from 'vue';
 import {
   listAssets, previewPackage,
-  type AssetItem, type MarketKind, type PackagePreview,
+  type AssetItem, type ExtKind, type PackagePreview,
 } from '@/api/assets';
 import {
   FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
-  checkCodeSync, codeFromPackageName, loadMarketRules, marketRules,
-  marketRulesError, marketRulesLoading, pickIcon, validateCode, validatePackageName,
+  checkCodeSync, codeFromPackageName, loadExtRules, extRules,
+  extRulesError, extRulesLoading, pickIcon, validateCode, validatePackageName,
 } from './assetForm';
 import { kindMeta } from './kindMeta';
 import { formatMcpConfig, mcpConfigTemplate, parseMcpConfig } from './mcpConfig';
@@ -36,7 +36,7 @@ export interface UseAssetUploadFormOptions {
   /** 更新/编辑时的原资产 */
   asset: () => AssetItem | null | undefined;
   /** 入口选定的形态 (空 = 让人在抽屉里选) */
-  initialKind: () => MarketKind | '';
+  initialKind: () => ExtKind | '';
   /** 抽屉是否打开 (打开时初始化 / 重置) */
   open: () => boolean;
 }
@@ -83,7 +83,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * 设为精选 仍然不在表单里 (前端不提供这个入口).
    */
   const form = reactive({
-    code: '', kind: 'skill' as MarketKind, name: '', version: '1.0.0',
+    code: '', kind: 'skill' as ExtKind, name: '', version: '1.0.0',
     summary: '', use_when: '', category: '', icon: '🧩',
     // 适用项目: 空 = 通用 (所有项目都能用); "6100" = 6100 项目特有
     project: '',
@@ -164,8 +164,8 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     if (mode() === 'update' || isEdit.value) return '';
     // ⚠️ 还没选包 / 没填配置时, code 还是空串 —— 那不是错误,
     //    是"还没派生出来". 提前标红会让人以为填错了.
-    if (!hasSource.value || !marketRules.value) return '';
-    return validateCode(form.code, marketRules.value);
+    if (!hasSource.value || !extRules.value) return '';
+    return validateCode(form.code, extRules.value);
   });
   const versionError = computed(() => {
     const v = (form.version || '').trim();
@@ -180,7 +180,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    *    底部「还缺」清单会列出来, 不是错误, 别一上来就标红.
    */
   const pkgBaseName = computed(() =>
-    codeFromPackageName(pkgFile.value?.name || '', marketRules.value));
+    codeFromPackageName(pkgFile.value?.name || '', extRules.value));
   /**
    * code 与「包名 / MCP 连接器名」不一致时的报错 (空串 = 一致 / 还不用管).
    *
@@ -192,14 +192,14 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * 更新也必须保持一致: code 不可改时, 需要调整新包或 MCP 配置里的名字后再提交.
    */
   const codeSyncError = computed(() => {
-    if (!marketRules.value) return '';
+    if (!extRules.value) return '';
     if (isMcp.value) {
-      if (!marketRules.value.enforcement.code_must_match_mcp_server) return '';
+      if (!extRules.value.enforcement.code_must_match_mcp_server) return '';
       const p = mcpParsed.value;
       const names = p.ok ? Object.keys((p.config as any)?.mcpServers || {}) : [];
       return checkCodeSync(form.code, { isMcp: true, mcpNames: names });
     }
-    if (!marketRules.value.enforcement.code_must_match_package) return '';
+    if (!extRules.value.enforcement.code_must_match_package) return '';
     return checkCodeSync(form.code, { pkgBase: pkgBaseName.value });
   });
 
@@ -213,9 +213,9 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    */
   const pkgNameError = computed(() => {
     // ⚠️ 编辑模式没有安装包 —— 别拿"包名不合规"吓人
-    if (isEdit.value || !marketRules.value) return '';
+    if (isEdit.value || !extRules.value) return '';
     return pkgFile.value
-      ? validatePackageName(pkgFile.value.name, { rules: marketRules.value })
+      ? validatePackageName(pkgFile.value.name, { rules: extRules.value })
       : '';
   });
 
@@ -261,9 +261,9 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
   /** 缺什么由后端 required 规则驱动; 规则不可用时首先阻止提交. */
   const missing = computed(() => {
     const out: string[] = [];
-    const rules = marketRules.value;
-    if (marketRulesLoading.value || !rules) {
-      out.push(!marketRulesLoading.value && marketRulesError.value
+    const rules = extRules.value;
+    if (extRulesLoading.value || !rules) {
+      out.push(!extRulesLoading.value && extRulesError.value
         ? '扩展规则 (加载失败, 请重试)'
         : '扩展规则 (加载中)');
       return out;
@@ -292,20 +292,20 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     return Array.from(new Set(out));
   });
   const canSubmit = computed(() =>
-    !!marketRules.value && !marketRulesLoading.value && !marketRulesError.value
+    !!extRules.value && !extRulesLoading.value && !extRulesError.value
     && missing.value.length === 0
     && (isEdit.value || isMcp.value || (!previewBad.value && !pkgNameError.value)));
 
   // ---------- 加载 ----------
   async function loadRules() {
     categoriesLoading.value = true;
-    await loadMarketRules();
-    const rules = marketRules.value;
+    await loadExtRules();
+    const rules = extRules.value;
     categories.value = (rules?.categories || []).map((c) => ({ ...c, total: 0 }));
     projectOptions.value = [...(rules?.projects || [])];
     // 复用抽屉已有的可见错误与重试区; 规则失败时分类/项目也不能另走兜底接口.
-    categoriesError.value = marketRulesError.value
-      ? `扩展规则加载失败: ${marketRulesError.value}`
+    categoriesError.value = extRulesError.value
+      ? `扩展规则加载失败: ${extRulesError.value}`
       : '';
     categoriesLoading.value = false;
   }
@@ -407,7 +407,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    *   技能选了包 → 切到连接器 → 包还在内存里 (还带着体检结论);
    *   连接器填了 MCP 配置 → 切回技能 → code 还锁在连接器名上, 同步不进包名.
    */
-  function chooseKind(k: MarketKind) {
+  function chooseKind(k: ExtKind) {
     form.kind = k;
     if (k === 'mcp') {
       clearPackage();
@@ -451,7 +451,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     } else {
       // 新建: 形态在入口就选好了 (initialKind) —— 直接进对应表单;
       // 没带形态 (别处打开) 就先走第 ① 步让人选, 别再默认「技能」。
-      const k = (opts.initialKind() || 'skill') as MarketKind;
+      const k = (opts.initialKind() || 'skill') as ExtKind;
       Object.assign(form, {
         code: '', kind: k, name: '', version: '1.0.0', summary: '',
         use_when: '', category: '', icon: '🧩',
@@ -473,9 +473,9 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * ⚠️ 放在 watch 里而不是 onPickPackage 里 —— 这样**任何**途径换包都会同步
    *    (也才好单测); code 是派生值, 用户改不了它.
    */
-  watch([() => pkgFile.value, () => marketRules.value], ([f]) => {
+  watch([() => pkgFile.value, () => extRules.value], ([f]) => {
     if (mode() !== 'create') return;
-    const derived = codeFromPackageName(f?.name || '', marketRules.value);
+    const derived = codeFromPackageName(f?.name || '', extRules.value);
     if (derived) form.code = derived;
   });
 
@@ -495,7 +495,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
    * ⚠️ 只在**新建**时同步 —— 更新时 code 不可改 (后端也只允许改配置, 不改 code).
    *    连接器名按字符集/分段规则校验 (配置校验会拦), 这里原样带成 code, 不另做加工.
    */
-  watch([() => mcpConfigText.value, () => marketRules.value], () => {
+  watch([() => mcpConfigText.value, () => extRules.value], () => {
     if (mode() !== 'create' || !isMcp.value) return;
     const p = mcpParsed.value;
     if (!p.ok) return;
@@ -511,7 +511,7 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     fileInput, pkgFile, preview, previewing, iconPanel, usedIcons, iconTouched,
     dragging,
     categories, categoriesError, categoriesLoading, projectOptions,
-    rules: marketRules, rulesError: marketRulesError, rulesLoading: marketRulesLoading,
+    rules: extRules, rulesError: extRulesError, rulesLoading: extRulesLoading,
     // 派生
     isMcp, isEdit, kind, mcpParsed, mcpConfigError, mcpHint, mcpHintState, mcpTemplate,
     codeError, codeFieldError,

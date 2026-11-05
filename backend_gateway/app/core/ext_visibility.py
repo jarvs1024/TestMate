@@ -15,7 +15,7 @@ from sqlalchemy import or_
 from sqlalchemy import Select
 
 from app.core.identity import author_forms
-from app.core.market_state import ON_SHELF_STATES, PUBLISHED
+from app.core.ext_state import ON_SHELF_STATES, PUBLISHED
 from app.models.asset import Asset
 
 

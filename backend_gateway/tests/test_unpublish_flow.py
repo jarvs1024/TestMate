@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import subprocess
 
-from tests.test_market_api import _enable_publisher, _upload
+from tests.test_ext_api import _enable_publisher, _upload
 
 API = "/api/v1/extensions"
 
@@ -79,7 +79,7 @@ async def test_apply_unpublish_moves_to_pending(
     assert d.json()["review_note"] == "这个技能不维护了", d.text
 
 
-async def test_pending_unpublish_still_visible_in_market(
+async def test_pending_unpublish_still_visible_in_ext(
     client, auth, ws, restore_git_config, publisher_user, stranger_user,  # noqa: ARG001
 ):
     """⚠️ 待下架审核期间资产**仍在架** —— 管理员确认前它还在被用, 不能消失."""

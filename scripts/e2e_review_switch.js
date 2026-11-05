@@ -176,7 +176,7 @@ async function openPage(browser, token, user) {
 /**
  * 切到「技能」类型 tab.
  *
- * ⚠️ 市场页默认停在**插件** tab (kind = 'plugin'), 技能资产根本不渲染 ——
+ * ⚠️ 扩展页默认停在**插件** tab (kind = 'plugin'), 技能资产根本不渲染 ——
  *    找不到卡片不是数据的问题, 是 tab 没切过去.
  */
 async function switchKindTab(page, label) {
@@ -254,7 +254,7 @@ async function openDrawer(page, name, timeoutMs = 20000) {
       defaultViewport: { width: 1600, height: 1000 },
     });
     const { page } = await openPage(browser, pubToken, { id: 0, username: PUB, role: 'tester' });
-    await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.asset-card', { timeout: 20000 });
     await sleep(1500);
     await switchKindTab(page, '技能');

@@ -11,11 +11,11 @@
  *   技能 / 插件 → 上传安装包 (zip), 靠包里的文档 + 清单说话
  *   连接器     → **只填一段 MCP JSON 配置**, 没有安装包, 也没有 README
  */
-import type { MarketKind } from '@/api/assets';
+import type { ExtKind } from '@/api/assets';
 
 export interface KindMeta {
   /** 类型值 (后端 kind) */
-  value: MarketKind;
+  value: ExtKind;
   /** 中文名 */
   label: string;
   /** 英文名 (后端 kind 原样) */
@@ -35,7 +35,7 @@ export interface KindMeta {
 /**
  * 三种形态 —— 顺序即展示顺序
  *
- * ⚠️ 顺序跟扩展页的页签 (marketCatalog.ts 的 MARKET_KINDS) **保持一致**:
+ * ⚠️ 顺序跟扩展页的页签 (extCatalog.ts 的 EXT_KINDS) **保持一致**:
  *    页签和 lede 都是「插件 / 技能 / 连接器」, 这里以前是「技能 / 插件 / 连接器」——
  *    同一个东西两处顺序不同, 用户会以为上传入口跟页签对不上.
  */
@@ -87,6 +87,6 @@ export const KIND_META: KindMeta[] = [
 const FALLBACK_KIND: KindMeta = KIND_META.find((k) => k.value === 'skill')!;
 
 /** 取某个类型的元信息 (未知类型兜底回技能) */
-export function kindMeta(kind: MarketKind | string | undefined | null): KindMeta {
+export function kindMeta(kind: ExtKind | string | undefined | null): KindMeta {
   return KIND_META.find((k) => k.value === kind) || FALLBACK_KIND;
 }

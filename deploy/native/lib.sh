@@ -566,7 +566,7 @@ port_owner_pid() {
 # 但 local driver 的进程是**跑在宿主上**的: 同一个名字在宿主上也解析到那个虚拟网关,
 # 而那个地址从宿主侧**连不通**. 于是本地部署会出现"看着配了, 就是连不上":
 #   · 代码检视 (ReviewAgent) 连不上   → http://host.docker.internal:3000
-#   · 资产市场推不到 GitLab             → ssh://git@host.docker.internal:8922
+#   · 扩展库推不到 GitLab             → ssh://git@host.docker.internal:8922
 #   · 设置页里填的任何 host.docker.internal 地址都连不上
 #
 # 解法是一行: 宿主的 /etc/hosts 里让它指回自己 (127.0.0.1).

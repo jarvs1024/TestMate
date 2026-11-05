@@ -6,7 +6,7 @@
    现在统一成 "{code}.zip" —— code 才是这个扩展的**身份**.
 
 覆盖:
-  · 纯函数 market_naming.download_filename / package_media_type 的规则
+  · 纯函数 ext_naming.download_filename / package_media_type 的规则
   · 真 HTTP 下载端点的 Content-Disposition / Content-Type
   · 无原始包时"即时打包"那条路也走同一套命名
 """
@@ -17,7 +17,7 @@ import zipfile
 
 import pytest
 
-from app.core import market_naming
+from app.core import ext_naming
 
 API = "/api/v1/extensions"
 
@@ -26,14 +26,14 @@ API = "/api/v1/extensions"
 
 def test_download_filename_is_code_without_version():
     """核心断言: 文件名 = code + 真实后缀, **不含版本号**."""
-    assert market_naming.download_filename("dml-ssd-log-doctor", "1.0.0.zip") == (
+    assert ext_naming.download_filename("dml-ssd-log-doctor", "1.0.0.zip") == (
         "dml-ssd-log-doctor.zip"
     )
-    assert market_naming.download_filename("dml-ssd-log-doctor", "1.1.0.zip") == (
+    assert ext_naming.download_filename("dml-ssd-log-doctor", "1.1.0.zip") == (
         "dml-ssd-log-doctor.zip"
     )
     # 同一个 code 的不同版本 → 文件名一样 (升级不会在本地堆出一堆同名不同版)
-    assert market_naming.download_filename("dml-a", "1.0.0.zip") == market_naming.download_filename(
+    assert ext_naming.download_filename("dml-a", "1.0.0.zip") == ext_naming.download_filename(
         "dml-a", "9.9.9.zip"
     )
 
@@ -52,24 +52,24 @@ def test_download_filename_is_code_without_version():
 )
 def test_download_filename_suffix_follows_real_content(source_name, expected):
     """后缀跟着**真实内容**走 —— tar.gz 的包不能硬给个 .zip 的名字."""
-    assert market_naming.download_filename("dml-a", source_name) == expected
+    assert ext_naming.download_filename("dml-a", source_name) == expected
 
 
 def test_download_filename_sanitizes_code_for_header_safety():
     """code 会进 Content-Disposition 头 —— 引号/换行就是头注入."""
-    assert market_naming.download_filename('dml-a"b', "1.0.0.zip") == "dml-a_b.zip"
-    assert market_naming.download_filename("dml-a\r\nX-Evil", "1.0.0.zip") == (
+    assert ext_naming.download_filename('dml-a"b', "1.0.0.zip") == "dml-a_b.zip"
+    assert ext_naming.download_filename("dml-a\r\nX-Evil", "1.0.0.zip") == (
         "dml-a__X-Evil.zip"
     )
-    assert market_naming.download_filename("", "1.0.0.zip") == "package.zip"
-    assert market_naming.download_filename("   ", "1.0.0.zip") == "package.zip"
+    assert ext_naming.download_filename("", "1.0.0.zip") == "package.zip"
+    assert ext_naming.download_filename("   ", "1.0.0.zip") == "package.zip"
 
 
 def test_package_media_type_matches_suffix():
-    assert market_naming.package_media_type("dml-a.zip") == "application/zip"
-    assert market_naming.package_media_type("dml-a.tar.gz") == "application/gzip"
-    assert market_naming.package_media_type("dml-a.tgz") == "application/gzip"
-    assert market_naming.package_media_type("") == "application/zip"
+    assert ext_naming.package_media_type("dml-a.zip") == "application/zip"
+    assert ext_naming.package_media_type("dml-a.tar.gz") == "application/gzip"
+    assert ext_naming.package_media_type("dml-a.tgz") == "application/gzip"
+    assert ext_naming.package_media_type("") == "application/zip"
 
 
 # ---------- 真 HTTP: 下载端点 ----------

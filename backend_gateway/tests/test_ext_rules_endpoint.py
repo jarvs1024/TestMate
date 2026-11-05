@@ -1,11 +1,11 @@
 """市场规则端点: 前端与 MCP 共用后端现有命名/分类/项目规则."""
 from __future__ import annotations
 
-from app.core import market_projects
+from app.core import ext_projects
 from tests.conftest import set_setting
 
 
-async def test_market_rules_returns_complete_existing_contract(client, auth):
+async def test_ext_rules_returns_complete_existing_contract(client, auth):
     response = await client.get("/api/v1/extensions/rules", headers=auth)
 
     assert response.status_code == 200, response.text
@@ -79,8 +79,8 @@ async def test_market_rules_returns_complete_existing_contract(client, auth):
     }
 
 
-async def test_market_rules_uses_configured_projects(client, auth):
-    await set_setting(market_projects.SETTINGS_KEY, "7000, 7100")
+async def test_ext_rules_uses_configured_projects(client, auth):
+    await set_setting(ext_projects.SETTINGS_KEY, "7000, 7100")
 
     response = await client.get("/api/v1/extensions/rules", headers=auth)
 

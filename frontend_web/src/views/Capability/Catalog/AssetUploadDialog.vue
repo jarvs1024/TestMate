@@ -212,7 +212,7 @@
                   <span class="cat-desc" :title="c.desc">{{ c.desc }}</span>
                 </el-option>
                 <!-- ⚠️ 兜底项: 分类接口失败时注入「其他」—— 后端本来就认这个分类
-                     (market_categories.MISC = "其他", 不认识的分类都归它),
+                     (ext_categories.MISC = "其他", 不认识的分类都归它),
                      保证下拉**永不为空**, 「上架」按钮不会永久卡死.
                      正常返回时**不注入** (表里本来就有「其他」). -->
                 <el-option v-if="categoriesError && !hasMiscCategory" value="其他" label="其他" />
@@ -376,7 +376,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
-import { getAsset, getJob, retryJob, uploadAsset, updateAsset, updateAssetMeta, type AssetItem, type AssetJob, type MarketKind } from '@/api/assets';
+import { getAsset, getJob, retryJob, uploadAsset, updateAsset, updateAssetMeta, type AssetItem, type AssetJob, type ExtKind } from '@/api/assets';
 import { KIND_META } from './kindMeta';
 import { useAssetUploadForm } from './useAssetUploadForm';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
@@ -392,7 +392,7 @@ const props = defineProps<{
   mode: 'create' | 'update' | 'edit';
   asset?: AssetItem | null;
   /** 入口选定的形态 (扩展页下拉选完传进来) —— 空就先进第 ① 步让人选 */
-  initialKind?: MarketKind | '';
+  initialKind?: ExtKind | '';
 }>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void;
@@ -464,7 +464,7 @@ const packageAccept = computed(() => rules.value?.package.suffixes.join(',') || 
 /**
  * 分类表里有没有「其他」—— 用来决定失败时**要不要**再注入一个兜底项.
  *
- * ⚠️ 后端本来就把「其他」当正式分类 (market_categories.MISC),
+ * ⚠️ 后端本来就把「其他」当正式分类 (ext_categories.MISC),
  *    正常返回时表里就有它 —— 再插一个会出现两个「其他」.
  */
 const hasMiscCategory = computed(() =>
@@ -482,7 +482,7 @@ watch(() => props.modelValue, (open) => {
 });
 
 function splitList(s: string): string[] {
-  // 与软件库 splitTags / 后端 market_policy 一致: 中英文逗号、顿号、分号都拆, 去空去重
+  // 与软件库 splitTags / 后端 ext_policy 一致: 中英文逗号、顿号、分号都拆, 去空去重
   return Array.from(new Set(
     (s || '').split(/[,;、，\s]+/).map((x) => x.trim()).filter(Boolean),
   ));
@@ -514,7 +514,7 @@ function parseMcpOrNull(text: string): Record<string, unknown> | null {
 /**
  * 点图标面板**外面** → 收起面板.
  *
- * ⚠️ 跟扩展页的形态菜单一个做法 (见 Market/index.vue 的 onDocClick):
+ * ⚠️ 跟扩展页的形态菜单一个做法 (见 Catalog/index.vue 的 onDocClick):
  *    面板连同按钮都在 .icon-pick 里, 点它不算"外面" ——
  *    不然点一下按钮会被"外面点击"和"按钮自己"各处理一次, 面板开了又关。
  *

@@ -1,5 +1,5 @@
 /**
- * 资产市场的**边界与异常** —— 正常路径之外最容易出事的地方.
+ * 扩展库的**边界与异常** —— 正常路径之外最容易出事的地方.
  *
  * 覆盖: 长度/字符边界、规则在 create 与 update 下的差异、
  *       池子用尽时的兜底、空数据不崩.
@@ -7,11 +7,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   FALLBACK_ICONS, GENERAL_ICONS, ICON_POOLS,
-  checkCodeSync, codeFromPackageName, marketRules, pickIcon, validateCode, validatePackageName,
+  checkCodeSync, codeFromPackageName, extRules, pickIcon, validateCode, validatePackageName,
 } from '../assetForm';
 
 beforeEach(() => {
-  marketRules.value = {
+  extRules.value = {
     code: {
       pattern: '^(?=.{3,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$',
       example: 'ssd-log-doctor', min_length: 3, max_length: 64,

@@ -223,7 +223,7 @@ async function openPage(browser, token, user) {
   // ⚠️ 先存原值 —— 白名单是**生产设置**, 结束时必须还原
   //    (以前直接恢复成空字符串, 会把管理员配好的真实白名单一起抹掉)
   savedPublisherSetting = await getSetting(adminToken, 'extensions.publisher_usernames');
-  await api('/api/v1/settings/marketplace.publisher_usernames', {
+  await api('/api/v1/settings/extensions.publisher_usernames', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminToken },
     body: JSON.stringify({ value: PUB }),
@@ -240,7 +240,7 @@ async function openPage(browser, token, user) {
 
   // ---------- ① 发布者上传 ----------
   const pub = await openPage(browser, pubToken, { id: 0, username: PUB, role: 'tester' });
-  await pub.page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await pub.page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await pub.page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1200);
 
@@ -325,7 +325,7 @@ async function openPage(browser, token, user) {
 
   // ---------- ③ 管理员审核台 ----------
   const adm = await openPage(browser, adminToken, { id: 1, username: ADMIN, role: 'admin' });
-  await adm.page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await adm.page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await adm.page.waitForSelector('.asset-card', { timeout: 15000 });
   await sleep(1500);
   // 视图行已去掉 —— 管理员在**列表里**直接看到待审资产 (卡片带徽标)

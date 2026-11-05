@@ -26,7 +26,7 @@ FEATURES=(
   "的名字只能用小写字母/数字/连字符"       # 2026-10-25: 更新存量连接器时不强制 dml- 前缀
                                        #   (示例文案后来改成后端下发的 rules.code.example, 不再写死 my-connector)
   "搜索名称、说明、标签或项目号"    # 2026-10-25: 搜索支持按项目
-  "本页上次刷新"               # 2026-10-25: 市场页自动刷新 + 页脚时间戳
+  "本页上次刷新"               # 2026-10-25: 扩展页自动刷新 + 页脚时间戳
   "导入这个压缩包即可安装"        # 2026-10-25: 下载提示通用化
   "全部项目"                  # 2026-10-25: 项目+排序合并成一个下拉
   "重试失败任务"               # 2026-10-26: 后端把 jobs 限本人 → 文案不能说"全部重试"
@@ -118,15 +118,15 @@ BACKEND_FILES=(
   app/api/auth.py
   app/api/settings.py
   app/api/agents.py
-  app/api/marketplace.py
+  app/api/extensions.py
   app/api/software.py
   app/core/identity.py
   app/core/config.py
   app/core/security.py
   app/core/git_sync.py
   app/core/dingtalk.py
-  app/core/market_state.py
-  app/core/market_notify.py
+  app/core/ext_state.py
+  app/core/ext_notify.py
   app/core/mcp_config.py
   app/core/software_store.py
   app/db/session.py

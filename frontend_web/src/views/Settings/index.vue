@@ -125,13 +125,13 @@
             </div>
 
             <!-- 🧩 扩展库 -->
-            <div id="sec-asset-market" class="sub-grp sub3">
-              <h4>🧩 扩展库 <span class="sub-cnt">{{ marketItems.length }} 项</span></h4>
+            <div id="sec-asset-ext" class="sub-grp sub3">
+              <h4>🧩 扩展库 <span class="sub-cnt">{{ extItems.length }} 项</span></h4>
               <div class="hint">
                 💡 扩展库的后端配置 —— GitLab 仓库在哪、项目列表怎么配、谁能发布、
                 怎么对外暴露 marketplace.json. 改完<strong>立即生效</strong>, 不用重启后端.
               </div>
-              <SettingRow v-for="(it, idx) in marketItems" :key="it.key"
+              <SettingRow v-for="(it, idx) in extItems" :key="it.key"
                 :item="it" :is-first="idx === 0" :is-admin="isAdmin"
                 :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
                 :saving="saving === it.key" :secret-display="getInputValue(it)"
@@ -149,10 +149,10 @@
                 </div>
               </div>
               <div class="workdir mono">
-                <div>工作区 <code>{{ marketWorkspace }}</code>
+                <div>工作区 <code>{{ extWorkspace }}</code>
                   <span class="muted">（运行时不可改 —— 换了会丢掉现有工作副本）</span>
                 </div>
-                <div>远端 <code>{{ marketRemote }}</code>
+                <div>远端 <code>{{ extRemote }}</code>
                   <span class="muted">（当前生效值, 改上面的「GitLab 仓库地址」后立即生效）</span>
                 </div>
               </div>
@@ -368,13 +368,13 @@
 
           <!-- 🧩 扩展库 -->
           <div class="sub-grp">
-            <h3>🧩 扩展库 <span class="sub-cnt">{{ notifMarketItems.length }} 项</span></h3>
+            <h3>🧩 扩展库 <span class="sub-cnt">{{ notifExtItems.length }} 项</span></h3>
             <div class="hint">
               💡 扩展资产的通知开关，以及<strong>两个群</strong>的机器人配置:
               <strong>扩展群</strong>收「资产已经变了」的通告, <strong>审核群</strong>收「要管理员处理」的事。
               测试环境可以把两边配成一样的。
             </div>
-            <SettingRow v-for="(it, idx) in notifMarketItems" :key="it.key"
+            <SettingRow v-for="(it, idx) in notifExtItems" :key="it.key"
               :item="it" :is-first="idx === 0" :is-admin="isAdmin"
               :draft="drafts[it.key]" :dirty="isDirty(it)" :show="!!showSecrets[it.key]"
               :saving="saving === it.key" :secret-display="getInputValue(it)"
@@ -509,7 +509,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { getSchema, updateSetting, testRagflow, testReviewAgent, testDingTalk, testGitLab, testSoftwareStorage, type SettingItem, type TestResult } from '@/api/settings';
-import { getMarketConfig, listNotifications, previewNotifications, type AssetNotification, type NotifyPreview } from '@/api/assets';
+import { getExtConfig, listNotifications, previewNotifications, type AssetNotification, type NotifyPreview } from '@/api/assets';
 import { listUsers, type ManagedUser } from '@/api/users';
 import SettingRow from './components/SettingRow.vue';
 import UserManage from './components/UserManage.vue';
@@ -574,7 +574,7 @@ const testResults = reactive<Record<string, TestResult | null>>({});
 // ⚠️ 默认落在「能力墙 → 资产 → 扩展」—— 那是设置页里项最多的地方.
 const activeTop = ref<string>('sec-capability');
 const activeSub = ref<string>('sec-asset');
-const activeSub2 = ref<string>('sec-asset-market');
+const activeSub2 = ref<string>('sec-asset-ext');
 
 // ===== 按 category 拆分 (后端 schema 是单一来源) =====
 const searchItems = computed(() => itemsByCategory('search'));
@@ -596,7 +596,7 @@ const _NOTIF_MARKET_KEYS = [
 ];
 const notifSharedItems = computed(() =>
   notificationItems.value.filter(it => it.key === 'dingtalk.notify_base_url'));
-const notifMarketItems = computed(() =>
+const notifExtItems = computed(() =>
   notificationItems.value.filter(it =>
     it.key.startsWith('dingtalk.extensions_') || it.key.startsWith('dingtalk.review_')
     || _NOTIF_MARKET_KEYS.includes(it.key)));
@@ -606,7 +606,7 @@ const notifCodeReviewItems = computed(() =>
   notificationItems.value.filter(it =>
     it.key.startsWith('dingtalk.code_review_') || it.key === 'dingtalk.notify_on_review_failure'));
 // 扩展 (GitLab 仓库 / 安装目录 / 发布白名单 / 对外暴露方式)
-const marketItems = computed(() => itemsByCategory('extensions'));
+const extItems = computed(() => itemsByCategory('extensions'));
 // 软件库 (存储根目录 / 单包上限 / 保留版本数 / 公开下载)
 // ⚠️ 2026-10-28: 这一组后端一直有, 前端一直没渲染 —— 补上.
 const softwareItems = computed(() => itemsByCategory('software'));
@@ -617,18 +617,18 @@ const toolItems = computed(() => itemsByCategory('tool'));
 const boardItems = computed(() => itemsByCategory('board'));
 
 // 扩展当前生效的配置 (只读, 用来展示"工作区在哪 / 远端是哪个")
-const marketWorkspace = ref('');
-const marketRemote = ref('');
-async function loadMarketConfig() {
+const extWorkspace = ref('');
+const extRemote = ref('');
+async function loadExtConfig() {
   try {
-    const c = await getMarketConfig();
-    marketWorkspace.value = c.workspace || '(未知)';
-    marketRemote.value = c.remote || '(未配置)';
+    const c = await getExtConfig();
+    extWorkspace.value = c.workspace || '(未知)';
+    extRemote.value = c.remote || '(未配置)';
   } catch {
-    // ⚠️ 以前失败时 marketRemote = '' → 模板渲染出一个**空代码块**,
+    // ⚠️ 以前失败时 extRemote = '' → 模板渲染出一个**空代码块**,
     //    用户分不清"没配"还是"读失败". 两个都标成「读取失败」.
-    marketWorkspace.value = '(读取失败)';
-    marketRemote.value = '(读取失败)';
+    extWorkspace.value = '(读取失败)';
+    extRemote.value = '(读取失败)';
   }
 }
 
@@ -775,7 +775,7 @@ const kbSourceTotal = computed(() => countOf(kbSourceGroups.value));
 /** 知识库 = 知识检索 + 知识对话 + RAGFlow API */
 const kbTotal = computed(() => searchItems.value.length + chatItems.value.length + kbSourceTotal.value);
 /** 资产 = 扩展 + 知识库 + 软件库 (首页资产组的三张卡) */
-const assetTotal = computed(() => marketItems.value.length + kbTotal.value + softwareItems.value.length);
+const assetTotal = computed(() => extItems.value.length + kbTotal.value + softwareItems.value.length);
 /** 看板 = 代码检视的数据源 + 以后可能有的 board 类设置项 */
 const boardTotal = computed(() => boardItems.value.length + countOf(boardSourceGroups.value));
 /** 能力墙总计 */
@@ -817,7 +817,7 @@ const sections = computed<TocSection[]>(() => {
         label: '📦 资产',
         count: assetTotal.value,
         children: [
-          { id: 'sec-asset-market', label: '🧩 扩展库', count: marketItems.value.length },
+          { id: 'sec-asset-ext', label: '🧩 扩展库', count: extItems.value.length },
           { id: 'sec-asset-kb',      label: '📚 知识库',         count: kbTotal.value },
           { id: 'sec-asset-sw',      label: '🧰 软件库',         count: softwareItems.value.length },
         ],
@@ -860,7 +860,7 @@ function onPickTop(topId: string) {
   // 通知区带送达回执, 进区就拉一次
   if (topId === 'sec-notification') loadNotifyLog();
   // 扩展区展示当前生效的工作区/远端
-  if (topId === 'sec-capability') loadMarketConfig();
+  if (topId === 'sec-capability') loadExtConfig();
   // 用户管理区拉账号列表
   if (topId === 'sec-users') loadUsers();
 }

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 
 # 复用市场 API 测试里的上传/白名单助手 (同一批夹具)
-from tests.test_market_api import _enable_publisher, _upload
+from tests.test_ext_api import _enable_publisher, _upload
 
 
 # ---------- 同步器: 缺字段不猜 ----------

@@ -55,7 +55,7 @@ brew install nginx                              # 前端静态托管
 4/9 数据库        → 装 + 起**本机** MySQL 和 Redis, 建 testmate 库 + 用户 (不用任何容器)
 5/9 Python 依赖   → 建 venv, 按 requirements.lock 装
 6/9 前端构建      → npm ci + vite build, 产物落到 runtime/frontend
-7/9 资产市场 SSH  → 拷私钥进 runtime/ssh
+7/9 扩展库 SSH  → 拷私钥进 runtime/ssh
 8/9 应用配置      → backend.env + nginx.conf (独立实例)
 9/9 启动          → 起进程 + 健康校验 + 建 admin
 ```
@@ -154,14 +154,14 @@ sudo ./deploy/native/tmctl.sh local hosts fix
     └── runtime/                    ← 所有运行时产物 (不入 git)
         ├── venv/                   ← Python 虚拟环境
         ├── frontend/               ← 前端构建产物 (nginx 的 root)
-        ├── market/                 ← 资产市场 git 工作区 (默认位置; mac 上通常指向共享目录, 见 §5)
+        ├── market/                 ← 扩展库 git 工作区 (默认位置; mac 上通常指向共享目录, 见 §5)
         ├── logs/                   ← nginx 日志
         ├── run/                    ← nginx pid / 临时目录
         ├── config/
         │   ├── backend.env         ← 后端环境变量 (600)
         │   ├── nginx.conf          ← nginx 配置 (独立实例)
         │   └── mime.types
-        └── ssh/                    ← 资产市场用的 SSH 私钥 (600)
+        └── ssh/                    ← 扩展库用的 SSH 私钥 (600)
 ```
 
 两种 driver 的服务:
@@ -209,7 +209,7 @@ Docker 模式里, 后端跑在容器里, 访问宿主用的是 `host.docker.inte
 覆盖两类地址:
 
 - **HTTP** —— 设置页里的代码检视 / RAGFlow 等 (`settings_store.py` 的 `_rewrite_loopback`)
-- **git 远端 (SSH)** —— 资产市场的仓库地址 (`git_sync.py` 的 `_rewrite_remote`)
+- **git 远端 (SSH)** —— 扩展库的仓库地址 (`git_sync.py` 的 `_rewrite_remote`)
 
 所以**同一个设置值在两种部署模式下都通**: 填 `127.0.0.1` 或填 `host.docker.internal`
 都行, 切部署模式不用改设置, 也不用改 `/etc/hosts` (那要 root)。
@@ -261,7 +261,7 @@ Docker 模式里, 后端跑在容器里, 访问宿主用的是 `host.docker.inte
 - **Redis 默认不设口令** (只监听 `127.0.0.1`, 外网够不着)。想让本机 Redis
   真的带口令: 在 Redis 自己的配置里加 `requirepass`, 再把同一个口令填回
   `.env` 的 `REDIS_PASSWORD`。
-- **资产市场工作区仍然跟 Docker 模式共用** (`DATA_ROOT/market`) —— 那是 git
+- **扩展库工作区仍然跟 Docker 模式共用** (`DATA_ROOT/market`) —— 那是 git
   工作区, 共用才能保证两种模式推的是同一个仓库。
   但**两种模式的数据库是分开的**, 所以"已上架的资产"记录各存各的。
 
@@ -270,7 +270,7 @@ Docker 模式里, 后端跑在容器里, 访问宿主用的是 `host.docker.inte
 
 Docker 模式的 backend 和 local 模式的 backend **同时跑**会出事:
 
-> 资产市场的 job 队列是**进程内**的 `asyncio.Queue`, 不跨进程.
+> 扩展库的 job 队列是**进程内**的 `asyncio.Queue`, 不跨进程.
 > 两个后端各有一份队列, 而且每个进程启动时都 `recover_pending_jobs()`
 > → 同一个 job 被两个进程抢 → git `index.lock` 冲突 / 重复推 GitLab.
 
@@ -313,7 +313,7 @@ cd deploy && docker compose --env-file .env start backend frontend
 
 `BACKEND_WORKERS=1`, 不是保守, 是**必须**:
 
-后端启动时(lifespan 钩子)会拉起三个后台任务 —— 资产市场 job 消费者 / 反向同步 puller / 钉钉重试。
+后端启动时(lifespan 钩子)会拉起三个后台任务 —— 扩展库 job 消费者 / 反向同步 puller / 钉钉重试。
 资产 job 走的是**进程内** `asyncio.Queue` + 单消费者队列(设计文档里写得很清楚: git 的 `index.lock` 是仓库级的, 两个 job 并发 commit 必有一个失败), 队列**不跨进程**。
 
 跑多个 worker = 每个进程一份队列, 而且每个进程启动时都 `recover_pending_jobs()` → 同一个 job 被多个进程抢 → `index.lock` 冲突 / 重复推送 GitLab。
@@ -348,7 +348,7 @@ install 第一次跑自动生成 `.env`, 并把 `JWT_SECRET` / `MySQL_PASSWORD` 
 
 后端启动时 `init_db()` 会 `alembic upgrade head`。**只有**「版本表不存在 / 没记录」(老环境用 `create_all` 建的) 才 stamp 兜底 —— 绝不会把版本号盖到 head 把新迁移整段跳过。
 
-### 6.6 资产市场工作区
+### 6.6 扩展库工作区
 
 裸机模式下 `EXTENSIONS_DIR` (默认 `runtime/market`) 是**宿主机上的一个目录**, 后端启动时会自己 `git init + remote add + fetch + checkout` 建好仓库 —— 不用脚本预先 clone。
 
@@ -381,7 +381,7 @@ tar czf /var/backups/testmate/software-$(date +%F).tar.gz \
 
 ### 6.9 换一个 git 远端 (公司 GitLab / 云 GitLab)
 
-⚠️ **后端不需要 GitLab 的 API** —— 资产市场只通过 SSH 做 git push/pull
+⚠️ **后端不需要 GitLab 的 API** —— 扩展库只通过 SSH 做 git push/pull
 (`app/core/git_sync.py`: 没有 PAT、没有 token 过期、没有 API 限流)。
 所以**远端只要是"能 SSH 访问的 git 仓库"就行**, GitLab 只是顺带给你一个网页界面。
 
@@ -516,7 +516,7 @@ sudo ./deploy/native/tmctl.sh install    # 重跑一遍 = 重新生成配置 + �
 | 裸机 (两种 driver 共用) | `deploy/native/.env` | `deploy/native/runtime/` |
 
 **mac 上的 local 模式跟 Docker 模式各用各的数据库** (见 §5「数据库和 Redis 都是本机的」) ——
-裸机模式用本机的 MySQL/Redis, 不碰任何容器; 两者只是**资产市场工作区**共用,
+裸机模式用本机的 MySQL/Redis, 不碰任何容器; 两者只是**扩展库工作区**共用,
 保证两种模式推的是同一个仓库。
 
 ---
@@ -543,7 +543,7 @@ sudo ./deploy/native/tmctl.sh install --offline
 - **macOS 上 `check` 报「systemd 不可用」是正常的** —— local driver 不需要 systemd, 体检里那一项会标成「不需要」。
 - **macOS: `host.docker.internal` 在宿主上默认是不通的** —— 那是容器里访问宿主用的名字。
   但**不用管它**: 后端会按"自己跑在哪"自动把 `host.docker.internal` ↔ `127.0.0.1`
-  双向改写 (HTTP 与 git 远端都算), 所以代码检视、资产市场推送在两种模式下都能用同一个值。
+  双向改写 (HTTP 与 git 远端都算), 所以代码检视、扩展库推送在两种模式下都能用同一个值。
   别的工具 (curl / ssh) 想用这个别名才需要 `sudo ./deploy/native/tmctl.sh local hosts fix`。见 §5。
 - **macOS: launchd 的 agent 只能以当前登录用户身份跑** —— 没有 root 版用户 agent, 所以没有 systemd 那层"专用系统用户 + 沙箱加固"。见 §6.2。
 - 宿主机自带的 nginx 若也监听 8080, 端口体检会报占用 —— install 会**自动换端口**, 不用手工改。
@@ -554,7 +554,7 @@ sudo ./deploy/native/tmctl.sh install --offline
 - **裸机模式的数据库是本机的, 跟 Docker 模式各存各的** —— 换模式**不会**自动把数据带过去。
   老环境的库要搬过来: `mysqldump` 出来, 再 `./deploy/native/tmctl.sh local db import <dump.sql>`。
   要带就手工 `mysqldump` / `mysql < dump` (或用 `tmctl.sh backup` 出一份)。
-  共享的只有**资产市场工作区** (git 仓库), 见 §5。
+  共享的只有**扩展库工作区** (git 仓库), 见 §5。
 
 ---
 
@@ -581,7 +581,7 @@ docker run --rm -v "$PWD:/repo" ubuntu:22.04 bash -c \
 `sandbox-probe.sh` 验的是**单元在 systemd 沙箱下能不能真的起来**, 以及加固项有没有误伤 —— 最要紧的一条是:
 
 > `ReadWritePaths` 能不能覆盖 `ProtectHome=read-only`?
-> 覆盖不了的话, 装在 `/home` 下的部署会**静默地写不了**资产市场的 git 工作区
+> 覆盖不了的话, 装在 `/home` 下的部署会**静默地写不了**扩展库的 git 工作区
 > (上传 / 推送全挂, 而且报错点离根因很远)。实测 systemd 249 上是**能覆盖**的,
 > 但这条每个 systemd 版本行为都可能变, 所以留了回归测试。
 

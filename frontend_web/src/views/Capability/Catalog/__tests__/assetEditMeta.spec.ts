@@ -1,5 +1,5 @@
 /**
- * 资产市场 —— **「编辑信息」** (2026-10-30 · 第十一轮 · 问题6).
+ * 扩展库 —— **「编辑信息」** (2026-10-30 · 第十一轮 · 问题6).
  *
  * 用户报的问题: "插件技能连接器支持编辑相关信息（同样是作者和管理才能编辑）".
  *
@@ -7,7 +7,7 @@
  *    也不动版本号. 跟原来的「发布新版本」(PUT, 必须重传包) 分开.
  *
  * ⚠️ 最要紧的一条是**后端**: 走错分支会把别人上传的安装包删掉
- *    (见 backend_gateway/app/api/marketplace.py 的 `_stage_asset_locked`).
+ *    (见 backend_gateway/app/api/extensions.py 的 `_stage_asset_locked`).
  *    这里盯的是前端这一半: 编辑模式**不能出现安装包上传区**, 提交走 PATCH.
  */
 import { describe, expect, it } from 'vitest';
@@ -43,7 +43,7 @@ describe('资产详情抽屉: 「编辑信息」按钮', () => {
     expect(m, '「编辑信息」按钮没有挂在 canEdit 上').toBeTruthy();
   });
 
-  it('市场页把 edit-meta 接到了「只改元信息」那条路', () => {
+  it('扩展页把 edit-meta 接到了「只改元信息」那条路', () => {
     expect(catalog).toMatch(/@edit-meta="openEditMeta"/);
     expect(catalog).toMatch(/uploadMode\.value = 'edit'/);
   });

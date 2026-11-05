@@ -75,7 +75,7 @@ export function capabilityCta(c: { kind: string; cta?: string | null }): string 
 export type MetaSource = 'assets' | 'kb' | 'software';
 
 export const PLATFORM_META_SOURCE: Record<string, MetaSource> = {
-  'agent-market': 'assets',
+  'ext-library': 'assets',
   'kb-inventory': 'kb',
   'software-library': 'software',
 };

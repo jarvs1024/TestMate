@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 插件·技能·连接 (原「AI 资产市场》) —— 端到端验收脚本 (真实 Chrome).
+ * 插件·技能·连接 (原「AI 扩展库》) —— 端到端验收脚本 (真实 Chrome).
  *
  * 为什么不用内置 Browser 验证:
  *   Electron 内置 Browser 在页面加载瞬间会挂起 renderer —— XHR 事件不投递、setTimeout 不触发,
@@ -13,7 +13,7 @@
  *
  * 用法:
  *   TESTMATE_USER=admin TESTMATE_PASSWORD='Admin@123' \
- *     node scripts/e2e_market.js [baseUrl]
+ *     node scripts/e2e_ext.js [baseUrl]
  *
  * 退出码: 0 = 全部通过, 1 = 有断言失败, 2 = 脚本异常。
  */
@@ -76,7 +76,7 @@ function makeZip(target, files) {
   return target;
 }
 
-/** 读取市场页当前状态 */
+/** 读取扩展页当前状态 */
 /** 把上传抽屉的必填项补齐 (新表单: 缺一项提交按钮就是禁用的) */
 async function fillRequiredFields(page) {
   await page.evaluate(() => {
@@ -126,7 +126,7 @@ async function snap(page) {
       debugBar: !!document.querySelector('.tm-debug'),
       cards,
       tabs: [...document.querySelectorAll('.kind-tab')].map((b) => txt(b)),
-      marketState: txt(document.querySelector('.market .state')),
+      extState: txt(document.querySelector('.ext-catalog .state')),
       syncBar: txt(document.querySelector('.sync-bar')),
       footHint: txt(document.querySelector('.foot-hint')),
       drawerOpen: !!drawer,
@@ -295,14 +295,14 @@ async function codeByName(page, name) {
     await page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1200);
     let s = await snap(page);
-    check('A1 市场页渲染出资产卡片', s.cards.length > 0, `${s.cards.length} 张: ${s.cards.map((c) => c.name).join(', ')}`);
+    check('A1 扩展页渲染出资产卡片', s.cards.length > 0, `${s.cards.length} 张: ${s.cards.map((c) => c.name).join(', ')}`);
     check('A2 无调试条残留', s.debugBar === false);
     check('A3 三个类型 Tab 都有计数', s.tabs.length === 3, s.tabs.join(' | '));
-    check('A4 无加载中/空态残留', !s.marketState, s.marketState || '(none)');
+    check('A4 无加载中/空态残留', !s.extState, s.extState || '(none)');
     check('A5 底部标注数据源', /GitLab/.test(s.footHint || ''), s.footHint);
 
     // ---------- A6. 旧「广场」地址 → 自动跳到能力墙首页 ----------
-    // ⚠️ 2026-10-25 信息架构重构: 广场变成了能力墙首页 (/home), 市场页不再有
+    // ⚠️ 2026-10-25 信息架构重构: 广场变成了能力墙首页 (/home), 扩展页不再有
     //    「返回广场」按钮 (导航由外壳提供) —— 但**旧书签 /plaza 不能 404**.
     await page.goto(BASE + '/plaza', { waitUntil: 'domcontentloaded' });
     await sleep(1500);
@@ -444,7 +444,7 @@ async function codeByName(page, name) {
     const autoCall = apiCalls.find((u) => u.includes('/api/v1/extensions?'));
     const footAfter = await page.evaluate(() =>
       (document.querySelector('.foot-hint')?.textContent || '').replace(/\s+/g, ' ').trim());
-    check('C7 市场页自动刷新 (20s 内自己刷一次)',
+    check('C7 扩展页自动刷新 (20s 内自己刷一次)',
       !!autoCall, autoCall ? '已自动刷新' : '没自动刷新');
     check('C8 页脚区分两个时间源 (GitLab 对齐 vs 本页刷新)',
       /本页上次刷新/.test(footAfter) && !/· 最近对齐 /.test(footAfter),
@@ -565,7 +565,7 @@ async function codeByName(page, name) {
       [...document.querySelectorAll('.pick-item')]
         .map((x) => (x.textContent || '').replace(/\s+/g, ' ').trim()));
     check('H0-1 上传入口先让用户选形态', kinds.length === 3, kinds.join(' | '));
-    // ⚠️ 顺序跟市场页的页签一致 (插件 / 技能 / 连接器) —— 2026-10-25 统一过
+    // ⚠️ 顺序跟扩展页的页签一致 (插件 / 技能 / 连接器) —— 2026-10-25 统一过
     check('H0-2 插件/技能/连接器三种都在 (顺序跟页签一致)',
       /插件/.test(kinds[0] || '') && /技能/.test(kinds[1] || '') && /连接器/.test(kinds[2] || ''),
       kinds.join(' | '));

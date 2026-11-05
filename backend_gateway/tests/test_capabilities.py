@@ -7,7 +7,7 @@
    ③ **知识库从侧栏顶级项变成了一张卡** (kind=platform, route=page:kb-manage);
    ④ 每张卡自带 cta —— 同角色的卡动法不同 (浏览资产 vs 检索语料 vs 浏览软件);
    ⑤ GET /agents **匿名可读** + 能按角色过滤;
-   ⑥ 2026-10-27: **工具只留「环境运维」**; 「AI 资产市场」改名「扩展」;
+   ⑥ 2026-10-27: **工具只留「环境运维」**; 「AI 扩展库」改名「扩展」;
       新增「软件库」卡; 环境运维的文案不许再提温箱 / 稳定性那一摊.
 """
 from app.api.agents import SEED_AGENTS, seed_agents
@@ -26,7 +26,7 @@ def test_seed_kinds_match_real_role():
     """角色要跟卡片**实际**扮演的东西对得上 —— 角色错了卡片就渲染错了."""
     by_code = {c["code"]: c for c in SEED_AGENTS}
     assert by_code["code-review"]["kind"] == AgentKind.board.value      # 看数
-    assert by_code["agent-market"]["kind"] == AgentKind.platform.value  # 资产
+    assert by_code["ext-library"]["kind"] == AgentKind.platform.value  # 资产
     assert by_code["kb-inventory"]["kind"] == AgentKind.platform.value  # 资产
     assert by_code["software-library"]["kind"] == AgentKind.platform.value  # 资产
     for code in ("env-ops",):
@@ -47,7 +47,7 @@ def test_every_seed_card_has_its_own_cta():
     for cfg in SEED_AGENTS:
         assert cfg.get("cta"), f"{cfg['code']} 缺 cta"
     by_code = {c["code"]: c for c in SEED_AGENTS}
-    assert by_code["agent-market"]["cta"] == "浏览资产"
+    assert by_code["ext-library"]["cta"] == "浏览资产"
     assert by_code["kb-inventory"]["cta"] == "检索语料"
     assert by_code["software-library"]["cta"] == "浏览软件"
     assert by_code["code-review"]["cta"] == "查看看板"
@@ -76,7 +76,7 @@ async def test_seed_agents_persists_kind():
         rows = (await s.execute(select(Agent))).scalars().all()
     kinds = {r.code: r.kind.value for r in rows}
     assert kinds["code-review"] == "board"
-    assert kinds["agent-market"] == "platform"
+    assert kinds["ext-library"] == "platform"
     assert kinds["kb-inventory"] == "platform"
     assert kinds["software-library"] == "platform"
     assert kinds["env-ops"] == "tool"
@@ -199,7 +199,7 @@ async def test_list_agents_filter_by_kind(client):
     assert all(i["kind"] == "platform" for i in items)
     codes = {i["code"] for i in items}
     assert "kb-inventory" in codes
-    assert "agent-market" in codes
+    assert "ext-library" in codes
     assert "software-library" in codes
 
 
@@ -272,16 +272,16 @@ def test_env_ops_copy_covers_the_intended_scope():
     assert "AI" in summary, summary
 
 
-def test_agent_market_renamed_to_plugin_skill_connector():
+def test_ext_library_card_seed():
     """「AI 资产市场」→「扩展」→「扩展库」 —— 老名字跟角色名「资产」撞了, 用户分不清.
 
     ⚠️ 2026-11-04 (第二十三轮): 再改名 "扩展" → "扩展库" (用户要求) ——
        光叫"扩展"听不出这是个**存放/浏览**的地方; 加"库"字后跟同级的
        「知识库」「软件库」完全对齐 (三个都是"库").
     """
-    mkt = next(c for c in SEED_AGENTS if c["code"] == "agent-market")
+    mkt = next(c for c in SEED_AGENTS if c["code"] == "ext-library")
     assert mkt["name"] == "扩展库"
-    assert "AI 资产市场" not in mkt["name"]
+    assert "AI 扩展库" not in mkt["name"]
     # 改名了, route 同步换成 /extensions
     assert mkt["route"] == "page:extensions"
 
@@ -314,7 +314,7 @@ def test_extension_library_renamed_consistently():
     用户图3 的箭头同时指向**页头标题**和**侧栏导航** —— 这两处都得是「扩展库」,
     名字对不上用户会以为点到了别的东西.
     """
-    mkt = next(c for c in SEED_AGENTS if c["code"] == "agent-market")
+    mkt = next(c for c in SEED_AGENTS if c["code"] == "ext-library")
     # ① 能力名 (侧栏导航 + 首页能力卡都读这个字段)
     assert mkt["name"] == "扩展库"
     # ② 另一个能力指向它时, 说的也是「扩展库」

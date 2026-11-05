@@ -77,7 +77,7 @@ function check(name, ok, detail) {
     }, USER, PASSWORD);
     check('E1 登录成功', !!tk);
 
-    await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.asset-card', { timeout: 15000 });
     await sleep(1500);
 
@@ -89,7 +89,7 @@ function check(name, ok, detail) {
       (nameEl || c).click();
       return true;
     });
-    check('E2 市场页有卡片可点开详情', openedCard);
+    check('E2 扩展页有卡片可点开详情', openedCard);
     if (!openedCard) throw new Error('没有找到卡片');
 
     await page.waitForSelector('.ad-actions', { timeout: 15000 });

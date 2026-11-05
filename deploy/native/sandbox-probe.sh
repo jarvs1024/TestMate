@@ -4,7 +4,7 @@
 # 验的是**单元在 systemd 沙箱下能不能真的起来**, 以及加固项有没有误伤:
 #
 #   ① 单元能启动 (Result=success) —— ReadWritePaths 指向的路径不存在时单元是起不来的
-#   ② ReadWritePaths 里的目录**可写** —— 资产市场 git 工作区就在这儿
+#   ② ReadWritePaths 里的目录**可写** —— 扩展库 git 工作区就在这儿
 #      (⚠️ 这条是重点: 单元里有 ProtectHome=read-only, 而 ReadWritePaths
 #       能否覆盖它, 文档说得含糊, 实际必须验 —— 覆盖不了的话,
 #       装在 /home 下的部署会静默地写不了市场工作区)
@@ -119,7 +119,7 @@ else
 fi
 
 if echo "$OUT" | grep -q 'MARKET_WRITE_OK'; then
-  pass "ReadWritePaths 里的目录可写 (资产市场工作区安全)"
+  pass "ReadWritePaths 里的目录可写 (扩展库工作区安全)"
 else
   failing "ReadWritePaths 里的目录写不了 —— ReadWritePaths 没能覆盖 ProtectHome=read-only"
 fi

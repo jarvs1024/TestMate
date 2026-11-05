@@ -7,7 +7,7 @@
  *      而 board / platform 两种角色的 beta 和 stable **文案都是「正常」** →
  *      同一句话两个颜色 (代码检视=绿 / 插件·技能·连接=橙). 现在按**语义色调**生成,
  *      所有「正常」都是绿色.
- *   ② **市场页筛选维度互斥** —— 「👤 我的」跟「⭐ 精选」/ 分类以前能同时高亮,
+ *   ② **扩展页筛选维度互斥** —— 「👤 我的」跟「⭐ 精选」/ 分类以前能同时高亮,
  *      两个维度打架 → 筛选结果说不清. 现在同一时刻只能选一个.
  *   ③ **软件库「全部 / 👤 我的」** —— 以前选「我的」后点「全部」**点不亮**
  *      (要连点两次), 而且「我的」后面没数字, 「全部 N」还会跟着变成"我的"数量.
@@ -86,7 +86,7 @@ async function shot(page, name, desc) {
 
   // ================= ① 状态徽标颜色统一 =================
   console.log('\n── ① 状态徽标: 所有「正常」都是绿色 ──');
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(2800);
   const headerBadge = await page.evaluate(() => {
     const el = document.querySelector('.tm-header .pt-badge');
@@ -133,9 +133,9 @@ async function shot(page, name, desc) {
     homeBadges.map((b) => b.cls).join(' | '));
   await shot(page, 'home-badges', '首页能力墙 · 状态徽标颜色统一');
 
-  // ================= ② 市场页筛选维度互斥 =================
-  console.log('\n── ② 市场页: 「我的」与「精选/分类」不能同时高亮 ──');
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  // ================= ② 扩展页筛选维度互斥 =================
+  console.log('\n── ② 扩展页: 「我的」与「精选/分类」不能同时高亮 ──');
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(2800);
 
   const chipState = () => page.evaluate(() => {
@@ -166,8 +166,8 @@ async function shot(page, name, desc) {
   }, re.source || re);
 
   const s0 = await chipState();
-  report.marketChips = { initial: s0 };
-  check('市场页找到筛选 chip 行', !!s0.allText && !!s0.mineText, `${s0.allText} | ${s0.mineText}`);
+  report.extChips = { initial: s0 };
+  check('扩展页找到筛选 chip 行', !!s0.allText && !!s0.mineText, `${s0.allText} | ${s0.mineText}`);
   check('「👤 我的」后面**有数字**', /\d/.test(s0.mineText), s0.mineText);
 
   // ⚠️ 进入页面默认停在「技能」(用户 2026-10-31 指定) —— 以前是「插件」,
@@ -179,30 +179,30 @@ async function shot(page, name, desc) {
       active: t.classList.contains('active'),
     }));
   });
-  report.marketKindTabs = kindTabs;
-  check('市场页有类型 tab (插件 / 技能 / 连接器)', kindTabs.length >= 3, JSON.stringify(kindTabs));
+  report.extKindTabs = kindTabs;
+  check('扩展页有类型 tab (插件 / 技能 / 连接器)', kindTabs.length >= 3, JSON.stringify(kindTabs));
   check('⚠️ 进入后默认停在「**技能**」',
     !!kindTabs.find((t) => t.active && t.text.includes('技能')), JSON.stringify(kindTabs));
-  await shot(page, 'market-default-skill', '市场页 · 进入后默认停在「技能」');
+  await shot(page, 'ext-default-skill', '扩展页 · 进入后默认停在「技能」');
 
   await clickChip(/我的/);
   await sleep(1600);
   const s1 = await chipState();
-  report.marketChips.afterMine = s1;
+  report.extChips.afterMine = s1;
   check('点「👤 我的」后它自己高亮', s1.mineActive, JSON.stringify(s1));
   check('⚠️ 点「👤 我的」后「⭐精选」**不再高亮**', !s1.featActive, JSON.stringify(s1));
   check('⚠️ 点「👤 我的」后「全部」**不再高亮**', !s1.allActive, JSON.stringify(s1));
   check('⚠️ 同一时刻**只有一个** chip 高亮', s1.totalActive === 1, `高亮 ${s1.totalActive} 个`);
-  await shot(page, 'market-mine', '市场页 · 选「👤 我的」 (其它维度让路)');
+  await shot(page, 'ext-mine', '扩展页 · 选「👤 我的」 (其它维度让路)');
 
   await clickChip(/精选/);
   await sleep(1600);
   const s2 = await chipState();
-  report.marketChips.afterFeatured = s2;
+  report.extChips.afterFeatured = s2;
   check('点「⭐ 精选」后它高亮', s2.featActive, JSON.stringify(s2));
   check('⚠️ 点「⭐ 精选」后「👤 我的」**不再高亮**', !s2.mineActive, JSON.stringify(s2));
   check('⚠️ 同一时刻**只有一个** chip 高亮', s2.totalActive === 1, `高亮 ${s2.totalActive} 个`);
-  await shot(page, 'market-featured', '市场页 · 选「⭐ 精选」 (「我的」让路)');
+  await shot(page, 'ext-featured', '扩展页 · 选「⭐ 精选」 (「我的」让路)');
 
   // ================= ③ 软件库「全部 / 我的」 =================
   console.log('\n── ③ 软件库: 「全部 / 我的」一次点击切回 + 各带计数 ──');

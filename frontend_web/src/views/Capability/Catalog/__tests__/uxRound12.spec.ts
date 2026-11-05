@@ -2,15 +2,15 @@
  * **第十二轮 · 「我的」筛选 + 编辑信息审核口径** (2026-10-30).
  *
  * 用户两条新需求:
- *   ① 「软件库和资产市场, 筛选加个**我的**, 过滤出登录用户的卡片」;
+ *   ① 「软件库和扩展库, 筛选加个**我的**, 过滤出登录用户的卡片」;
  *   ② 「技能插件连接器如果只是编辑信息, 管理员审核 (优化站内通知),
  *      通知到管理审核群, 但审核通过, 这个编辑信息没涉及到包变化
  *      **就不用通知到扩展群**」.
  *
  * ⚠️ 为什么大多是源码断言:
- *   · 「我的」是**筛选维度**, 真渲染一整个市场页太重 (el-select / 分类 chip 注入多);
+ *   · 「我的」是**筛选维度**, 真渲染一整个扩展页太重 (el-select / 分类 chip 注入多);
  *     但 "chip 存在 + 传了 status=mine" 这两件事用源码断言更锁得住;
- *   · 审核口径的正确性由**后端单测**盯 (test_market_meta_edit.py) ——
+ *   · 审核口径的正确性由**后端单测**盯 (test_ext_meta_edit.py) ——
  *     那是真跑接口, 前端断言只能看"前端有没有把标记显示出来".
  */
 import { describe, expect, it } from 'vitest';
@@ -38,7 +38,7 @@ const home = strip(homeRaw);
 const assetsApiRaw = read('src/api/assets.ts');
 const assetsApi = strip(assetsApiRaw);
 
-describe('① 资产市场: 「👤 我的」筛选', () => {
+describe('① 扩展库: 「👤 我的」筛选', () => {
   it('筛选栏里要有「👤 我的」入口', () => {
     expect(catalogTpl).toContain('👤 我的');
   });

@@ -7,7 +7,7 @@
     ④ 「完成钉钉推送的通知信息, 上架补充发描述 比如是干嘛的, 发布更新, 补充更新了啥等,
         信息要区分是插件技能还是连接还是软件包, 最后附上连接……消息简洁明了, 好看」
 
-⚠️ 这里全部走**干跑** (`preview_market_message`) —— 只拼字符串, 不碰 webhook.
+⚠️ 这里全部走**干跑** (`preview_asset_message`) —— 只拼字符串, 不碰 webhook.
    所以**绝对不往公司真实钉钉群发消息**.
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ def test_software_events_share_one_switch():
     )
 
 
-def test_software_events_go_to_market_channel():
+def test_software_events_go_to_ext_channel():
     """软件库的通知走**扩展群** (同一个机器人) —— 用户原话「可以用市场的通知中配置的钉钉信息」."""
     assert dingtalk._CHANNEL_OF_EVENT["software_publish"] == "extensions"
     assert dingtalk._CHANNEL_OF_EVENT["software_update"] == "extensions"
@@ -75,13 +75,13 @@ def test_software_kind_label():
 # ---------- 消息内容 ----------
 
 
-async def test_publish_message_has_summary_and_market_link(monkeypatch):
+async def test_publish_message_has_summary_and_ext_link(monkeypatch):
     """市场上架 → 带**简介** (这玩意儿是干嘛的) + 市场链接."""
     monkeypatch.setattr(
         dingtalk, "get",
         _fake_get({"dingtalk.notify_base_url": "http://127.0.0.1:8081"}),
     )
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "publish", name="代码检视流水线", version="1.0.0", author="zhangsan",
         kind="plugin", category="流程规范", code="dml-code-review",
         summary="一键串联: 取 MR diff → 送检视 → 回写评论 → 汇总结果",
@@ -107,7 +107,7 @@ async def test_publish_message_shows_author_not_approver(monkeypatch):
        说明也该是资产的简介, 不是「审核通过, 已上架」.
     """
     monkeypatch.setattr(dingtalk, "get", _fake_get({}))
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "publish", name="插件创建器", version="0.1.2",
         actor="admin", author="zhangsan",
         kind="skill", category="效率工具", code="dml-create-plugin",
@@ -124,7 +124,7 @@ async def test_publish_message_shows_author_not_approver(monkeypatch):
 
 async def test_notify_asset_prefers_asset_summary(monkeypatch):
     """notify_asset 从资产对象/字典里取简介 —— 审核通过那条也得带上."""
-    from app.core import market_notify
+    from app.core import ext_notify
 
     captured: dict = {}
 
@@ -133,8 +133,8 @@ async def test_notify_asset_prefers_asset_summary(monkeypatch):
         captured.update(kw)
         return True
 
-    monkeypatch.setattr(market_notify, "notify_extensions", fake_notify)
-    await market_notify.notify_asset(
+    monkeypatch.setattr(ext_notify, "notify_extensions", fake_notify)
+    await ext_notify.notify_asset(
         "publish", {"name": "插件创建器", "summary": "一句话创建一个插件"},
         actor="admin", detail="审核通过, 已上架",
     )
@@ -143,7 +143,7 @@ async def test_notify_asset_prefers_asset_summary(monkeypatch):
 
 async def test_notify_asset_blank_summary_keeps_detail(monkeypatch):
     """显式传 summary="" → 用 detail (驳回/下架说的是"发生了什么", 不是简介)."""
-    from app.core import market_notify
+    from app.core import ext_notify
 
     captured: dict = {}
 
@@ -151,8 +151,8 @@ async def test_notify_asset_blank_summary_keeps_detail(monkeypatch):
         captured.update(kw)
         return True
 
-    monkeypatch.setattr(market_notify, "notify_extensions", fake_notify)
-    await market_notify.notify_asset(
+    monkeypatch.setattr(ext_notify, "notify_extensions", fake_notify)
+    await ext_notify.notify_asset(
         "reject", {"name": "某技能", "summary": "这玩意儿是干嘛的"},
         actor="admin", detail="权限声明不完整", summary="",
     )
@@ -165,7 +165,7 @@ async def test_update_message_label_is_update(monkeypatch):
         dingtalk, "get",
         _fake_get({"dingtalk.notify_base_url": "http://127.0.0.1:8081"}),
     )
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "update", name="代码检视流水线", version="1.2.0", actor="zhangsan",
         kind="plugin", summary="支持批量 MR 检视",
     )
@@ -179,7 +179,7 @@ async def test_software_publish_message(monkeypatch):
         dingtalk, "get",
         _fake_get({"dingtalk.notify_base_url": "http://127.0.0.1:8081"}),
     )
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "software_publish", name="E2E 演示软件", version="1.0.0", actor="zhangsan",
         kind="software", category="工具", code="e2e-demo",
         summary="e2e 走通用的演示软件",
@@ -198,7 +198,7 @@ async def test_software_update_message_carries_release_notes(monkeypatch):
         dingtalk, "get",
         _fake_get({"dingtalk.notify_base_url": "http://127.0.0.1:8081"}),
     )
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "software_update", name="E2E 演示软件", version="1.0.3", actor="zhangsan",
         kind="software", summary="e2e 走通用的演示软件",
         release_notes="修了日志解析在超长行上的截断问题",
@@ -212,7 +212,7 @@ async def test_software_update_message_carries_release_notes(monkeypatch):
 async def test_release_notes_wins_over_summary(monkeypatch):
     """两个都传 → 更新说明优先 (更新事件更该说"改了啥")."""
     monkeypatch.setattr(dingtalk, "get", _fake_get({}))
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "software_update", name="X", version="1.0.0",
         summary="简介", release_notes="更新说明",
     )
@@ -223,7 +223,7 @@ async def test_release_notes_wins_over_summary(monkeypatch):
 async def test_detail_used_when_no_summary(monkeypatch):
     """没有简介/更新说明 → 退回 detail (老逻辑: 这次操作发生了什么)."""
     monkeypatch.setattr(dingtalk, "get", _fake_get({}))
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "reject", name="X", version="1.0.0", detail="审核不通过, 简介写得太笼统",
     )
     assert "说明: 审核不通过, 简介写得太笼统" in r["text"]
@@ -232,7 +232,7 @@ async def test_detail_used_when_no_summary(monkeypatch):
 async def test_no_link_without_base_url(monkeypatch):
     """没有基地址 → **不给链接** (别发一个打不开的地址)."""
     monkeypatch.setattr(dingtalk, "get", _fake_get({}))
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "publish", name="X", version="1.0.0", kind="plugin", summary="简介",
     )
     assert "](http" not in r["text"]
@@ -245,7 +245,7 @@ async def test_link_falls_back_to_public_base_url(monkeypatch):
         dingtalk, "get",
         _fake_get({"extensions.public_base_url": "http://public.example.com"}),
     )
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "publish", name="X", version="1.0.0", kind="plugin", summary="简介",
     )
     assert "http://public.example.com/extensions" in r["text"]
@@ -257,7 +257,7 @@ async def test_explicit_link_wins(monkeypatch):
         dingtalk, "get",
         _fake_get({"dingtalk.notify_base_url": "http://127.0.0.1:8081"}),
     )
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "publish", name="X", version="1.0.0", kind="plugin", summary="简介",
         link="http://other/thing",
     )
@@ -275,7 +275,7 @@ async def test_preview_does_not_send(monkeypatch):
 
     monkeypatch.setattr(dingtalk, "send_markdown", boom)
     monkeypatch.setattr(dingtalk, "get", _fake_get({}))
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "software_publish", name="X", version="1.0.0", kind="software", summary="简介",
     )
     assert r["text"]
@@ -376,7 +376,7 @@ async def test_software_unpublish_message(monkeypatch):
         dingtalk, "get",
         _fake_get({"dingtalk.notify_base_url": "http://127.0.0.1:8081"}),
     )
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "software_unpublish", name="E2E 演示软件", version="1.0.0", actor="zhangsan",
         kind="software", category="工具", code="e2e-demo",
         detail="该软件已从软件库下架",
@@ -399,7 +399,7 @@ async def test_base_url_is_dynamic_from_request(monkeypatch):
     monkeypatch.setattr(dingtalk, "get", _fake_get({}))
     dingtalk.set_request_base_url("http://10.0.0.5:8081")
     try:
-        r = await dingtalk.preview_market_message(
+        r = await dingtalk.preview_asset_message(
             "publish", name="X", version="1.0.0", kind="plugin", summary="简介")
         assert "http://10.0.0.5:8081/extensions" in r["text"], r["text"]
     finally:
@@ -414,7 +414,7 @@ async def test_explicit_base_url_beats_dynamic(monkeypatch):
     )
     dingtalk.set_request_base_url("http://10.0.0.5:8081")
     try:
-        r = await dingtalk.preview_market_message(
+        r = await dingtalk.preview_asset_message(
             "publish", name="X", version="1.0.0", kind="plugin", summary="简介")
         assert "http://public.example.com/extensions" in r["text"], r["text"]
     finally:
@@ -489,18 +489,18 @@ async def test_preview_shows_at_markers(monkeypatch):
     以前 @ 是发送前才拼的 → 设置页「👀 预览消息」看到的正文跟群里那条不一样.
     """
     monkeypatch.setattr(dingtalk, "get", _fake_get({}))
-    r = await dingtalk.preview_market_message(
+    r = await dingtalk.preview_asset_message(
         "software_publish", name="A", version="1.0.0", kind="software")
     assert "@所有人" in r["text"], r["text"]
 
-    r2 = await dingtalk.preview_market_message(
+    r2 = await dingtalk.preview_asset_message(
         "reject", name="A", version="1.0.0", kind="plugin",
         author="zhangsan", actor="admin", detail="简介写得太笼统")
     assert "@zhangsan" not in r2["text"], "不再 @ 具体的人"
     assert "发布人: zhangsan" in r2["text"], r2["text"]
     assert "@所有人" not in r2["text"], "审核不通过只说发布人, 不 @所有人"
     # 审核类通知不 @任何人 (窗口合并后一条汇总, @反而吵)
-    r3 = await dingtalk.preview_market_message(
+    r3 = await dingtalk.preview_asset_message(
         "review", name="A", version="1.0.0", kind="plugin", summary="简介")
     assert "@所有人" not in r3["text"], r3["text"]
 

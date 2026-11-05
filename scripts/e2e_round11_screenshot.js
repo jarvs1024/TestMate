@@ -3,7 +3,7 @@
  * **第十一轮验收截图** (2026-10-30).
  *
  * 六个问题一次验收:
- *   ① 小屏网格 (首页 / 资产市场) —— 三个视口下的列数与卡片完整度;
+ *   ① 小屏网格 (首页 / 扩展库) —— 三个视口下的列数与卡片完整度;
  *   ② 「软件标识」那块灰底没了 —— 只显示软件名;
  *   ③ 发新版本时能选「新增 / 覆盖」;
  *   ④ 浮层里的灰阶提亮了 (--panel-surface-sunken);
@@ -131,7 +131,7 @@ async function closeOverlays(page) {
   };
 
   // ================= ① 小屏网格 =================
-  console.log('\n── ① 小屏网格 (首页 / 资产市场) ──');
+  console.log('\n── ① 小屏网格 (首页 / 扩展库) ──');
   const VIEWPORTS = [
     { w: 1440, h: 900 },
     { w: 1280, h: 720 },
@@ -149,13 +149,13 @@ async function closeOverlays(page) {
       check(`首页 ${vp.w}px 卡片不挤扁 (每列 ≥ 300px)`, home.firstWidth >= 300, `每列 ${home.firstWidth}px / ${home.colCount} 列`);
     }
 
-    await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+    await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
     await sleep(2400);
     const mk = await probeGrid(page, '.grid');
-    await shot(page, `market-${vp.w}`, `资产市场 · 视口 ${vp.w}px`);
-    check(`资产市场 ${vp.w}px 不横向溢出`, mk && !mk.overflowX, '');
+    await shot(page, `ext-${vp.w}`, `扩展库 · 视口 ${vp.w}px`);
+    check(`扩展库 ${vp.w}px 不横向溢出`, mk && !mk.overflowX, '');
     if (mk) {
-      check(`资产市场 ${vp.w}px 卡片不挤扁 (每列 ≥ 280px)`, mk.firstWidth >= 280, `每列 ${mk.firstWidth}px / ${mk.colCount} 列`);
+      check(`扩展库 ${vp.w}px 卡片不挤扁 (每列 ≥ 280px)`, mk.firstWidth >= 280, `每列 ${mk.firstWidth}px / ${mk.colCount} 列`);
     }
   }
 
@@ -249,7 +249,7 @@ async function closeOverlays(page) {
 
   // ================= ⑥ 资产「编辑信息」 =================
   console.log('\n── ⑥ 资产详情: 「编辑信息」 ──');
-  await page.goto(BASE + '/market', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/extensions', { waitUntil: 'domcontentloaded' });
   await sleep(2600);
   const mcard = await page.evaluate(() => {
     const c = document.querySelector('.asset-card');

@@ -1,8 +1,8 @@
-"""生成 Qoder 原生 marketplace 清单.
+"""生成 Qoder 市场源清单 (marketplace.json).
 
 Qoder 的市场清单格式 (实测自 ~/.qoder-cn/plugins/marketplaces/qoder-plugins/marketplace.json):
     {
-      "name": "<marketplace 名>",       ← 决定 Qoder 缓存目录名
+      "name": "<市场源名>",       ← 决定 Qoder 缓存目录名
       "owner": {"name": "..."},
       "plugins": [
         {
@@ -57,7 +57,7 @@ async def _package_bytes(asset: Asset) -> tuple[bytes, str] | None:
     return None
 
 
-async def build_marketplace(base_url: str, name: str = "testmate",
+async def build_extensions_manifest(base_url: str, name: str = "testmate",
                             owner: str = "SSD 测试组") -> dict[str, Any]:
     """生成 marketplace.json 内容."""
     base = (base_url or "").rstrip("/")
@@ -76,7 +76,7 @@ async def build_marketplace(base_url: str, name: str = "testmate",
     for a in rows:
         got = await _package_bytes(a)
         if got is None:
-            logger.warning("marketplace 跳过 (无可下载包): %s", a.code)
+            logger.warning("市场清单跳过 (无可下载包): %s", a.code)
             continue
         _data, sha = got
         plugins.append(

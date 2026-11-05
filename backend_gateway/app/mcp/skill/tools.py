@@ -1,7 +1,7 @@
 """Explicit schemas and common-runtime registration specs for extension tools."""
 from __future__ import annotations
 
-from app.core.market_rules import CODE_MAX_LENGTH, CODE_MIN_LENGTH
+from app.core.ext_rules import CODE_MAX_LENGTH, CODE_MIN_LENGTH
 from app.mcp.common.tool import ToolSpec
 from app.mcp.skill import adapter
 

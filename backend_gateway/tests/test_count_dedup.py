@@ -91,7 +91,7 @@ async def test_bump_concurrent_calls_only_one_counts():
 
 @pytest.fixture
 async def mcp_conn(ws, restore_git_config, client, auth):  # noqa: ARG001
-    from tests.test_market_builtin import _make_mcp
+    from tests.test_ext_builtin import _make_mcp
 
     await set_setting("extensions.review.enabled", "false")
     await _make_mcp(client, auth, code="conn-x")
@@ -133,11 +133,11 @@ async def test_copy_different_users_each_count(
 
 # ---------- 市场: 下载 ----------
 
-async def test_market_download_same_user_repeat_counts_once_and_still_serves(
+async def test_ext_download_same_user_repeat_counts_once_and_still_serves(
     client, auth, ws, restore_git_config,  # noqa: ARG001
 ):
     """同一人窗口内下两次 → 计数只 +1, 但**每次都照常出包**."""
-    from tests.test_market_api import _upload
+    from tests.test_ext_api import _upload
 
     await set_setting("extensions.review.enabled", "false")
     await _upload(client, auth, code="dl-demo")
@@ -158,9 +158,9 @@ async def test_market_download_same_user_repeat_counts_once_and_still_serves(
         assert a.download_count == 1, a.download_count
 
 
-async def test_market_anon_download_dedup_by_ip(client, auth, ws, restore_git_config):  # noqa: ARG001
+async def test_ext_anon_download_dedup_by_ip(client, auth, ws, restore_git_config):  # noqa: ARG001
     """匿名下载按 IP 去重: 同 IP 窗口内只 +1, 换 IP 照计."""
-    from tests.test_market_api import _upload
+    from tests.test_ext_api import _upload
 
     await set_setting("extensions.review.enabled", "false")
     await set_setting("extensions.public_download", "true")
@@ -195,11 +195,11 @@ def _asset_ticket(*, uid: int, code: str, version: str, ttl_seconds: int = 600) 
     return jwt.encode(claims, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
-async def test_market_ticket_download_dedup_by_uid(
+async def test_ext_ticket_download_dedup_by_uid(
     client, auth, ws, restore_git_config, admin_user,  # noqa: ARG001
 ):
     """票下载按票里的 uid 去重 (同一人窗口内只计一次)."""
-    from tests.test_market_api import _upload
+    from tests.test_ext_api import _upload
 
     await set_setting("extensions.review.enabled", "false")
     await _upload(client, auth, code="dl-ticket")

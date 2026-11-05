@@ -36,7 +36,7 @@
       <!-- ===== 排序 ===== -->
       <div class="fp-group">
         <div class="fp-title">排序</div>
-        <button v-for="s in MARKET_SORT_OPTIONS" :key="s.value" type="button"
+        <button v-for="s in EXT_SORT_OPTIONS" :key="s.value" type="button"
                 class="fp-item" :class="{ on: sort === s.value }"
                 @click="pickSort(s.value)">
           <span class="fpi-radio" />
@@ -49,19 +49,19 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { MARKET_SORT_OPTIONS, type MarketProjectItem, type MarketSort } from './marketCatalog';
+import { EXT_SORT_OPTIONS, type ExtProjectItem, type ExtSort } from './extCatalog';
 
 const props = defineProps<{
   /** 当前项目筛选: '' = 全部, 'general' = 只看通用, 其他 = 该项目特有 + 通用 */
   project: string;
   /** 当前排序 */
-  sort: MarketSort;
+  sort: ExtSort;
   /** 项目列表 (含「通用」) */
-  projects: MarketProjectItem[];
+  projects: ExtProjectItem[];
 }>();
 const emit = defineEmits<{
   (e: 'update:project', v: string): void;
-  (e: 'update:sort', v: MarketSort): void;
+  (e: 'update:sort', v: ExtSort): void;
 }>();
 
 const open = ref(false);
@@ -81,7 +81,7 @@ const projectItems = computed(() => [
     value: p.code,
     label: p.code === 'general' ? '通用' : p.name,
     count: p.total || 0,
-    // ⚠️ 语义跟后端一致 (marketplace.py 的 project 参数):
+    // ⚠️ 语义跟后端一致 (extensions.py 的 project 参数):
     //    选某个项目 = 该项目特有 **+ 通用** (通用资产在该项目同样适用);
     //    选「通用」= 只看通用的.
     hint: p.code === 'general'
@@ -97,14 +97,14 @@ const triggerText = computed(() => {
     : (props.project === 'general'
       ? '通用'
       : props.project);
-  const srt = MARKET_SORT_OPTIONS.find((x) => x.value === props.sort)?.label || props.sort;
+  const srt = EXT_SORT_OPTIONS.find((x) => x.value === props.sort)?.label || props.sort;
   return `${proj} · ${srt}`;
 });
 
 /** 按钮的 title —— 说清当前筛选到底筛了什么 */
 const triggerTitle = computed(() => {
   const p = projectItems.value.find((x) => x.value === props.project);
-  const srt = MARKET_SORT_OPTIONS.find((x) => x.value === props.sort)?.label || props.sort;
+  const srt = EXT_SORT_OPTIONS.find((x) => x.value === props.sort)?.label || props.sort;
   return `${p?.hint || '不按项目过滤'} · 排序: ${srt}`;
 });
 
@@ -119,7 +119,7 @@ function pickProject(v: string) {
   triggerRef.value?.focus();
   open.value = false;
 }
-function pickSort(v: MarketSort) {
+function pickSort(v: ExtSort) {
   emit('update:sort', v);
   triggerRef.value?.focus();
   open.value = false;

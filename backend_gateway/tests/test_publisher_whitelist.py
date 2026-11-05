@@ -50,7 +50,7 @@ def _auth(user):
 # ---------- _split_list: 纯函数 ----------
 
 def test_split_list_empty():
-    from app.core.market_policy import split_list as _split_list
+    from app.core.ext_policy import split_list as _split_list
 
     assert _split_list("") == []
     assert _split_list("   ") == []
@@ -58,25 +58,25 @@ def test_split_list_empty():
 
 
 def test_split_list_comma_separated():
-    from app.core.market_policy import split_list as _split_list
+    from app.core.ext_policy import split_list as _split_list
 
     assert _split_list("zhangsan,lisi") == ["zhangsan", "lisi"]
 
 
 def test_split_list_json_array():
-    from app.core.market_policy import split_list as _split_list
+    from app.core.ext_policy import split_list as _split_list
 
     assert _split_list('["zhangsan","lisi"]') == ["zhangsan", "lisi"]
 
 
 def test_split_list_json_array_with_spaces():
-    from app.core.market_policy import split_list as _split_list
+    from app.core.ext_policy import split_list as _split_list
 
     assert _split_list('["zhangsan", "lisi"]') == ["zhangsan", "lisi"]
 
 
 def test_split_list_chinese_and_semicolon_separators():
-    from app.core.market_policy import split_list as _split_list
+    from app.core.ext_policy import split_list as _split_list
 
     assert _split_list("zhangsan、lisi") == ["zhangsan", "lisi"]
     assert _split_list("zhangsan，lisi") == ["zhangsan", "lisi"]
@@ -85,28 +85,28 @@ def test_split_list_chinese_and_semicolon_separators():
 
 def test_split_list_broken_json_array_falls_back_to_delimiters():
     """坏 JSON (少个 ]) 不能整个丢掉 —— 退化成按分隔符切."""
-    from app.core.market_policy import split_list as _split_list
+    from app.core.ext_policy import split_list as _split_list
 
     assert _split_list('["zhangsan","lisi"') == ["zhangsan", "lisi"]
     assert _split_list('["zhangsan", "lisi"') == ["zhangsan", "lisi"]
 
 
 def test_split_list_strips_stray_quotes():
-    from app.core.market_policy import split_list as _split_list
+    from app.core.ext_policy import split_list as _split_list
 
     assert _split_list('"zhangsan","lisi"') == ["zhangsan", "lisi"]
     assert _split_list("['zhangsan','lisi']") == ["zhangsan", "lisi"]
 
 
 def test_split_list_keeps_numeric_ids():
-    from app.core.market_policy import split_list as _split_list
+    from app.core.ext_policy import split_list as _split_list
 
     assert _split_list("[1,2]") == ["1", "2"]
     assert _split_list("1,2") == ["1", "2"]
 
 
 def test_split_list_json_array_of_non_strings():
-    from app.core.market_policy import split_list as _split_list
+    from app.core.ext_policy import split_list as _split_list
 
     # 数字正常转字符串; 布尔跳过 —— str(True) 会变成 "True" 这种鬼名字
     assert _split_list("[1,true]") == ["1"]
@@ -116,28 +116,28 @@ def test_split_list_json_array_of_non_strings():
 
 async def test_publisher_names_accepts_json_array_format():
     """用户名口径写成 JSON 数组 (照抄隔壁那项) 也要认."""
-    from app.core.market_policy import publisher_names as _publisher_names
+    from app.core.ext_policy import publisher_names as _publisher_names
 
     await set_setting("extensions.publisher_usernames", '["ZhangSan","LiSi"]')
     assert await _publisher_names() == {"zhangsan", "lisi"}
 
 
 async def test_publisher_names_accepts_comma_format():
-    from app.core.market_policy import publisher_names as _publisher_names
+    from app.core.ext_policy import publisher_names as _publisher_names
 
     await set_setting("extensions.publisher_usernames", "ZhangSan,LiSi")
     assert await _publisher_names() == {"zhangsan", "lisi"}
 
 
 async def test_publisher_names_empty_gives_empty_set():
-    from app.core.market_policy import publisher_names as _publisher_names
+    from app.core.ext_policy import publisher_names as _publisher_names
 
     await set_setting("extensions.publisher_usernames", "")
     assert await _publisher_names() == set()
 
 
 async def test_publisher_ids_accepts_json_array_format():
-    from app.core.market_policy import publisher_ids as _publisher_ids
+    from app.core.ext_policy import publisher_ids as _publisher_ids
 
     await set_setting("extensions.publisher_ids", "[1,2]")
     assert await _publisher_ids() == {1, 2}
@@ -145,14 +145,14 @@ async def test_publisher_ids_accepts_json_array_format():
 
 async def test_publisher_ids_accepts_comma_format():
     """ID 口径写成逗号分隔 (照抄隔壁那项) 也要认."""
-    from app.core.market_policy import publisher_ids as _publisher_ids
+    from app.core.ext_policy import publisher_ids as _publisher_ids
 
     await set_setting("extensions.publisher_ids", "1,2")
     assert await _publisher_ids() == {1, 2}
 
 
 async def test_publisher_ids_ignores_non_numeric():
-    from app.core.market_policy import publisher_ids as _publisher_ids
+    from app.core.ext_policy import publisher_ids as _publisher_ids
 
     await set_setting("extensions.publisher_ids", "[1,abc]")
     assert await _publisher_ids() == {1}
@@ -237,7 +237,7 @@ async def test_tester_can_publish_without_whitelist(
 
 async def test_default_publisher_roles_is_tester():
     """默认值就是 tester —— 不配也能发."""
-    from app.core.market_policy import publisher_roles as _roles
+    from app.core.ext_policy import publisher_roles as _roles
 
     await set_setting("extensions.publisher_roles", "tester")
     assert await _roles() == {"tester"}
@@ -264,7 +264,7 @@ async def test_clearing_publisher_roles_reverts_to_whitelist_only(
 
 
 async def test_publisher_roles_accepts_multiple_roles():
-    from app.core.market_policy import publisher_roles as _roles
+    from app.core.ext_policy import publisher_roles as _roles
 
     await set_setting("extensions.publisher_roles", "tester, viewer,admin")
     assert await _roles() == {"tester", "viewer", "admin"}

@@ -4,7 +4,7 @@
 用户要求: "完成钉钉推送的通知信息, 上架补充发描述 比如是干嘛的, 发布更新, 补充更新了啥等,
 信息要区分是插件技能还是连接还是软件包, 最后附上连接……消息简洁明了, 好看".
 
-⚠️ **绝对不发** —— 这个脚本只调 `dingtalk.preview_market_message` (纯拼字符串),
+⚠️ **绝对不发** —— 这个脚本只调 `dingtalk.preview_asset_message` (纯拼字符串),
    一行网络请求都不发. 线上真发要走 `notify_extensions`.
 
 用法:
@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend_gateway"))
 
-from app.core.dingtalk import preview_market_message  # noqa: E402
+from app.core.dingtalk import preview_asset_message  # noqa: E402
 
 
 SCENES = [
@@ -90,7 +90,7 @@ SCENES = [
 async def main() -> int:
     try:
         for sc in SCENES:
-            r = await preview_market_message(sc["event"], **sc["kw"])
+            r = await preview_asset_message(sc["event"], **sc["kw"])
             print("=" * 68)
             print(f"【{sc['title']}】  event={r['event']}")
             print("-" * 68)

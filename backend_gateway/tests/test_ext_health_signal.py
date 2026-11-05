@@ -54,7 +54,7 @@ async def _seed_failed_job(code: str, *, asset_exists: bool) -> None:
         await s.commit()
 
 
-async def _market_check(client) -> dict:
+async def _ext_check(client) -> dict:
     r = await client.get(f"{API}/health/ready")
     assert r.status_code == 200, r.text
     return r.json()["checks"]["extensions"]
@@ -85,7 +85,7 @@ def _patch_deps(monkeypatch, *, gitlab_ok: bool = True):
     monkeypatch.setattr(health_mod, "_probe_gitlab", _gitlab_ok if gitlab_ok else _gitlab_bad)
 
 
-async def test_historical_failed_jobs_do_not_break_market_health(client, monkeypatch):
+async def test_historical_failed_jobs_do_not_break_ext_health(client, monkeypatch):
     """① 资产已删的历史失败 → 市场链路**仍然健康**.
 
     这正是那 219 条残留干的事: 它们对应的资产早没了, 没有任何东西待处理.
@@ -93,13 +93,13 @@ async def test_historical_failed_jobs_do_not_break_market_health(client, monkeyp
     _patch_deps(monkeypatch)
     await _seed_failed_job("gone-asset", asset_exists=False)
 
-    m = await _market_check(client)
+    m = await _ext_check(client)
     assert m["failed_jobs"] == 1, m           # 历史残留照样如实报出来
     assert m["failed_assets"] == 0, m         # 但没有"待处理的失败"
     assert m["ok"] is True, m                # 所以链路是健康的
 
 
-async def test_asset_stuck_in_failed_state_breaks_market_health(client, monkeypatch):
+async def test_asset_stuck_in_failed_state_breaks_ext_health(client, monkeypatch):
     """② 资产还在、且它自己 sync_status='failed' → 市场链路**不健康**.
 
     这是真的"有活没推上去" —— 资产在库里摆着, 用户下不到最新版本.
@@ -107,15 +107,15 @@ async def test_asset_stuck_in_failed_state_breaks_market_health(client, monkeypa
     _patch_deps(monkeypatch)
     await _seed_failed_job("stuck-asset", asset_exists=True)
 
-    m = await _market_check(client)
+    m = await _ext_check(client)
     assert m["failed_assets"] == 1, m
     assert m["ok"] is False, m
 
 
-async def test_unreachable_gitlab_breaks_market_health(client, monkeypatch):
+async def test_unreachable_gitlab_breaks_ext_health(client, monkeypatch):
     """③ GitLab 探不通 → 市场链路不健康 (跟失败数无关)."""
     _patch_deps(monkeypatch, gitlab_ok=False)
 
-    m = await _market_check(client)
+    m = await _ext_check(client)
     assert m["gitlab"]["ok"] is False, m
     assert m["ok"] is False, m

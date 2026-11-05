@@ -36,22 +36,22 @@ from app.core.asset_locks import code_lock
 from app.core.dingtalk import (
     list_notifications,
     notify_extensions,
-    preview_market_message,
+    preview_asset_message,
 )
 from app.core import (
     builtin_assets,
     count_dedup,
-    market_notify,
-    market_naming,
-    market_policy,
-    market_projects,
-    market_rules,
-    market_state,
+    ext_notify,
+    ext_naming,
+    ext_policy,
+    ext_projects,
+    ext_rules,
+    ext_state,
 )
 from app.core.identity import author_forms
-from app.core.market_visibility import assert_visible, apply_visibility
+from app.core.ext_visibility import assert_visible, apply_visibility
 from app.core.security import decode_asset_download_ticket
-from app.core.market_catalog import (
+from app.core.ext_catalog import (
     CATEGORY_SLUGS,
     INDEX_PATH,
     ManifestError,
@@ -81,7 +81,7 @@ from app.schemas.asset import (
     AssetMetaUpdateIn,
     AssetNotificationListOut,
     NotifyPreviewOut,
-    MarketConfigOut,
+    ExtConfigOut,
     AssetOut,
     PackagePreviewOut,
     ProbeOut,
@@ -117,13 +117,13 @@ async def require_publisher(user: User = Depends(get_current_user)) -> User:
     · 白名单口径 (publisher_ids / publisher_usernames) —— 给角色不在列表里的人开口子;
     · admin 恒可发布.
 
-    判定逻辑在 app/core/market_policy.py (纯逻辑, 可单测).
+    判定逻辑在 app/core/ext_policy.py (纯逻辑, 可单测).
     """
-    if not await market_policy.can_publish(user):
-        role = market_policy.role_of(user)
+    if not await ext_policy.can_publish(user):
+        role = ext_policy.role_of(user)
         if role == "anonymous":
             raise HTTPException(status_code=401, detail="未登录")
-        roles = ", ".join(sorted(await market_policy.publisher_roles())) or "(空)"
+        roles = ", ".join(sorted(await ext_policy.publisher_roles())) or "(空)"
         raise HTTPException(
             status_code=403,
             detail=(
@@ -135,8 +135,8 @@ async def require_publisher(user: User = Depends(get_current_user)) -> User:
 
 
 async def _is_reviewer(user: User) -> bool:
-    """能不能审核 (管理员永远可以) —— 判定在 market_policy."""
-    return await market_policy.is_reviewer(user)
+    """能不能审核 (管理员永远可以) —— 判定在 ext_policy."""
+    return await ext_policy.is_reviewer(user)
 
 
 async def _public_download_enabled() -> bool:
@@ -197,7 +197,7 @@ async def _assert_can_modify(code: str, user: User) -> Asset:
     if builtin_assets.is_builtin_code(a.code or ""):
         # 内置连接器是平台的一部分 —— 不落 GitLab、不参与编辑/上下架
         raise HTTPException(status_code=400, detail="平台内置资产不能修改")
-    if not market_policy.can_modify(a, user):
+    if not ext_policy.can_modify(a, user):
         raise HTTPException(
             status_code=403,
             detail="只能操作自己上传的资产 (管理员可操作任意资产)",
@@ -217,9 +217,9 @@ def _assert_naming(
     绕过前端直接调 API 时, 也能拦住"资产号与包名对不上"的资产.
     """
     if kind == "mcp":
-        msg = market_naming.check_mcp_code_consistency(mcp_cfg, code)
+        msg = ext_naming.check_mcp_code_consistency(mcp_cfg, code)
     elif package is not None and (package.filename or "").strip():
-        msg = market_naming.check_package_consistency(package.filename, code)
+        msg = ext_naming.check_package_consistency(package.filename, code)
     else:
         # 多文件文本上传 —— 没有"包名"这回事
         return
@@ -234,7 +234,7 @@ async def _resolve_project(code: str, raw: str, *, action: str) -> str:
     **历史事实** —— 归一时把它清成"通用"就等于悄悄改了语义.
     所以: 归一后为空且资产本来有归属 → 保留原值.
     """
-    proj = market_projects.normalize(raw, await _project_list())
+    proj = ext_projects.normalize(raw, await _project_list())
     if action != "update" or proj:
         return proj
     async with AsyncSessionLocal() as session:
@@ -252,9 +252,9 @@ async def _project_list() -> list[str]:
     项目会增减 —— 所以是**配置**而不是写死的常量; 上传表单 / 扩展筛选 /
     卡片徽标都用这一份, 免得两处各写一套.
     """
-    raw = await _setting(market_projects.SETTINGS_KEY, "")
-    projects = market_projects.parse(raw)
-    return projects or list(market_projects.DEFAULT_PROJECTS)
+    raw = await _setting(ext_projects.SETTINGS_KEY, "")
+    projects = ext_projects.parse(raw)
+    return projects or list(ext_projects.DEFAULT_PROJECTS)
 
 
 async def _setting_bool(key: str, default: bool = False) -> bool:
@@ -325,7 +325,7 @@ def _asset_dir(a: Asset) -> Path:
        (下载 / 看文件列表 / 打包). 不校验的话, 一个 ``../../../app/.env`` 就能把容器里的
        JWT_SECRET 读出来 —— **仓库写权限 ≠ 服务器文件读权限**, 中间不能有这一步跳跃.
 
-    ⚠️ 这是**读侧**的第二道闸: 落库时 (market_catalog.apply_index_to_db) 也校验过一次,
+    ⚠️ 这是**读侧**的第二道闸: 落库时 (ext_catalog.apply_index_to_db) 也校验过一次,
        两道都要有 —— 数据库里万一已经有脏数据 (老版本留下的), 读侧也能挡住.
     """
     p = git_sync.resolve_in_workspace(a.git_path)
@@ -615,8 +615,8 @@ async def list_categories(
       · 其他人 → 在架 ∪ 待下架 ∪ 自己提交的
     ⚠️ `status` 参数让前端在「只看待审」时也能数对 (否则 chip 显示的是已上架数).
     """
-    from app.core import market_categories
-    from app.core.market_categories import table as category_table
+    from app.core import ext_categories
+    from app.core.ext_categories import table as category_table
 
     username = (user.username or "").strip()
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
@@ -646,7 +646,7 @@ async def list_categories(
         #    不归一的话, 每个旧名字都会变成一个"未归类"的孤儿 chip:
         #    同一批资产被拆到 7 个没人认识的 chip 上, 且 chip 显示的是旧口径的名字.
         #    归一后旧名自动折叠进对应的新分类, 前端只认这 5 类.
-        name = market_categories.normalize(cat)
+        name = ext_categories.normalize(cat)
         counts.setdefault(name, {})[k] = counts.setdefault(name, {}).get(k, 0) + 1
 
     items = []
@@ -728,7 +728,7 @@ async def list_jobs(
     """
     async with AsyncSessionLocal() as session:
         stmt = select(AssetJob).order_by(AssetJob.id.desc())
-        if not market_policy.is_admin(user):
+        if not ext_policy.is_admin(user):
             stmt = stmt.where(AssetJob.created_by == user.id)
         rows = (await session.execute(stmt.limit(limit))).scalars().all()
         return AssetJobListOut(items=[AssetJobOut.model_validate(j) for j in rows], total=len(rows))
@@ -740,7 +740,7 @@ async def get_job(job_id: int, user: User = Depends(get_current_user)) -> AssetJ
         job = await session.get(AssetJob, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job 不存在")
-        if not market_policy.is_admin(user) and job.created_by != user.id:
+        if not ext_policy.is_admin(user) and job.created_by != user.id:
             raise HTTPException(status_code=403, detail="只能查看自己的任务")
         return AssetJobOut.model_validate(job)
 
@@ -758,7 +758,7 @@ async def retry_failed_job(
         job = await session.get(AssetJob, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job 不存在")
-        if not market_policy.is_admin(user) and job.created_by != user.id:
+        if not ext_policy.is_admin(user) and job.created_by != user.id:
             raise HTTPException(status_code=403, detail="只能重试自己的任务")
     ok = await retry_job(job_id)
     if not ok:
@@ -788,7 +788,7 @@ async def list_audits(
         for r in rows:
             out = AssetAuditOut.model_validate(r)
             # 动作的中文由后端给 (唯一真源) —— 前端不再自己翻译
-            out.action_label = market_state.audit_action_label(r.action)
+            out.action_label = ext_state.audit_action_label(r.action)
             items.append(out)
         return AssetAuditListOut(items=items, total=len(items))
 
@@ -807,7 +807,7 @@ async def sync_status(
     """
     from app.core.sync_puller import get_puller
 
-    is_admin = market_policy.is_admin(user)
+    is_admin = ext_policy.is_admin(user)
     mine = (user.username or "").strip()
     # "我的"这几个计数用的作者口径 —— 短名 / 全邮箱都认 (见 identity.author_forms)
     my_forms = set(author_forms(user.username))
@@ -1012,7 +1012,7 @@ async def preview_notification_messages(
     """
     out: list[NotifyPreviewOut] = []
     for sc in _PREVIEW_SCENES:
-        r = await preview_market_message(sc["event"], **sc["kw"])
+        r = await preview_asset_message(sc["event"], **sc["kw"])
         out.append(
             NotifyPreviewOut(
                 event=sc["event"],
@@ -1027,8 +1027,8 @@ async def preview_notification_messages(
 
 # ---------- 当前生效配置 (只读) ----------
 
-@router.get("/config", response_model=MarketConfigOut)
-async def get_market_config(user: User = Depends(get_current_user)) -> MarketConfigOut:
+@router.get("/config", response_model=ExtConfigOut)
+async def get_ext_config(user: User = Depends(get_current_user)) -> ExtConfigOut:
     """扩展当前生效的配置 —— 设置页用来展示"工作区在哪 / 远端是哪个".
 
     注意是**生效值** (DB 设置 > env 初值), 不是 schema 里的默认值.
@@ -1037,8 +1037,8 @@ async def get_market_config(user: User = Depends(get_current_user)) -> MarketCon
        那是部署内部信息 (主机名/端口/仓库路径), 对普通用户没意义.
     """
     st = git_sync.workspace_status()
-    is_admin = market_policy.is_admin(user)
-    return MarketConfigOut(
+    is_admin = ext_policy.is_admin(user)
+    return ExtConfigOut(
         workspace=str(git_sync.WORKSPACE) if is_admin else "",
         remote=git_sync.git_remote() if is_admin else "",
         branch=git_sync.git_branch(),
@@ -1055,9 +1055,9 @@ async def get_market_config(user: User = Depends(get_current_user)) -> MarketCon
 
 
 @router.get("/rules")
-async def get_market_rules(_user: User = Depends(get_current_user)) -> dict[str, Any]:
+async def get_ext_rules(_user: User = Depends(get_current_user)) -> dict[str, Any]:
     """上传/编辑表单与 MCP 共用的当前扩展规则."""
-    return await market_rules.rules_payload()
+    return await ext_rules.rules_payload()
 
 
 @router.get("/{code}", response_model=AssetOut)
@@ -1076,7 +1076,7 @@ async def get_asset(
         # ⚠️ 待审核 / 被驳回 / 已下架的资产**不能**让无关的人看到
         #    (连接器的 MCP 配置里还有 env/headers, 可能是令牌)
         assert_visible(a, username=user.username or "", is_reviewer=is_reviewer,
-                       is_admin=market_policy.is_admin(user))
+                       is_admin=ext_policy.is_admin(user))
         out = [_to_out(a, can_review=is_reviewer, mcp_base=await _mcp_config_base())]
         await _apply_git_web_url(out)
         return out[0]
@@ -1105,7 +1105,7 @@ async def record_connector_copy(
             raise HTTPException(status_code=400, detail="只有连接器 (mcp) 的配置复制可以计数")
         is_reviewer = await _is_reviewer(user)
         assert_visible(a, username=user.username or "", is_reviewer=is_reviewer,
-                       is_admin=market_policy.is_admin(user))
+                       is_admin=ext_policy.is_admin(user))
         if await count_dedup.bump_count(session, code, count_dedup.user_key(user.id)):
             await session.execute(
                 update(Asset)
@@ -1131,7 +1131,7 @@ async def get_asset_doc(code: str, user: User = Depends(get_current_user)) -> As
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
     assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
-                   is_admin=market_policy.is_admin(user))
+                   is_admin=ext_policy.is_admin(user))
 
     if a.kind == "mcp":
         # 连接器没有 README —— 它只有一段 MCP 配置 (在 manifest 里, 详情页直接展示)
@@ -1172,7 +1172,7 @@ async def get_asset_files(code: str, user: User = Depends(get_current_user)) -> 
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
     assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
-                   is_admin=market_policy.is_admin(user))
+                   is_admin=ext_policy.is_admin(user))
 
     root = pkg.files_root(_asset_dir(a))
     nodes: list[AssetFileNode] = []
@@ -1206,7 +1206,7 @@ async def get_asset_bundle(
     if a is None:
         raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
     assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
-                   is_admin=market_policy.is_admin(user))
+                   is_admin=ext_policy.is_admin(user))
 
     base = _asset_dir(a)
     root = pkg.files_root(base)
@@ -1277,7 +1277,7 @@ async def download_package(
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
     else:
         assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
-                       is_admin=market_policy.is_admin(user))
+                       is_admin=ext_policy.is_admin(user))
 
     if a.kind == "mcp":
         # ⚠️ 连接器没有安装包 —— 它是一段 MCP 配置, 不是一堆文件
@@ -1299,7 +1299,7 @@ async def download_package(
         source_name = "package.zip"
     # ⚠️ 下载到本地的文件名**不带版本号** —— 存的包叫 "1.0.0.zip", 一屏下三四个扩展
     #    本地全是 "1.0.0.zip", 互相覆盖还认不出谁是谁. 统一成 "{code}.zip".
-    name = market_naming.download_filename(code, source_name)
+    name = ext_naming.download_filename(code, source_name)
 
     # 下载次数 +1 —— 原子自增 (先读后写会丢计数: 并发下载时互相覆盖).
     # ⚠️ 2026-11-05: 同一人/同 IP 冷却窗口内重复下载不再计数 (误触/刷量防护).
@@ -1317,7 +1317,7 @@ async def download_package(
 
     return Response(
         content=data,
-        media_type=market_naming.package_media_type(name),
+        media_type=ext_naming.package_media_type(name),
         headers={
             "Content-Disposition": f'attachment; filename="{name}"',
             "X-Content-Sha256": pkg.sha256_bytes(data),
@@ -1330,7 +1330,7 @@ def _find_exact_stored_package(base: Path, version: str) -> Path | None:
     package_dir = base / "package"
     if package_dir.is_symlink() or not package_dir.is_dir():
         return None
-    expected_names = {f"{version}{suffix}" for suffix in market_naming.PACKAGE_SUFFIXES}
+    expected_names = {f"{version}{suffix}" for suffix in ext_naming.PACKAGE_SUFFIXES}
     candidates = sorted(
         (
             item
@@ -1393,7 +1393,7 @@ async def download_package_by_asset_ticket(
         asset,
         username=user.username or "",
         is_reviewer=await _is_reviewer(user),
-        is_admin=market_policy.is_admin(user),
+        is_admin=ext_policy.is_admin(user),
     )
     if asset.kind == "mcp":
         raise HTTPException(status_code=400, detail="连接器没有安装包")
@@ -1415,11 +1415,11 @@ async def download_package_by_asset_ticket(
 
     return Response(
         content=data,
-        media_type=market_naming.package_media_type(stored.name),
+        media_type=ext_naming.package_media_type(stored.name),
         headers={
             # ⚠️ 文件名基于 code (不带版本号) —— 见 download_package 里的说明
             "Content-Disposition": _ticket_content_disposition(
-                market_naming.download_filename(code, stored.name)
+                ext_naming.download_filename(code, stored.name)
             ),
             "X-Content-Sha256": pkg.sha256_bytes(data),
         },
@@ -1576,15 +1576,15 @@ async def _set_publish_state(
 
             # ⚠️ 状态机: 「这个动作在这个状态下、这个人身份下」允许吗?
             #    以前每个端点各自 if 判断, 于是作者能自助上架绕过审核、
-            #    审核人能驳回在架资产 —— 现在统一由 market_state 裁决.
+            #    审核人能驳回在架资产 —— 现在统一由 ext_state 裁决.
             try:
-                market_state.assert_transition(
-                    action, a.publish_status or market_state.PUBLISHED,
-                    is_author=market_policy.can_modify(a, user),
+                ext_state.assert_transition(
+                    action, a.publish_status or ext_state.PUBLISHED,
+                    is_author=ext_policy.can_modify(a, user),
                     is_reviewer=await _is_reviewer(user),
-                    is_admin=market_policy.is_admin(user),
+                    is_admin=ext_policy.is_admin(user),
                 )
-            except market_state.TransitionError as e:
+            except ext_state.TransitionError as e:
                 raise HTTPException(status_code=409, detail=str(e)) from e
 
             if a.publish_status == publish_status and (
@@ -1604,7 +1604,7 @@ async def _set_publish_state(
             #    ⚠️ **只在真的在架/已下架时清** —— 驳回 (rejected) 时要**留着**,
             #    否则"驳回 → 改了重新提交"这条路上, 重新提交就不知道是改信息还是改包了.
             prev_pending_action = a.pending_action or ""
-            if publish_status in (market_state.PUBLISHED, market_state.UNPUBLISHED):
+            if publish_status in (ext_state.PUBLISHED, ext_state.UNPUBLISHED):
                 a.pending_action = ""
             await session.commit()
 
@@ -1640,7 +1640,7 @@ async def _set_publish_state(
                 payload={
                     "author": list(_author_of(user)),
                     "commit_message": (
-                        f"chore(market): {_ACTION_COMMIT_TEXT.get(action, '更新')}资产 "
+                        f"chore(ext): {_ACTION_COMMIT_TEXT.get(action, '更新')}资产 "
                         f"{a.name} {a.version}"
                     ),
                 },
@@ -1718,7 +1718,7 @@ async def unpublish_asset(
             comment=comment or "自助下架 (免审核)", user=user, review_note="",
         )
         if out.get("changed"):
-            await market_notify.notify_asset(
+            await ext_notify.notify_asset(
                 "unpublish", out,
                 actor=user.username,
                 detail=comment or "作者自助下架 (免审核), 文件保留, 可重新上架",
@@ -1740,7 +1740,7 @@ async def unpublish_asset(
     # 申请下架 → 通知**审核群** (提醒管理员去确认).
     # ⚠️ 注意跟"彻底下架"的通知分开: 申请阶段资产还在架, 别在扩展群说这件事.
     if out.get("changed"):
-        await market_notify.notify_asset(
+        await ext_notify.notify_asset(
             "unpublish_request", out,
             actor=user.username,
             detail=comment or "有人申请下架, 等管理员确认",
@@ -1870,7 +1870,7 @@ async def review_asset(
                     "资产信息修改审核通过, 不通知扩展群 (包没变): code=%s", code,
                 )
             else:
-                await market_notify.notify_asset(
+                await ext_notify.notify_asset(
                     "publish", out, actor=_user.username,
                     detail=comment or "审核通过, 已上架",
                 )
@@ -1882,7 +1882,7 @@ async def review_asset(
         comment=note, user=_user, review_note=note,
     )
     if out.get("changed"):
-        await market_notify.notify_asset(
+        await ext_notify.notify_asset(
             "reject", out, actor=_user.username, detail=note,
             # 驳回要显示**理由**, 不是资产简介
             summary="",
@@ -1908,7 +1908,7 @@ async def submit_for_review(
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
         # ⚠️ 作者判断用统一口径 can_modify (短名/全邮箱都认, 见 identity.name_matches).
         #    以前这里精确串比较 —— 存量短名作者的资产永远被判"不是本人", 提交审核 403.
-        if not market_policy.can_modify(a, _user):
+        if not ext_policy.can_modify(a, _user):
             raise HTTPException(status_code=403, detail="只有资产作者本人可以提交审核")
         if a.publish_status == "published":
             raise HTTPException(status_code=409, detail="资产已在架, 无需重复提交审核")
@@ -1918,7 +1918,7 @@ async def submit_for_review(
         comment=comment or "重新提交审核", user=_user, review_note="",
     )
     if out.get("changed"):
-        await market_notify.notify_asset(
+        await ext_notify.notify_asset(
             "review", out, actor=_user.username,
             detail=comment or "提交审核",
             # 审核通知说的是"要你处理什么", 不用资产简介顶掉它
@@ -1952,7 +1952,7 @@ async def publish_asset(
     )
     if not out.get("changed"):
         return out
-    await market_notify.notify_asset(
+    await ext_notify.notify_asset(
         "publish", out, actor=user.username,
         detail=comment or "重新上架",
         # ⚠️ 事件 key 还是 publish (开关映射不变), 只是标题别写成「新资产上架」——
@@ -2043,7 +2043,7 @@ async def _hard_delete_asset(
         try:
             result = await git_sync.sync_paths(
                 paths=paths,
-                message=f"chore(market): 删除资产 {asset_name} {version}",
+                message=f"chore(ext): 删除资产 {asset_name} {version}",
                 author=_author_of(user),
             )
         except git_sync.SyncError as e:
@@ -2092,7 +2092,7 @@ async def _hard_delete_asset(
         #    (服务端写盘通道已下线)
 
     if notify:
-        await market_notify.notify_asset(
+        await ext_notify.notify_asset(
             event,
             {"name": asset_name, "version": version, "code": code,
              "kind": kind, "category": category, "project": project},
@@ -2135,8 +2135,8 @@ async def delete_asset(
             raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
         if builtin_assets.is_builtin_code(a.code or ""):
             raise HTTPException(status_code=400, detail="平台内置资产不能删除")
-        is_admin = market_policy.is_admin(user)
-        is_author = market_policy.can_modify(a, user)
+        is_admin = ext_policy.is_admin(user)
+        is_author = ext_policy.can_modify(a, user)
         if not is_admin:
             if not is_author:
                 raise HTTPException(
@@ -2144,11 +2144,11 @@ async def delete_asset(
                 )
             # 状态机裁决: 只有 pending / rejected 允许作者直接撤
             try:
-                market_state.assert_transition(
-                    "discard", a.publish_status or market_state.PUBLISHED,
+                ext_state.assert_transition(
+                    "discard", a.publish_status or ext_state.PUBLISHED,
                     is_author=is_author, is_reviewer=False, is_admin=is_admin,
                 )
-            except market_state.TransitionError as e:
+            except ext_state.TransitionError as e:
                 raise HTTPException(status_code=409, detail=str(e)) from e
             return await _hard_delete_asset(
                 code=code, user=user,
@@ -2478,7 +2478,7 @@ async def _stage_asset_locked(
             manifest["package_name"] = f"{manifest['version']}{extracted.suffix}"
             manifest["files"] = extracted.files
             manifest["doc_file"] = doc_name
-            # 原始包也存进 git —— Qoder marketplace 的 source.url 需要字节稳定的归档
+            # 原始包也存进 git —— marketplace.json 的 source.url 需要字节稳定的归档
             pkg_dir = git_sync.WORKSPACE / base / "package"
             # ⚠️ **先清空旧档** (2026-10-25 审计): 归档文件名带版本号
             #    (1.0.0.zip / 1.1.0.zip …), 不清的话每次升版都在仓库里多留一份
@@ -2578,7 +2578,7 @@ async def _stage_asset_locked(
             a.pending_action = "new" if action == "create" else "update"
         elif existing is None:
             a.publish_status = "published"
-        elif existing.publish_status in (market_state.REJECTED, market_state.UNPUBLISHED):
+        elif existing.publish_status in (ext_state.REJECTED, ext_state.UNPUBLISHED):
             # ⚠️ 更新**没在架**的资产 (被驳回 / 已下架) 且免审 → 重新上架.
             #    以前这里不动状态: 驳回的资产作者改了重新传, 状态还是 rejected,
             #    审核人那边却没有任何待审项 → 资产永远不可见, 还查不出原因.
@@ -2627,7 +2627,7 @@ async def _stage_asset_locked(
                 "publish_status": a.publish_status,
                 "author": [author[0], author[1]],
                 "commit_message": (
-                    f"{'chore(market): 更新资产' if action == 'update' else 'feat(market): 上架资产'}"
+                    f"{'chore(ext): 更新资产' if action == 'update' else 'feat(ext): 上架资产'}"
                     f" {a.name} {a.version}"
                 ),
                 # ⚠️ 改了分类 / 类型 → 目录路径变了 → **老目录要清掉**,
@@ -2654,7 +2654,7 @@ async def _stage_asset_locked(
     # ⚠️ detail 是**这次操作发生了什么**, 不是资产的简介 ——
     #    把简介塞进来, 群里读起来像重复了一遍卡片副标题, 看不出发生了什么.
     if a.publish_status == "pending":
-        await market_notify.notify_asset(
+        await ext_notify.notify_asset(
             "review", manifest,
             actor=user.username,
             detail=(
@@ -2669,7 +2669,7 @@ async def _stage_asset_locked(
         #    detail 是"发生了什么"的套话 (跟标题重复), summary 才是"这玩意儿干嘛的".
         #    ⚠️ 扩展**没有**「更新说明」这个字段 (manifest/Asset 都没有),
         #    所以「发布新版本」只能带新简介 —— 标签会自动变成「更新:」.
-        await market_notify.notify_asset(
+        await ext_notify.notify_asset(
             "publish" if action == "create" else "update", manifest,
             actor=user.username,
             summary=manifest.get("summary", "") or "",
@@ -3063,7 +3063,7 @@ async def _stage_asset_meta(
             # ⚠️ 2026-10-30 (第十二轮): 记下这是「**只改了信息**」的审核 ——
             #    包没变, 审核通过后**不通知扩展群** (见 review_asset 的 approve 分支).
             a.pending_action = "meta"
-        elif a.publish_status in (market_state.REJECTED, market_state.UNPUBLISHED):
+        elif a.publish_status in (ext_state.REJECTED, ext_state.UNPUBLISHED):
             a.publish_status = "published"
             a.review_note = ""
 
@@ -3116,7 +3116,7 @@ async def _stage_asset_meta(
                 "files": {},
                 "publish_status": a.publish_status,
                 "author": [author[0], author[1]],
-                "commit_message": f"docs(market): 修改资产信息 {a.name} {a.version}",
+                "commit_message": f"docs(ext): 修改资产信息 {a.name} {a.version}",
                 "old_git_path": old_git_path,
             },
             git_path=a.git_path,
@@ -3148,7 +3148,7 @@ async def _stage_asset_meta(
     #       频道 (审核群) 都靠 key 查, 换 key 会关错开关、发错群.
     #       只用 title_override 改标题文案, 让管理员一眼看出"这是改信息, 不是上新东西".
     if need_review:
-        await market_notify.notify_asset(
+        await ext_notify.notify_asset(
             "review", manifest,
             actor=user.username,
             detail="修改了资产信息, 等管理员审核",

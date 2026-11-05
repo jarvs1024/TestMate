@@ -35,7 +35,7 @@ const api = vi.hoisted(() => ({
   listAudits: vi.fn(),
   listNotifications: vi.fn(),
   getSyncStatus: vi.fn(),
-  getMarketConfig: vi.fn(),
+  getExtConfig: vi.fn(),
   retryJob: vi.fn(),
   syncFromGit: vi.fn(),
   publishAsset: vi.fn(),
@@ -48,7 +48,7 @@ const api = vi.hoisted(() => ({
 
 vi.mock('@/api/assets', () => api);
 
-// ⚠️ 市场页用 useRoute() 读 `?status=pending` —— 少了这个 mock 组件初始化就抛
+// ⚠️ 扩展页用 useRoute() 读 `?status=pending` —— 少了这个 mock 组件初始化就抛
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
   useRoute: () => ({ query: {} }),
@@ -74,15 +74,15 @@ const auditStubs = {
   'el-tab-pane': { template: '<div class="el-tab-pane"><slot/></div>' },
 };
 
-/** 市场页的打桩: 抽屉那些组件跟这轮整改无关, 桩掉省得把整抽屉挂起来 */
-const marketStubs = {
+/** 扩展页的打桩: 抽屉那些组件跟这轮整改无关, 桩掉省得把整抽屉挂起来 */
+const extStubs = {
   'el-tooltip': { template: '<div><slot/></div>' },
   AssetDetailDrawer: true,
   AssetUploadDialog: true,
   AssetAuditDrawer: true,
 };
 
-/** 造一条市场资产 (category 用来验证 chip 计数) */
+/** 造一条扩展资产 (category 用来验证 chip 计数) */
 function asset(code = 'demo', category = '其他') {
   return {
     code, name: '演示资产', kind: 'plugin', version: '1.0.0',
@@ -95,15 +95,15 @@ function asset(code = 'demo', category = '其他') {
   } as any;
 }
 
-/** 挂市场页 (fake timers 下用 advanceTimersByTimeAsync(0) 冲 promise 链) */
-async function mountMarket(opts: { fake?: boolean } = {}) {
+/** 挂扩展页 (fake timers 下用 advanceTimersByTimeAsync(0) 冲 promise 链) */
+async function mountExt(opts: { fake?: boolean } = {}) {
   if (opts.fake) vi.useFakeTimers();
   const pinia = createPinia();
   setActivePinia(pinia);
   const store = useUserStore(pinia);
   store.user = { id: 1, username: 'jarvs', role: 'tester' } as any;
-  const Market = (await import('../index.vue')).default;
-  const w = mount(Market, { global: { plugins: [pinia], stubs: marketStubs } });
+  const Ext = (await import('../index.vue')).default;
+  const w = mount(Ext, { global: { plugins: [pinia], stubs: extStubs } });
   await vi.advanceTimersByTimeAsync(0);
   await flushPromises();
   return w;
@@ -152,7 +152,7 @@ beforeEach(() => {
   api.listAudits.mockReset();
   api.listNotifications.mockReset();
   api.getSyncStatus.mockReset();
-  api.getMarketConfig.mockReset();
+  api.getExtConfig.mockReset();
   api.publishAsset.mockReset();
 
   api.listAssets.mockResolvedValue({ items: [], total: 0 });
@@ -162,7 +162,7 @@ beforeEach(() => {
   api.listAudits.mockResolvedValue({ items: [] });
   api.listNotifications.mockResolvedValue({ items: [] });
   api.getSyncStatus.mockResolvedValue({});
-  api.getMarketConfig.mockResolvedValue({ remote: '', review_enabled: true });
+  api.getExtConfig.mockResolvedValue({ remote: '', review_enabled: true });
   api.publishAsset.mockResolvedValue({});
 });
 
@@ -234,11 +234,11 @@ describe('上传抽屉 · 扩展规则加载失败', () => {
 // ===================================================================
 // ② P1 · 列表加载超时 —— 提示必须**看得见**
 // ===================================================================
-describe('市场页 · 加载超时提示', () => {
+describe('扩展页 · 加载超时提示', () => {
   it('后端卡住 → 15 秒后出现「加载超时」提示条 (以前永远渲染不出来)', async () => {
     // ⚠️ 请求一直悬着 —— 模拟后端不返回
     api.listAssets.mockImplementation(() => new Promise(() => {}));
-    const w = await mountMarket({ fake: true });
+    const w = await mountExt({ fake: true });
     await vi.advanceTimersByTimeAsync(15000);
     await w.vm.$nextTick();
     const bar = w.find('.timeout-bar');
@@ -251,7 +251,7 @@ describe('市场页 · 加载超时提示', () => {
 
   it('超时提示条里带一个「重试」按钮', async () => {
     api.listAssets.mockImplementation(() => new Promise(() => {}));
-    const w = await mountMarket({ fake: true });
+    const w = await mountExt({ fake: true });
     await vi.advanceTimersByTimeAsync(15000);
     await w.vm.$nextTick();
     const btn = w.find('.timeout-bar .tb-btn');
@@ -264,7 +264,7 @@ describe('市场页 · 加载超时提示', () => {
 // ===================================================================
 // ③ P1 · 分类 chip 的数字必须来自当前列表
 // ===================================================================
-describe('市场页 · 分类 chip 计数', () => {
+describe('扩展页 · 分类 chip 计数', () => {
   it('chip 上的数字按当前列表聚合 (不是后端的 by_kind)', async () => {
     // ⚠️ 后端 by_kind 写的是 8 / 5 —— 那是不受搜索/项目筛选影响的"全局口径"
     api.listCategories.mockResolvedValue({
@@ -275,7 +275,7 @@ describe('市场页 · 分类 chip 计数', () => {
     });
     // 当前列表只有 1 张卡 (比如搜索「日志」之后)
     api.listAssets.mockResolvedValue({ items: [asset('a', '质量保障')], total: 1 });
-    const w = await mountMarket({ fake: true });
+    const w = await mountExt({ fake: true });
 
     const chips = w.findAll('.cat-chips .chip');
     const all = chips.find((c) => c.text().includes('全部'))!;
@@ -305,7 +305,7 @@ describe('市场页 · 分类 chip 计数', () => {
       items: [asset('a', '质量保障'), asset('b', '质量保障'), asset('c', '效率工具')],
       total: 3,
     });
-    const w = await mountMarket({ fake: true });
+    const w = await mountExt({ fake: true });
     const chips = w.findAll('.cat-chips .chip');
     const q = chips.find((c) => c.text().includes('质量保障'))!;
     const e = chips.find((c) => c.text().includes('效率工具'))!;

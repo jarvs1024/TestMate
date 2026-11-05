@@ -31,7 +31,7 @@
 | **工作台（能力墙）** | 首页 `/` | 按资产 / 工具 / 看板三种角色陈列能力，点卡片直接进 |
 | **代码检视看板** | `/code-review` | MR 生命周期、建议采纳率、规则命中、作者分布、周报 |
 | **能力详情（工具运行）** | `/c/:code` | 填参数 → 出结果，附 run 全量日志与时间线 |
-| **插件·技能·连接** | `/market` | 能力目录、打包发布、审核下架、版本、任务队列、审计 |
+| **插件·技能·连接** | `/extensions` | 能力目录、打包发布、审核下架、版本、任务队列、审计 |
 | **软件库** | `/software` | 内部软件的分发入口 —— 任意格式软件包（≤5G）传上来，卡片式浏览，下载 / 发新版本；每个软件可写功能 / 详情 / 适用场景 / 发布与更新说明 |
 | **知识库** | `/kb-manage` | RAGFlow 数据集 / 文档 / 分段，检索即用 |
 | **账号管理** | 设置页「👥 用户管理」 | 管理员建号、改角色、停用 |
@@ -64,7 +64,7 @@ TestMate/
 ├── backend_gateway/                # FastAPI 后端
 │   ├── app/
 │   │   ├── api/                    # 路由模块: health / auth / machines / kb / notify
-│   │   │                           #   / agents(能力) / settings / review_agent / marketplace
+│   │   │                           #   / agents(能力) / settings / review_agent / extensions
 │   │   ├── core/                   # 配置 / 安全 / 日志 / 外部服务客户端 / 资产市场策略
 │   │   ├── db/                     # SQLAlchemy async session
 │   │   ├── models/                 # ORM 模型(表名见各文件的 __tablename__)

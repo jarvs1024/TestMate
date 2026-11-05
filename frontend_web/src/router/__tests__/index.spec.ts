@@ -18,8 +18,8 @@ import appRouter, { routes } from '../index';
 
 const router = createRouter({ history: createMemoryHistory(), routes });
 
-const OAUTH_AUTHORIZE_PATH = '/connect/authorize?client_id=client%2Fci&redirect_uri=https%3A%2F%2Fclient.example%2Fcb%3Fa%3D1%26b%3Dtwo&response_type=code&scope=market%3Aread%20market%3Awrite&code_challenge=a-%2B%2F%3D&code_challenge_method=S256&state=x%20%26%3D%2B%2F%25';
-const LOGIN_REDIRECT_PATH = '/login?redirect=/connect/authorize?client_id=client%252Fci%26redirect_uri=https%253A%252F%252Fclient.example%252Fcb%253Fa%253D1%2526b%253Dtwo%26response_type=code%26scope=market%253Aread%2520market%253Awrite%26code_challenge=a-%252B%252F%253D%26code_challenge_method=S256%26state=x%2520%2526%253D%252B%252F%2525';
+const OAUTH_AUTHORIZE_PATH = '/connect/authorize?client_id=client%2Fci&redirect_uri=https%3A%2F%2Fclient.example%2Fcb%3Fa%3D1%26b%3Dtwo&response_type=code&scope=extensions%3Aread%20extensions%3Awrite&code_challenge=a-%2B%2F%3D&code_challenge_method=S256&state=x%20%26%3D%2B%2F%25';
+const LOGIN_REDIRECT_PATH = '/login?redirect=/connect/authorize?client_id=client%252Fci%26redirect_uri=https%253A%252F%252Fclient.example%252Fcb%253Fa%253D1%2526b%253Dtwo%26response_type=code%26scope=extensions%253Aread%2520extensions%253Awrite%26code_challenge=a-%252B%252F%253D%26code_challenge_method=S256%26state=x%2520%2526%253D%252B%252F%2525';
 
 beforeAll(() => {
   // 登录态 —— 否则守卫会把受保护页面踢去 /login, 断言就测不到跳转本身
@@ -65,7 +65,7 @@ describe('路由表', () => {
     expect(router.resolve('/kb-manage').meta.title).toBe('知识库');
   });
 
-  it('软件库是独立页面 (不塞进 /market 的 Tab)', () => {
+  it('软件库是独立页面 (不塞进 /extensions 的 Tab)', () => {
     const r = router.resolve('/software');
     expect(r.name).toBe('software');
     expect(r.meta.title).toBe('软件库');

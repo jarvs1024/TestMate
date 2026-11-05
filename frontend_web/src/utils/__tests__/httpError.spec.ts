@@ -24,7 +24,7 @@ describe('httpErrorText', () => {
   });
 
   it('后端给了 detail 就用 detail —— 那比状态码翻译更精确', () => {
-    expect(httpErrorText(500, '资产市场工作区被占用')).toBe('资产市场工作区被占用');
+    expect(httpErrorText(500, '扩展库工作区被占用')).toBe('扩展库工作区被占用');
     expect(httpErrorText(500, { message: '工作区被占用' })).toBe('工作区被占用');
   });
 

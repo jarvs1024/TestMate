@@ -1,4 +1,4 @@
-# 资产市场后端测试
+# 扩展库后端测试
 
 ## 跑起来
 
@@ -47,9 +47,9 @@ docker exec -w /app test-mate-backend-1 python -m pytest tests/ -v
 | 文件 | 覆盖 |
 |---|---|
 | `test_pkg.py` | 解包安全：zip-slip / 绝对路径 / 符号链接 / 敏感路径 / 体积与数量预算 / 确定性打包 / frontmatter |
-| `test_market_catalog.py` | 文件校验、code/版本校验、索引条目与 publish_status 往返 |
+| `test_ext_catalog.py` | 文件校验、code/版本校验、索引条目与 publish_status 往返 |
 | `test_dingtalk.py` | 加签算法（与官方实现交叉验证）、关键词前置、回执落库、失败重试与退避 |
 | `test_git_sync.py` | semver 比较、错误分类、提交推送、**推送失败后重试**、origin 地址同步 |
-| `test_qoder_marketplace.py` | marketplace.json 结构、只收 published 的 plugin、sha256 与实际字节一致 |
-| `test_market_api.py` | 上传落库、审核状态机、可见性、权限边界、包预检、安装/卸载、上下架、删除、审计、状态统计 |
+| `test_qoder_extensions.py` | marketplace.json 结构、只收 published 的 plugin、sha256 与实际字节一致 |
+| `test_ext_api.py` | 上传落库、审核状态机、可见性、权限边界、包预检、安装/卸载、上下架、删除、审计、状态统计 |
 | `test_availability.py` | 并发上传/安装、崩溃恢复、依赖不可用时的降级、通知失败不影响主流程 |

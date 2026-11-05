@@ -1,7 +1,7 @@
-"""资产市场的**边界与异常**用例.
+"""扩展库的**边界与异常**用例.
 
 为什么单独一个文件:
-    正常路径的用例已经有了 (test_market_api.py 等), 但真正容易出事的是边界:
+    正常路径的用例已经有了 (test_ext_api.py 等), 但真正容易出事的是边界:
       · 项目列表为空 / 带脏值 / 改名
       · MCP 配置的各种畸形 (非法 JSON / 结构不对 / 太大 / 名字不合法)
       · 包名 / code / 版本 的非法输入
@@ -17,16 +17,16 @@ import zipfile
 
 import pytest
 
-from app.core import market_projects as mp
+from app.core import ext_projects as mp
 from tests.conftest import set_setting
-from tests.test_market_api import API, _enable_publisher, _upload, _zip_bytes
+from tests.test_ext_api import API, _enable_publisher, _upload, _zip_bytes
 
 
 # ---------- 项目列表: 边界 ----------
 
 async def test_projects_setting_empty_falls_back_to_default(client, auth):
     """项目列表配成空 → 用默认列表 (不能变成"没有项目可选")."""
-    from app.core import market_projects
+    from app.core import ext_projects
 
     await set_setting("extensions.projects", "")
     items = (await client.get(f"{API}/projects", headers=auth)).json()["items"]
@@ -108,7 +108,7 @@ def test_mcp_config_accepts_minimal_valid():
     "dml-X.zip",               # 大写
 ])
 def test_package_name_rules(filename):
-    from app.core.market_naming import package_base_name
+    from app.core.ext_naming import package_base_name
 
     # 归一规则: 后端只要求"包名 == code", 格式在前端
     assert package_base_name(filename) in (filename, filename.rsplit(".", 1)[0])
@@ -124,7 +124,7 @@ def test_package_name_rules(filename):
     "dml--x",
 ])
 def test_code_format_rejected(code):
-    from app.core.market_catalog import ManifestError, validate_code
+    from app.core.ext_catalog import ManifestError, validate_code
 
     with pytest.raises(ManifestError):
         validate_code(code)
@@ -132,7 +132,7 @@ def test_code_format_rejected(code):
 
 @pytest.mark.parametrize("version", ["1.0", "abc", "1.0.0.0", "v", ""])
 def test_version_format_rejected(version):
-    from app.core.market_catalog import ManifestError, validate_version
+    from app.core.ext_catalog import ManifestError, validate_version
 
     with pytest.raises(ManifestError):
         validate_version(version)
@@ -437,7 +437,7 @@ async def test_audit_action_label_comes_from_backend(client, auth, ws,  # noqa: 
 
 def test_audit_action_label_known_actions():
     """后端认得的动作都要有中文; 没登记的原样返回 (宁可露 id 也不显示空白)."""
-    from app.core.market_state import audit_action_label
+    from app.core.ext_state import audit_action_label
 
     assert audit_action_label("create") == "新建资产"
     assert audit_action_label("unpublish_approve").startswith("通过下架申请")

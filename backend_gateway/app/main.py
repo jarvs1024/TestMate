@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, review_agent, marketplace, software, platform
+from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, review_agent, extensions, software, platform
 from app.api import mcp as mcp_api
 from app.api.agents import seed_agents
 from app.core.settings_store import seed_defaults
@@ -165,7 +165,7 @@ app.include_router(settings_api.router, prefix="/api/v1/settings", tags=["settin
 # ⚠️ 平台信息 (副标题 / 版本号) —— **公开可读**: 页头在匿名状态下也显示, 登录页更是.
 app.include_router(platform.router, prefix="/api/v1/platform", tags=["platform"])
 app.include_router(review_agent.router, prefix="/api/v1/review-agent", tags=["review-agent"])
-app.include_router(marketplace.router, prefix="/api/v1/extensions", tags=["extensions"])
+app.include_router(extensions.router, prefix="/api/v1/extensions", tags=["extensions"])
 # 软件库 —— 与「扩展」完全分家: 那边真身在 GitLab, 这边真身在服务端磁盘.
 app.include_router(software.router, prefix="/api/v1/software", tags=["software"])
 app.include_router(mcp_api.router, prefix="/api/v1/mcp", tags=["mcp"])
@@ -174,19 +174,19 @@ app.mount("/mcp", mcp_dispatcher, name="mcp")
 
 
 @app.get("/marketplace.json", include_in_schema=False)
-async def qoder_marketplace(request: Request):
+async def qoder_extensions(request: Request):
     """Qoder 原生市场清单 —— 无需登录 (Qoder 拉取时不带 token).
 
     Qoder 把这个 URL 加为市场源后, 自带安装器负责下载/校验/解压,
     并可用 autoUpdate 自动更新.
     """
-    from app.core.qoder_marketplace import build_marketplace, render
+    from app.core.qoder_extensions import build_extensions_manifest, render
     from app.core.settings_store import get, to_bool
 
     configured = (await get("extensions.public_base_url", "")) or ""
     base = configured.rstrip("/") or str(request.base_url).rstrip("/")
     name = (await get("extensions.name", "testmate")) or "testmate"
-    manifest = await build_marketplace(base, name=name)
+    manifest = await build_extensions_manifest(base, name=name)
     # ⚠️ 清单是**公开**的, 但里面的下载 URL 默认要登录 —— Qoder 自带安装器带不了
     #    TestMate 的 token, 不开「extensions.public_download」的话它下载必然 401.
     #    记一条日志: 免得管理员配了 public_base_url 就以为"原生安装器已经通了".

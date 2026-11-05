@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from app.core import market_naming as mn
+from app.core import ext_naming as mn
 
 
 # ---------- 包名 ----------

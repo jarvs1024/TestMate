@@ -245,8 +245,8 @@ def _scan_workspace(ws: Path) -> list[tuple[Path, dict]]:
 async def main(apply: bool) -> int:
     load_env()
 
-    from app.core import git_sync, market_categories
-    from app.core.market_catalog import asset_git_path, stage_index
+    from app.core import git_sync, ext_categories
+    from app.core.ext_catalog import asset_git_path, stage_index
     from app.db.session import AsyncSessionLocal
     from app.models.asset import Asset
     from sqlalchemy import select
@@ -285,7 +285,7 @@ async def main(apply: bool) -> int:
             if not target:
                 target = FALLBACK_BY_OLD.get(old_cat, "其他")
                 unmapped.append(code)
-            if target not in market_categories.names():
+            if target not in ext_categories.names():
                 print(f"❌ 目标分类 '{target}' 不在分类表里: {code}")
                 return 1
             new_path = asset_git_path(kind, target, code)
@@ -315,7 +315,7 @@ async def main(apply: bool) -> int:
         if only_ws:
             print(f"⚠️ 这些资产工作区里有、DB 里没有 (同步一下再迁): {sorted(only_ws)}")
 
-        print(f"\n分类表 (新): {', '.join(market_categories.names())}")
+        print(f"\n分类表 (新): {', '.join(ext_categories.names())}")
         print(f"分支: {branch} · 涉及 {len(plan)}/{len(assets)} 个资产")
         print()
         for p in plan:
@@ -421,8 +421,8 @@ async def main(apply: bool) -> int:
         result = git_sync.sync_paths_blocking(
             paths=stage_paths,
             commit_paths=commit_paths,
-            message="refactor(market): 分类整改 —— 改成按协作角色划分 (质量保障/效率工具/流程规范/管理协同)",
-            author=("market-migrate", "market-migrate@testmate.internal"),
+            message="refactor(ext): 分类整改 —— 改成按协作角色划分 (质量保障/效率工具/流程规范/管理协同)",
+            author=("ext-migrate", "ext-migrate@testmate.internal"),
         )
         print(f"  commit={result.commit_sha[:12]} pushed={result.pushed} no_change={result.no_change}")
         if not result.pushed and not result.no_change:

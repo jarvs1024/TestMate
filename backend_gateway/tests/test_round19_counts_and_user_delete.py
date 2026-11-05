@@ -139,7 +139,7 @@ async def test_software_mine_filter_does_not_change_all_total(client, admin_user
 
 
 async def test_asset_counts_are_constant_across_filters(client, admin_user):
-    """市场页同理: 分类是"看哪一片", 不改「全部 N」."""
+    """扩展页同理: 分类是"看哪一片", 不改「全部 N」."""
     me = admin_user["username"]
     await _seed_asset("as-a", author=me, category="工具")
     await _seed_asset("as-b", author=me, category="工具")
