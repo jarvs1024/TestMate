@@ -47,6 +47,7 @@ async def test_upload_writes_publish_status_into_manifest(
 
     少了它, 同步器会把它猜成 published → 待审核资产自动上架.
     """
+    from app.core import git_sync
     from tests.conftest import set_setting
 
     await set_setting("extensions.review.enabled", "true")
@@ -54,10 +55,15 @@ async def test_upload_writes_publish_status_into_manifest(
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
     await _upload(client, pauth, code="man-demo")
 
-    p = ws / "assets/skills/misc/man-demo/manifest.json"
+    # ⚠️ 2026-11-05: 待审内容落**仓库外暂存区**, 不进 git 工作区 ——
+    #    所以这份 manifest.json 现在在暂存区里 (工作区里出现它反而是 bug:
+    #    反向同步器会把它当成已上架的资产).
+    p = git_sync.STAGING / "assets/skills/misc/man-demo/manifest.json"
     assert p.exists(), f"manifest.json 没落盘: {p}"
     m = json.loads(p.read_text(encoding="utf-8"))
     assert m.get("publish_status") == "pending", f"manifest 缺 publish_status: {m}"
+    assert not (ws / "assets/skills/misc/man-demo/manifest.json").exists(), \
+        "待审内容不该出现在 git 工作区"
 
 
 async def test_upload_manifest_publish_status_matches_db(

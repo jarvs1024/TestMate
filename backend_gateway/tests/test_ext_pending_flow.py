@@ -47,7 +47,13 @@ def _zip_bytes(files: dict[str, str], filename: str = "pkg.zip") -> tuple[str, b
     return (filename, buf.getvalue(), "application/zip")
 
 
-async def _upload(client, auth, code="demo", kind="skill", **over):
+async def _upload(client, auth, code="demo", kind="skill", *, new_version=False, **over):
+    """上架新资产 (POST /upload) 或给已有资产发新版本 (PUT /{code}).
+
+    ⚠️ 这两个是**不同的端点**, 不能混:
+      · POST /upload  = 上架**新**资产 (action=create) —— 同 code 再传一次是 409
+      · PUT  /{code}  = 给**已有**资产发新版本 / 改信息 (action=update)
+    """
     pkg = _zip_bytes(
         {"SKILL.md": f"---\nname: {code}\ndescription: d\n---\n\n# {code}\n"},
         filename=f"{code}.zip",
@@ -59,9 +65,16 @@ async def _upload(client, auth, code="demo", kind="skill", **over):
         "featured": "false", "permissions": "{}", "install_steps": "[]", "bindings": "{}",
     }
     data.update(over)
+    files = {"package": (pkg[0], pkg[1], pkg[2])}
+    if new_version:
+        # PUT 的 code 来自路径 —— 表单里那个 code 字段去掉 (免得两处打架)
+        data.pop("code", None)
+        return await client.put(
+            f"{API}/{code}", data=data, files=files, headers=auth,
+        )
     return await client.post(
         f"{API}/upload", data=data,
-        files={"package": (pkg[0], pkg[1], pkg[2])},
+        files=files,
         headers=auth,
     )
 
@@ -244,7 +257,7 @@ async def test_revert_restores_shelved_version(client, auth, ws,  # noqa: ARG001
     await set_setting("extensions.review.enabled", "true")
     captured = _capture_notify(monkeypatch)
     jobs_before = await _job_count()
-    r = await _upload(client, pauth, code="rev-demo", version="2.0.0")
+    r = await _upload(client, pauth, code="rev-demo", version="2.0.0", new_version=True)
     assert r.status_code == 202, r.text
     st2 = await client.get(f"{API}/rev-demo", headers=pauth)
     assert st2.json()["publish_status"] == "pending"
@@ -279,7 +292,7 @@ async def test_delete_blocked_for_pending_update(client, auth, ws,  # noqa: ARG0
     await _upload(client, pauth, code="del-guard")
 
     await set_setting("extensions.review.enabled", "true")
-    await _upload(client, pauth, code="del-guard", version="2.0.0")
+    await _upload(client, pauth, code="del-guard", version="2.0.0", new_version=True)
     st = await client.get(f"{API}/del-guard", headers=pauth)
     assert st.json()["publish_status"] == "pending"
 

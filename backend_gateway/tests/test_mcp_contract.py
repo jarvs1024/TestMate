@@ -379,14 +379,13 @@ def test_normalize_preserves_sequence_container_types():
 
 def _expected_state_change(scenario: str, username: str) -> dict[str, Any]:
     assert scenario in {"submit_review", "unpublish_request"}
-    return {
+    out: dict[str, Any] = {
         "ok": True,
         "code": "<code>",
         "publish_status": (
             "pending" if scenario == "submit_review" else "unpublish_pending"
         ),
         "changed": True,
-        "job_id": "<generated-id>",
         "name": "Contract asset",
         "version": "1.0.0",
         "kind": "skill",
@@ -397,6 +396,12 @@ def _expected_state_change(scenario: str, username: str) -> dict[str, Any]:
         "summary": "Initial summary",
         "pending_action": "new" if scenario == "submit_review" else "",
     }
+    # ⚠️ 2026-11-05: 「提交审核」是**纯状态**流转 —— 待审内容躺在仓库外暂存区,
+    #    没进过 git, 没有可提交的文件 → 不建同步 job → 响应里没有 job_id.
+    #    (下架申请要落 git, 所以它有 job_id.)
+    if scenario == "unpublish_request":
+        out["job_id"] = "<generated-id>"
+    return out
 
 
 def _expected_response(scenario: str, username: str) -> dict[str, Any]:

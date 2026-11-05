@@ -383,10 +383,10 @@ async def test_cancel_request_sends_no_notification(
             )).scalars().all()
         return [x.event for x in rows]
 
-    before = events_of()
+    before = await events_of()
     r = await client.post(f"{API}/unp-cancel-notify/unpublish-cancel", data={}, headers=pauth)
     assert r.status_code == 200, r.text
-    after = events_of()
+    after = await events_of()
     # ⚠️ 2026-11-05 起 publish 公告改由同步 worker 发 (git 同步成功后才发),
     #    单测里没有 worker → 前面的上架 publish 收据本来就不会有.
     #    这里比的是**撤销前后有没有新增** —— 撤销不能发任何一条.

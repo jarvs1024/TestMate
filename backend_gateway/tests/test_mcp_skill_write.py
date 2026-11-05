@@ -177,6 +177,32 @@ def notifications(monkeypatch):
     return sent
 
 
+async def _flush_sync_jobs(*actions: str) -> None:
+    """把待跑的 git 同步 job 跑一遍 (单测里没有 worker 线程).
+
+    ⚠️ 2026-11-05 起, 上架/更新/下架的**扩展群公告**不再即时发 ——
+       端点只把通知配置挂到 AssetJob.payload["notify"] 上, 由 worker 在
+       **git 推送成功之后**才发 (push 失败绝不发假公告).
+       单测里没起 worker 线程 → 公告不会自己发出来, 断言只能看到空列表.
+
+       这里手动跑一遍 worker, 让「推送成功 → 公告发出」这条链路真的被验到 ——
+       而不是把断言改成"没通知" (那样就把新设计整个验没了).
+
+    ⚠️ actions: 只跑指定 action 的 job —— 一个用例里常有好几个 job
+       (比如"先建资产再更新"), 只跑要断言的那一个, 免得把别的公告也发出来.
+       不传 = 全跑.
+    """
+    from app.core import asset_jobs
+
+    q = select(AssetJob).where(AssetJob.status == "staged")
+    if actions:
+        q = q.where(AssetJob.action.in_(actions))
+    async with AsyncSessionLocal() as s:
+        job_ids = [j.id for j in (await s.execute(q)).scalars().all()]
+    for job_id in job_ids:
+        await asset_jobs._process(job_id)
+
+
 @asynccontextmanager
 async def _client(principals):
     server = build_skill_server(
@@ -760,6 +786,8 @@ async def test_publish_files_presences_and_defaults_are_not_guessed(
     assert minimal_asset.permissions == {}
     assert minimal_asset.install_steps == []
     assert minimal_asset.bindings == {}
+    # 公告是 git 推送成功后由 worker 发的 → 这里手动跑一遍 worker
+    await _flush_sync_jobs("create")
     assert [event for event, _, _ in notifications] == ["publish", "publish"]
 
     audits = await _tool_audits("extension_publish")
@@ -797,6 +825,7 @@ async def test_publish_base64_returns_real_job_and_audits_only_package_metadata(
     assert asset.publish_status == "published"
     package_path = ws / asset.git_path / "package" / "1.2.3.zip"
     assert package_path.read_bytes() == package
+    await _flush_sync_jobs("create")
     assert [event for event, _, _ in notifications] == ["publish"]
 
     audit = (await _tool_audits("extension_publish"))[0]
@@ -860,6 +889,7 @@ async def test_update_retains_every_omitted_metadata_field(
     assert asset.permissions == {"network": True}
     assert asset.install_steps == ["keep"]
     assert asset.bindings == {"agent": "keep"}
+    await _flush_sync_jobs("update")
     assert [event for event, _, _ in notifications] == ["update"]
 
 
@@ -980,6 +1010,8 @@ async def test_unpublish_binds_confirmation_reason_and_preserves_review_switch(
     assert result["changed"] is True
     asset = await _asset("mcp-unpublish-success")
     assert asset.publish_status == expected_status
+    # 免审下架的公告同样是 git 推送成功后才发 (申请制的下架提醒是即时的)
+    await _flush_sync_jobs("take_down")
     assert [event for event, _, _ in notifications] == [expected_event]
     assert "Exact unpublish reason" in notifications[0][2]["detail"]
     async with AsyncSessionLocal() as session:
