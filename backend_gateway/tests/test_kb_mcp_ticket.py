@@ -190,3 +190,47 @@ async def test_ticket_upload_writes_audit_rows(client, publisher_user, fake_rf):
     async with AsyncSessionLocal() as s:
         count = (await s.execute(select(func.count()).select_from(KbAudit))).scalar_one()
         assert count == 1
+
+
+async def test_missing_ticket_is_rejected_although_body_is_valid(
+    client, publisher_user, fake_rf
+):
+    """没有票头时, 即使 multipart body 完全合法, 也先报票错误 (验票先于解析)."""
+    response = await client.post(
+        f"{API}/kb/datasets/ds-naive/documents/ticket-upload",
+        files=_files("a.txt"),
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "上传票无效或已过期"
+    assert fake_rf.docs == []
+
+
+async def test_non_upload_tokens_are_rejected_as_tickets(client, publisher_user, fake_rf):
+    """签名有效但 typ 不是 kb-upload 的票/令牌 → 401 (错 typ)."""
+    from app.core.security import (
+        create_access_token,
+        create_asset_download_ticket,
+    )
+
+    access_token, _ = create_access_token(publisher_user["id"])
+    asset_ticket, _ = create_asset_download_ticket(
+        user_id=publisher_user["id"], code="asset", version="1.0.0"
+    )
+
+    for wrong in (access_token, asset_ticket):
+        response = await _post(client, wrong)
+        assert response.status_code == 401
+        assert response.json()["detail"] == "上传票无效或已过期"
+    assert fake_rf.docs == []
+
+
+async def test_ticket_rejects_more_than_five_files(client, publisher_user, fake_rf):
+    """超过 MAX_UPLOAD_FILES 的批量 → 解析阶段 422 (通用表单错误)."""
+    response = await _post(
+        client,
+        await _ticket(publisher_user["id"]),
+        files=_files("a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt"),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "上传表单格式错误"
+    assert fake_rf.docs == []

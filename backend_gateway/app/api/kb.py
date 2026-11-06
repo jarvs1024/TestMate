@@ -889,9 +889,8 @@ async def ticket_upload(dataset_id: str, request: Request) -> dict:
                 raise HTTPException(status_code=422, detail="替换模式一次只能传 1 个文件")
             upload = uploads[0]
             raw_name = (getattr(upload, "filename", "") or "").strip()
-            payload = await _read_upload_limited(
-                upload, MAX_UPLOAD_BYTES, raw_name or "document"
-            )
+            label = _sanitize_kb_filename(raw_name, "document")
+            payload = await _read_upload_limited(upload, MAX_UPLOAD_BYTES, label)
             return await replace_document(
                 dataset_id, replace_id, raw_name, payload,
                 getattr(upload, "content_type", "") or "application/octet-stream",
