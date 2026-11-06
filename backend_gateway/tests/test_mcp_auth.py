@@ -387,3 +387,50 @@ async def test_static_intersects_db_scopes_with_current_capabilities_and_updates
         stored = await session.get(McpApiToken, record.id)
         assert stored is not None
         assert stored.last_used_at is not None
+
+
+@pytest.mark.parametrize("credential", ["static", "oauth"])
+async def test_mcp_token_cannot_authenticate_rest_api(client, credential):
+    if credential == "static":
+        token, _, _ = await _static_credential()
+    else:
+        token, _, _ = await _oauth_credential()
+
+    response = await client.get(
+        "/api/v1/kb/datasets",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.parametrize("credential", ["static", "oauth"])
+async def test_mcp_token_type_is_rejected_even_without_aud_claim(client, credential):
+    """REST 侧必须**显式**按 typ 拒绝 MCP 令牌.
+
+    ⚠️ 为什么要去掉 aud: 带 aud 的令牌在 decode_token 里本来就因为"aud 对不上"
+       被拒（detail = 'token 无效或过期'）, 那条路径**不能**代替 typ 检查 ——
+       只要哪天 decode_token 放开 aud 校验, MCP 令牌就会顺着 sub/tv 直接进 REST.
+       这里的 token 还故意配 token_version=0 的用户, 让 sub/tv 两条校验都通过,
+       确保 401 只可能来自 typ 判断.
+    """
+    user = await _user(token_version=0)
+    if credential == "static":
+        token, record, _ = await _static_credential(user)
+        record_id = record.id
+    else:
+        token, _, _ = await _oauth_credential(user)
+        record_id = None
+    token = _resign(token, aud=DELETE)
+    if record_id is not None:
+        await _update_static(
+            record_id,
+            token_hash=hashlib.sha256(token.encode("ascii")).hexdigest(),
+        )
+
+    response = await client.get(
+        "/api/v1/kb/datasets",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 401, response.text

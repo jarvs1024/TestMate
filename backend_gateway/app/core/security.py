@@ -41,6 +41,10 @@ def create_access_token(subject: str | int, extra: dict[str, Any] | None = None)
     return token, settings.JWT_EXPIRE_MINUTES * 60
 
 
+#: MCP 专用令牌类型 —— 只能访问 /mcp/*，不能当普通登录令牌调 REST。
+MCP_TOKEN_TYPES = frozenset({"mcp-static", "mcp-oauth"})
+
+
 def decode_token(token: str) -> dict[str, Any] | None:
     try:
         return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])

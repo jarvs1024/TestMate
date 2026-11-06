@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.identity import local_part, lookup_candidates, to_email
 from app.core.logging import current_request_id, log_rate_limited
-from app.core.security import create_access_token, decode_token, hash_password, verify_password
+from app.core.security import MCP_TOKEN_TYPES, create_access_token, decode_token, hash_password, verify_password
 from app.db.session import get_session
 from app.models.asset import AssetAudit
 from app.models.user import User, UserRole
@@ -131,6 +131,10 @@ async def get_current_user(
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token 无效或过期")
+    if payload.get("typ") in MCP_TOKEN_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="token 类型无效"
+        )
     # ⚠️ sub / tv 都要**防一手**: token 虽然是自己签的, 但解析失败不能变成 500.
     #    (以前 int(payload.get("sub",0)) 遇到非数字直接 ValueError → 500)
     try:
