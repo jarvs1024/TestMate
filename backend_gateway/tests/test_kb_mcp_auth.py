@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 from contextlib import asynccontextmanager
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from jose import jwt
 
 from app.api import kb as kb_api
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.mcp.common import auth, oauth
 from app.mcp.common.server import build_dispatcher, run_mcp_lifespan
@@ -30,17 +33,33 @@ class _FakeRedis:
 @pytest.fixture(autouse=True)
 async def _settings():
     await set_setting("extensions.public_base_url", PUBLIC_BASE)
-    await set_setting("mcp.allowed_hosts", "test")
 
 
 @pytest.fixture
 async def user():
     async with AsyncSessionLocal() as session:
-        u = User(username="kb-auth-user", password_hash="unused", role=UserRole.tester)
+        u = User(
+            username=f"kb-auth-user-{uuid.uuid4().hex[:8]}",
+            password_hash="unused",
+            role=UserRole.tester,
+        )
         session.add(u)
         await session.commit()
         await session.refresh(u)
         return u
+
+
+def _without_audience(token: str) -> str:
+    """去掉 aud —— decode_token 不校验 audience, 但 jose 见到 aud 会先报 Invalid audience.
+    去掉后请求才能真正走到 typ 守卫, 否则这组用例测的是 audience 校验."""
+    claims = jwt.decode(
+        token,
+        settings.JWT_SECRET,
+        algorithms=[settings.JWT_ALGORITHM],
+        options={"verify_aud": False},
+    )
+    claims.pop("aud", None)
+    return jwt.encode(claims, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
 async def _static_token(user: User, scopes=("kb:read",)) -> str:
@@ -60,7 +79,7 @@ async def _static_token(user: User, scopes=("kb:read",)) -> str:
 
 async def _oauth_token(user: User, scopes=("kb:read",)) -> str:
     async with AsyncSessionLocal() as session:
-        client_id = "kb-auth-client"
+        client_id = f"kb-auth-client-{uuid.uuid4().hex[:8]}"
         session.add(
             McpOAuthClient(
                 client_id=client_id,
@@ -78,14 +97,12 @@ async def _oauth_token(user: User, scopes=("kb:read",)) -> str:
 
 @asynccontextmanager
 async def _app(monkeypatch):
-    import app.api.kb as kb_mod
-
     async def list_datasets(page=1, page_size=50):
         return [{"id": "ds-1", "name": "技术文档", "description": "",
                  "chunk_method": "naive", "embedding_model": "emb",
                  "permission": "me", "document_count": 0, "chunk_count": 0}]
 
-    monkeypatch.setattr(kb_mod, "list_datasets", list_datasets)
+    monkeypatch.setattr(kb_api, "list_datasets", list_datasets)
 
     server = build_kb_server(
         public_base_url=PUBLIC_BASE, allowed_hosts=["test"], redis_client=_FakeRedis()
@@ -107,18 +124,23 @@ async def test_mcp_token_cannot_call_rest_but_can_call_kb_mcp(user, monkeypatch,
 
     async with _app(monkeypatch) as client:
         rest = await client.get(
-            "/api/v1/kb/datasets", headers={"Authorization": f"Bearer {token}"}
+            "/api/v1/kb/datasets",
+            headers={"Authorization": f"Bearer {_without_audience(token)}"},
         )
         tools = await list_tools(client, token, endpoint=ENDPOINT)
 
     assert rest.status_code == 401, rest.text
+    assert rest.json()["detail"] == "token 类型无效"
     assert len(tools["tools"]) == 12
+    assert "kb_dataset_list" in {t["name"] for t in tools["tools"]}
 
 
 async def test_platform_login_token_still_works_on_rest(user, monkeypatch):
     from app.core.security import create_access_token
 
     token, _ = create_access_token(user.id)
+    claims = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    assert "typ" not in claims
 
     async with _app(monkeypatch) as client:
         rest = await client.get(
