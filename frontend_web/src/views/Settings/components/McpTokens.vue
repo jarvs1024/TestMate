@@ -25,9 +25,9 @@
         </label>
         <fieldset class="scope-field" :disabled="creating">
           <legend>权限 <b>*</b></legend>
-          <label><input v-model="form.scopes" type="checkbox" value="extensions:read" /> 读取资产</label>
+          <label><input v-model="form.scopes" type="checkbox" value="extensions:read" :disabled="!canRead" /> 读取资产</label>
           <label><input v-model="form.scopes" type="checkbox" value="extensions:write" :disabled="!canWrite" /> 管理资产</label>
-          <label><input v-model="form.scopes" type="checkbox" value="kb:read" /> 读取知识库</label>
+          <label><input v-model="form.scopes" type="checkbox" value="kb:read" :disabled="!canKbRead" /> 读取知识库</label>
           <label><input v-model="form.scopes" type="checkbox" value="kb:write" :disabled="!canKbWrite" /> 写入知识库</label>
         </fieldset>
         <button type="button" class="mini-btn primary create-btn" :disabled="!canCreate" @click="create">
@@ -123,7 +123,9 @@ const form = reactive<{ name: string; scopes: McpScope[]; expiresAt: string }>({
   expiresAt: '',
 });
 
+const canRead = computed(() => allowedScopes.value.includes('extensions:read'));
 const canWrite = computed(() => allowedScopes.value.includes('extensions:write'));
+const canKbRead = computed(() => allowedScopes.value.includes('kb:read'));
 const canKbWrite = computed(() => allowedScopes.value.includes('kb:write'));
 const canCreate = computed(() => (
   !creating.value
@@ -202,8 +204,7 @@ async function create() {
   try {
     const payload: CreateMcpTokenPayload = {
       name: form.name.trim(),
-      // 只提交服务端当前允许的 scope，避免残留值带来越权请求。
-      scopes: form.scopes.filter((scope) => allowedScopes.value.includes(scope)),
+      scopes: form.scopes,
     };
     if (form.expiresAt) payload.expires_at = new Date(form.expiresAt).toISOString();
     const created = await createMcpToken(payload);

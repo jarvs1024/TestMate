@@ -124,8 +124,8 @@ describe('个人中心 · 访问令牌', () => {
       .mockResolvedValueOnce({ items: [{ ...TOKEN, scopes: ['extensions:read', 'kb:read', 'kb:write'] }] });
     const w = await mountTokens();
 
-    expect(w.text()).toContain('读取知识库');
-    expect(w.text()).toContain('写入知识库');
+    // 列表为空时不存在 scope 徽标，说明下面的断言确实来自列表渲染而非表单标签。
+    expect(w.find('.token-scopes').exists()).toBe(false);
     await w.get('input[aria-label="令牌名称"]').setValue('kb agent');
     await w.get('input[type="checkbox"][value="kb:read"]').setValue(true);
     await w.get('input[type="checkbox"][value="kb:write"]').setValue(true);
@@ -136,8 +136,29 @@ describe('个人中心 · 访问令牌', () => {
       name: 'kb agent',
       scopes: ['extensions:read', 'kb:read', 'kb:write'],
     });
-    expect(w.text()).toContain('读取知识库');
-    expect(w.text()).toContain('写入知识库');
+    // 创建成功后刷新列表，徽标文案取自 listMcpTokens 的返回值。
+    expect(api.listMcpTokens).toHaveBeenCalledTimes(2);
+    const scopesText = w.get('.token-scopes').text();
+    expect(scopesText).toContain('读取知识库');
+    expect(scopesText).toContain('写入知识库');
+    w.unmount();
+  });
+
+  it('服务端只提供 extensions:read 时读取知识库也不可勾选', async () => {
+    api.listMcpTokenScopes.mockResolvedValue({ scopes: ['extensions:read'] });
+    const w = await mountTokens();
+
+    const kbRead = w.get('input[type="checkbox"][value="kb:read"]').element as HTMLInputElement;
+    expect(kbRead.disabled).toBe(true);
+
+    await w.get('input[aria-label="令牌名称"]').setValue('kb disabled');
+    await button(w, '创建令牌').trigger('click');
+    await flushPromises();
+
+    expect(api.createMcpToken).toHaveBeenCalledWith({
+      name: 'kb disabled',
+      scopes: ['extensions:read'],
+    });
     w.unmount();
   });
 
