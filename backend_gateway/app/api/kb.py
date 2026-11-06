@@ -355,9 +355,6 @@ async def get_datasets(_user: User = Depends(get_current_user)) -> dict:
     return {"items": items, "total": len(items)}
 
 
-
-
-
 # ============ Documents (P2: 数据集下文档列表 / 重跑 / 删除) ============
 
 @router.get("/datasets/{dataset_id}/documents")
@@ -791,7 +788,10 @@ async def upload_prepared_documents(
     prepared: list[tuple[str, bytes, str]],
     user: User,
 ) -> dict:
-    """上传已读入内存的文件并自动发起解析 —— 不等待解析完成。"""
+    """上传已读入内存的文件并自动发起解析 —— 不等待解析完成。
+
+    前置条件: 调用方须先校验上传数量/字节上限 (REST: MAX_UPLOAD_FILES/MAX_UPLOAD_BYTES; MCP: 各自批量上限)。
+    """
     ds_name, chunk_method = await _dataset_info(dataset_id)
     try:
         created = await upload_documents(dataset_id, prepared)
