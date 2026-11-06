@@ -224,7 +224,13 @@ def _upload_items(name, content, content_type, documents):
 
 
 def _prepare_text(name: str, content: str, content_type: str | None):
-    clean = kb._sanitize_kb_filename(name, "document")
+    # ⚠️ 顺序不能反: `_sanitize_kb_filename` 是**按 200 字符**截断的 ——
+    #    先洗后裁, `"a"*260 + ".md"` 会被截成 200 个 a, 扩展名没了,
+    #    然后误报「请用上传票」. 先用 `_fit_kb_name_bytes` 按字节裁到
+    #    `MAX_KB_FILE_NAME_LEN` (它保扩展名), 洗的时候就不会再截第二次.
+    clean = kb._sanitize_kb_filename(
+        kb._fit_kb_name_bytes(name, kb.MAX_KB_FILE_NAME_LEN), "document"
+    )
     ext = os.path.splitext(clean.lower())[1]
     if ext not in TEXT_DOC_EXTENSIONS:
         raise McpRuntimeError(
@@ -252,7 +258,7 @@ def _write_result(
         count_key: len(docs),
         "failed": len(errors),
         "ingest_started": ingest_started,
-        "warning": " ".join(warnings),
+        "warning": " ".join(dict.fromkeys(warnings)),
         "docs": docs,
         "errors": errors,
     }
@@ -308,7 +314,20 @@ async def document_upload(
                 {"name": file_tuple[0], "error": exc.code, "message": exc.message}
             )
             continue
-        ingest_started = ingest_started or bool(result.get("ingest_started"))
+        # ⚠️ RAGFlow 返回空 data 时 `upload_prepared_documents` 仍是 ok=True/uploaded=0
+        #    (kb.py:835-847) —— 那是「零提交」, 不能当成功报给调用方.
+        if not result.get("docs"):
+            errors.append(
+                {
+                    "name": file_tuple[0],
+                    "error": "kb_unavailable",
+                    "message": "知识库服务暂时不可用，请稍后重试。",
+                }
+            )
+            continue
+        # 每篇有自己的 ingest_started —— 顶层只做 OR, 调用方要靠它定位「哪篇没起解析」.
+        doc_ingest = bool(result.get("ingest_started"))
+        ingest_started = ingest_started or doc_ingest
         if result.get("warning"):
             warnings.append(str(result["warning"]))
         for doc in result.get("docs") or []:
@@ -319,6 +338,7 @@ async def document_upload(
                     "state": "submitted",
                     "run": doc.get("run", "UNSTART"),
                     "size": doc.get("size", 0),
+                    "ingest_started": doc_ingest,
                 }
             )
     return _write_result(docs, errors, ingest_started, warnings)
@@ -344,6 +364,14 @@ async def document_update(
         items = [{"document_id": document_id, "content": content}]
     await _require_dataset(dataset_id)
 
+    total_bytes = sum(
+        len(str(item.get("content") or "").encode("utf-8")) for item in items
+    )
+    if total_bytes > MAX_MCP_BATCH_BYTES:
+        raise McpRuntimeError(
+            "file_too_large", "本次文本总量超过 8 MB，请分批更新或改用上传票。"
+        )
+
     docs, errors, warnings = [], [], []
     replaced_ids: list[str] = []
     ingest_started = False
@@ -366,7 +394,8 @@ async def document_update(
                 {"document_id": old_id, "name": "", "error": exc.code, "message": exc.message}
             )
             continue
-        ingest_started = ingest_started or bool(result.get("ingest_started"))
+        doc_ingest = bool(result.get("ingest_started"))
+        ingest_started = ingest_started or doc_ingest
         if result.get("warning"):
             warnings.append(str(result["warning"]))
         updated = result.get("updated") or {}
@@ -377,38 +406,47 @@ async def document_update(
                 "state": "submitted",
                 "run": updated.get("run", "UNSTART"),
                 "size": updated.get("size", 0),
+                "ingest_started": doc_ingest,
             }
         )
         replaced_ids.append(old_id)
 
-    replaced = replaced_ids[0] if len(items) == 1 and replaced_ids else replaced_ids
+    # 规格只要求「替换成功后多返回 replaced」—— 一篇都没成功就不该出现这个键.
+    replaced = None
+    if replaced_ids:
+        replaced = replaced_ids[0] if len(items) == 1 else replaced_ids
     return _write_result(
         docs, errors, ingest_started, warnings, count_key="updated", replaced=replaced
     )
 
 
 async def document_reparse(ctx: McpContext, *, dataset_id, document_id):
+    # 先确认数据集存在 —— 否则未知 dataset 会被 `_find_document` 报成「文档不存在」.
+    await _require_dataset(dataset_id)
     result = await _call(
         kb.reparse_kb_document(
             dataset_id=dataset_id, document_id=document_id, user=ctx.principal.user
         )
     )
     doc = await _call(kb._find_document(dataset_id, document_id)) or {}
+    name = result.get("name") or doc.get("name") or ""
+    run = str(doc.get("run") or "UNSTART")
     return {
         "ok": True,
         "state": "submitted",
         "document_id": document_id,
-        "name": result.get("name") or doc.get("name") or "",
-        "run": str(doc.get("run") or "UNSTART"),
+        "name": name,
+        "run": run,
         "ingest_started": True,
         "warning": "",
         "docs": [
             {
                 "document_id": document_id,
-                "name": result.get("name") or doc.get("name") or "",
+                "name": name,
                 "state": "submitted",
-                "run": str(doc.get("run") or "UNSTART"),
-                "size": 0,
+                "run": run,
+                "size": doc.get("size", 0),
+                "ingest_started": True,
             }
         ],
         "errors": [],

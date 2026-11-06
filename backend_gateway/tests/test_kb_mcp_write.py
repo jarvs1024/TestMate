@@ -295,3 +295,172 @@ async def test_ragflow_failure_maps_to_kb_unavailable(principals, fake_kb, monke
     assert data["errors"][0]["error"] == "kb_unavailable"
     assert data["errors"][0]["message"] == "知识库服务暂时不可用，请稍后重试。"
     assert "ragflow.internal" not in str(data)
+
+
+# ============ 修复轮 1: 零提交 / 批量上限 / replaced / ingest_started ============
+
+
+async def test_upload_zero_created_docs_is_reported_as_failure(
+    principals, fake_kb, monkeypatch
+):
+    """F1: RAGFlow 返回空 data 时核心函数仍 ok=True —— 不能谎报提交成功。"""
+    import app.api.kb as kb_mod
+
+    async def empty(dataset_id, prepared, user):
+        return {
+            "ok": True, "uploaded": 0, "ingest_started": False, "warning": "", "docs": [],
+        }
+
+    monkeypatch.setattr(kb_mod, "upload_prepared_documents", empty)
+
+    async with _client(principals) as client:
+        data = await call_tool_data(
+            client, WRITE_TOKEN, "kb_document_upload",
+            {"dataset_id": "ds-naive", "name": "a.md", "content": "x"},
+            endpoint=ENDPOINT,
+        )
+    assert data["ok"] is False
+    assert data["state"] == "failed"
+    assert data["uploaded"] == 0
+    assert data["errors"][0]["error"] == "kb_unavailable"
+
+
+async def test_update_rejects_batch_over_total_bytes(principals, fake_kb, monkeypatch):
+    """F2: 批量更新的文本总量也要挡 8 MB。"""
+    from app.mcp.kb import adapter
+
+    first = await fake_kb.upload_documents("ds-naive", [("a.md", b"a", "text/plain")])
+    second = await fake_kb.upload_documents("ds-naive", [("b.md", b"b", "text/plain")])
+    monkeypatch.setattr(adapter, "MAX_MCP_BATCH_BYTES", 10)
+
+    async with _client(principals) as client:
+        result = await call_tool(
+            client, WRITE_TOKEN, "kb_document_update",
+            {
+                "dataset_id": "ds-naive",
+                "documents": [
+                    {"document_id": first[0]["id"], "content": "abcdef"},
+                    {"document_id": second[0]["id"], "content": "abcdef"},
+                ],
+            },
+            endpoint=ENDPOINT,
+        )
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "8 MB" in text
+    assert not fake_kb.patched
+
+
+async def test_update_missing_document_has_no_replaced_key(principals, fake_kb):
+    """F3: 一篇都没替换成功时不该返回 replaced=[]。"""
+    async with _client(principals) as client:
+        data = await call_tool_data(
+            client, WRITE_TOKEN, "kb_document_update",
+            {"dataset_id": "ds-naive", "document_id": "nope", "content": "x"},
+            endpoint=ENDPOINT,
+        )
+    assert data["ok"] is False
+    assert "replaced" not in data
+
+
+async def test_docs_carry_per_document_ingest_started(principals, fake_kb):
+    """F4: 每篇文档都要带自己的 ingest_started。"""
+    async with _client(principals) as client:
+        uploaded = await call_tool_data(
+            client, WRITE_TOKEN, "kb_document_upload",
+            {"dataset_id": "ds-naive", "name": "a.md", "content": "x"},
+            endpoint=ENDPOINT,
+        )
+    assert uploaded["docs"][0]["ingest_started"] is True
+
+    doc_id = uploaded["docs"][0]["document_id"]
+    async with _client(principals) as client:
+        reparsed = await call_tool_data(
+            client, WRITE_TOKEN, "kb_document_reparse",
+            {"dataset_id": "ds-naive", "document_id": doc_id},
+            endpoint=ENDPOINT,
+        )
+    assert reparsed["docs"][0]["ingest_started"] is True
+
+
+async def test_upload_overlong_name_keeps_extension(principals, fake_kb):
+    """F5: 名字被截断后仍要保住扩展名 —— 别把 .md 丢了。"""
+    name = "a" * 260 + ".md"
+    async with _client(principals) as client:
+        data = await call_tool_data(
+            client, WRITE_TOKEN, "kb_document_upload",
+            {"dataset_id": "ds-naive", "name": name, "content": "x"},
+            endpoint=ENDPOINT,
+        )
+    assert data["ok"] is True
+    assert data["docs"][0]["name"].endswith(".md")
+
+
+async def test_reparse_unknown_dataset_reports_dataset_not_found(principals, fake_kb):
+    """F6: 未知 dataset 应报「数据集不存在」, 不是「文档不存在」。"""
+    async with _client(principals) as client:
+        result = await call_tool(
+            client, WRITE_TOKEN, "kb_document_reparse",
+            {"dataset_id": "missing", "document_id": "doc-1"},
+            endpoint=ENDPOINT,
+        )
+    assert result["isError"] is True
+    assert "数据集不存在" in result["content"][0]["text"]
+
+
+async def test_update_batch_partial_failure(principals, fake_kb):
+    """F7-1: 批量更新部分失败 —— 成功的那篇仍要报 replaced。"""
+    created = await fake_kb.upload_documents("ds-naive", [("a.md", b"a", "text/plain")])
+    good_id = created[0]["id"]
+
+    async with _client(principals) as client:
+        data = await call_tool_data(
+            client, WRITE_TOKEN, "kb_document_update",
+            {
+                "dataset_id": "ds-naive",
+                "documents": [
+                    {"document_id": good_id, "content": "a2"},
+                    {"document_id": "missing-doc", "content": "b2"},
+                ],
+            },
+            endpoint=ENDPOINT,
+        )
+    assert data["ok"] is False
+    assert data["state"] == "partial"
+    assert data["updated"] == 1
+    assert data["replaced"] == [good_id]
+
+
+async def test_update_rejects_more_than_five_documents(principals, fake_kb):
+    """F7-2: documents 超过 5 篇要被挡下, 且调用方能看到 1..5 的说明。
+
+    ⚠️ 传输层第一道闸是 ToolSpec 的 ``maxItems: 5`` (报 "Invalid tool arguments."),
+       adapter 自己的 ``_upload_items`` 式检查在 schema 放行后才会走到 —— 两处都断言。
+    """
+    from app.mcp.common.errors import McpRuntimeError
+    from app.mcp.kb import adapter
+
+    items = [{"document_id": f"doc-{index}", "content": "x"} for index in range(6)]
+    async with _client(principals) as client:
+        result = await call_tool(
+            client, WRITE_TOKEN, "kb_document_update",
+            {"dataset_id": "ds-naive", "documents": items},
+            endpoint=ENDPOINT,
+        )
+    assert result["isError"] is True
+
+    with pytest.raises(McpRuntimeError) as excinfo:
+        await adapter.document_update(None, dataset_id="ds-naive", documents=items)
+    assert "1..5" in excinfo.value.message
+    assert not fake_kb.patched
+
+
+def test_write_tool_descriptions_teach_the_tradeoffs():
+    """F7-3/4: 描述里必须讲清 id 会变化 / 旧文档被删除 / 用 status 查解析。"""
+    from app.mcp.kb.tools import TOOL_SPECS
+
+    descriptions = {spec.name: spec.description for spec in TOOL_SPECS}
+    update = descriptions["kb_document_update"]
+    assert "document_id" in update
+    assert "删除" in update
+    assert "kb_document_status" in descriptions["kb_document_upload"]
