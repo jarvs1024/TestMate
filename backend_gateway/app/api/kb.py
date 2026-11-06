@@ -282,48 +282,77 @@ async def delete_kb_dataset(
     }
 
 
-@router.get("/datasets")
-async def get_datasets(_user: User = Depends(get_current_user)) -> dict:
-    """列出 RAGFlow datasets (代理)."""
+async def _attach_dataset_owners(items: list[dict]) -> None:
+    owners = await _owners_for_datasets([str(x.get("id") or "") for x in items])
+    for item in items:
+        o = owners.get(str(item.get("id") or ""), {})
+        item["created_by"] = o.get("created_by")
+        item["created_by_name"] = o.get("created_by_name", "")
+        item["created_at"] = o.get("created_at")
+
+
+async def _clean_dataset_rows(rows: list[dict]) -> list[dict]:
+    cleaned = [
+        {
+            "id": d.get("id"),
+            "name": d.get("name"),
+            "description": d.get("description", ""),
+            "chunk_count": d.get("chunk_count", 0),
+            "document_count": d.get("document_count", 0),
+            "chunk_method": d.get("chunk_method", ""),
+            "create_date": d.get("create_date", ""),
+            "embedding_model": d.get("embedding_model", ""),
+            "permission": d.get("permission", "me"),
+            "status": d.get("status", "1"),
+            "language": d.get("language", ""),
+            "token_num": d.get("token_num", 0),
+            "similarity_threshold": d.get("similarity_threshold", 0.2),
+            "vector_similarity_weight": d.get("vector_similarity_weight", 0.3),
+            "pagerank": d.get("pagerank", 0),
+            "update_date": d.get("update_date", ""),
+            "create_time": d.get("create_time", 0),
+            "update_time": d.get("update_time", 0),
+            "parser_config": d.get("parser_config") or {},
+        }
+        for d in rows
+    ]
+    await _attach_dataset_owners(cleaned)
+    return cleaned
+
+
+async def _dataset_items(
+    page: int = 1, page_size: int = 50, keyword: str = ""
+) -> list[dict]:
+    """REST 用默认参数；MCP 用分页参数。keyword 模式最多扫 5 页。"""
     try:
-        items = await list_datasets()
-        # 精简: 去掉大字段 (avatar / create_time / update_time)
-        cleaned = [
-            {
-                "id": d.get("id"),
-                "name": d.get("name"),
-                "description": d.get("description", ""),
-                "chunk_count": d.get("chunk_count", 0),
-                "document_count": d.get("document_count", 0),
-                "chunk_method": d.get("chunk_method", ""),
-                "create_date": d.get("create_date", ""),
-                # P1: 多放一些字段, 前端可展示 embedding_model / 权限 / 切片参数等
-                "embedding_model": d.get("embedding_model", ""),
-                "permission": d.get("permission", "me"),
-                "status": d.get("status", "1"),
-                "language": d.get("language", ""),
-                "token_num": d.get("token_num", 0),
-                "similarity_threshold": d.get("similarity_threshold", 0.2),
-                "vector_similarity_weight": d.get("vector_similarity_weight", 0.3),
-                "pagerank": d.get("pagerank", 0),
-                "update_date": d.get("update_date", ""),
-                "create_time": d.get("create_time", 0),
-                "update_time": d.get("update_time", 0),
-                "parser_config": d.get("parser_config") or {},
-            }
-            for d in items
+        needle = (keyword or "").strip().lower()
+        if not needle:
+            return await _clean_dataset_rows(
+                await list_datasets(page=page, page_size=page_size)
+            )
+        matches: list[dict] = []
+        for p in range(1, 6):
+            rows = await list_datasets(page=p, page_size=100)
+            matches.extend(await _clean_dataset_rows(rows))
+            if len(rows) < 100:
+                break
+        matches = [
+            item for item in matches
+            if needle in str(item.get("name") or "").lower()
+            or needle in str(item.get("description") or "").lower()
         ]
-        # 归属: 补上「谁建的」—— RAGFlow 那边记不了 TestMate 的账号
-        owners = await _owners_for_datasets([str(x.get("id") or "") for x in cleaned])
-        for item in cleaned:
-            o = owners.get(str(item.get("id") or ""), {})
-            item["created_by"] = o.get("created_by")
-            item["created_by_name"] = o.get("created_by_name", "")
-            item["created_at"] = o.get("created_at")
-        return {"items": cleaned, "total": len(cleaned)}
+        start = max(page - 1, 0) * page_size
+        return matches[start:start + page_size]
     except Exception as e:
         logger.exception("list_datasets failed")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+
+@router.get("/datasets")
+async def get_datasets(_user: User = Depends(get_current_user)) -> dict:
+    """列出 RAGFlow datasets (代理)."""
+    items = await _dataset_items(page=1, page_size=50)
+    return {"items": items, "total": len(items)}
 
 
 
@@ -757,6 +786,68 @@ MANUAL_CHUNK_METHOD = "manual"
 MANUAL_AUTO_PARSE_EXTS = (".pdf", ".docx")
 
 
+async def upload_prepared_documents(
+    dataset_id: str,
+    prepared: list[tuple[str, bytes, str]],
+    user: User,
+) -> dict:
+    """上传已读入内存的文件并自动发起解析 —— 不等待解析完成。"""
+    ds_name, chunk_method = await _dataset_info(dataset_id)
+    try:
+        created = await upload_documents(dataset_id, prepared)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("upload_documents failed")
+        await _audit(
+            action="upload", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            doc_name=", ".join(n for n, _, _ in prepared),
+            size=sum(len(d) for _, d, _ in prepared),
+            error=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    ids = [str(d.get("id")) for d in created if d.get("id")]
+    ingest_ok = False
+    warning = ""
+    if chunk_method == MANUAL_CHUNK_METHOD and not all(
+        n.lower().endswith(MANUAL_AUTO_PARSE_EXTS) for n, _, _ in prepared
+    ):
+        warning = (
+            f"「{ds_name or dataset_id}」是「手动分块」数据集, RAGFlow 只支持 "
+            f"pdf/docx 自动解析 —— 文档已上传, 但需要管理员手动切分后才能被检索."
+        )
+        logger.info("数据集 %s 是 manual 分块, 跳过自动解析: %s", dataset_id, warning)
+    elif ids:
+        try:
+            ingest_ok = await ingest_documents(ids, run="1")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("上传后启动解析失败 (文档已入库, 需手动重跑): %s", e)
+
+    for d in created:
+        await _audit(
+            action="upload", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            document_id=str(d.get("id") or ""), doc_name=str(d.get("name") or ""),
+            size=int(d.get("size") or 0),
+        )
+        await _save_document_owner(d, dataset_id, user)
+
+    return {
+        "ok": True,
+        "uploaded": len(created),
+        "ingest_started": ingest_ok,
+        "warning": warning,
+        "docs": [
+            {
+                "id": d.get("id"),
+                "name": d.get("name"),
+                "size": d.get("size", 0),
+                "location": d.get("location", ""),
+                "run": d.get("run", "UNSTART"),
+            }
+            for d in created
+        ],
+    }
+
+
 @router.post("/datasets/{dataset_id}/documents")
 async def upload_docs(
     dataset_id: str,
@@ -799,67 +890,7 @@ async def upload_docs(
     if not prepared:
         raise HTTPException(status_code=422, detail="没有可上传的文件 (空文件)")
 
-    ds_name, chunk_method = await _dataset_info(dataset_id)
-    try:
-        created = await upload_documents(dataset_id, prepared)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("upload_documents failed")
-        await _audit(
-            action="upload", user=user, dataset_id=dataset_id, dataset_name=ds_name,
-            doc_name=", ".join(n for n, _, _ in prepared),
-            size=sum(len(d) for _, d, _ in prepared),
-            error=str(e)[:500],
-        )
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
-
-    # ⚠️ 自动启动解析 —— 否则文档永远停在 UNSTART, 检索不到
-    ids = [str(d.get("id")) for d in created if d.get("id")]
-    ingest_ok = False
-    warning = ""
-    if chunk_method == MANUAL_CHUNK_METHOD and not all(
-        n.lower().endswith(MANUAL_AUTO_PARSE_EXTS) for n, _, _ in prepared
-    ):
-        # ⚠️ 手动分块的数据集只认 pdf/docx —— 硬发解析必然 FAIL,
-        #    文档会被标成 FAIL, 用户还以为是自己传坏了. 不如直接说清楚.
-        warning = (
-            f"「{ds_name or dataset_id}」是「手动分块」数据集, RAGFlow 只支持 "
-            f"pdf/docx 自动解析 —— 文档已上传, 但需要管理员手动切分后才能被检索."
-        )
-        logger.info("数据集 %s 是 manual 分块, 跳过自动解析: %s", dataset_id, warning)
-    elif ids:
-        try:
-            ingest_ok = await ingest_documents(ids, run="1")
-        except Exception as e:  # noqa: BLE001 — 解析失败不该让上传失败 (文件已经在库里了)
-            logger.warning("上传后启动解析失败 (文档已入库, 需手动重跑): %s", e)
-
-    for d in created:
-        await _audit(
-            action="upload", user=user, dataset_id=dataset_id, dataset_name=ds_name,
-            document_id=str(d.get("id") or ""), doc_name=str(d.get("name") or ""),
-            size=int(d.get("size") or 0),
-            # ⚠️ error 只放**真的失败** —— manual 数据集那条是"没解析"不是"没上传",
-            #    塞进来前端会显示成「失败」(用户以为白传了).
-            #    "没参与检索"这件事在上传时已经明确提示过了, 文档状态也在列表里看得到.
-        )
-        # 归属: 记下「这篇是谁传的」—— RAGFlow 那边记不了 TestMate 的账号
-        await _save_document_owner(d, dataset_id, user)
-
-    return {
-        "ok": True,
-        "uploaded": len(created),
-        "ingest_started": ingest_ok,
-        "warning": warning,
-        "docs": [
-            {
-                "id": d.get("id"),
-                "name": d.get("name"),
-                "size": d.get("size", 0),
-                "location": d.get("location", ""),
-                "run": d.get("run", "UNSTART"),
-            }
-            for d in created
-        ],
-    }
+    return await upload_prepared_documents(dataset_id, prepared, user)
 
 
 # ============ 文档更新 / 重新解析 (2026-10-29) ============
@@ -980,6 +1011,129 @@ async def _move_document_owner(
         logger.warning("迁移文档归属失败 (已忽略): %s", e)
 
 
+async def replace_document(
+    dataset_id: str,
+    document_id: str,
+    name: str,
+    payload: bytes,
+    content_type: str,
+    user: User,
+) -> dict:
+    """替换一篇文档的内容 —— 旧文档在提交阶段删除, 不等待解析。"""
+    raw_name = (name or "").strip()
+    if not raw_name:
+        raise HTTPException(status_code=422, detail="没有选择文件")
+    target_name = _fit_kb_name_bytes(_sanitize_kb_filename(raw_name, "document"))
+    if not payload:
+        raise HTTPException(status_code=422, detail="文件是空的")
+
+    try:
+        old = await _find_document(dataset_id, document_id)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("更新文档: 查旧文档失败")
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+    if not old:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    old_name = str(old.get("name") or "")
+    old_chunk_method = str(old.get("chunk_method") or "")
+    ds_name, ds_chunk_method = await _dataset_info(dataset_id)
+
+    old_ext = os.path.splitext(old_name.lower())[1]
+    new_ext = os.path.splitext(target_name.lower())[1]
+    if new_ext != old_ext:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"新文件类型 ({new_ext or '无扩展名'}) 跟原文档 ({old_ext or '无扩展名'}) 不一致 —— "
+                f"更新只能换内容, 换文件类型请直接上传新文档"
+            ),
+        )
+
+    try:
+        created = await upload_documents(
+            dataset_id, [(target_name, payload, content_type or "application/octet-stream")]
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("更新文档: 上传新文件失败")
+        await _audit(
+            action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            document_id=document_id, doc_name=old_name, error=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+
+    new_doc = (created or [{}])[0] or {}
+    new_id = str(new_doc.get("id") or "")
+    if not new_id:
+        await _audit(
+            action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            document_id=document_id, doc_name=old_name, error="ragflow 没返回新文档 id",
+        )
+        raise HTTPException(status_code=502, detail="ragflow 没有返回新文档 id")
+
+    try:
+        await delete_documents(dataset_id, doc_ids=[document_id])
+    except Exception as e:  # noqa: BLE001
+        logger.exception("更新文档: 删旧文档失败")
+        await _safe_delete_documents(dataset_id, [new_id])
+        await _audit(
+            action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+            document_id=document_id, doc_name=old_name, error=str(e)[:500],
+        )
+        raise HTTPException(status_code=502, detail=f"删除旧版本失败: {e}")
+
+    warnings: list[str] = []
+    current_name = str(new_doc.get("name") or target_name)
+    if current_name != target_name:
+        try:
+            await update_document(dataset_id, new_id, name=target_name)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("更新文档: 改名失败 (新文档仍叫 %s): %s", current_name, e)
+            warnings.append(f"内容已更新, 但改名失败 —— 文档现在叫「{current_name}」(原因: {e})")
+            target_name = current_name
+
+    if old_chunk_method and ds_chunk_method and old_chunk_method != ds_chunk_method:
+        warnings.append(
+            f"切片方式已跟数据集保持一致 ({ds_chunk_method}) —— 原来这篇是 {old_chunk_method}"
+        )
+
+    await _move_document_owner(document_id, new_id, dataset_id, target_name, len(payload), user)
+
+    ingest_ok = False
+    if ds_chunk_method == MANUAL_CHUNK_METHOD and not target_name.lower().endswith(MANUAL_AUTO_PARSE_EXTS):
+        warnings.append(
+            f"「{ds_name or dataset_id}」是「手动分块」数据集, RAGFlow 只支持 pdf/docx 自动解析 —— "
+            f"文档已更新, 但需要管理员手动切分后才能被检索."
+        )
+    else:
+        try:
+            ingest_ok = await ingest_documents([new_id], run="1")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("更新后启动解析失败 (文档已更新, 需手动重跑): %s", e)
+            warnings.append(f"解析启动失败 —— 请稍后用「重新解析」重跑 (原因: {e})")
+
+    audit_name = target_name
+    if old_name and old_name != target_name:
+        audit_name = f"{old_name} → {target_name}"
+    await _audit(
+        action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
+        document_id=new_id, doc_name=audit_name[:255], size=len(payload),
+    )
+
+    return {
+        "ok": True,
+        "updated": {
+            "id": new_id,
+            "name": target_name,
+            "size": len(payload),
+            "run": str(new_doc.get("run") or "UNSTART"),
+        },
+        "replaced": {"id": document_id, "name": old_name},
+        "ingest_started": ingest_ok,
+        "warning": " ".join(warnings),
+    }
+
+
 @router.put("/datasets/{dataset_id}/documents/{document_id}")
 async def update_kb_document(
     dataset_id: str,
@@ -1012,131 +1166,10 @@ async def update_kb_document(
     if not payload:
         raise HTTPException(status_code=422, detail="文件是空的")
 
-    # 旧文档 (拿它的名字 / 切片方式, 用来对齐)
-    try:
-        old = await _find_document(dataset_id, document_id)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("更新文档: 查旧文档失败")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
-    if not old:
-        raise HTTPException(status_code=404, detail="文档不存在")
-
-    old_name = str(old.get("name") or "")
-    old_chunk_method = str(old.get("chunk_method") or "")
-    ds_name, ds_chunk_method = await _dataset_info(dataset_id)
-
-    # ⚠️ **扩展名不能变** —— RAGFlow 的改名会拒 ("The extension of file can't be changed").
-    #    用户传了别的类型的文件 → 那不是"更新内容", 是"加一篇", 直接拦掉,
-    #    别做出一个半成品.
-    old_ext = os.path.splitext(old_name.lower())[1]
-    new_ext = os.path.splitext(target_name.lower())[1]
-    if new_ext != old_ext:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"新文件类型 ({new_ext or '无扩展名'}) 跟原文档 ({old_ext or '无扩展名'}) 不一致 —— "
-                f"更新只能换内容, 换文件类型请直接上传新文档"
-            ),
-        )
-
-    # ① 传新文件 —— 先传后删, 中途失败旧文档还在
-    try:
-        created = await upload_documents(
-            dataset_id,
-            [(target_name, payload, file.content_type or "application/octet-stream")],
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.exception("更新文档: 上传新文件失败")
-        await _audit(
-            action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
-            document_id=document_id, doc_name=old_name, error=str(e)[:500],
-        )
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
-
-    new_doc = (created or [{}])[0] or {}
-    new_id = str(new_doc.get("id") or "")
-    if not new_id:
-        await _audit(
-            action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
-            document_id=document_id, doc_name=old_name, error="ragflow 没返回新文档 id",
-        )
-        raise HTTPException(status_code=502, detail="ragflow 没有返回新文档 id")
-
-    # ② 删旧文档 (硬删) —— 旧版的分段 / MinIO 源文件一起没了
-    try:
-        await delete_documents(dataset_id, doc_ids=[document_id])
-    except Exception as e:  # noqa: BLE001
-        logger.exception("更新文档: 删旧文档失败")
-        # ⚠️ 回滚 —— 旧文档没删掉, 新文档就成了多余副本, 得清掉, 否则库里多一份垃圾
-        await _safe_delete_documents(dataset_id, [new_id])
-        await _audit(
-            action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
-            document_id=document_id, doc_name=old_name, error=str(e)[:500],
-        )
-        raise HTTPException(status_code=502, detail=f"删除旧版本失败: {e}")
-
-    # ③ PATCH 改回目标名 —— RAGFlow 同名上传会自动加 "(1)" 后缀, 这里改回去
-    warnings: list[str] = []
-    current_name = str(new_doc.get("name") or target_name)
-    if current_name != target_name:
-        try:
-            await update_document(dataset_id, new_id, name=target_name)
-        except Exception as e:  # noqa: BLE001 — 内容已经换掉了, 改名失败不该让整件事失败
-            logger.warning("更新文档: 改名失败 (新文档仍叫 %s): %s", current_name, e)
-            warnings.append(f"内容已更新, 但改名失败 —— 文档现在叫「{current_name}」(原因: {e})")
-            target_name = current_name
-
-    # ⚠️ **切片方式不搬旧的** —— 新文档天然继承**数据集**的切片方式.
-    #    实机核对过: 文档级 parser_config 跟数据集级**完全一致**, 搬过去没有意义;
-    #    而 RAGFlow 的 ParserConfig 是 extra=forbid 的严格模型, 搬旧值反而容易
-    #    因为版本字段变动而整个 PATCH 失败.
-    #    旧文档要是被手动改过切片方式, 这里会**对齐回数据集的**, 得跟用户说清楚.
-    if old_chunk_method and ds_chunk_method and old_chunk_method != ds_chunk_method:
-        warnings.append(
-            f"切片方式已跟数据集保持一致 ({ds_chunk_method}) —— 原来这篇是 {old_chunk_method}"
-        )
-
-    # ④ 迁移归属 + 启动解析
-    await _move_document_owner(document_id, new_id, dataset_id, target_name, len(payload), user)
-
-    ingest_ok = False
-    if ds_chunk_method == MANUAL_CHUNK_METHOD and not target_name.lower().endswith(MANUAL_AUTO_PARSE_EXTS):
-        # ⚠️ 跟上传同一套规矩 —— 手动分块的解析器只认 pdf/docx,
-        #    硬发解析必然 FAIL, 用户还以为是自己传坏了.
-        warnings.append(
-            f"「{ds_name or dataset_id}」是「手动分块」数据集, RAGFlow 只支持 pdf/docx 自动解析 —— "
-            f"文档已更新, 但需要管理员手动切分后才能被检索."
-        )
-    else:
-        try:
-            ingest_ok = await ingest_documents([new_id], run="1")
-        except Exception as e:  # noqa: BLE001 — 解析失败不该让更新失败 (文件已经换好了)
-            logger.warning("更新后启动解析失败 (文档已更新, 需手动重跑): %s", e)
-            warnings.append(f"解析启动失败 —— 请稍后用「重新解析」重跑 (原因: {e})")
-
-    # 审计里写清「谁把什么换成了什么」—— 旧文档 id 已经不存在了, 名字是唯一的线索
-    audit_name = target_name
-    if old_name and old_name != target_name:
-        audit_name = f"{old_name} → {target_name}"
-    await _audit(
-        action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
-        document_id=new_id, doc_name=audit_name[:255], size=len(payload),
+    return await replace_document(
+        dataset_id, document_id, raw_name, payload,
+        file.content_type or "application/octet-stream", user,
     )
-
-    return {
-        "ok": True,
-        "updated": {
-            "id": new_id,
-            "name": target_name,
-            "size": len(payload),
-        },
-        "replaced": {
-            "id": document_id,
-            "name": old_name,
-        },
-        "ingest_started": ingest_ok,
-        "warning": " ".join(warnings),
-    }
 
 
 @router.post("/datasets/{dataset_id}/documents/{document_id}/reparse")
