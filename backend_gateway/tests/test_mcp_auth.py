@@ -435,6 +435,8 @@ async def test_mcp_token_type_is_rejected_even_without_aud_claim(client, credent
     )
 
     assert response.status_code == 401, response.text
+    # detail 必须来自 typ 守卫 —— 否则别的 401 路径 (aud/用户/版本) 会掩盖 typ 回归.
+    assert response.json()["detail"] == "token 类型无效", response.text
 
 
 @pytest.mark.parametrize("credential", ["static", "oauth"])
