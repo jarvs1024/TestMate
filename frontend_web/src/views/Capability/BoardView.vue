@@ -46,7 +46,7 @@
         <div class="tbl-wrap">
         <table class="tbl">
           <thead>
-            <tr><th>MR</th><th>作者</th><th>分支</th><th class="r">上次命令</th><th class="r">错误</th><th class="r">操作</th></tr>
+            <tr><th>MR</th><th>作者</th><th>分支</th><th class="r">失败命令</th><th class="r">错误</th><th class="r">操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="m in unackedFailedMrs" :key="`${m.project_id}/${m.mr_id}`">
@@ -55,9 +55,9 @@
               </td>
               <td>{{ m.author || '—' }}</td>
               <td class="mono branches">{{ m.source_branch || '—' }} → {{ m.target_branch || '—' }}</td>
-              <td class="r"><span class="cmd-tag-s">{{ m.last_run?.command || '—' }}</span></td>
+              <td class="r"><span class="cmd-tag-s">{{ failRunOf(m)?.command || '—' }}</span></td>
               <td class="err-cell">
-                <ErrorView v-if="m.last_run?.error" :raw="m.last_run?.error" :inline-thresh="120" />
+                <ErrorView v-if="failRunOf(m)?.error" :raw="failRunOf(m)?.error || ''" :inline-thresh="120" />
                 <!-- error 为空时: 后端没传错误详情, 引导用户去时间线看 run 全量日志 -->
                 <button v-else class="link-btn link-btn-s" type="button" title="查看该 MR 时间线, 查最近一次失败原因" @click="openTimeline(m)">查看时间线 →</button>
               </td>
@@ -329,7 +329,7 @@
         </thead>
         <tbody>
           <tr v-for="m in filteredMrs" :key="`${m.project_id}/${m.mr_id}`"
-              :class="{ merged: m.state === 'merged' || m.state === 'closed', 'run-failed': m.last_run?.status === 'failed' }">
+              :class="{ merged: m.state === 'merged' || m.state === 'closed', 'run-failed': !!failRunOf(m) }">
             <td>
               <div class="mr-t">
                 <a :href="m.url" target="_blank" rel="noopener" class="mr-link">!{{ m.mr_id }}</a>
@@ -363,11 +363,11 @@
             </td>
             <td class="r">
               <button class="link-btn"
-                      :class="{ 'link-btn-err': m.last_run?.status === 'failed' }"
+                      :class="{ 'link-btn-err': !!failRunOf(m) }"
                       :title="mrLastRunTitle(m)"
                       @click="openTimeline(m)"
                       :disabled="tlLoading === `${m.project_id}/${m.mr_id}`">
-                <span v-if="m.last_run?.status === 'failed'" class="btn-warn">⚠</span>查看时间线
+                <span v-if="failRunOf(m)" class="btn-warn">⚠</span>查看时间线
               </button>
             </td>
           </tr>
@@ -601,7 +601,7 @@ import { ElMessage } from 'element-plus';
 import {
   getHealth, getOverview, getRules, getAuthors, listMrs, getTimeline, getSeverity, getDismissalsByRule,
   getWeeklyReports, getWeeklyReport,
-  type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type MrListResp, type TimelineResp, type HealthResp,
+  type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type MrRun, type MrListResp, type TimelineResp, type HealthResp,
   type SeverityBucket, type DismissalsByRuleItem, type SuggestionRow, type ActionRow,
   type WeeklyReport,
 } from '@/api/reviewagent';
@@ -1070,12 +1070,17 @@ function stateCls(s?: string): string {
 function runCls(s: string): string {
   return s === 'success' ? 'b-ok' : s === 'failed' ? 'b-err' : s === 'empty' ? 'b-mute' : 'b-info';
 }
+/** banner 行的失败 run: 后端按「每个命令各自最近一次」判定 (describe/improve 并行,
+ *  后者成功不该盖掉前者的失败); 老数据没有该字段时退回 last_run */
+function failRunOf(m: MrRow): MrRun | null {
+  return m.last_failed_run || (m.last_run?.status === 'failed' ? m.last_run : null);
+}
 // MR 最近一次评审失败的简短原因 (查看时间线按钮 title 用)
 function mrLastRunTitle(m: MrRow): string {
-  const lr = m.last_run;
-  if (!lr || lr.status !== 'failed') return '查看时间线';
+  const lr = failRunOf(m);
+  if (!lr) return '查看时间线';
   const err = (lr.error || '').split('\n')[0].slice(0, 120) || '评审失败';
-  return `最近一次评审失败: ${err}`;
+  return `${lr.command || ''} 最近一次评审失败: ${err}`;
 }
 function sugLabel(s: SuggestionRow): string {
   // 手动/自动 都用 "已采纳" (跟 auto 视觉对齐), "手工" 单独小标跟在徽章下面.

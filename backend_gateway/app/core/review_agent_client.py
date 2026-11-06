@@ -139,7 +139,23 @@ def _map_mr_row(m: dict) -> dict:
         "description_generated": bool(int(m.get("description_generated") or 0)),
         "_v2_state": _v2_state(m.get("state"), m.get("last_review_at")),
         "last_run": None,
+        "last_failed_run": None,
         "suggestion_counts": None,
+    }
+
+
+def _run_row(r: dict) -> dict:
+    """recent_runs[] → 列表里展示用的精简 run (带 error, 方便 banner 直接显示原因)."""
+    return {
+        "run_id": str(r.get("id") or ""),
+        "command": r.get("command"),
+        "status": r.get("status"),
+        "model": r.get("model"),
+        "started_at": r.get("started_at"),
+        "finished_at": r.get("finished_at"),
+        "duration_ms": r.get("duration_ms"),
+        # 列表可能一次 200 条 MR, 错误原文截断 (详情走时间线)
+        "error": (str(r.get("error") or "")[:500] or None),
     }
 
 
@@ -446,20 +462,30 @@ async def list_mrs(
             return
         try:
             detail = await _get(f"/mr/{pid}/{iid}") or {}
-            recent = detail.get("recent_runs") or []
+            recent = [r for r in (detail.get("recent_runs") or []) if isinstance(r, dict)]
+            # 顺序不保证 —— 按结束时间 (缺则开始时间) 新 → 旧排
+            recent.sort(
+                key=lambda r: str(r.get("finished_at") or r.get("started_at") or ""),
+                reverse=True,
+            )
             if recent:
-                r = recent[0]
-                row["last_run"] = {
-                    "run_id": str(r.get("id") or ""),
-                    "command": r.get("command"),
-                    "status": r.get("status"),
-                    "model": r.get("model"),
-                    "started_at": r.get("started_at"),
-                    "finished_at": r.get("finished_at"),
-                    "duration_ms": r.get("duration_ms"),
-                }
+                row["last_run"] = _run_row(recent[0])
+                # ⚠️ describe / improve 是**并行**跑的, 谁成为 recent[0] 基本是
+                #    毫秒级抽签 (!1253: improve 只晚 3ms 开始). 只看 last_run 会让
+                #    "describe 失败了但 improve 成功" 的 MR 从失败列表里消失 ——
+                #    这里按命令各取最近一次, 任一命令最近一次失败就记 last_failed_run.
+                seen_cmds: set[str] = set()
+                for r in recent:
+                    cmd = str(r.get("command") or "")
+                    if cmd in seen_cmds:
+                        continue
+                    seen_cmds.add(cmd)
+                    if str(r.get("status") or "") == "failed":
+                        row["last_failed_run"] = _run_row(r)
+                        break
         except Exception:
             row["last_run"] = None
+            row["last_failed_run"] = None
         try:
             stats = await _get(f"/mr/{pid}/{iid}/stats") or {}
             state_counts = stats.get("state_counts") or {}

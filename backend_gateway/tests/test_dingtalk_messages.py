@@ -220,6 +220,36 @@ async def test_release_notes_wins_over_summary(monkeypatch):
     assert "简介" not in r["text"]
 
 
+async def test_multiline_release_notes_become_aligned_bullets(monkeypatch):
+    """多行更新说明 → 每行都是**同级** "- " 条目, 续行不能顶到行首.
+
+    2026-11-06 (用户截图): 续行以 "2. ..." 开头, 钉钉 markdown 当成新的一级
+    有序列表, 缩进跟 "- 更新:" 对不上. 统一收成同级条目才对得齐.
+    """
+    monkeypatch.setattr(dingtalk, "get", _fake_get({}))
+    r = await dingtalk.preview_asset_message(
+        "software_update", name="自动化提单分析工具", version="2.2", kind="plugin",
+        release_notes="1. 新增 PingCode/PLM MCP 服务器\n2. 修复刷新失败\n\n3. 修复卡顿",
+    )
+    lines = r["lines"]
+    assert "- 更新: 1. 新增 PingCode/PLM MCP 服务器" in lines
+    assert "- 2. 修复刷新失败" in lines
+    assert "- 3. 修复卡顿" in lines
+    assert not any(ln.startswith(("2. ", "3. ")) for ln in lines), "续行必须以列表符号开头"
+    assert "" not in lines, "空行会打断列表, 应被丢掉"
+
+
+async def test_multiline_detail_is_flattened_too(monkeypatch):
+    """评审失败的错误详情也是多行 —— 同一条渲染路径, 同样要对齐."""
+    monkeypatch.setattr(dingtalk, "get", _fake_get({}))
+    r = await dingtalk.preview_asset_message(
+        "review_failure", name="!1253 标题\n第二行", detail="[describe] boom\nTraceback: xxx",
+    )
+    assert r["lines"][0] == "### ❌ 代码检视失败 · !1253 标题 第二行", "标题必须压成一行"
+    assert "- 错误: [describe] boom" in r["lines"]
+    assert "- Traceback: xxx" in r["lines"]
+
+
 async def test_detail_used_when_no_summary(monkeypatch):
     """没有简介/更新说明 → 退回 detail (老逻辑: 这次操作发生了什么)."""
     monkeypatch.setattr(dingtalk, "get", _fake_get({}))

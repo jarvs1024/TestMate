@@ -124,6 +124,37 @@ async def test_notify_extensions_records_failure(monkeypatch):
     assert rows[0].next_retry_at is not None, "失败后应安排重试"
 
 
+async def test_errcode_nonzero_is_treated_as_failure(monkeypatch):
+    """HTTP 200 + errcode != 0 (关键词不匹配等) 必须记 failed, 不能记 sent.
+
+    2026-11-06: code_review 频道漏配关键词, 钉钉回 errcode=310000, 但发送路径
+    只看 HTTP 状态 → 回执全记 sent, 群里一条都没收到, 排查时被误导.
+    """
+    async def fake_send(*a, **kw):
+        return {"errcode": 310000, "errmsg": "keywords not in content"}
+
+    monkeypatch.setattr(dingtalk, "send_markdown", fake_send)
+    monkeypatch.setattr(
+        dingtalk, "get",
+        _fake_get({"dingtalk.extensions_webhook": "http://x/hook", "dingtalk.notify_on_publish": "true"}),
+    )
+
+    ok = await dingtalk.notify_extensions("publish", name="关键词不匹配", code="kw-miss")
+    assert ok is False
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetNotification
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as s:
+        row = (
+            await s.execute(select(AssetNotification).where(AssetNotification.code == "kw-miss"))
+        ).scalars().first()
+    assert row is not None
+    assert row.status == "failed"
+    assert "310000" in row.error
+
+
 async def test_notify_extensions_prepends_keyword(monkeypatch):
     """关键词必须出现在消息里 —— 机器人校验不到就发不出去."""
     sent: list[dict] = []

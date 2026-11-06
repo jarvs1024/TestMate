@@ -113,7 +113,9 @@ async def list_mrs(
 
     # failed MR 跨页扫出来给 banner 用 (banner 数字与列表同源, 不会出现 2 / 0 这种不一致).
     # 跟 page 是两份不同的过滤, 一致性优先.
-    failed_items = [m for m in all_items if (m.get("last_run") or {}).get("status") == "failed"]
+    # ⚠️ 判据是「任一命令最近一次 run 失败」, 不是「整体最近一次 run 失败」——
+    #    describe / improve 并行跑, 后者成功不应该把前者的失败盖掉.
+    failed_items = [m for m in all_items if m.get("last_failed_run")]
     failed = len(failed_items)
     total = len(all_items)
     page = all_items[offset:offset + limit]

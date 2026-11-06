@@ -22,6 +22,7 @@ import base64
 import hashlib
 import hmac
 import logging
+import re
 import time
 import urllib.parse
 from contextvars import ContextVar
@@ -405,10 +406,18 @@ async def _deliver(
     at_user_ids: list[str] | None = None,
     is_at_all: bool = False,
 ) -> None:
-    await send_markdown(
+    resp = await send_markdown(
         webhook, title, text, secret=secret,
         at_user_ids=at_user_ids, is_at_all=is_at_all,
     )
+    # ⚠️ 钉钉的业务错误是 **HTTP 200 + errcode != 0** (关键词不匹配 310000 /
+    #    机器人被停用 / 触发限流…). 只看 HTTP 状态会把**根本没发出去**的消息
+    #    在回执里记成 sent —— 2026-11-06 的代码检视失败通知就是这样"发了但没人收到":
+    #    code_review 频道没配关键词, 3 条回执全是 sent, 群里一条都没有.
+    errcode = resp.get("errcode") if isinstance(resp, dict) else None
+    if errcode not in (0, None):
+        errmsg = (resp.get("errmsg") if isinstance(resp, dict) else "") or resp
+        raise RuntimeError(f"钉钉 errcode={errcode}: {errmsg}"[:500])
 
 
 # ---------- 审核类通知的窗口合并 (2026-10-28) ----------
@@ -626,6 +635,33 @@ async def flush_aggregated_notifications() -> int:
     return n
 
 
+def _one_line(v: Any) -> str:
+    """多行 / 多余空白压成一行 —— 标题、属性这类**必须单行**的位置用."""
+    return " ".join(str(v or "").split())
+
+
+# 行首已带的列表符号 (续行可能本身就是 markdown 列表)
+_BULLET_MARKER = re.compile(r"^[-*+•]\s+")
+
+
+def _bullet_lines(label: str, value: Any) -> list[str]:
+    """可能多行的值 → 一组**同级**列表条目.
+
+    ⚠️ 2026-11-06: 更新说明 / 错误详情经常是 "1. ...\\n2. ..." 这种多行文本.
+       原样拼进 ``- 更新: {备注}`` 后, 第 2 行从行首的 "2." 开始, 钉钉 markdown
+       会把它当成**新的一级有序列表** —— 缩进跟上层条目对不上 (用户截图那个样子).
+       这里统一收成同级条目: 首行带 label, 续行都加 "- " 前缀, 对齐不依赖渲染器
+       对缩进/嵌套列表的支持 (数字编号保留在条目文字里).
+    """
+    parts = [ln.strip() for ln in str(value or "").splitlines()]
+    parts = [ln for ln in parts if ln]
+    if not parts:
+        return []
+    out = [f"- {label}: {_BULLET_MARKER.sub('', parts[0])}"]
+    out.extend(f"- {_BULLET_MARKER.sub('', ln)}" for ln in parts[1:])
+    return out
+
+
 async def _render_asset_body(
     event: str,
     *,
@@ -658,30 +694,34 @@ async def _render_asset_body(
     #    开关映射 (dingtalk.notify_on_publish 等) 靠 key, 改了会关掉/打开错开关.
     event_text = title_override or _EVENT_TEXT.get(event, "通知")
     at_rule = _EVENT_AT.get(event, {"at_all": False, "show_author": False})
-    lines = [f"### {event_text} · {name}"]
+    lines = [f"### {event_text} · {_one_line(name)}"]
     body_bits: list[str] = []
     # 类型要说清楚 —— 收到通知的人得知道这是个技能还是插件 (还是软件包)
-    kind_line = f"- 类型: {_KIND_LABEL.get(kind, kind)}" if kind else ""
+    kind_line = f"- 类型: {_one_line(_KIND_LABEL.get(kind, kind))}" if kind else ""
     if category:
-        kind_line += f" · {category}"
+        kind_line += f" · {_one_line(category)}"
     if kind_line:
         lines.append(kind_line)
         body_bits.append(kind_line.removeprefix("- 类型: "))
     if project:
         # 适用项目: 只有**项目特有**的资产才写这行 (通用的不占地方)
+        project = _one_line(project)
         line = f"- 适用项目: {project} 项目"
         lines.append(line)
         body_bits.append(f"{project} 项目")
     if version:
+        version = _one_line(version)
         lines.append(f"- 版本: `{version}`")
         body_bits.append(f"v{version}")
     if actor and at_rule.get("show_actor", True):
+        actor = _one_line(actor)
         lines.append(f"- 操作人: {actor}")
         body_bits.append(f"操作人 {actor}")
     # ⚠️ 2026-11-01: 作者的说明位置进"资产属性"这一块 (跟着类型/版本走).
     #    上架时"操作人"是审核人, 换成「作者」才说得清这资产是谁做的.
     if at_rule.get("show_author") and author:
         label = at_rule.get("author_label", "发布人")
+        author = _one_line(author)
         lines.append(f"- {label}: {author}")
         body_bits.append(f"{label} {author}")
     # ⚠️ 2026-10-30 (第十一轮): 「这玩意儿是干嘛的 / 这次改了啥」——
@@ -693,15 +733,15 @@ async def _render_asset_body(
     note = (release_notes or summary or "").strip()
     if note:
         label = _NOTE_LABEL.get(event, "说明")
-        lines.append(f"- {label}: {note}")
-        body_bits.append(note)
+        lines.extend(_bullet_lines(label, note))
+        body_bits.append(_one_line(note))
     elif detail:
         # ⚠️ detail 是**这次操作发生了什么** (如"审核不通过"), 不是资产的简介 ——
         #    把简介塞进来会变成"说明: 把测试数据整理成报告", 看着像重复了一遍简介.
         # ⚠️ 2026-10-31 (第十三轮): 标签也走 _NOTE_LABEL ——
         #    软件下架的 detail 说的是"它没了", 标成「说明」读着别扭, 该标「下架说明」.
-        lines.append(f"- {_NOTE_LABEL.get(event, '说明')}: {detail}")
-        body_bits.append(detail)
+        lines.extend(_bullet_lines(_NOTE_LABEL.get(event, "说明"), detail))
+        body_bits.append(_one_line(detail))
     # ---- 链接 ----
     # ⚠️ 2026-10-30 (第十一轮): 没显式传 link 时**按事件给默认链接** ——
     #    用户要求「最后附上链接: 插件相关的 /extensions, 软件库相关的 /software」.
@@ -741,7 +781,7 @@ async def preview_asset_message(event: str, **kw) -> dict[str, Any]:
        (线上要真发, 走 notify_extensions.)
     """
     lines, body_bits, event_text = await _render_asset_body(event, **kw)
-    title = f"{event_text} · {kw.get('name', '')}"
+    title = f"{event_text} · {_one_line(kw.get('name', ''))}"
     return {
         "event": event,
         "title": title,
@@ -835,7 +875,7 @@ async def notify_extensions(
         if window > 0:
             if await _within_window(event, window):
                 # 窗口内 → 并入汇总, **不单独发** (但回执要留痕, 能在操作记录里看到)
-                body = f"- {name}" + (f" ({' · '.join(body_bits)})" if body_bits else "")
+                body = f"- {_one_line(name)}" + (f" ({' · '.join(body_bits)})" if body_bits else "")
                 await _create_receipt(
                     event, code, name, _EVENT_TEXT[event], body, status="aggregated",
                 )
@@ -848,7 +888,7 @@ async def notify_extensions(
                 logger.warning("dingtalk 汇总发送失败 (已忽略): %s", e)
 
     text = "\n".join(lines)
-    title = f"{event_text} · {name}"
+    title = f"{event_text} · {_one_line(name)}"
 
     # ---------- @谁: 只算「at 名单」, 正文里的 @ 已经在渲染层拼好了 ----------
     # ⚠️ 2026-10-31 (第十六轮): **atUserIds 永远是空的** ——
@@ -919,7 +959,7 @@ async def notify_review_failure(
 
     # ⚠️ MR 标题是**外部数据** (GitLab), 可能很长 —— 回执 title 列是 String(256),
     #    超长会插不进去, 截到安全长度 (正文不受影响).
-    name = (name or "").strip()[:120] or f"MR {code}"
+    name = _one_line(name)[:120] or f"MR {code}"
 
     lines, _body_bits, event_text = await _render_asset_body(
         event, name=name, author=author, detail=detail, link=link,

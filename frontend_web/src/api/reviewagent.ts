@@ -100,6 +100,8 @@ export interface MrRow {
   /** V2 特有: 基于 last_review_at 时间窗的 'updated' 标识 */
   _v2_state?: string;
   last_run?: MrRun | null;
+  /** 任一命令 (describe/improve) 最近一次 run 失败时给 —— banner 的判据 */
+  last_failed_run?: MrRun | null;
   suggestion_counts?: SuggestionCounts | null;
 }
 export interface SuggestionCounts {
