@@ -205,6 +205,7 @@ WRITE_SPECS = (
         description=(
             "签发数据集级、30 分钟可复用的上传票；二进制文件用 curl -F 直传 upload_url，"
             "不要用 base64。替换时在直传请求里加 -F document_id=<id>。"
+            " 签票成功只代表拿到上传凭证；上传成功后仍需用 kb_document_status 查询解析状态。"
         ),
         input_schema=_object(
             {"dataset_id": {"type": "string", "minLength": 1}}, ["dataset_id"]

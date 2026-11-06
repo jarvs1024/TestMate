@@ -1,7 +1,9 @@
 """kb_document_write_ticket 的票面契约。"""
 from __future__ import annotations
 
+import re
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -83,6 +85,8 @@ async def test_tools_list_has_all_twelve(writer, fake_rf):
     assert len(result["tools"]) == 12
     names = {tool["name"] for tool in result["tools"]}
     assert "kb_document_write_ticket" in names
+    descriptions = {tool["name"]: tool.get("description", "") for tool in result["tools"]}
+    assert "kb_document_status" in descriptions["kb_document_write_ticket"]
 
 
 async def test_ticket_shape_and_reusable_flag(writer, fake_rf):
@@ -100,9 +104,23 @@ async def test_ticket_shape_and_reusable_flag(writer, fake_rf):
     assert data["file_field"] == "file"
     assert data["replace_field"] == "document_id"
     assert data["expires_in"] == 1800
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z", data["expires_at"]
+    ), data["expires_at"]
+    assert "30 分钟" in data["note"]
+    assert "document_id" in data["note"]
     assert data["reusable"] is True
     assert data["max_bytes_per_file"] == 20 * 1024 * 1024
     assert data["max_files_per_request"] == 5
+
+    # upload_url 的路径必须真的挂在运行中的 app 上 (kb 路由前缀被改/未挂载时这里要红)。
+    # FastAPI 0.143 起 include_router 是惰性的: app.routes 里是 _IncludedRouter 包装,
+    # 不含展开后的完整 path, 因此走公开的 url_path_for 由路由表反解真实路径。
+    from app.main import app as main_app
+
+    expected_path = "/api/v1/kb/datasets/{dataset_id}/documents/ticket-upload"
+    assert main_app.url_path_for("ticket_upload", dataset_id="{dataset_id}") == expected_path
+    assert urlparse(data["upload_url"]).path == expected_path.replace("{dataset_id}", "ds-naive")
 
 
 async def test_ticket_for_missing_dataset_is_not_found(writer, fake_rf):
