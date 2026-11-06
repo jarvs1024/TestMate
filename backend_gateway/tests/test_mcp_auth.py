@@ -9,6 +9,7 @@ import pytest
 from jose import jwt
 from mcp.server.auth.provider import AccessToken
 
+from app.api.auth import get_optional_user
 from app.core.config import settings
 from app.core.security import create_access_token
 from app.db.session import AsyncSessionLocal
@@ -434,3 +435,39 @@ async def test_mcp_token_type_is_rejected_even_without_aud_claim(client, credent
     )
 
     assert response.status_code == 401, response.text
+
+
+@pytest.mark.parametrize("credential", ["static", "oauth"])
+async def test_mcp_token_is_anonymous_on_optional_auth(credential):
+    """可选鉴权 (get_optional_user) 也必须把 MCP 令牌当匿名, 不能带出令牌所属用户.
+
+    ⚠️ 为什么直接调依赖而不打端点: 用到 get_optional_user 的公共只读端点
+       (/api/v1/agents, /api/v1/review-agent/health 等) 的响应体跟调用者身份无关,
+       "返回了真实用户" 在响应里看不出来 —— 只有依赖本身的返回值能区分.
+
+    ⚠️ 两处刻意构造 (否则根本走不到 typ 检查, 测试就测不到这个 bug):
+       · 用户 token_version=0 —— MCP 令牌里带的是 token_version (不是 tv),
+         去掉 aud 之后 payload 里没有 tv, 缺省按 0 算; 只有用户也是 0 时,
+         "tv 不一致 → 匿名" 这条兜底才不会提前命中.
+       · 去掉 aud —— 带 aud 的令牌在 decode_token 里本来就因 audience 不匹配被拒,
+         那条路径同样会提前退化成匿名.
+    """
+    user = await _user(token_version=0)
+    if credential == "static":
+        token, record, _ = await _static_credential(user)
+    else:
+        token, _, _ = await _oauth_credential(user)
+        record = None
+    token = _resign(token, aud=DELETE)
+    if record is not None:
+        await _update_static(
+            record.id,
+            token_hash=hashlib.sha256(token.encode("ascii")).hexdigest(),
+        )
+
+    async with AsyncSessionLocal() as session:
+        current = await get_optional_user(token=token, session=session)
+
+    assert current.id != user.id
+    assert current.username == "anonymous"
+    assert current.role == UserRole.anonymous

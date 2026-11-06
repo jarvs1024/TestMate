@@ -205,6 +205,12 @@ async def get_optional_user(
     payload = decode_token(token)
     if not payload:
         return _anonymous_user()
+    # ⚠️ MCP 令牌 (mcp-static / mcp-oauth) 只能调 /mcp/*, 在 REST 侧一律当匿名 ——
+    #    跟 get_current_user 的口径保持一致. 这里**不抛 401**, 因为这个依赖的契约
+    #    是"退化成匿名"而不是"拒绝"; 但绝不能返回令牌所属的真实用户, 否则公共只读
+    #    端点就会把 MCP 令牌当成登录态, "MCP 令牌只用于 /mcp/*" 的边界就破了一个口子.
+    if payload.get("typ") in MCP_TOKEN_TYPES:
+        return _anonymous_user()
     try:
         user_id = int(payload.get("sub", 0))
     except (TypeError, ValueError):
