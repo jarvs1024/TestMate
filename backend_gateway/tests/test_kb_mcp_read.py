@@ -30,6 +30,30 @@ READ_TOOLS = {
     "kb_health",
 }
 
+#: §8.1: tools/list 暴露的必须恰好是这 12 个工具, 且各自的 required 就是这张表.
+EXPECTED_REQUIRED = {
+    "kb_dataset_list": set(),
+    "kb_document_list": {"dataset_id"},
+    "kb_document_search": {"keywords"},
+    "kb_document_chunks": {"dataset_id", "document_id"},
+    "kb_document_status": {"dataset_id"},
+    "kb_search": {"question", "dataset_ids"},
+    "kb_health": set(),
+    "kb_dataset_create": {"name"},
+    "kb_document_upload": {"dataset_id"},
+    "kb_document_update": {"dataset_id"},
+    "kb_document_reparse": {"dataset_id", "document_id"},
+    "kb_document_write_ticket": {"dataset_id"},
+}
+
+#: 这两个工具是「单篇内联」与「documents 数组」二选一, 除 ``dataset_id`` 外的顶层
+#: 参数天然是可选且无默认值的. 这里把允许的集合钉死 —— 多出任何一个「既非 required
+#: 又无 default」的参数都算回归.
+ALTERNATIVE_ARGUMENTS = {
+    "kb_document_upload": {"name", "content", "content_type", "documents"},
+    "kb_document_update": {"document_id", "content", "documents"},
+}
+
 
 class _FakeRedis:
     async def eval(self, script, numkeys, *args):
@@ -166,6 +190,50 @@ async def test_tools_list_exposes_all_read_tools(principals):
     assert READ_TOOLS <= names
 
 
+async def test_tools_list_declares_closed_schemas(principals):
+    """§8.1: 12 个工具的 required / additionalProperties=false 必须精确."""
+    import jsonschema
+
+    async with _client(principals) as client:
+        result = await list_tools(client, READ_TOKEN, endpoint=ENDPOINT)
+
+    schemas = {tool["name"]: tool["inputSchema"] for tool in result["tools"]}
+    assert set(schemas) == set(EXPECTED_REQUIRED)
+
+    for name, expected_required in EXPECTED_REQUIRED.items():
+        schema = schemas[name]
+        alternatives = ALTERNATIVE_ARGUMENTS.get(name, set())
+        assert schema["type"] == "object", name
+        assert schema["additionalProperties"] is False, name
+        assert set(schema["required"]) == expected_required, name
+        for prop, prop_schema in schema["properties"].items():
+            assert (
+                prop in expected_required
+                or "default" in prop_schema
+                or prop in alternatives
+            ), f"{name}.{prop} 既不在 required 里也没有 default"
+
+    # 二选一的两种合法写法都必须真的过得了严格 schema (additionalProperties=false).
+    for name, calls in {
+        "kb_document_upload": (
+            {"dataset_id": "ds-1", "name": "a.md", "content": "x"},
+            {"dataset_id": "ds-1", "documents": [{"name": "a.md", "content": "x"}]},
+        ),
+        "kb_document_update": (
+            {"dataset_id": "ds-1", "document_id": "doc-1", "content": "x"},
+            {"dataset_id": "ds-1", "documents": [{"document_id": "doc-1", "content": "x"}]},
+        ),
+    }.items():
+        for arguments in calls:
+            jsonschema.validate(instance=arguments, schema=schemas[name])
+
+    # 数组型工具的 items 也必须是封闭对象, 且自己声明了必填项.
+    for name in ("kb_document_upload", "kb_document_update"):
+        items = schemas[name]["properties"]["documents"]["items"]
+        assert items["additionalProperties"] is False, name
+        assert items["required"], name
+
+
 async def test_dataset_list_paginates_and_filters(principals, fake_kb):
     async with _client(principals) as client:
         page = await call_tool_data(
@@ -287,6 +355,44 @@ async def test_status_timeout_returns_current_state(principals, fake_kb, monkeyp
     assert data["progress_msg"] == "切片中"
     assert slept == pytest.approx(wait_seconds)
     assert clock["now"] == pytest.approx(wait_seconds)
+
+
+async def test_status_fail_returns_progress_msg_without_waiting(
+    principals, fake_kb, monkeypatch
+):
+    """§8.1: run=FAIL 是终态 —— 原样带出 progress_msg, 且不能空转到 deadline。"""
+    from app.mcp.kb import adapter
+
+    async def fake_find(dataset_id, document_id):
+        return {"id": document_id, "name": "a.md", "run": "FAIL",
+                "progress": 0.4, "progress_msg": "解析失败：文件格式不支持",
+                "chunk_count": 0, "token_count": 0}
+
+    import app.api.kb as kb_mod
+    monkeypatch.setattr(kb_mod, "_find_document", fake_find)
+
+    clock = {"now": 0.0}
+    slept = False
+    monkeypatch.setattr(adapter, "_monotonic", lambda: clock["now"])
+
+    async def sleep(seconds):
+        nonlocal slept
+        slept = True
+        clock["now"] += seconds
+
+    monkeypatch.setattr(adapter, "_sleep", sleep)
+
+    async with _client(principals) as client:
+        data = await call_tool_data(
+            client, READ_TOKEN, "kb_document_status",
+            {"dataset_id": "ds-1", "document_id": "doc-1", "wait_seconds": 10},
+            endpoint=ENDPOINT,
+        )
+
+    assert data["run"] == "FAIL"
+    assert data["progress_msg"] == "解析失败：文件格式不支持"
+    assert data["timed_out"] is False
+    assert slept is False
 
 
 async def test_status_missing_name_is_not_found(principals, fake_kb):

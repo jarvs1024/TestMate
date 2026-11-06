@@ -3,11 +3,11 @@
 直接用 bcrypt 原生 API, 不走 passlib(passlib 1.7.4 不兼容 bcrypt 4.x,
 会打 `error reading bcrypt version` 警告). 算法用 bcrypt (cost=12).
 """
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import bcrypt
-from jose import jwt, JWTError
+from jose import JWTError, jwt
 
 from app.core.config import settings
 
@@ -33,7 +33,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(subject: str | int, extra: dict[str, Any] | None = None) -> tuple[str, int]:
     """返回 (token, expires_in_seconds)。"""
-    expire = datetime.utcnow() + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    expire = datetime.now(UTC) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
     payload: dict[str, Any] = {"sub": str(subject), "exp": expire}
     if extra:
         payload.update(extra)
@@ -73,7 +73,7 @@ def create_download_ticket(
       · 用户没被停用 (is_active)
       · 该版本的软件仍然存在且是 ready
     """
-    expire = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+    expire = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
     payload: dict[str, Any] = {
         "typ": DOWNLOAD_TICKET_TYPE,
         "uid": int(user_id),
@@ -108,7 +108,7 @@ def create_asset_download_ticket(
     *, user_id: int, code: str, version: str, ttl_seconds: int = ASSET_DOWNLOAD_TICKET_TTL
 ) -> tuple[str, int]:
     """签发绑定用户、资产与精确版本的短时下载票。"""
-    expire = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+    expire = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
     payload: dict[str, Any] = {
         "typ": ASSET_DOWNLOAD_TICKET_TYPE,
         "uid": int(user_id),
@@ -154,7 +154,7 @@ def create_kb_upload_ticket(
     ttl_seconds: int = KB_UPLOAD_TICKET_TTL,
 ) -> tuple[str, int]:
     """签发绑定用户 + 数据集的短时上传票，返回 (ticket, expires_in_seconds)。"""
-    expire = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+    expire = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
     payload: dict[str, Any] = {
         "typ": KB_UPLOAD_TICKET_TYPE,
         "uid": int(user_id),

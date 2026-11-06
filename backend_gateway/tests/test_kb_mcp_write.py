@@ -409,9 +409,18 @@ async def test_reparse_unknown_dataset_reports_dataset_not_found(principals, fak
 
 
 async def test_update_batch_partial_failure(principals, fake_kb):
-    """F7-1: 批量更新部分失败 —— 成功的那篇仍要报 replaced。"""
+    """F7-1: 批量更新部分失败 —— 成功的那篇仍要报 replaced。
+
+    失败项能找到旧文档时要带出它的名字 (name 不能一律是 ""); 找不到的文档
+    名字确实未知, 仍保持 ""。
+    """
     created = await fake_kb.upload_documents("ds-naive", [("a.md", b"a", "text/plain")])
     good_id = created[0]["id"]
+    # 假 RAGFlow 不校验扩展名 —— 塞一篇 .pdf 进来, 让 _prepare_text 在找到文档之后才失败
+    binary = await fake_kb.upload_documents(
+        "ds-naive", [("scan.pdf", b"%PDF", "application/pdf")]
+    )
+    binary_id = binary[0]["id"]
 
     async with _client(principals) as client:
         data = await call_tool_data(
@@ -420,7 +429,8 @@ async def test_update_batch_partial_failure(principals, fake_kb):
                 "dataset_id": "ds-naive",
                 "documents": [
                     {"document_id": good_id, "content": "a2"},
-                    {"document_id": "missing-doc", "content": "b2"},
+                    {"document_id": binary_id, "content": "b2"},
+                    {"document_id": "missing-doc", "content": "c2"},
                 ],
             },
             endpoint=ENDPOINT,
@@ -429,6 +439,11 @@ async def test_update_batch_partial_failure(principals, fake_kb):
     assert data["state"] == "partial"
     assert data["updated"] == 1
     assert data["replaced"] == [good_id]
+    failures = {error["document_id"]: error for error in data["errors"]}
+    assert failures[binary_id]["error"] == "invalid_document_type"
+    assert failures[binary_id]["name"] == "scan.pdf"
+    assert failures["missing-doc"]["error"] == "not_found"
+    assert failures["missing-doc"]["name"] == ""
 
 
 async def test_update_rejects_more_than_five_documents(principals, fake_kb):

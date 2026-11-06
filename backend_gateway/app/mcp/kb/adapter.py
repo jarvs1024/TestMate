@@ -380,12 +380,15 @@ async def document_update(
     ingest_started = False
     for item in items:
         old_id = str(item.get("document_id") or "")
+        # 找到旧文档后才知道名字 —— 失败项要尽量带出它, 方便调用方定位是哪一篇.
+        name_hint = ""
         try:
             old = await _call(kb._find_document(dataset_id, old_id))
             if not old:
                 raise McpRuntimeError("not_found", "文档不存在")
+            name_hint = str(old.get("name") or "")
             name, payload, ctype = _prepare_text(
-                str(old.get("name") or ""), str(item.get("content") or ""), None
+                name_hint, str(item.get("content") or ""), None
             )
             result = await _call(
                 kb.replace_document(
@@ -394,7 +397,12 @@ async def document_update(
             )
         except McpRuntimeError as exc:
             errors.append(
-                {"document_id": old_id, "name": "", "error": exc.code, "message": exc.message}
+                {
+                    "document_id": old_id,
+                    "name": name_hint,
+                    "error": exc.code,
+                    "message": exc.message,
+                }
             )
             continue
         doc_ingest = bool(result.get("ingest_started"))
