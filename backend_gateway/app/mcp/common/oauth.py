@@ -26,10 +26,8 @@ from app.db.session import AsyncSessionLocal
 from app.models.mcp import McpOAuthClient, McpOAuthGrant
 from app.models.user import User
 
-SUPPORTED_SCOPES = frozenset(
-    {"extensions:read", "extensions:write", "kb:read", "kb:write"}
-)
 SCOPE_ORDER = ("extensions:read", "extensions:write", "kb:read", "kb:write")
+SUPPORTED_SCOPES = frozenset(SCOPE_ORDER)
 SCOPE_HINT = " ".join(SCOPE_ORDER)
 _LEGACY_SCOPES = {"market:read": "extensions:read", "market:write": "extensions:write"}
 AUTHORIZATION_CODE_TTL_SECONDS = 300
