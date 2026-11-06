@@ -58,6 +58,15 @@ def _parse_ts(v: Any) -> datetime | None:
 
 async def scan_failed_runs(now: datetime | None = None) -> int:
     """扫一遍 ReviewAgent 最近失败的 run, 发钉钉通知. 返回通知了几条."""
+    # ⚠️ `global _last_scan` **不能少** (2026-11-06 修):
+    #    下面第 90 行和第 150 行都给这个模块级变量赋值, 但少了 global 声明,
+    #    Python 会把它当**局部变量** → 函数里第 65 行读它时抛
+    #    `UnboundLocalError: cannot access local variable '_last_scan'`.
+    #    后果: 这个 worker 从上线起**一次都没成功扫过**
+    #    (25 上 24 小时内 579 次 UnboundLocalError, 成功 0 次),
+    #    即「代码检视评审失败通知」功能完全没生效。
+    #    (第 157 行的 _loop() 里有 global, 但那是另一个函数 —— 不管用。)
+    global _last_scan
     if not await review_agent_client.is_configured():
         return 0
 
