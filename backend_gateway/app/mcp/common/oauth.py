@@ -20,13 +20,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import ext_policy
 from app.core.config import settings
 from app.core.dingtalk import get_request_base_url
+from app.core.kb_policy import can_write_kb
 from app.core.settings_store import get
 from app.db.session import AsyncSessionLocal
 from app.models.mcp import McpOAuthClient, McpOAuthGrant
 from app.models.user import User
 
-SUPPORTED_SCOPES = frozenset({"extensions:read", "extensions:write"})
-_SCOPE_ORDER = ("extensions:read", "extensions:write")
+SUPPORTED_SCOPES = frozenset(
+    {"extensions:read", "extensions:write", "kb:read", "kb:write"}
+)
+_SCOPE_ORDER = ("extensions:read", "extensions:write", "kb:read", "kb:write")
+SCOPE_HINT = " ".join(_SCOPE_ORDER)
 _LEGACY_SCOPES = {"market:read": "extensions:read", "market:write": "extensions:write"}
 AUTHORIZATION_CODE_TTL_SECONDS = 300
 
@@ -123,7 +127,7 @@ def _parse_scopes(raw: Any, *, default: Sequence[str] | None = None) -> list[str
     else:
         raise OAuthError("invalid_scope", "scope 格式错误")
     if not values or any(scope not in SUPPORTED_SCOPES for scope in values):
-        raise OAuthError("invalid_scope", "scope 必须是 extensions:read extensions:write 的非空子集")
+        raise OAuthError("invalid_scope", f"scope 必须是 {SCOPE_HINT} 的非空子集")
     return _ordered_scopes(values)
 
 
@@ -241,12 +245,15 @@ async def validate_authorization(
 
 
 async def allowed_scopes(user: User) -> list[str]:
-    """Return scopes allowed by the user's current state and publisher policy."""
+    """Return scopes allowed by the user's current state and role/policy."""
     if not getattr(user, "is_active", False):
         return []
     scopes = ["extensions:read"]
     if await ext_policy.can_publish(user):
         scopes.append("extensions:write")
+    scopes.append("kb:read")
+    if can_write_kb(user):
+        scopes.append("kb:write")
     return scopes
 
 

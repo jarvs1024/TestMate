@@ -26,6 +26,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_user
+from app.core.kb_policy import can_write_kb
 from app.core.ragflow_client import (
     list_datasets, retrieval, probe,
     list_documents, ingest_documents, delete_documents,
@@ -50,13 +51,8 @@ MAX_UPLOAD_BYTES = MAX_UPLOAD_FILE_MB * 1024 * 1024
 
 
 def _can_write(user: User) -> bool:
-    """能不能**写**知识库 (上传文档).
-
-    ⚠️ admin / tester 可以, **viewer 不行** —— viewer 的语义是"只读".
-       删除更严 (只有 admin), 见下面的 delete_docs.
-    """
-    role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    return role in (UserRole.admin.value, UserRole.tester.value)
+    """保留旧函数名，判定统一走 core.kb_policy。"""
+    return can_write_kb(user)
 
 
 #: 知识库文档名的清洗规则 —— **故意比软件包那套宽得多**

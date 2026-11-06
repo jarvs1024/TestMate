@@ -15,6 +15,7 @@ from app.api.auth import get_current_user
 from app.db.session import get_session
 from app.mcp.common.auth import issue_static_token
 from app.mcp.common.oauth import (
+    SCOPE_HINT,
     SUPPORTED_SCOPES,
     OAuthError,
     allowed_scopes,
@@ -77,7 +78,7 @@ class TokenCreate(BaseModel):
     @classmethod
     def validate_scopes(cls, value: list[str]) -> list[str]:
         if not value or any(scope not in SUPPORTED_SCOPES for scope in value):
-            raise ValueError("scopes 必须是 extensions:read extensions:write 的非空子集")
+            raise ValueError(f"scopes 必须是 {SCOPE_HINT} 的非空子集")
         return value
 
     @field_validator("expires_at")

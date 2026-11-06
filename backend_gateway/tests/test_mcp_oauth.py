@@ -166,12 +166,14 @@ async def test_register_client_accepts_http_loopback_and_defaults_all_scopes(
 
     assert registered["token_endpoint_auth_method"] == "none"
     assert "client_secret" not in registered
-    assert registered["scope"] == "extensions:read extensions:write"
+    assert registered["scope"] == "extensions:read extensions:write kb:read kb:write"
     async with AsyncSessionLocal() as session:
         stored = await session.get(McpOAuthClient, registered["client_id"])
         assert stored is not None
         assert stored.redirect_uris == [redirect_uri]
-        assert stored.scopes == ["extensions:read", "extensions:write"]
+        assert stored.scopes == [
+            "extensions:read", "extensions:write", "kb:read", "kb:write"
+        ]
 
 
 @pytest.mark.parametrize(
@@ -282,13 +284,22 @@ async def test_validate_authorization_rejects_unbound_or_non_s256_requests(
 async def test_allowed_scopes_uses_current_publish_policy_and_user_state():
     user = await _user()
     await set_setting("extensions.publisher_roles", "tester")
-    assert await oauth.allowed_scopes(user) == ["extensions:read", "extensions:write"]
+    assert await oauth.allowed_scopes(user) == [
+        "extensions:read", "extensions:write", "kb:read", "kb:write"
+    ]
 
     await set_setting("extensions.publisher_roles", "")
-    assert await oauth.allowed_scopes(user) == ["extensions:read"]
+    assert await oauth.allowed_scopes(user) == [
+        "extensions:read", "kb:read", "kb:write"
+    ]
 
     user.is_active = False
     assert await oauth.allowed_scopes(user) == []
+
+
+async def test_viewer_allowed_scopes_include_kb_read_only():
+    viewer = await _user(role=UserRole.viewer)
+    assert await oauth.allowed_scopes(viewer) == ["extensions:read", "kb:read"]
 
 
 async def test_create_authorization_code_rejects_scope_user_cannot_publish():

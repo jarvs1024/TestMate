@@ -154,7 +154,7 @@ async def test_register_returns_task2_client_metadata_with_201(client):
         "token_endpoint_auth_method": "none",
         "grant_types": ["authorization_code"],
         "response_types": ["code"],
-        "scope": "extensions:read extensions:write",
+        "scope": "extensions:read extensions:write kb:read kb:write",
     }
     assert "client_secret" not in registered
 
