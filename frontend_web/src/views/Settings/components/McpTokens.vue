@@ -27,6 +27,8 @@
           <legend>权限 <b>*</b></legend>
           <label><input v-model="form.scopes" type="checkbox" value="extensions:read" /> 读取资产</label>
           <label><input v-model="form.scopes" type="checkbox" value="extensions:write" :disabled="!canWrite" /> 管理资产</label>
+          <label><input v-model="form.scopes" type="checkbox" value="kb:read" /> 读取知识库</label>
+          <label><input v-model="form.scopes" type="checkbox" value="kb:write" :disabled="!canKbWrite" /> 写入知识库</label>
         </fieldset>
         <button type="button" class="mini-btn primary create-btn" :disabled="!canCreate" @click="create">
           {{ creating ? '创建中…' : '创建令牌' }}
@@ -104,7 +106,7 @@ import { parseApiTime } from '@/utils/format';
 import { copyToClipboard } from '@/utils/clipboard';
 
 const tokens = ref<McpToken[]>([]);
-const allowedScopes = ref<McpScope[]>(['extensions:read']);
+const allowedScopes = ref<McpScope[]>(['extensions:read', 'kb:read']);
 const loading = ref(false);
 const loadError = ref('');
 const scopesError = ref('');
@@ -122,6 +124,7 @@ const form = reactive<{ name: string; scopes: McpScope[]; expiresAt: string }>({
 });
 
 const canWrite = computed(() => allowedScopes.value.includes('extensions:write'));
+const canKbWrite = computed(() => allowedScopes.value.includes('kb:write'));
 const canCreate = computed(() => (
   !creating.value
   && !!form.name.trim()
@@ -133,8 +136,15 @@ function errorText(error: unknown, fallback: string): string {
   return httpErrorText(errorStatus(error), errorDetail(error), fallback);
 }
 
+const SCOPE_TEXT: Record<McpScope, string> = {
+  'extensions:read': '读取资产',
+  'extensions:write': '管理资产',
+  'kb:read': '读取知识库',
+  'kb:write': '写入知识库',
+};
+
 function scopeText(scope: McpScope): string {
-  return scope === 'extensions:write' ? '管理资产' : '读取资产';
+  return SCOPE_TEXT[scope] ?? scope;
 }
 
 function formatTime(value: string | null): string {
@@ -164,7 +174,7 @@ async function loadScopes() {
     const result = await listMcpTokenScopes();
     allowedScopes.value = result.scopes;
   } catch {
-    allowedScopes.value = ['extensions:read'];
+    allowedScopes.value = ['extensions:read', 'kb:read'];
     scopesError.value = '未能读取当前可用权限，暂时只能创建只读令牌。';
   }
   form.scopes = form.scopes.filter((scope) => allowedScopes.value.includes(scope));
@@ -192,7 +202,8 @@ async function create() {
   try {
     const payload: CreateMcpTokenPayload = {
       name: form.name.trim(),
-      scopes: [...form.scopes],
+      // 只提交服务端当前允许的 scope，避免残留值带来越权请求。
+      scopes: form.scopes.filter((scope) => allowedScopes.value.includes(scope)),
     };
     if (form.expiresAt) payload.expires_at = new Date(form.expiresAt).toISOString();
     const created = await createMcpToken(payload);

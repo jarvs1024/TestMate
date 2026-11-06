@@ -113,17 +113,27 @@ function errorText(error: unknown, fallback: string): string {
   return httpErrorText(errorStatus(error), detail, fallback);
 }
 
-function scopeText(scope: McpScope): { title: string; description: string } {
-  if (scope === 'extensions:write') {
-    return {
-      title: '管理资产',
-      description: '以你的名义新建、修改、发布或下架你有权操作的插件、技能和连接器。',
-    };
-  }
-  return {
+const SCOPE_TEXT: Record<McpScope, { title: string; description: string }> = {
+  'extensions:read': {
     title: '读取资产',
     description: '查看插件、技能、连接器及其版本信息，并读取你本可访问的内容。',
-  };
+  },
+  'extensions:write': {
+    title: '管理资产',
+    description: '以你的名义新建、修改、发布或下架你有权操作的插件、技能和连接器。',
+  },
+  'kb:read': {
+    title: '读取知识库',
+    description: '查看数据集、文档与分段，并按问题检索知识库内容。',
+  },
+  'kb:write': {
+    title: '写入知识库',
+    description: '在你可操作的数据集里新建数据集、上传或替换文档、重新解析。',
+  },
+};
+
+function scopeText(scope: McpScope): { title: string; description: string } {
+  return SCOPE_TEXT[scope] ?? { title: scope, description: '' };
 }
 
 async function loadPreview() {

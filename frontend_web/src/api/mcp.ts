@@ -1,7 +1,11 @@
 /** MCP OAuth 同意、用户授权与访问令牌 API。 */
 import request from '@/utils/request';
 
-export type McpScope = 'extensions:read' | 'extensions:write';
+export type McpScope =
+  | 'extensions:read'
+  | 'extensions:write'
+  | 'kb:read'
+  | 'kb:write';
 
 export interface McpAuthorizationQuery {
   client_id: string;

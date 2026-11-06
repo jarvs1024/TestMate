@@ -226,6 +226,20 @@ describe('MCP 授权同意页', () => {
     w.unmount();
   });
 
+  it('展示知识库 scope 的标题与说明', async () => {
+    api.previewMcpAuthorization.mockResolvedValueOnce({
+      ...PREVIEW,
+      scopes: ['kb:read', 'kb:write'],
+    });
+    const { wrapper: w } = await mountAuthorize();
+
+    expect(w.text()).toContain('读取知识库');
+    expect(w.text()).toContain('写入知识库');
+    expect(w.text()).toContain('查看数据集、文档与分段');
+    expect(w.text()).toContain('新建数据集、上传或替换文档');
+    w.unmount();
+  });
+
   it('拒绝时保留存在但为空的 state', async () => {
     api.previewMcpAuthorization.mockResolvedValueOnce({ ...PREVIEW, state: '' });
     const { wrapper: w } = await mountAuthorize();

@@ -23,7 +23,7 @@ const ACTIVE_GRANT = {
   id: 7,
   client_id: 'client-123',
   client_name: 'CI Assistant',
-  scopes: ['extensions:read', 'extensions:write'],
+  scopes: ['extensions:read', 'kb:read', 'kb:write'],
   version: 2,
   revoked_at: null,
   created_at: '2026-10-30T08:00:00Z',
@@ -60,6 +60,8 @@ describe('MCP 授权管理', () => {
 
     expect(w.text()).toContain('CI Assistant');
     expect(w.text()).toContain('读取资产');
+    expect(w.text()).toContain('读取知识库');
+    expect(w.text()).toContain('写入知识库');
     await button(w, '撤销授权').trigger('click');
     await flushPromises();
 

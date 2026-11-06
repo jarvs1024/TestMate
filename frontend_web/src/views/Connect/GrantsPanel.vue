@@ -76,8 +76,15 @@ function errorText(error: unknown, fallback: string): string {
   return httpErrorText(errorStatus(error), errorDetail(error), fallback);
 }
 
+const SCOPE_TEXT: Record<McpScope, string> = {
+  'extensions:read': '读取资产',
+  'extensions:write': '管理资产',
+  'kb:read': '读取知识库',
+  'kb:write': '写入知识库',
+};
+
 function scopeText(scope: McpScope): string {
-  return scope === 'extensions:write' ? '管理资产' : '读取资产';
+  return SCOPE_TEXT[scope] ?? scope;
 }
 
 function formatTime(value: string | null): string {

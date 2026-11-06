@@ -54,7 +54,9 @@ beforeEach(() => {
   api.createMcpToken.mockReset();
   api.deleteMcpToken.mockReset();
   api.listMcpTokens.mockResolvedValue({ items: [] });
-  api.listMcpTokenScopes.mockResolvedValue({ scopes: ['extensions:read', 'extensions:write'] });
+  api.listMcpTokenScopes.mockResolvedValue({
+    scopes: ['extensions:read', 'extensions:write', 'kb:read', 'kb:write'],
+  });
   api.createMcpToken.mockResolvedValue(TOKEN);
   api.deleteMcpToken.mockResolvedValue(undefined);
   vi.mocked(ElMessageBox.confirm).mockReset();
@@ -113,6 +115,41 @@ describe('个人中心 · 访问令牌', () => {
       name: 'readonly',
       scopes: ['extensions:read'],
     });
+    w.unmount();
+  });
+
+  it('知识库权限按能力渲染并随令牌提交', async () => {
+    api.listMcpTokens
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [{ ...TOKEN, scopes: ['extensions:read', 'kb:read', 'kb:write'] }] });
+    const w = await mountTokens();
+
+    expect(w.text()).toContain('读取知识库');
+    expect(w.text()).toContain('写入知识库');
+    await w.get('input[aria-label="令牌名称"]').setValue('kb agent');
+    await w.get('input[type="checkbox"][value="kb:read"]').setValue(true);
+    await w.get('input[type="checkbox"][value="kb:write"]').setValue(true);
+    await button(w, '创建令牌').trigger('click');
+    await flushPromises();
+
+    expect(api.createMcpToken).toHaveBeenCalledWith({
+      name: 'kb agent',
+      scopes: ['extensions:read', 'kb:read', 'kb:write'],
+    });
+    expect(w.text()).toContain('读取知识库');
+    expect(w.text()).toContain('写入知识库');
+    w.unmount();
+  });
+
+  it('viewer 的写入知识库复选框置灰', async () => {
+    api.listMcpTokenScopes.mockResolvedValue({
+      scopes: ['extensions:read', 'kb:read'],
+    });
+    const w = await mountTokens();
+
+    const kbWrite = w.get('input[type="checkbox"][value="kb:write"]').element as HTMLInputElement;
+    expect(kbWrite.disabled).toBe(true);
+    expect(w.text()).toContain('读取知识库');
     w.unmount();
   });
 
