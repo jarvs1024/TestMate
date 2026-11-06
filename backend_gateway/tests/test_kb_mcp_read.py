@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import pytest
 from httpx import ASGITransport, AsyncClient
 from mcp.server.auth.provider import AccessToken, TokenVerifier
+from sqlalchemy import select
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
@@ -13,8 +14,9 @@ from app.db.session import AsyncSessionLocal
 from app.mcp.common.context import Principal
 from app.mcp.common.server import build_dispatcher, run_mcp_lifespan
 from app.mcp.kb.server import build_kb_server
+from app.models.mcp import McpToolCall
 from app.models.user import User, UserRole
-from tests._mcp_protocol import call_tool_data, list_tools
+from tests._mcp_protocol import call_tool, call_tool_data, list_tools
 
 READ_TOKEN = "kb-read-token"
 ENDPOINT = "/mcp/kb"
@@ -261,20 +263,50 @@ async def test_status_timeout_returns_current_state(principals, fake_kb, monkeyp
     monkeypatch.setattr(kb_mod, "_find_document", fake_find)
 
     clock = {"now": 0.0}
+    slept = 0.0
     monkeypatch.setattr(adapter, "_monotonic", lambda: clock["now"])
 
     async def sleep(seconds):
+        nonlocal slept
+        slept += seconds
         clock["now"] += seconds
 
     monkeypatch.setattr(adapter, "_sleep", sleep)
 
+    wait_seconds = 3
     async with _client(principals) as client:
         data = await call_tool_data(
             client, READ_TOKEN, "kb_document_status",
-            {"dataset_id": "ds-1", "document_id": "doc-1", "wait_seconds": 4},
+            {"dataset_id": "ds-1", "document_id": "doc-1",
+             "wait_seconds": wait_seconds},
             endpoint=ENDPOINT,
         )
 
     assert data["run"] == "RUNNING"
     assert data["timed_out"] is True
     assert data["progress_msg"] == "切片中"
+    assert slept == pytest.approx(wait_seconds)
+    assert clock["now"] == pytest.approx(wait_seconds)
+
+
+async def test_status_missing_name_is_not_found(principals, fake_kb):
+    async with _client(principals) as client:
+        result = await call_tool(
+            client, READ_TOKEN, "kb_document_status",
+            {"dataset_id": "ds-1", "name": "missing.md"}, endpoint=ENDPOINT,
+        )
+
+    assert result.get("isError") is True, result
+    message = "\n".join(
+        item["text"] for item in result["content"] if item["type"] == "text"
+    )
+    assert "文档不存在" in message
+    assert "invalid_arguments" not in message
+
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(McpToolCall).where(McpToolCall.tool == "kb_document_status")
+            )
+        ).scalars().all()
+    assert [row.error for row in rows] == ["not_found"]
