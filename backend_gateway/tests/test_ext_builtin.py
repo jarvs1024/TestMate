@@ -101,6 +101,10 @@ async def test_list_marks_builtin_and_adapts_to_public_base_url(client, auth, bu
     kb = _card(items, "testmate-kb")
 
     assert ext["builtin"] is True and kb["builtin"] is True
+    # 卡片字段 (序列化层, 不只是 DB 行)
+    assert ext["author"] == "admin"
+    assert ext["category"] == "其他"
+    assert "内置" in ext["tags"]
     assert ext["mcp_config"]["mcpServers"]["testmate-extensions"]["url"] == (
         "https://tm.example.com/mcp/skill"
     )
