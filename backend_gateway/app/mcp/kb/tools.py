@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.ragflow_client import CHUNK_METHODS, KB_LANGUAGES
 from app.mcp.common.tool import ToolSpec
 from app.mcp.kb import adapter
 

@@ -150,9 +150,11 @@ async def _client(principals):
     server._token_verifier = _Verifier(principals)
     dispatcher = build_dispatcher({"kb": server})
     app = Starlette(routes=[Mount("/mcp", app=dispatcher)])
-    async with run_mcp_lifespan(dispatcher):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            yield client
+    async with (
+        run_mcp_lifespan(dispatcher),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        yield client
 
 
 async def test_tools_list_exposes_all_read_tools(principals):
@@ -217,7 +219,7 @@ async def test_chunks_search_and_health(principals, fake_kb):
 
 
 async def test_status_polls_until_done(principals, fake_kb, monkeypatch):
-    import app.mcp.kb.adapter as adapter
+    from app.mcp.kb import adapter
 
     states = iter(["RUNNING", "RUNNING", "DONE"])
 
@@ -249,7 +251,7 @@ async def test_status_polls_until_done(principals, fake_kb, monkeypatch):
 
 
 async def test_status_timeout_returns_current_state(principals, fake_kb, monkeypatch):
-    import app.mcp.kb.adapter as adapter
+    from app.mcp.kb import adapter
 
     async def fake_find(dataset_id, document_id):
         return {"id": document_id, "name": "a.md", "run": "RUNNING",

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any
 
@@ -136,6 +135,8 @@ async def _status_document(dataset_id: str, document_id: str, name: str) -> dict
             if doc.get("name") == name or str(doc.get("id") or "") == document_id:
                 return doc
     if not document_id:
+        if name:
+            raise McpRuntimeError("not_found", "文档不存在")
         raise McpRuntimeError("invalid_arguments", "document_id 或 name 至少提供一个")
     doc = await _call(kb._find_document(dataset_id, document_id))
     if not doc:
@@ -168,7 +169,7 @@ async def document_status(
                 "token_count": doc.get("token_count", 0),
                 "timed_out": timed_out,
             }
-        await _sleep(2)
+        await _sleep(max(0.0, min(2.0, deadline - _monotonic())))
 
 
 async def search(
