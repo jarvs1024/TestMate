@@ -136,3 +136,49 @@ def decode_asset_download_ticket(ticket: str) -> dict[str, Any] | None:
     if payload.get("typ") != ASSET_DOWNLOAD_TICKET_TYPE:
         return None
     return payload
+
+
+# ===== 知识库上传票据 =====
+
+#: 上传票是**数据集级、可复用**的: 批量上传 / 慢速内网不能因为一张短票
+#: 变成「前 3 个成功、后 2 个 401」。30 分钟覆盖一批 5×20MB 的常规耗时。
+KB_UPLOAD_TICKET_TYPE = "kb-upload"
+KB_UPLOAD_TICKET_TTL = 1800
+
+
+def create_kb_upload_ticket(
+    *,
+    user_id: int,
+    token_version: int,
+    dataset_id: str,
+    ttl_seconds: int = KB_UPLOAD_TICKET_TTL,
+) -> tuple[str, int]:
+    """签发绑定用户 + 数据集的短时上传票，返回 (ticket, expires_in_seconds)。"""
+    expire = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+    payload: dict[str, Any] = {
+        "typ": KB_UPLOAD_TICKET_TYPE,
+        "uid": int(user_id),
+        "tv": int(token_version),
+        "ds": dataset_id,
+        "exp": expire,
+    }
+    ticket = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    return ticket, ttl_seconds
+
+
+def decode_kb_upload_ticket(ticket: str) -> dict[str, Any] | None:
+    """只接受签名有效、未过期且类型为 kb-upload 的票据。"""
+    if not ticket:
+        return None
+    try:
+        payload = jwt.decode(
+            ticket,
+            settings.JWT_SECRET,
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"require_exp": True},
+        )
+    except (JWTError, TypeError, ValueError):
+        return None
+    if payload.get("typ") != KB_UPLOAD_TICKET_TYPE:
+        return None
+    return payload

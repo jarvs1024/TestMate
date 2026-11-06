@@ -21,12 +21,14 @@ import os
 import re
 from urllib.parse import quote as _quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_user
 from app.core.kb_policy import can_write_kb
+from app.core.security import decode_kb_upload_ticket
+from app.db.session import AsyncSessionLocal
 from app.core.ragflow_client import (
     list_datasets, retrieval, probe,
     list_documents, ingest_documents, delete_documents,
@@ -846,6 +848,73 @@ async def upload_prepared_documents(
             for d in created
         ],
     }
+
+
+@router.post("/datasets/{dataset_id}/documents/ticket-upload")
+async def ticket_upload(dataset_id: str, request: Request) -> dict:
+    """上传票直传 —— 先验票，再读 multipart；一张票可复用于整批。"""
+    claims = decode_kb_upload_ticket(request.headers.get("X-KB-Upload-Ticket", ""))
+    if not claims:
+        raise HTTPException(status_code=401, detail="上传票无效或已过期")
+    if str(claims.get("ds") or "") != dataset_id:
+        raise HTTPException(status_code=403, detail="上传票与数据集不匹配")
+    try:
+        user_id = int(claims.get("uid") or 0)
+        token_version = int(claims.get("tv") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="上传票无效")
+
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=403, detail="上传票对应账号不可用")
+    if token_version != (user.token_version or 0):
+        raise HTTPException(status_code=403, detail="上传票已失效, 请重新签票")
+    if not can_write_kb(user):
+        raise HTTPException(status_code=403, detail="只读账号不能上传文档")
+
+    try:
+        form = await request.form(
+            max_files=MAX_UPLOAD_FILES, max_fields=MAX_UPLOAD_FILES
+        )
+    except Exception:
+        raise HTTPException(status_code=422, detail="上传表单格式错误")
+    try:
+        uploads = form.getlist("file")
+        replace_id = str(form.get("document_id") or "").strip()
+        if not uploads:
+            raise HTTPException(status_code=422, detail="没有选择文件")
+        if replace_id:
+            if len(uploads) != 1:
+                raise HTTPException(status_code=422, detail="替换模式一次只能传 1 个文件")
+            upload = uploads[0]
+            raw_name = (getattr(upload, "filename", "") or "").strip()
+            payload = await _read_upload_limited(
+                upload, MAX_UPLOAD_BYTES, raw_name or "document"
+            )
+            return await replace_document(
+                dataset_id, replace_id, raw_name, payload,
+                getattr(upload, "content_type", "") or "application/octet-stream",
+                user,
+            )
+
+        prepared: list[tuple[str, bytes, str]] = []
+        for f in uploads:
+            raw_name = (getattr(f, "filename", "") or "").strip()
+            if not raw_name:
+                continue
+            name = _sanitize_kb_filename(raw_name, f"doc-{len(prepared) + 1}")
+            data = await _read_upload_limited(f, MAX_UPLOAD_BYTES, name)
+            if not data:
+                continue
+            prepared.append(
+                (name, data, getattr(f, "content_type", "") or "application/octet-stream")
+            )
+        if not prepared:
+            raise HTTPException(status_code=422, detail="没有可上传的文件 (空文件)")
+        return await upload_prepared_documents(dataset_id, prepared, user)
+    finally:
+        await form.close()
 
 
 @router.post("/datasets/{dataset_id}/documents")
