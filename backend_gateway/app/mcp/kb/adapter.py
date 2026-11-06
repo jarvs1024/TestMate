@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any
 
@@ -202,3 +203,213 @@ async def search(
 async def health(ctx: McpContext):
     status, message = await _call(kb.probe())
     return {"status": status, "message": message}
+
+
+# ============ 文本写工具 (2026-11-06 Task 7) ============
+# ⚠️ 写工具的成功语义是**已提交**, 不是解析成功 —— 解析结果让调用方去
+#    kb_document_status 查, adapter 绝不等待 / 绝不谎报 DONE.
+
+
+def _upload_items(name, content, content_type, documents):
+    if documents is not None:
+        if not 1 <= len(documents) <= MAX_MCP_BATCH_DOCS:
+            raise McpRuntimeError("invalid_arguments", "documents 需为 1..5 篇")
+        return [dict(item) for item in documents]
+    if name is None or content is None:
+        raise McpRuntimeError("invalid_arguments", "请提供 name+content 或 documents 数组")
+    item = {"name": name, "content": content}
+    if content_type is not None:
+        item["content_type"] = content_type
+    return [item]
+
+
+def _prepare_text(name: str, content: str, content_type: str | None):
+    clean = kb._sanitize_kb_filename(name, "document")
+    ext = os.path.splitext(clean.lower())[1]
+    if ext not in TEXT_DOC_EXTENSIONS:
+        raise McpRuntimeError(
+            "invalid_document_type",
+            "文本工具只支持 .txt/.md/.markdown/.csv/.json/.log/.html/.htm；"
+            "二进制文件请用 kb_document_write_ticket 签票后直传。",
+        )
+    payload = (content or "").encode("utf-8")
+    if not payload:
+        raise McpRuntimeError("invalid_arguments", "文件内容是空的")
+    if len(payload) > MAX_MCP_INLINE_BYTES:
+        raise McpRuntimeError(
+            "file_too_large", "单篇文本超过 2 MB，请改用 kb_document_write_ticket 签票后直传。"
+        )
+    return clean, payload, content_type or "text/plain; charset=utf-8"
+
+
+def _write_result(
+    docs, errors, ingest_started, warnings, *, count_key="uploaded", replaced=None
+):
+    state = "submitted" if not errors else ("failed" if not docs else "partial")
+    result = {
+        "ok": not errors,
+        "state": state,
+        count_key: len(docs),
+        "failed": len(errors),
+        "ingest_started": ingest_started,
+        "warning": " ".join(warnings),
+        "docs": docs,
+        "errors": errors,
+    }
+    if replaced is not None:
+        result["replaced"] = replaced
+    return result
+
+
+async def dataset_create(
+    ctx: McpContext, *, name, description="", chunk_method="naive", language="Chinese"
+):
+    payload = kb.CreateDatasetIn(
+        name=name, description=description, chunk_method=chunk_method, language=language
+    )
+    return await _call(kb.create_kb_dataset(payload=payload, user=ctx.principal.user))
+
+
+async def document_upload(
+    ctx: McpContext,
+    *,
+    dataset_id,
+    name=None,
+    content=None,
+    content_type=None,
+    documents=None,
+):
+    items = _upload_items(name, content, content_type, documents)
+    await _require_dataset(dataset_id)
+
+    prepared = []
+    errors = []
+    for index, item in enumerate(items):
+        label = str(item.get("name") or f"doc-{index + 1}")
+        try:
+            prepared.append(
+                (index, _prepare_text(label, str(item.get("content") or ""), item.get("content_type")))
+            )
+        except McpRuntimeError as exc:
+            errors.append({"name": label, "error": exc.code, "message": exc.message})
+    if sum(len(payload) for _, (_, payload, _) in prepared) > MAX_MCP_BATCH_BYTES:
+        raise McpRuntimeError(
+            "file_too_large", "本次文本总量超过 8 MB，请分批上传或改用上传票。"
+        )
+
+    docs, warnings, ingest_started = [], [], False
+    for _, file_tuple in prepared:
+        try:
+            result = await _call(
+                kb.upload_prepared_documents(dataset_id, [file_tuple], ctx.principal.user)
+            )
+        except McpRuntimeError as exc:
+            errors.append(
+                {"name": file_tuple[0], "error": exc.code, "message": exc.message}
+            )
+            continue
+        ingest_started = ingest_started or bool(result.get("ingest_started"))
+        if result.get("warning"):
+            warnings.append(str(result["warning"]))
+        for doc in result.get("docs") or []:
+            docs.append(
+                {
+                    "document_id": doc.get("id"),
+                    "name": doc.get("name"),
+                    "state": "submitted",
+                    "run": doc.get("run", "UNSTART"),
+                    "size": doc.get("size", 0),
+                }
+            )
+    return _write_result(docs, errors, ingest_started, warnings)
+
+
+async def document_update(
+    ctx: McpContext,
+    *,
+    dataset_id,
+    document_id=None,
+    content=None,
+    documents=None,
+):
+    if documents is not None:
+        if not 1 <= len(documents) <= MAX_MCP_BATCH_DOCS:
+            raise McpRuntimeError("invalid_arguments", "documents 需为 1..5 篇")
+        items = [dict(item) for item in documents]
+    else:
+        if document_id is None or content is None:
+            raise McpRuntimeError(
+                "invalid_arguments", "请提供 document_id+content 或 documents 数组"
+            )
+        items = [{"document_id": document_id, "content": content}]
+    await _require_dataset(dataset_id)
+
+    docs, errors, warnings = [], [], []
+    replaced_ids: list[str] = []
+    ingest_started = False
+    for item in items:
+        old_id = str(item.get("document_id") or "")
+        try:
+            old = await _call(kb._find_document(dataset_id, old_id))
+            if not old:
+                raise McpRuntimeError("not_found", "文档不存在")
+            name, payload, ctype = _prepare_text(
+                str(old.get("name") or ""), str(item.get("content") or ""), None
+            )
+            result = await _call(
+                kb.replace_document(
+                    dataset_id, old_id, name, payload, ctype, ctx.principal.user
+                )
+            )
+        except McpRuntimeError as exc:
+            errors.append(
+                {"document_id": old_id, "name": "", "error": exc.code, "message": exc.message}
+            )
+            continue
+        ingest_started = ingest_started or bool(result.get("ingest_started"))
+        if result.get("warning"):
+            warnings.append(str(result["warning"]))
+        updated = result.get("updated") or {}
+        docs.append(
+            {
+                "document_id": updated.get("id"),
+                "name": updated.get("name"),
+                "state": "submitted",
+                "run": updated.get("run", "UNSTART"),
+                "size": updated.get("size", 0),
+            }
+        )
+        replaced_ids.append(old_id)
+
+    replaced = replaced_ids[0] if len(items) == 1 and replaced_ids else replaced_ids
+    return _write_result(
+        docs, errors, ingest_started, warnings, count_key="updated", replaced=replaced
+    )
+
+
+async def document_reparse(ctx: McpContext, *, dataset_id, document_id):
+    result = await _call(
+        kb.reparse_kb_document(
+            dataset_id=dataset_id, document_id=document_id, user=ctx.principal.user
+        )
+    )
+    doc = await _call(kb._find_document(dataset_id, document_id)) or {}
+    return {
+        "ok": True,
+        "state": "submitted",
+        "document_id": document_id,
+        "name": result.get("name") or doc.get("name") or "",
+        "run": str(doc.get("run") or "UNSTART"),
+        "ingest_started": True,
+        "warning": "",
+        "docs": [
+            {
+                "document_id": document_id,
+                "name": result.get("name") or doc.get("name") or "",
+                "state": "submitted",
+                "run": str(doc.get("run") or "UNSTART"),
+                "size": 0,
+            }
+        ],
+        "errors": [],
+    }

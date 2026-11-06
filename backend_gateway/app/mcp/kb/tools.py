@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.ragflow_client import CHUNK_METHODS, KB_LANGUAGES
 from app.mcp.common.tool import ToolSpec
 from app.mcp.kb import adapter
 
@@ -120,4 +121,85 @@ READ_SPECS = (
     ),
 )
 
-TOOL_SPECS = READ_SPECS
+_WRITE_DESCRIPTION_SUFFIX = " 返回成功只代表已提交并已发起解析；解析结果请用 kb_document_status 查询。"
+
+UPLOAD_ITEM = _object(
+    {
+        "name": {"type": "string", "minLength": 1},
+        "content": {"type": "string"},
+        "content_type": {"type": "string"},
+    },
+    ["name", "content"],
+)
+
+UPDATE_ITEM = _object(
+    {
+        "document_id": {"type": "string", "minLength": 1},
+        "content": {"type": "string"},
+    },
+    ["document_id", "content"],
+)
+
+WRITE_SPECS = (
+    ToolSpec(
+        name="kb_dataset_create",
+        description="新建知识库数据集。" + _WRITE_DESCRIPTION_SUFFIX,
+        input_schema=_object({
+            "name": {"type": "string", "minLength": 1, "maxLength": 128},
+            "description": {"type": "string", "maxLength": 500, "default": ""},
+            "chunk_method": {"type": "string", "enum": list(CHUNK_METHODS), "default": "naive"},
+            "language": {"type": "string", "enum": list(KB_LANGUAGES), "default": "Chinese"},
+        }, ["name"]),
+        scope="kb:write",
+        read_only=False,
+        handler=adapter.dataset_create,
+    ),
+    ToolSpec(
+        name="kb_document_upload",
+        description=(
+            "上传 UTF-8 文本到数据集，单篇或 documents 数组 1..5 篇，逐篇返回结果。"
+            ".pdf/.docx 等二进制请用 kb_document_write_ticket。"
+            + _WRITE_DESCRIPTION_SUFFIX
+        ),
+        input_schema=_object({
+            "dataset_id": {"type": "string", "minLength": 1},
+            "name": {"type": "string", "minLength": 1},
+            "content": {"type": "string"},
+            "content_type": {"type": "string"},
+            "documents": {"type": "array", "items": UPLOAD_ITEM, "minItems": 1, "maxItems": 5},
+        }, ["dataset_id"]),
+        scope="kb:write",
+        read_only=False,
+        handler=adapter.document_upload,
+    ),
+    ToolSpec(
+        name="kb_document_update",
+        description=(
+            "替换文档内容（RAGFlow 会删旧建新，document_id 会变化），"
+            "单篇或 documents 数组 1..5 篇。旧文档在提交阶段删除，不会自动恢复。"
+            + _WRITE_DESCRIPTION_SUFFIX
+        ),
+        input_schema=_object({
+            "dataset_id": {"type": "string", "minLength": 1},
+            "document_id": {"type": "string", "minLength": 1},
+            "content": {"type": "string"},
+            "documents": {"type": "array", "items": UPDATE_ITEM, "minItems": 1, "maxItems": 5},
+        }, ["dataset_id"]),
+        scope="kb:write",
+        read_only=False,
+        handler=adapter.document_update,
+    ),
+    ToolSpec(
+        name="kb_document_reparse",
+        description="重新解析一篇文档（内容不变，重跑切片与向量化）。" + _WRITE_DESCRIPTION_SUFFIX,
+        input_schema=_object({
+            "dataset_id": {"type": "string", "minLength": 1},
+            "document_id": {"type": "string", "minLength": 1},
+        }, ["dataset_id", "document_id"]),
+        scope="kb:write",
+        read_only=False,
+        handler=adapter.document_reparse,
+    ),
+)
+
+TOOL_SPECS = READ_SPECS + WRITE_SPECS
