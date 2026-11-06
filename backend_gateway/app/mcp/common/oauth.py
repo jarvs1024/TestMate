@@ -29,8 +29,8 @@ from app.models.user import User
 SUPPORTED_SCOPES = frozenset(
     {"extensions:read", "extensions:write", "kb:read", "kb:write"}
 )
-_SCOPE_ORDER = ("extensions:read", "extensions:write", "kb:read", "kb:write")
-SCOPE_HINT = " ".join(_SCOPE_ORDER)
+SCOPE_ORDER = ("extensions:read", "extensions:write", "kb:read", "kb:write")
+SCOPE_HINT = " ".join(SCOPE_ORDER)
 _LEGACY_SCOPES = {"market:read": "extensions:read", "market:write": "extensions:write"}
 AUTHORIZATION_CODE_TTL_SECONDS = 300
 
@@ -110,7 +110,7 @@ def _is_loopback_redirect(uri: Any) -> bool:
 
 def _ordered_scopes(scopes: Sequence[str]) -> list[str]:
     requested = {normalize_scope(scope) for scope in scopes}
-    return [scope for scope in _SCOPE_ORDER if scope in requested]
+    return [scope for scope in SCOPE_ORDER if scope in requested]
 
 
 def _parse_scopes(raw: Any, *, default: Sequence[str] | None = None) -> list[str]:
@@ -175,7 +175,7 @@ async def register_client(
             "redirect URI 仅允许 http://127.0.0.1、http://localhost 或 http://[::1]",
         )
 
-    scopes = _parse_scopes(metadata.get("scope"), default=_SCOPE_ORDER)
+    scopes = _parse_scopes(metadata.get("scope"), default=SCOPE_ORDER)
     client_id = secrets.token_urlsafe(24)
     client_name = str(metadata.get("client_name") or "MCP Client").strip()[:255]
     async with _session_scope(session) as db:

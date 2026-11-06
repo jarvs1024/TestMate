@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.mcp.common.oauth import (
+    SCOPE_ORDER,
     OAuthError,
     exchange_code,
     register_client,
@@ -104,7 +105,7 @@ async def authorization_server_metadata():
         "token_endpoint": f"{issuer}/oauth/token",
         "registration_endpoint": f"{issuer}/oauth/register",
         "revocation_endpoint": f"{issuer}/oauth/revoke",
-        "scopes_supported": ["extensions:read", "extensions:write"],
+        "scopes_supported": list(SCOPE_ORDER),
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "token_endpoint_auth_methods_supported": ["none"],
@@ -118,7 +119,7 @@ async def protected_resource_metadata():
     return {
         "resource": f"{issuer}/mcp/extensions",
         "authorization_servers": [issuer],
-        "scopes_supported": ["extensions:read", "extensions:write"],
+        "scopes_supported": list(SCOPE_ORDER),
         "bearer_methods_supported": ["header"],
     }
 
@@ -130,6 +131,6 @@ async def protected_resource_metadata_legacy():
     return {
         "resource": f"{issuer}/mcp/skill",
         "authorization_servers": [issuer],
-        "scopes_supported": ["extensions:read", "extensions:write"],
+        "scopes_supported": list(SCOPE_ORDER),
         "bearer_methods_supported": ["header"],
     }

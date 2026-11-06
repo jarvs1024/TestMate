@@ -21,6 +21,12 @@ PUBLIC_BASE = "http://127.0.0.1:8081/"
 ISSUER = "http://127.0.0.1:8081"
 VERIFIER = "correct-verifier-1234567890"
 REDIRECT_URI = "http://127.0.0.1:51234/callback"
+SUPPORTED_SCOPES = ["extensions:read", "extensions:write", "kb:read", "kb:write"]
+DISCOVERY_PATHS = [
+    "/.well-known/oauth-authorization-server",
+    "/.well-known/oauth-protected-resource/mcp/extensions",
+    "/.well-known/oauth-protected-resource/mcp/skill",
+]
 
 
 def _challenge() -> str:
@@ -123,7 +129,7 @@ async def test_authorization_server_metadata_advertises_internal_http_issuer(cli
         "token_endpoint": f"{ISSUER}/oauth/token",
         "registration_endpoint": f"{ISSUER}/oauth/register",
         "revocation_endpoint": f"{ISSUER}/oauth/revoke",
-        "scopes_supported": ["extensions:read", "extensions:write"],
+        "scopes_supported": SUPPORTED_SCOPES,
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "token_endpoint_auth_methods_supported": ["none"],
@@ -131,16 +137,36 @@ async def test_authorization_server_metadata_advertises_internal_http_issuer(cli
     }
 
 
-async def test_protected_resource_metadata_targets_mcp_skill(client):
+async def test_protected_resource_metadata_targets_mcp_extensions(client):
     response = await client.get("/.well-known/oauth-protected-resource/mcp/extensions")
 
     assert response.status_code == 200
     assert response.json() == {
         "resource": f"{ISSUER}/mcp/extensions",
         "authorization_servers": [ISSUER],
-        "scopes_supported": ["extensions:read", "extensions:write"],
+        "scopes_supported": SUPPORTED_SCOPES,
         "bearer_methods_supported": ["header"],
     }
+
+
+async def test_protected_resource_metadata_targets_mcp_skill(client):
+    response = await client.get("/.well-known/oauth-protected-resource/mcp/skill")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "resource": f"{ISSUER}/mcp/skill",
+        "authorization_servers": [ISSUER],
+        "scopes_supported": SUPPORTED_SCOPES,
+        "bearer_methods_supported": ["header"],
+    }
+
+
+@pytest.mark.parametrize("path", DISCOVERY_PATHS)
+async def test_discovery_documents_advertise_all_four_scopes(client, path):
+    response = await client.get(path)
+
+    assert response.status_code == 200
+    assert response.json()["scopes_supported"] == SUPPORTED_SCOPES
 
 
 async def test_register_returns_task2_client_metadata_with_201(client):
