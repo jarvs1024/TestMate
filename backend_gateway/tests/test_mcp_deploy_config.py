@@ -267,8 +267,10 @@ async def test_real_app_lifespan_configures_after_seed_and_runs_mcp_manager(
 
     async with main.app.router.lifespan_context(main.app):
         assert managed == [dispatcher]
-        assert set(dispatcher.domains) == {"extensions"}
-        allowed = set(
-            dispatcher.domains["extensions"].settings.transport_security.allowed_hosts
-        )
-        assert {"test", "test:8081"} <= allowed
+        assert set(dispatcher.domains) == {"extensions", "kb"}
+        for domain in ("extensions", "kb"):
+            allowed = set(
+                dispatcher.domains[domain].settings.transport_security.allowed_hosts
+            )
+            assert {"test", "test:8081"} <= allowed
+        assert dispatcher.domains["kb"].settings.streamable_http_path == "/kb"
