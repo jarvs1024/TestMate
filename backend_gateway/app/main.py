@@ -40,12 +40,12 @@ async def lifespan(app: FastAPI):
     await seed_agents()
     await seed_defaults()  # 把 .env 里的值首次落库, 后续 UI 改 DB
 
-    # 内置连接器 (扩展库的「内置 MCP」卡片) —— 幂等种子, 见 app/core/builtin_assets.py
-    from app.core.builtin_assets import ensure_builtin_asset
+    # 内置连接器 (扩展库助手 + 知识库助手) —— 幂等种子, 见 app/core/builtin_assets.py
+    from app.core.builtin_assets import ensure_builtin_assets
     from app.db.session import AsyncSessionLocal as _Session
 
     async with _Session() as _s:
-        await ensure_builtin_asset(_s)
+        await ensure_builtin_assets(_s)
 
     # MCP 必须读取 seed 之后的 DB 设置, 并与 FastAPI 共用同一个 lifespan.
     from app.core.settings_store import get as _get_setting

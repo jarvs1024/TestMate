@@ -370,7 +370,7 @@ def _to_out(a: Asset, can_review: bool = False, mcp_base: str = "") -> AssetOut:
     if builtin_assets.is_builtin_code(a.code or ""):
         out.builtin = True
         if mcp_base:
-            out.mcp_config = builtin_assets.builtin_mcp_config(mcp_base)
+            out.mcp_config = builtin_assets.builtin_mcp_config(a.code, mcp_base)
     return out
 
 
