@@ -53,11 +53,11 @@ def _result(response, request_id: int) -> dict[str, Any]:
 
 
 async def _initialize(
-    client: AsyncClient, token: str
+    client: AsyncClient, token: str, endpoint: str = _ENDPOINT
 ) -> tuple[dict[str, Any], dict[str, str]]:
     headers = _headers(token)
     response = await client.post(
-        _ENDPOINT,
+        endpoint,
         json={
             "jsonrpc": "2.0",
             "id": 1,
@@ -78,7 +78,7 @@ async def _initialize(
     headers["mcp-protocol-version"] = result["protocolVersion"]
 
     initialized = await client.post(
-        _ENDPOINT,
+        endpoint,
         json={"jsonrpc": "2.0", "method": "notifications/initialized"},
         headers=headers,
     )
@@ -87,9 +87,11 @@ async def _initialize(
     return result, headers
 
 
-async def initialize(client: AsyncClient, token: str) -> dict[str, Any]:
+async def initialize(
+    client: AsyncClient, token: str, endpoint: str = _ENDPOINT
+) -> dict[str, Any]:
     """Perform a complete MCP initialize/initialized handshake."""
-    result, _ = await _initialize(client, token)
+    result, _ = await _initialize(client, token, endpoint)
     return result
 
 
@@ -98,18 +100,21 @@ async def _rpc(
     token: str,
     method: str,
     params: dict[str, Any] | None = None,
+    endpoint: str = _ENDPOINT,
 ) -> dict[str, Any]:
-    _, headers = await _initialize(client, token)
+    _, headers = await _initialize(client, token, endpoint)
     request: dict[str, Any] = {"jsonrpc": "2.0", "id": 2, "method": method}
     if params is not None:
         request["params"] = params
-    response = await client.post(_ENDPOINT, json=request, headers=headers)
+    response = await client.post(endpoint, json=request, headers=headers)
     return _result(response, 2)
 
 
-async def list_tools(client: AsyncClient, token: str) -> dict[str, Any]:
+async def list_tools(
+    client: AsyncClient, token: str, endpoint: str = _ENDPOINT
+) -> dict[str, Any]:
     """Return the real tools/list result over MCP Streamable HTTP."""
-    return await _rpc(client, token, "tools/list", {})
+    return await _rpc(client, token, "tools/list", {}, endpoint)
 
 
 async def call_tool(
@@ -117,6 +122,7 @@ async def call_tool(
     token: str,
     name: str,
     args: dict[str, Any],
+    endpoint: str = _ENDPOINT,
 ) -> dict[str, Any]:
     """Return the real tools/call result over MCP Streamable HTTP."""
     return await _rpc(
@@ -124,6 +130,7 @@ async def call_tool(
         token,
         "tools/call",
         {"name": name, "arguments": args},
+        endpoint,
     )
 
 
@@ -132,9 +139,10 @@ async def call_tool_data(
     token: str,
     name: str,
     args: dict[str, Any],
+    endpoint: str = _ENDPOINT,
 ) -> dict[str, Any]:
     """Remove only the MCP content envelope and return a tool's JSON object."""
-    result = await call_tool(client, token, name, args)
+    result = await call_tool(client, token, name, args, endpoint)
     assert result.get("isError") is not True, result
     assert len(result["content"]) == 1
     assert result["content"][0]["type"] == "text"
