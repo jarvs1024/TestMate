@@ -18,6 +18,7 @@ from app.core.settings_store import seed_defaults
 from app.db.session import init_db
 from app.mcp.common import oauth_routes
 from app.mcp.common.server import build_dispatcher, run_mcp_lifespan
+from app.mcp.kb.server import build_kb_server
 from app.mcp.skill.server import build_skill_server
 
 # 入口模块最顶端调用:配置 JSON 结构化日志
@@ -55,11 +56,16 @@ async def lifespan(app: FastAPI):
     ).strip().rstrip("/")
     if not public_base_url:
         public_base_url = f"http://127.0.0.1:{settings.PORT}"
+    allowed_hosts = await _get_setting("mcp.allowed_hosts", "")
     mcp_dispatcher.configure({
         "extensions": build_skill_server(
             public_base_url=public_base_url,
-            allowed_hosts=await _get_setting("mcp.allowed_hosts", ""),
-        )
+            allowed_hosts=allowed_hosts,
+        ),
+        "kb": build_kb_server(
+            public_base_url=public_base_url,
+            allowed_hosts=allowed_hosts,
+        ),
     })
 
     async with run_mcp_lifespan(mcp_dispatcher):

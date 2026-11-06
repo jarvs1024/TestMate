@@ -200,6 +200,19 @@ WRITE_SPECS = (
         read_only=False,
         handler=adapter.document_reparse,
     ),
+    ToolSpec(
+        name="kb_document_write_ticket",
+        description=(
+            "签发数据集级、30 分钟可复用的上传票；二进制文件用 curl -F 直传 upload_url，"
+            "不要用 base64。替换时在直传请求里加 -F document_id=<id>。"
+        ),
+        input_schema=_object(
+            {"dataset_id": {"type": "string", "minLength": 1}}, ["dataset_id"]
+        ),
+        scope="kb:write",
+        read_only=False,
+        handler=adapter.document_write_ticket,
+    ),
 )
 
 TOOL_SPECS = READ_SPECS + WRITE_SPECS

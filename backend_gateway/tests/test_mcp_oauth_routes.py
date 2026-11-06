@@ -26,6 +26,7 @@ DISCOVERY_PATHS = [
     "/.well-known/oauth-authorization-server",
     "/.well-known/oauth-protected-resource/mcp/extensions",
     "/.well-known/oauth-protected-resource/mcp/skill",
+    "/.well-known/oauth-protected-resource/mcp/kb",
 ]
 
 
@@ -155,6 +156,18 @@ async def test_protected_resource_metadata_targets_mcp_skill(client):
     assert response.status_code == 200
     assert response.json() == {
         "resource": f"{ISSUER}/mcp/skill",
+        "authorization_servers": [ISSUER],
+        "scopes_supported": SUPPORTED_SCOPES,
+        "bearer_methods_supported": ["header"],
+    }
+
+
+async def test_protected_resource_metadata_targets_mcp_kb(client):
+    response = await client.get("/.well-known/oauth-protected-resource/mcp/kb")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "resource": f"{ISSUER}/mcp/kb",
         "authorization_servers": [ISSUER],
         "scopes_supported": SUPPORTED_SCOPES,
         "bearer_methods_supported": ["header"],

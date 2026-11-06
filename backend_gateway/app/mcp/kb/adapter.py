@@ -5,13 +5,16 @@ import asyncio
 import logging
 import os
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.api import kb
+from app.core.security import create_kb_upload_ticket
 from app.mcp.common.context import McpContext
 from app.mcp.common.errors import McpRuntimeError
+from app.mcp.common.oauth import resolve_public_base
 
 logger = logging.getLogger(__name__)
 
@@ -450,4 +453,40 @@ async def document_reparse(ctx: McpContext, *, dataset_id, document_id):
             }
         ],
         "errors": [],
+    }
+
+
+# ============ 上传票工具 (2026-11-06 Task 8) ============
+# ⚠️ 票是「数据集级 + 30 分钟可复用」的: 二进制文件走 curl -F 直传,
+#    不经过 MCP 通道 (base64 会膨胀 + 撑爆 JSON 请求体).
+
+
+async def document_write_ticket(ctx: McpContext, *, dataset_id):
+    await _require_dataset(dataset_id)
+    base = (await resolve_public_base()).strip().rstrip("/")
+    if not base:
+        raise McpRuntimeError(
+            "kb_unavailable", "无法确定上传地址，请联系管理员配置 extensions.public_base_url。"
+        )
+    ticket, expires_in = create_kb_upload_ticket(
+        user_id=int(ctx.principal.user.id),
+        token_version=int(ctx.principal.user.token_version or 0),
+        dataset_id=dataset_id,
+    )
+    expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+    return {
+        "ticket": ticket,
+        "upload_url": f"{base}/api/v1/kb/datasets/{dataset_id}/documents/ticket-upload",
+        "method": "POST",
+        "file_field": "file",
+        "replace_field": "document_id",
+        "expires_in": expires_in,
+        "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+        "max_bytes_per_file": kb.MAX_UPLOAD_BYTES,
+        "max_files_per_request": kb.MAX_UPLOAD_FILES,
+        "reusable": True,
+        "note": (
+            "30 分钟内可复用；上传多篇就重复 -F file；替换时加 -F document_id=<id>。"
+            "批量超过 30 分钟就重新签票，已传文件不受影响。"
+        ),
     }

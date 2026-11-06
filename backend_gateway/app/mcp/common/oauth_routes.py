@@ -134,3 +134,14 @@ async def protected_resource_metadata_legacy():
         "scopes_supported": list(SCOPE_ORDER),
         "bearer_methods_supported": ["header"],
     }
+
+
+@router.get("/.well-known/oauth-protected-resource/mcp/kb")
+async def protected_resource_metadata_kb():
+    issuer = await _public_base()
+    return {
+        "resource": f"{issuer}/mcp/kb",
+        "authorization_servers": [issuer],
+        "scopes_supported": list(SCOPE_ORDER),
+        "bearer_methods_supported": ["header"],
+    }
