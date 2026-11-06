@@ -31,6 +31,7 @@
         <string>--proxy-headers</string>
         <string>--forwarded-allow-ips</string>
         <string>@@FORWARDED_ALLOW@@</string>
+        <string>--no-access-log</string>
     </array>
 
     <key>WorkingDirectory</key>

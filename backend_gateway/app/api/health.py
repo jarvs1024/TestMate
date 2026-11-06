@@ -13,9 +13,33 @@ from typing import Tuple
 from fastapi import APIRouter, Response, status
 
 from app.core.config import settings
+from app.core.logging import log_rate_limited
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# 探针状态: 只在"正常 ↔ 故障"跃迁时告警, 持续故障每 10 分钟提醒一次.
+# ⚠️ /health/ready 每 15 秒被 docker healthcheck 调一次 —— 依赖挂掉时
+#    以前每个探针每次都 WARNING, 一天 5760 条重复, 真正的时间点反而被淹没.
+_probe_state: dict[str, bool] = {}
+_PROBE_REMIND_SECONDS = 600.0
+
+
+def _log_probe(name: str, ok: bool, detail: str = "") -> None:
+    prev = _probe_state.get(name)
+    _probe_state[name] = ok
+    if ok:
+        if prev is False:
+            logger.info("readiness: %s 已恢复", name)
+        return
+    if prev is not False:
+        logger.warning("readiness: %s 探针失败: %s", name, detail)
+    else:
+        log_rate_limited(
+            logger, f"readiness.{name}", logging.WARNING,
+            "readiness: %s 探针仍然失败: %s", name, detail,
+            interval=_PROBE_REMIND_SECONDS,
+        )
 
 
 # ---------------- liveness ----------------
@@ -50,9 +74,10 @@ async def _check_mysql() -> Tuple[bool, str]:
         from app.db.session import engine
         async with engine.connect() as conn:
             await asyncio.wait_for(conn.execute(text("SELECT 1")), timeout=2.0)
+        _log_probe("mysql", True)
         return True, ""
     except Exception as e:
-        logger.warning("readiness: mysql 探针失败: %s: %s", type(e).__name__, e)
+        _log_probe("mysql", False, f"{type(e).__name__}: {e}")
         return False, f"{type(e).__name__}: {e}"
 
 
@@ -70,11 +95,12 @@ async def _check_redis() -> Tuple[bool, str]:
         )
         try:
             await asyncio.wait_for(client.ping(), timeout=2.0)
+            _log_probe("redis", True)
             return True, ""
         finally:
             await client.aclose()
     except Exception as e:
-        logger.warning("readiness: redis 探针失败: %s: %s", type(e).__name__, e)
+        _log_probe("redis", False, f"{type(e).__name__}: {e}")
         return False, f"{type(e).__name__}: {e}"
 
 
@@ -147,9 +173,9 @@ async def _probe_gitlab() -> Tuple[bool, str]:
             ok, err = False, (se or so).strip()[:200]
     except Exception as e:  # noqa: BLE001
         ok, err = False, f"{type(e).__name__}: {e}"
-    if err:
-        # ⚠️ git 的报错里带 SSH 仓库地址 (内网 host + 仓库路径) —— 原文进日志, 不外发
-        logger.warning("readiness: gitlab 探针失败: %s", err)
+    # ⚠️ git 的报错里带 SSH 仓库地址 (内网 host + 仓库路径) —— 原文进日志, 不外发.
+    #    30s 缓存 + 状态跃迁才告警, 不会每 15 秒刷一条.
+    _log_probe("gitlab", ok, err)
 
     _ext_probe_cache["gitlab"] = {"ok": ok, "err": err, "ts": now}
     return ok, err
@@ -184,7 +210,11 @@ async def _check_extensions() -> dict:
         git_ok, git_err = await _probe_gitlab()
         out["gitlab"] = {"ok": git_ok, "error": git_err or None}
     except Exception as e:  # noqa: BLE001
-        logger.warning("readiness: gitlab 探针异常: %s: %s", type(e).__name__, e)
+        log_rate_limited(
+            logger, "readiness.gitlab_exc", logging.WARNING,
+            "readiness: gitlab 探针异常: %s: %s", type(e).__name__, e,
+            interval=300,
+        )
         out["gitlab"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     try:
@@ -224,7 +254,11 @@ async def _check_extensions() -> dict:
         out["pending_jobs"] = int(pending)
         out["unpublished"] = int(unpublished)
     except Exception as e:  # noqa: BLE001
-        logger.warning("readiness: 扩展统计查询失败: %s: %s", type(e).__name__, e)
+        log_rate_limited(
+            logger, "readiness.ext_stats", logging.WARNING,
+            "readiness: 扩展统计查询失败: %s: %s", type(e).__name__, e,
+            interval=300,
+        )
         out["error"] = f"{type(e).__name__}: {e}"
 
     # ⚠️ 判定用 failed_assets (还有活没推上去), 不是 failed_jobs (历史残留) —— 见上面

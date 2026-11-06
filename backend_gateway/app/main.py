@@ -1,6 +1,8 @@
 """FastAPI 入口。"""
 import logging
 import os
+import time
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +10,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.core.security import decode_token
 from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, review_agent, extensions, software, platform
 from app.api import mcp as mcp_api
 from app.api.agents import seed_agents
@@ -18,7 +21,8 @@ from app.mcp.common.server import build_dispatcher, run_mcp_lifespan
 from app.mcp.skill.server import build_skill_server
 
 # 入口模块最顶端调用:配置 JSON 结构化日志
-setup_logging(level="INFO" if not settings.DEBUG else "DEBUG")
+# ⚠️ 级别由 LOG_LEVEL 单独控制 (留空则按 DEBUG 推导) —— 不再等于 SQL echo.
+setup_logging(level=settings.LOG_LEVEL or ("DEBUG" if settings.DEBUG else "INFO"))
 import structlog
 log = structlog.get_logger("testmate.main")
 mcp_dispatcher = build_dispatcher()
@@ -28,6 +32,10 @@ mcp_dispatcher = build_dispatcher()
 async def lifespan(app: FastAPI):
     """启动 / 关闭钩子。"""
     log.info("startup.begin", app=settings.APP_NAME, version=settings.APP_VERSION)
+    # 防止启动顺序把 uvicorn 的日志配置/access log 级别重置回去 (请求日志我们自己记)
+    from app.core.logging import unify_uvicorn_loggers
+
+    unify_uvicorn_loggers()
     await init_db()
     await seed_agents()
     await seed_defaults()  # 把 .env 里的值首次落库, 后续 UI 改 DB
@@ -153,6 +161,93 @@ async def _capture_public_base_url(request: Request, call_next):
     finally:
         # ⚠️ 只清**当前请求**的记录 (进程内缓存保留 —— 后台 worker 要用)
         set_request_base_url("")
+
+
+# ===== 请求级日志 (审计 + 定位) =====
+#
+# 以前只有 uvicorn 自带 access log: 纯文本、每个健康检查都打、没有 request_id,
+# 4xx/5xx 也没有统一的业务上下文. 这里统一接管:
+#   · 生成 / 透传 X-Request-ID, 并注入 structlog 上下文 (后台日志也能带上)
+#   · 一行一个请求: method / path(路由模板) / status / duration_ms / ip / actor
+#   · 5xx=ERROR、401/403/429=WARNING、其余 4xx=INFO
+#   · 2xx 的 GET/HEAD/OPTIONS 降 DEBUG —— 前端轮询不该刷屏
+#   · /api/v1/health* 完全跳过 (docker healthcheck 15s 一次)
+_HTTP_LOG_SKIP_PREFIXES = ("/api/v1/health",)
+
+
+def _safe_request_id(raw: str) -> str:
+    """客户端可以自带 X-Request-ID, 但只放行安全字符并限长 (防日志注入)."""
+    raw = (raw or "").strip()
+    if raw and len(raw) <= 64 and all(c.isalnum() or c in "-_." for c in raw):
+        return raw
+    return uuid.uuid4().hex[:16]
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ip = forwarded or (request.client.host if request.client else "")
+    return (ip or "-")[:64]
+
+
+def _route_path(request: Request) -> str:
+    """优先记**路由模板** (/assets/{code}), 不是原始路径 —— 否则每个资产一个 key."""
+    route = request.scope.get("route")
+    return str(getattr(route, "path", None) or request.url.path)[:200]
+
+
+def _request_actor(request: Request) -> str:
+    """从 Bearer token 里取用户名 (只验签, 不查库; 主要用于把请求和人对上)."""
+    header = request.headers.get("authorization") or ""
+    if not header.lower().startswith("bearer "):
+        return ""
+    try:
+        payload = decode_token(header.split(" ", 1)[1].strip())
+    except Exception:  # noqa: BLE001 — 日志字段解析失败不能影响请求
+        return ""
+    if not payload:
+        return ""
+    return str(payload.get("username") or payload.get("sub") or "")[:64]
+
+
+@app.middleware("http")
+async def _request_logging(request: Request, call_next):
+    request_id = _safe_request_id(request.headers.get("x-request-id") or "")
+    structlog.contextvars.bind_contextvars(request_id=request_id)
+    started = time.perf_counter()
+    status_code = 500
+    exc: BaseException | None = None
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        return response
+    except Exception as e:  # noqa: BLE001 — 记完再抛, 交给 uvicorn 转 500
+        exc = e
+        raise
+    finally:
+        path = _route_path(request)
+        if not path.startswith(_HTTP_LOG_SKIP_PREFIXES):
+            fields = {
+                "method": request.method,
+                "path": path,
+                "status": status_code,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                "ip": _client_ip(request),
+                "actor": _request_actor(request),
+            }
+            if exc is not None:
+                log.exception("http_request", **fields)
+            elif status_code >= 500:
+                log.error("http_request", **fields)
+            elif status_code in (401, 403, 429):
+                log.warning("http_request", **fields)
+            elif status_code >= 400:
+                log.info("http_request", **fields)
+            elif request.method in ("GET", "HEAD", "OPTIONS"):
+                log.debug("http_request", **fields)
+            else:
+                log.info("http_request", **fields)
+        structlog.contextvars.clear_contextvars()
 
 # 路由
 app.include_router(health.router, prefix="/api/v1", tags=["health"])

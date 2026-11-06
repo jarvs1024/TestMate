@@ -66,4 +66,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
     CMD curl -fsS http://127.0.0.1:8000/api/v1/health/ready || exit 1
 
 # 启动 uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# ⚠️ --no-access-log: 请求日志由 app.main._request_logging 统一记录
+#    (带 request_id / 耗时 / 状态码, 且跳过 15s 一次的健康检查).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

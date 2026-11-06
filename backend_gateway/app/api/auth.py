@@ -1,6 +1,7 @@
 from typing import Optional
 """登录 / 当前用户 / 账号管理。"""
 import asyncio
+import logging
 import os
 import secrets
 import time
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.identity import local_part, lookup_candidates, to_email
+from app.core.logging import current_request_id, log_rate_limited
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.db.session import get_session
 from app.models.asset import AssetAudit
@@ -29,6 +31,7 @@ from app.schemas.auth import (
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+logger = logging.getLogger(__name__)
 
 
 # ===== 登录失败限流 =====
@@ -216,6 +219,50 @@ async def get_optional_user(
     return user or _anonymous_user()
 
 
+# ===== 登录审计 =====
+#
+# 为什么既要日志又要落库:
+#   · 日志 —— 排查"某个时间点谁从哪个 IP 登录 / 被挡", 带 request_id 能串到同一次请求;
+#   · AssetAudit —— 日志会被轮转删掉, 登录成功和针对**真实账号**的失败要留得比日志久.
+#   · 不落库的: 不存在的账号 (撞库/乱填会造出海量垃圾行, 日志里有就够了)、
+#     被限流后的每次重试 (10 次/15 分钟已经挡住, 再每次写库等于放大攻击).
+def _client_meta(request: Request) -> tuple[str, str]:
+    """返回 (ip, user_agent) —— 都截断, 防止超长头进日志/审计."""
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ip = forwarded or (request.client.host if request.client else "") or "-"
+    ua = (request.headers.get("user-agent") or "")[:200]
+    return ip[:64], ua
+
+
+async def _audit_login(
+    session: AsyncSession,
+    *,
+    action: str,
+    username: str,
+    actor_id: int | None,
+    detail: dict,
+    comment: str,
+) -> None:
+    """登录事件留痕. 写库失败**不能**影响登录本身 (只记一条警告)."""
+    username = (username or "").strip()[:128]
+    try:
+        session.add(
+            AssetAudit(
+                asset_id=None,
+                code=f"user:{username}"[:64],
+                action=action,
+                actor_id=actor_id,
+                actor_name=username[:64],
+                comment=comment,
+                detail={**detail, "request_id": current_request_id()},
+            )
+        )
+        await session.commit()
+    except Exception as e:  # noqa: BLE001 — 审计不能挡住业务
+        await session.rollback()
+        logger.warning("登录审计写库失败 action=%s username=%s error=%s", action, username, e)
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(
     req: LoginRequest,
@@ -241,10 +288,16 @@ async def login(
     """
     # ⚠️ 限流: 连续失败太多次就先挡住 (默认 10 次 / 15 分钟).
     #    挡在**查库之前** —— 账号不存在也照样计数, 否则枚举账号反而没有代价.
-    client_ip = request.client.host if request.client else "-"
+    client_ip, user_agent = _client_meta(request)
     fail_key = _login_fail_key(req.username, client_ip)
     fails = await _login_fail_count(fail_key)
     if fails >= _LOGIN_FAIL_LIMIT:
+        # 攻击期间每次重试都返回 429 —— 同一 key 每分钟只记一条, 别自己刷屏
+        log_rate_limited(
+            logger, f"auth.blocked:{fail_key}", logging.WARNING,
+            "登录被限流 username=%s ip=%s fails=%s window_s=%s",
+            req.username[:128], client_ip, fails, _LOGIN_FAIL_WINDOW,
+        )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"登录失败次数过多, 请 {_LOGIN_FAIL_WINDOW // 60} 分钟后再试",
@@ -253,15 +306,33 @@ async def login(
     user = await _find_user(session, req.username)
 
     if user is None:
-        # 账号不存在 → 不给自动开通, 让管理员先建号
+        # 账号不存在 → 不给自动开通, 让管理员先建号.
+        # ⚠️ 只记日志**不落库** —— 撞库/乱填会造出海量垃圾审计行.
         await _record_login_failure(fail_key)
+        logger.warning(
+            "登录失败 (账号不存在) username=%s ip=%s", req.username[:128], client_ip
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "account_not_found", "message": "账号不存在, 请联系管理员开通"},
         )
 
     if not user.is_active:
-        await _record_login_failure(fail_key)
+        fails = await _record_login_failure(fail_key)
+        logger.warning("登录失败 (账号停用) username=%s ip=%s", user.username, client_ip)
+        await _audit_login(
+            session,
+            action="user.login_failed",
+            username=user.username,
+            actor_id=None,
+            detail={
+                "reason": "account_disabled",
+                "ip": client_ip,
+                "user_agent": user_agent,
+                "fails": fails,
+            },
+            comment="账号已停用, 登录被拒",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "account_disabled", "message": "账号已停用, 请联系管理员"},
@@ -271,6 +342,8 @@ async def login(
     need_password = user.role == UserRole.admin or user.password_required
     if need_password:
         if not req.password:
+            # 这不是一次失败尝试 (前端只是还没展开密码框), 不计失败次数
+            logger.info("登录需要密码 username=%s ip=%s", user.username, client_ip)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -279,7 +352,24 @@ async def login(
                 },
             )
         if not verify_password(req.password, user.password_hash):
-            await _record_login_failure(fail_key)
+            fails = await _record_login_failure(fail_key)
+            logger.warning(
+                "登录失败 (密码错误) username=%s ip=%s fails=%s",
+                user.username, client_ip, fails,
+            )
+            await _audit_login(
+                session,
+                action="user.login_failed",
+                username=user.username,
+                actor_id=None,
+                detail={
+                    "reason": "bad_password",
+                    "ip": client_ip,
+                    "user_agent": user_agent,
+                    "fails": fails,
+                },
+                comment="密码错误",
+            )
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     elif req.password:
         # 免密账号: 用户还是输了密码 —— 这个账号**压根没有密码**, 输什么都对不上.
@@ -288,6 +378,15 @@ async def login(
 
     # 登录成功 → 清掉失败计数 (别让一次误输把账号一直挂着"快锁了")
     await _clear_login_failures(fail_key)
+    logger.info("登录成功 username=%s role=%s ip=%s", user.username, user.role.value, client_ip)
+    await _audit_login(
+        session,
+        action="user.login",
+        username=user.username,
+        actor_id=user.id,
+        detail={"role": user.role.value, "ip": client_ip, "user_agent": user_agent},
+        comment="登录成功",
+    )
 
     # ⚠️ token 里带 tv (token_version) —— 之后改密码/改角色/停用会让旧 token 立即作废
     token, expires_in = create_access_token(
@@ -352,9 +451,14 @@ async def account_hint(
     ⚠️ 输入还没成形 (少于 2 个字符) → account='unknown', 不查库 ——
        否则用户刚开始打字就会看到"账号不存在".
     """
-    client_ip = request.client.host if request.client else "-"
+    client_ip, _ = _client_meta(request)
     hint_key = f"hint|{client_ip}"
     if await _hint_count(hint_key) >= _HINT_LIMIT:
+        # 账号提示被当枚举工具用 —— 这是安全信号, 但每请求一条会刷屏, 限流记录
+        log_rate_limited(
+            logger, f"auth.hint_blocked:{client_ip}", logging.WARNING,
+            "账号提示查询被限流 ip=%s window_s=%s", client_ip, _HINT_WINDOW,
+        )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"查询过于频繁, 请 {_HINT_WINDOW // 60} 分钟后再试",

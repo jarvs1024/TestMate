@@ -84,6 +84,9 @@ services:
       APP_NAME: TestMate Gateway
       APP_VERSION: 0.1.0
       DEBUG: "false"
+      # 日志级别与应用 DEBUG 解耦; SQL echo 单独开关 (默认都关)
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DB_ECHO: ${DB_ECHO:-false}
       HOST: 0.0.0.0
       PORT: "8000"
 

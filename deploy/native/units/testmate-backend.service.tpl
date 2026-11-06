@@ -32,7 +32,7 @@ Environment=PATH=@@VENV_BIN@@:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:
 #    跑多 worker = 每个进程一份队列 + 每个进程都 recover_pending_jobs()
 #    → 同一个 job 被多个进程抢 → index.lock 冲突 / 重复推送 GitLab.
 #    要提吞吐请加机器, 不要加 worker.
-ExecStart=@@VENV_BIN@@/uvicorn app.main:app --host @@BIND_ADDR@@ --port @@BACKEND_PORT@@ --workers @@WORKERS@@ --proxy-headers --forwarded-allow-ips=@@FORWARDED_ALLOW@@
+ExecStart=@@VENV_BIN@@/uvicorn app.main:app --host @@BIND_ADDR@@ --port @@BACKEND_PORT@@ --workers @@WORKERS@@ --proxy-headers --forwarded-allow-ips=@@FORWARDED_ALLOW@@ --no-access-log
 
 Restart=always
 RestartSec=5

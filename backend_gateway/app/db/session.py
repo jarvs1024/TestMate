@@ -14,7 +14,9 @@ class Base(DeclarativeBase):
 
 engine = create_async_engine(
     settings.mysql_async_dsn,
-    echo=settings.DEBUG,
+    # ⚠️ SQL echo 单独开关 —— 以前跟 DEBUG 绑在一起, 想开应用 DEBUG 日志
+    #    就先被每条 SQL 淹了 (日志噪音 + 性能影响), 实际没人敢开.
+    echo=settings.DB_ECHO,
     pool_pre_ping=True,
     pool_recycle=3600,
 )

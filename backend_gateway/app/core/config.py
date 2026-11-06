@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     APP_NAME: str = "TestMate Gateway"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
+    # 日志级别 (DEBUG/INFO/WARNING/ERROR). 留空 = 按 DEBUG 推导:
+    #   DEBUG=true → DEBUG, 否则 INFO.
+    # ⚠️ 跟 SQL echo 分开: 以前想开详细日志只能开 DEBUG, 结果 SQL 全打出来.
+    LOG_LEVEL: str = ""
+    # SQLAlchemy 是否打印每条 SQL (默认关, 排查慢查询时按需开)
+    DB_ECHO: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     CORS_ORIGINS: List[str] = Field(default_factory=lambda: ["http://localhost:5173", "http://localhost:8080"])

@@ -12,8 +12,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.auth import get_current_user
+from app.core.logging import current_request_id
 from app.core.settings_store import SETTING_SCHEMA, get, get_all, to_bool
 from app.db.session import AsyncSessionLocal
+from app.models.asset import AssetAudit
 from app.models.system_setting import SystemSetting
 from app.models.user import User
 from app.schemas.system_setting import (
@@ -55,6 +57,26 @@ def _is_default(value: Any, default: Any, value_type: str) -> bool:
     if value_type == "bool":
         return to_bool(value) == to_bool(default)
     return value == default
+
+
+# 审计里**绝不能落原文**的设置项: webhook URL 自带 access_token, 其余是凭据本身.
+_AUDIT_SECRET_RE = re.compile(r"(webhook|secret|token|api_key|password)", re.IGNORECASE)
+
+
+def _setting_raw(row: SystemSetting | None, schema: dict) -> Any:
+    """设置行里存的是 {"v": value}; 没有行时用 schema 默认值."""
+    if row is None:
+        return schema.get("default")
+    v = row.value
+    return v.get("v") if isinstance(v, dict) else v
+
+
+def _audit_value(value: Any, schema: dict) -> Any:
+    """审计记录的值: 凭据类只记"有没有", 其余截断到 500 字符 (防超长 URL/JSON)."""
+    if schema.get("is_secret") or _AUDIT_SECRET_RE.search(schema["key"]):
+        return "***" if value not in (None, "") else ""
+    s = str(value)
+    return s if len(s) <= 500 else s[:500] + "…"
 
 
 # ⚠️ **非管理员看不到的条目** —— 里面是"拿到就能直接用"的东西:
@@ -154,6 +176,8 @@ async def update_setting(
                 old_storage = (v.get("v") if isinstance(v, dict) else v) or ""
     async with AsyncSessionLocal() as session:
         row = await session.get(SystemSetting, key)
+        # ⚠️ 旧值必须在覆盖前取 —— 审计要回答"从什么改成了什么"
+        old_value = _setting_raw(row, schema)
         if row is None:
             row = SystemSetting(
                 key=key,
@@ -167,8 +191,27 @@ async def update_setting(
         else:
             row.value = {"v": value}
             row.updated_by = user.id
+        # 设置变更留痕: 谁 / 什么时候 / 把哪个 key 从什么改成了什么.
+        # ⚠️ 凭据类只记 "***" —— 审计表不该变成第二个凭据泄露源.
+        session.add(
+            AssetAudit(
+                asset_id=None,
+                code=f"setting:{key}"[:64],
+                action="setting.update",
+                actor_id=user.id,
+                actor_name=user.username,
+                comment=f"修改设置 {key}",
+                detail={
+                    "key": key,
+                    "old": _audit_value(old_value, schema),
+                    "new": _audit_value(value, schema),
+                    "request_id": current_request_id(),
+                },
+            )
+        )
         await session.commit()
         await session.refresh(row)
+    logger.info("设置变更 key=%s actor=%s", key, user.username)
     # 扩展的仓库地址/分支是**运行时配置** —— 改完立即生效, 不用重启后端
     if key in ("extensions.git.remote", "extensions.git.branch"):
         from app.core import git_sync

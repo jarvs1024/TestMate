@@ -161,7 +161,8 @@ def _git_phase() -> dict[str, Any]:
         if ln.strip().endswith("/") is False and "assets/" in ln
     ]
     if pending_local:
-        logger.info(
+        # 每 30 秒一轮都会命中 —— 这是"常态跳过", 不是故障, 只留 DEBUG
+        logger.debug(
             "sync_puller 跳过本轮 (本地有未提交资产改动 %s 项)", len(pending_local)
         )
         return {"skipped": "本地有未提交的资产改动, 本轮跳过"}
@@ -185,7 +186,7 @@ def _git_phase() -> dict[str, Any]:
         )
         ahead = so.strip() if rc == 0 else "0"
         if ahead and ahead != "0":
-            logger.info("sync_puller 跳过本轮 (本地有 %s 个未推送 commit)", ahead)
+            logger.debug("sync_puller 跳过本轮 (本地有 %s 个未推送 commit)", ahead)
             return {"skipped": f"本地有 {ahead} 个未推送 commit, 本轮跳过"}
 
         to_checkout: list[str] = []
@@ -334,10 +335,15 @@ async def sync_once() -> dict[str, Any]:
         _puller.conflict_count = len(conflicts)
         _puller.last_sync_at = datetime.utcnow()
         _puller.last_error = ""
-        logger.info(
-            "sync_puller 完成: changed=%s conflicts=%s added=%s updated=%s",
-            changed, len(conflicts), added, updated,
-        )
+        # ⚠️ 30 秒一轮 —— 没事发生时**不打 INFO**.
+        #    以前每天 ~2880 行 "changed=0 conflicts=0 ..." 把真实故障淹了.
+        if changed or conflicts or added or updated or removed:
+            logger.info(
+                "sync_puller 完成: changed=%s conflicts=%s added=%s updated=%s removed=%s",
+                changed, len(conflicts), added, updated, removed,
+            )
+        else:
+            logger.debug("sync_puller 完成: 无变化")
         return {
             "changed": changed,
             "conflicts": conflicts,

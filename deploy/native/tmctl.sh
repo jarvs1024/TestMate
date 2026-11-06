@@ -946,6 +946,9 @@ emit_env() {
     emit_env APP_NAME "TestMate Gateway"
     emit_env APP_VERSION "0.1.0"
     emit_env DEBUG "false"
+    # 日志级别 / SQL echo —— 与应用 DEBUG 解耦
+    emit_env LOG_LEVEL "$(cfg LOG_LEVEL INFO)"
+    emit_env DB_ECHO "$(cfg DB_ECHO false)"
     emit_env HOST "$bind_addr"
     emit_env PORT "$be_port"
     emit_env TZ "$(cfg TIMEZONE Asia/Shanghai)"
