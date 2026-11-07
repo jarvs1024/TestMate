@@ -3,7 +3,7 @@
 背景: 同一个人反复下载/复制 (误触、重试或恶意连点) 会把 download_count 刷虚高.
 方案 (用户拍板):
   · **冷却窗口去重** —— 同一 dedup_key (u:{用户id} 或 ip:{客户端IP}) 在
-    1 小时 (DEDUP_WINDOW_SECONDS) 内对同一目标只计 1 次, 之后照常计数.
+    2 小时 (DEDUP_WINDOW_SECONDS) 内对同一目标只计 1 次, 之后照常计数.
   · **匿名下载按 IP 去重** (X-Forwarded-For 第一跳; 裸机 nginx 反代下
     request.client 恒为 127.0.0.1, 必须看转发头).
   · 软件库**条目计数**按 (key, code) 去重, **版本计数**按 (key, code@版本)
@@ -23,7 +23,7 @@ from jose import jwt
 from sqlalchemy import select, update
 
 from app.core.config import settings
-from app.core.count_dedup import bump_count, user_key
+from app.core.count_dedup import DEDUP_WINDOW_SECONDS, bump_count, user_key
 from app.db.session import AsyncSessionLocal
 from tests.conftest import set_setting
 
@@ -59,9 +59,20 @@ async def test_bump_counts_again_after_window():
     async with AsyncSessionLocal() as s:
         assert await bump_count(s, "unit-demo", "u:1") is True
         await s.commit()
-    await _backdate_mark("unit-demo", "u:1", 7200)
+    await _backdate_mark("unit-demo", "u:1", DEDUP_WINDOW_SECONDS + 60)
     async with AsyncSessionLocal() as s:
         assert await bump_count(s, "unit-demo", "u:1") is True
+        await s.commit()
+
+
+async def test_bump_window_is_two_hours():
+    """90 分钟前的标记仍在窗口内 —— 窗口是 2 小时."""
+    async with AsyncSessionLocal() as s:
+        assert await bump_count(s, "unit-window", "u:1") is True
+        await s.commit()
+    await _backdate_mark("unit-window", "u:1", 90 * 60)
+    async with AsyncSessionLocal() as s:
+        assert await bump_count(s, "unit-window", "u:1") is False
         await s.commit()
 
 
@@ -113,7 +124,7 @@ async def test_copy_counts_again_after_window(client, auth, mcp_conn, admin_user
     r1 = await client.post(f"{API}/conn-x/copy", headers=auth)
     assert r1.json()["copy_count"] == 1
 
-    await _backdate_mark("conn-x", user_key(admin_user["id"]), 7200)
+    await _backdate_mark("conn-x", user_key(admin_user["id"]), DEDUP_WINDOW_SECONDS + 60)
 
     r2 = await client.post(f"{API}/conn-x/copy", headers=auth)
     assert r2.json()["copy_count"] == 2

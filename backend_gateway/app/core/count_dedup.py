@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.count import CountMark
 
-DEDUP_WINDOW_SECONDS = 3600
+DEDUP_WINDOW_SECONDS = 7200
 
 
 def client_ip(request: Request) -> str:

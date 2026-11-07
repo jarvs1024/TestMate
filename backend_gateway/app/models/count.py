@@ -1,6 +1,6 @@
 """下载/复制计数的冷却窗口去重标记 (2026-11-05).
 
-同一 dedup_key (u:{用户id} / ip:{客户端IP}) 在 DEDUP_WINDOW_SECONDS 内
+同一 dedup_key (u:{用户id} / ip:{客户端IP}) 在 DEDUP_WINDOW_SECONDS (2 小时) 内
 对同一 code 只计一次 —— 防误触/重试/恶意连点把 download_count 刷虚高.
 软件库的版本计数用 `code@版本` 当 code, 与条目计数互相独立.
 """
