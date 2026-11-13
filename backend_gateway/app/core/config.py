@@ -1,4 +1,5 @@
 """Pydantic 强校验加载 .env,所有 .env key 必须在这里声明。"""
+import base64
 import secrets
 from typing import List
 from urllib.parse import quote_plus
@@ -69,6 +70,13 @@ class Settings(BaseSettings):
     # DingTalk
     DINGTALK_DEFAULT_WEBHOOK: str = ""
 
+    # ===== 外部系统集成 (PingCode / PLM) =====
+    PINGCODE_BASE_URL: str = "http://10.20.24.30"
+    PINGCODE_TEAM_ID: str = "66209672995cb95d777b6aec"
+    # 凭据落库主密钥 (base64 32 字节). 生产必填, 开发/测试缺省时由
+    # JWT_SECRET 经 HKDF 派生 —— 换 JWT_SECRET 会让已存凭据不可解.
+    INTEGRATION_CREDENTIAL_KEY: str = ""
+
     # ===== 扩展 (本地 git 工作区 + GitLab SSH 同步) =====
     EXTENSIONS_WORKSPACE: str = "/workspace"
     EXTENSIONS_GIT_REMOTE: str = "ssh://git@host.docker.internal:8922/root/testmate-extensions.git"
@@ -115,5 +123,26 @@ def _validate_jwt_secret(s: Settings) -> None:
         )
 
 
+def _validate_integration_key(s: Settings) -> None:
+    """生产必须显式配置凭据主密钥; 开发允许 HKDF 派生 (见 integrations.crypto)."""
+    if s.DEBUG:
+        return
+    if "INTEGRATION_CREDENTIAL_KEY" not in s.model_fields_set:
+        raise RuntimeError(
+            "INTEGRATION_CREDENTIAL_KEY 未在 .env 配置. 生产环境必须显式设置 "
+            "(base64 编码的 32 字节, 可用 "
+            "`python -c 'import base64,secrets;print(base64.b64encode(secrets.token_bytes(32)).decode())'` 生成)."
+        )
+    try:
+        key = base64.b64decode(s.INTEGRATION_CREDENTIAL_KEY.strip(), validate=True)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("INTEGRATION_CREDENTIAL_KEY 不是合法 base64") from exc
+    if len(key) != 32:
+        raise RuntimeError(
+            f"INTEGRATION_CREDENTIAL_KEY 必须是 32 字节, 当前 {len(key)} 字节."
+        )
+
+
 settings = Settings()
 _validate_jwt_secret(settings)
+_validate_integration_key(settings)

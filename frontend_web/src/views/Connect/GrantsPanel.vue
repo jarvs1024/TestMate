@@ -65,6 +65,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { listMcpGrants, revokeMcpGrant, type McpGrant, type McpScope } from '@/api/mcp';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { parseApiTime } from '@/utils/format';
+import { scopeMeta } from '@/utils/mcpScopes';
 
 const grants = ref<McpGrant[]>([]);
 const loading = ref(false);
@@ -76,15 +77,8 @@ function errorText(error: unknown, fallback: string): string {
   return httpErrorText(errorStatus(error), errorDetail(error), fallback);
 }
 
-const SCOPE_TEXT: Record<McpScope, string> = {
-  'extensions:read': '读取资产',
-  'extensions:write': '管理资产',
-  'kb:read': '读取知识库',
-  'kb:write': '写入知识库',
-};
-
 function scopeText(scope: McpScope): string {
-  return SCOPE_TEXT[scope] ?? scope;
+  return scopeMeta(scope).label;
 }
 
 function formatTime(value: string | null): string {

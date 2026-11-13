@@ -36,6 +36,7 @@
             <input v-model="selectedScopes" type="checkbox" :value="scope" />
             <span class="scope-copy">
               <span class="scope-title">
+                <span class="scope-system">{{ systemLabel(scope) }}</span>
                 <strong>{{ scopeText(scope).title }}</strong>
                 <code>{{ scope }}</code>
               </span>
@@ -77,6 +78,7 @@ import {
   type McpScope,
 } from '@/api/mcp';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
+import { SCOPE_SYSTEMS, scopeMeta, systemOfScope } from '@/utils/mcpScopes';
 
 const route = useRoute();
 const preview = ref<McpAuthorizationPreview | null>(null);
@@ -113,27 +115,14 @@ function errorText(error: unknown, fallback: string): string {
   return httpErrorText(errorStatus(error), detail, fallback);
 }
 
-const SCOPE_TEXT: Record<McpScope, { title: string; description: string }> = {
-  'extensions:read': {
-    title: '读取资产',
-    description: '查看插件、技能、连接器及其版本信息，并读取你本可访问的内容。',
-  },
-  'extensions:write': {
-    title: '管理资产',
-    description: '以你的名义新建、修改、发布或下架你有权操作的插件、技能和连接器。',
-  },
-  'kb:read': {
-    title: '读取知识库',
-    description: '查看数据集、文档与分段，并按问题检索知识库内容。',
-  },
-  'kb:write': {
-    title: '写入知识库',
-    description: '在你可操作的数据集里新建数据集、上传或替换文档、重新解析。',
-  },
-};
-
 function scopeText(scope: McpScope): { title: string; description: string } {
-  return SCOPE_TEXT[scope] ?? { title: scope, description: '' };
+  const meta = scopeMeta(scope);
+  return { title: meta.label, description: meta.description };
+}
+
+function systemLabel(scope: McpScope): string {
+  const code = systemOfScope(scope);
+  return SCOPE_SYSTEMS.find((system) => system.code === code)?.label ?? code;
 }
 
 async function loadPreview() {
@@ -273,6 +262,7 @@ h1 { margin: 0; color: var(--ink-900); font-size: clamp(22px, 4vw, 28px); line-h
 .scope-item input { width: 17px; height: 17px; margin: 2px 0 0; accent-color: var(--primary); flex: 0 0 auto; }
 .scope-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .scope-title { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; color: var(--ink-900); }
+.scope-system { padding: 1px 7px; border-radius: 5px; background: var(--surface-sunken); color: var(--ink-500); font-family: var(--font-mono); font-size: 10.5px; }
 .scope-description { color: var(--ink-500); font-size: 12px; line-height: 1.6; }
 .selection-hint, .action-error { margin: 10px 0 0; font-size: 12px; }
 .selection-hint { color: var(--warn); }

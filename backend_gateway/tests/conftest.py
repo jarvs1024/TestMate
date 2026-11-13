@@ -56,6 +56,8 @@ _TABLES = (
     "software_versions",
     "software_items",
     "system_settings",
+    # 外部系统集成凭据
+    "integration_credentials",
     "users",
     # agents 也清 —— 能力用例会 seed_agents() 写库, 不清会漏到别的用例里
     "agents",

@@ -55,7 +55,14 @@ beforeEach(() => {
   api.deleteMcpToken.mockReset();
   api.listMcpTokens.mockResolvedValue({ items: [] });
   api.listMcpTokenScopes.mockResolvedValue({
-    scopes: ['extensions:read', 'extensions:write', 'kb:read', 'kb:write'],
+    scopes: [
+      'extensions:read',
+      'extensions:write',
+      'kb:read',
+      'kb:write',
+      'pingcode:read',
+      'pingcode:write',
+    ],
   });
   api.createMcpToken.mockResolvedValue(TOKEN);
   api.deleteMcpToken.mockResolvedValue(undefined);
@@ -171,6 +178,28 @@ describe('个人中心 · 访问令牌', () => {
     const kbWrite = w.get('input[type="checkbox"][value="kb:write"]').element as HTMLInputElement;
     expect(kbWrite.disabled).toBe(true);
     expect(w.text()).toContain('读取知识库');
+    w.unmount();
+  });
+
+  it('权限按系统分组，令牌徽标标明所属系统', async () => {
+    api.listMcpTokens.mockResolvedValueOnce({
+      items: [{ ...TOKEN, scopes: ['extensions:read', 'pingcode:read'] }],
+    });
+    const w = await mountTokens();
+
+    const form = w.get('.scope-field');
+    expect(form.text()).toContain('TestMate');
+    expect(form.text()).toContain('PingCode');
+    expect(form.text()).toContain('PLM');
+    expect(form.text()).toContain('读取 PingCode');
+
+    const chips = w.get('.token-list').text();
+    expect(chips).toContain('TestMate');
+    expect(chips).toContain('PingCode');
+    expect(chips).toContain('读取 PingCode');
+
+    const pingcodeWrite = w.get('input[type="checkbox"][value="pingcode:write"]').element as HTMLInputElement;
+    expect(pingcodeWrite.disabled).toBe(false);
     w.unmount();
   });
 

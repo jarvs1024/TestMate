@@ -21,12 +21,20 @@ PUBLIC_BASE = "http://127.0.0.1:8081/"
 ISSUER = "http://127.0.0.1:8081"
 VERIFIER = "correct-verifier-1234567890"
 REDIRECT_URI = "http://127.0.0.1:51234/callback"
-SUPPORTED_SCOPES = ["extensions:read", "extensions:write", "kb:read", "kb:write"]
+SUPPORTED_SCOPES = [
+    "extensions:read",
+    "extensions:write",
+    "kb:read",
+    "kb:write",
+    "pingcode:read",
+    "pingcode:write",
+]
 DISCOVERY_PATHS = [
     "/.well-known/oauth-authorization-server",
     "/.well-known/oauth-protected-resource/mcp/extensions",
     "/.well-known/oauth-protected-resource/mcp/skill",
     "/.well-known/oauth-protected-resource/mcp/kb",
+    "/.well-known/oauth-protected-resource/mcp/pingcode",
 ]
 
 
@@ -174,8 +182,22 @@ async def test_protected_resource_metadata_targets_mcp_kb(client):
     }
 
 
+async def test_protected_resource_metadata_targets_mcp_pingcode(client):
+    response = await client.get(
+        "/.well-known/oauth-protected-resource/mcp/pingcode"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "resource": f"{ISSUER}/mcp/pingcode",
+        "authorization_servers": [ISSUER],
+        "scopes_supported": SUPPORTED_SCOPES,
+        "bearer_methods_supported": ["header"],
+    }
+
+
 @pytest.mark.parametrize("path", DISCOVERY_PATHS)
-async def test_discovery_documents_advertise_all_four_scopes(client, path):
+async def test_discovery_documents_advertise_all_supported_scopes(client, path):
     response = await client.get(path)
 
     assert response.status_code == 200
@@ -193,7 +215,10 @@ async def test_register_returns_task2_client_metadata_with_201(client):
         "token_endpoint_auth_method": "none",
         "grant_types": ["authorization_code"],
         "response_types": ["code"],
-        "scope": "extensions:read extensions:write kb:read kb:write",
+        "scope": (
+            "extensions:read extensions:write kb:read kb:write "
+            "pingcode:read pingcode:write"
+        ),
     }
     assert "client_secret" not in registered
 

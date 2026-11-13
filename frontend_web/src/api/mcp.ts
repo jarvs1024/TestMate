@@ -5,7 +5,9 @@ export type McpScope =
   | 'extensions:read'
   | 'extensions:write'
   | 'kb:read'
-  | 'kb:write';
+  | 'kb:write'
+  | 'pingcode:read'
+  | 'pingcode:write';
 
 export interface McpAuthorizationQuery {
   client_id: string;

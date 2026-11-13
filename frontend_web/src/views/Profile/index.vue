@@ -20,6 +20,14 @@
           :class="{ active: tab === 'tokens' }"
           @click="tab = 'tokens'"
         >访问令牌</button>
+        <button
+          type="button"
+          class="kind-tab"
+          role="tab"
+          :aria-selected="tab === 'accounts'"
+          :class="{ active: tab === 'accounts' }"
+          @click="tab = 'accounts'"
+        >平台认证</button>
       </div>
       <div class="ma-right">
         <span class="account-meta">当前账号 · <b>{{ username }}</b></span>
@@ -27,7 +35,8 @@
     </div>
 
     <GrantsPanel v-if="tab === 'grants'" />
-    <McpTokens v-else />
+    <McpTokens v-else-if="tab === 'tokens'" />
+    <IntegrationAccounts v-else />
   </div>
 </template>
 
@@ -36,9 +45,10 @@ import { computed, ref } from 'vue';
 import { useUserStore } from '@/stores/user';
 import GrantsPanel from '@/views/Connect/GrantsPanel.vue';
 import McpTokens from '@/views/Settings/components/McpTokens.vue';
+import IntegrationAccounts from '@/views/Profile/IntegrationAccounts.vue';
 
 const userStore = useUserStore();
-const tab = ref<'grants' | 'tokens'>('grants');
+const tab = ref<'grants' | 'tokens' | 'accounts'>('grants');
 const username = computed(() => userStore.user?.username || '未登录');
 </script>
 

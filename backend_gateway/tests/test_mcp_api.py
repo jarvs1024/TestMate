@@ -322,10 +322,24 @@ async def test_token_scope_options_follow_current_capability(
 
     assert publisher_scopes.status_code == 200, publisher_scopes.text
     assert publisher_scopes.json() == {
-        "scopes": ["extensions:read", "extensions:write", "kb:read", "kb:write"]
+        "scopes": [
+            "extensions:read",
+            "extensions:write",
+            "kb:read",
+            "kb:write",
+            "pingcode:read",
+            "pingcode:write",
+        ]
     }
     assert stranger_scopes.status_code == 200, stranger_scopes.text
-    assert stranger_scopes.json() == {"scopes": ["extensions:read", "kb:read"]}
+    assert stranger_scopes.json() == {
+        "scopes": [
+            "extensions:read",
+            "kb:read",
+            "pingcode:read",
+            "pingcode:write",
+        ]
+    }
 
 
 async def test_token_creation_rejects_scopes_beyond_current_capability(
