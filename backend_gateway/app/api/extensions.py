@@ -1137,7 +1137,12 @@ async def record_connector_copy(
             await session.execute(
                 update(Asset)
                 .where(Asset.code == code)
-                .values(download_count=Asset.download_count + 1)
+                # ⚠️ updated_at 显式钉住 —— 卡片日期语义是「上架/修改/发版」,
+                #    不指定它会触发 onupdate, 每下载一次就把日期顶成今天.
+                .values(
+                    download_count=Asset.download_count + 1,
+                    updated_at=Asset.updated_at,
+                )
             )
         await session.commit()
         new_count = (
@@ -1338,7 +1343,12 @@ async def download_package(
         if await count_dedup.bump_count(session, code, key):
             await session.execute(
                 update(Asset).where(Asset.code == code)
-                .values(download_count=Asset.download_count + 1)
+                # ⚠️ updated_at 显式钉住 —— 卡片日期语义是「上架/修改/发版」,
+                #    不指定它会触发 onupdate, 每下载一次就把日期顶成今天.
+                .values(
+                    download_count=Asset.download_count + 1,
+                    updated_at=Asset.updated_at,
+                )
             )
         await session.commit()
 
@@ -1436,7 +1446,12 @@ async def download_package_by_asset_ticket(
             await session.execute(
                 update(Asset)
                 .where(Asset.code == code)
-                .values(download_count=Asset.download_count + 1)
+                # ⚠️ updated_at 显式钉住 —— 卡片日期语义是「上架/修改/发版」,
+                #    不指定它会触发 onupdate, 每下载一次就把日期顶成今天.
+                .values(
+                    download_count=Asset.download_count + 1,
+                    updated_at=Asset.updated_at,
+                )
             )
         await session.commit()
 

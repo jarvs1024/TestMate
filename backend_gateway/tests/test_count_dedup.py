@@ -362,3 +362,144 @@ async def test_sw_anon_ticket_download_dedup_by_ip(client, sw_auth, sw_root):  #
 
     d = await _sw_detail(client, sw_auth, "demo-sw")
     assert d["download_count"] == 2, d["download_count"]
+
+
+# ---------- 计数不能刷新 updated_at ----------
+#
+# 卡片/详情展示的日期是 updated_at —— 语义是「上架 / 修改 / 发新版本」,
+# 不是「最近一次有人下载」. 计数 UPDATE 必须把 updated_at 钉住, 否则每计一次
+# 就把日期顶成今天 (用户看到的就是"下载后日期变了").
+
+_PINNED = datetime(2026, 1, 2, 3, 4, 5)
+
+
+async def _pin_asset_time(code: str) -> None:
+    """把资产的 updated_at 拨到固定过去时间 (下载/复制后应保持不变)."""
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        await s.execute(
+            update(Asset).where(Asset.code == code).values(updated_at=_PINNED)
+        )
+        await s.commit()
+
+
+async def _read_asset(code: str):
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        return (await s.execute(select(Asset).where(Asset.code == code))).scalar_one()
+
+
+async def test_copy_does_not_touch_updated_at(client, auth, mcp_conn):  # noqa: ARG001
+    """连接器复制只涨计数, 不改 updated_at."""
+    await _pin_asset_time("conn-x")
+
+    r = await client.post(f"{API}/conn-x/copy", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["copy_count"] == 1
+
+    a = await _read_asset("conn-x")
+    assert a.download_count == 1
+    assert a.updated_at == _PINNED, a.updated_at
+
+
+async def test_ext_download_does_not_touch_updated_at(client, auth, ws, restore_git_config):  # noqa: ARG001
+    """扩展包下载只涨计数, 不改 updated_at."""
+    from tests.test_ext_api import _upload
+
+    await set_setting("extensions.review.enabled", "false")
+    await _upload(client, auth, code="dl-time")
+    await _pin_asset_time("dl-time")
+
+    r = await client.get(f"{API}/dl-time/versions/1.0.0/download", headers=auth)
+    assert r.status_code == 200, r.text
+
+    a = await _read_asset("dl-time")
+    assert a.download_count == 1
+    assert a.updated_at == _PINNED, a.updated_at
+
+
+async def test_ext_ticket_download_does_not_touch_updated_at(
+    client, auth, ws, restore_git_config, admin_user,  # noqa: ARG001
+):
+    """票据下载只涨计数, 不改 updated_at."""
+    from tests.test_ext_api import _upload
+
+    await set_setting("extensions.review.enabled", "false")
+    await _upload(client, auth, code="dl-time-ticket")
+    await _pin_asset_time("dl-time-ticket")
+
+    ticket = _asset_ticket(uid=admin_user["id"], code="dl-time-ticket", version="1.0.0")
+    r = await client.get(
+        f"{API}/dl-time-ticket/versions/1.0.0/ticket-download",
+        params={"ticket": ticket},
+    )
+    assert r.status_code == 200, r.text
+
+    a = await _read_asset("dl-time-ticket")
+    assert a.download_count == 1
+    assert a.updated_at == _PINNED, a.updated_at
+
+
+async def _pin_software_time(code: str) -> None:
+    from app.models.software import SoftwareItem, SoftwareVersion
+
+    async with AsyncSessionLocal() as s:
+        item = (
+            await s.execute(select(SoftwareItem).where(SoftwareItem.code == code))
+        ).scalar_one()
+        await s.execute(
+            update(SoftwareItem)
+            .where(SoftwareItem.id == item.id)
+            .values(updated_at=_PINNED)
+        )
+        await s.execute(
+            update(SoftwareVersion)
+            .where(SoftwareVersion.item_id == item.id)
+            .values(updated_at=_PINNED)
+        )
+        await s.commit()
+
+
+async def _read_software_times(code: str) -> tuple[datetime, list[datetime]]:
+    from app.models.software import SoftwareItem, SoftwareVersion
+
+    async with AsyncSessionLocal() as s:
+        item = (
+            await s.execute(select(SoftwareItem).where(SoftwareItem.code == code))
+        ).scalar_one()
+        versions = (
+            await s.execute(
+                select(SoftwareVersion).where(SoftwareVersion.item_id == item.id)
+            )
+        ).scalars().all()
+    return item.updated_at, [v.updated_at for v in versions]
+
+
+async def test_sw_ticket_download_does_not_touch_updated_at(client, sw_auth, sw_root):  # noqa: ARG001
+    """软件库凭票下载: 条目和版本的 updated_at 都不许变."""
+    await _sw_create(client, sw_auth)
+    await _sw_upload(client, sw_auth, "demo-sw", b"v1")
+    await _pin_software_time("demo-sw")
+
+    t = await client.post(f"{SW}/demo-sw/download-ticket", headers=sw_auth)
+    assert (await client.get(t.json()["url"])).status_code == 200
+
+    item_time, version_times = await _read_software_times("demo-sw")
+    assert item_time == _PINNED, item_time
+    assert version_times == [_PINNED], version_times
+
+
+async def test_sw_fixed_link_download_does_not_touch_updated_at(client, sw_auth, sw_root):  # noqa: ARG001
+    """软件库固定链接下载: 条目和版本的 updated_at 都不许变."""
+    await _sw_create(client, sw_auth)
+    await _sw_upload(client, sw_auth, "demo-sw", b"v1")
+    await _pin_software_time("demo-sw")
+
+    r = await client.get(f"{SW}/demo-sw/download", headers={"X-Forwarded-For": "10.9.7.1"})
+    assert r.status_code == 200, r.text
+
+    item_time, version_times = await _read_software_times("demo-sw")
+    assert item_time == _PINNED, item_time
+    assert version_times == [_PINNED], version_times

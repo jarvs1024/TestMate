@@ -655,14 +655,22 @@ async def download_by_ticket(
         if await count_dedup.bump_count(session, code, key):
             await session.execute(
                 update(SoftwareItem).where(SoftwareItem.id == item.id)
-                .values(download_count=SoftwareItem.download_count + 1)
+                # ⚠️ updated_at 钉住 —— 详情页「更新 {updated_at}」说的是内容更新,
+                #    不能被下载计数顶成今天.
+                .values(
+                    download_count=SoftwareItem.download_count + 1,
+                    updated_at=SoftwareItem.updated_at,
+                )
             )
         if await count_dedup.bump_count(
             session, count_dedup.version_scope(code, version), key
         ):
             await session.execute(
                 update(SoftwareVersion).where(SoftwareVersion.id == ver.id)
-                .values(download_count=SoftwareVersion.download_count + 1)
+                .values(
+                    download_count=SoftwareVersion.download_count + 1,
+                    updated_at=SoftwareVersion.updated_at,
+                )
             )
         await session.commit()
 
@@ -761,14 +769,22 @@ async def _serve_recommended(
     if await count_dedup.bump_count(session, item.code, key):
         await session.execute(
             update(SoftwareItem).where(SoftwareItem.id == item.id)
-            .values(download_count=SoftwareItem.download_count + 1)
+            # ⚠️ updated_at 钉住 —— 详情页「更新 {updated_at}」说的是内容更新,
+            #    不能被下载计数顶成今天.
+            .values(
+                download_count=SoftwareItem.download_count + 1,
+                updated_at=SoftwareItem.updated_at,
+            )
         )
     if await count_dedup.bump_count(
         session, count_dedup.version_scope(item.code, ver.version), key
     ):
         await session.execute(
             update(SoftwareVersion).where(SoftwareVersion.id == ver.id)
-            .values(download_count=SoftwareVersion.download_count + 1)
+            .values(
+                download_count=SoftwareVersion.download_count + 1,
+                updated_at=SoftwareVersion.updated_at,
+            )
         )
     await session.commit()
 
