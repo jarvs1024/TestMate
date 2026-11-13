@@ -16,11 +16,17 @@ from tests.conftest import set_setting
 
 API = "/api/v1/extensions"
 
-BUILTIN_CODES = ("testmate-extensions", "testmate-kb", "testmate-pingcode")
+BUILTIN_CODES = (
+    "testmate-extensions",
+    "testmate-kb",
+    "testmate-pingcode",
+    "testmate-plm",
+)
 BUILTIN_CATEGORIES = {
     "testmate-extensions": "其他",
     "testmate-kb": "其他",
     "testmate-pingcode": "管理协同",
+    "testmate-plm": "管理协同",
 }
 
 
@@ -89,7 +95,7 @@ async def test_ensure_builtin_idempotent_preserves_download_count(builtin_seeded
             await s.execute(select(func.count()).select_from(Asset).where(Asset.code.in_(BUILTIN_CODES)))
         ).scalar_one()
         a = (await s.execute(select(Asset).where(Asset.code == "testmate-extensions"))).scalar_one()
-        assert total == 3
+        assert total == 4
         assert a.download_count == 42
         assert a.name == "TestMate 扩展库助手"
 
@@ -105,16 +111,21 @@ async def test_list_marks_builtin_and_adapts_to_public_base_url(client, auth, bu
     ext = _card(items, "testmate-extensions")
     kb = _card(items, "testmate-kb")
     pc = _card(items, "testmate-pingcode")
+    plm = _card(items, "testmate-plm")
 
     assert ext["builtin"] is True and kb["builtin"] is True
-    assert pc["builtin"] is True
+    assert pc["builtin"] is True and plm["builtin"] is True
     # 卡片字段 (序列化层, 不只是 DB 行)
     assert ext["author"] == "admin"
     assert ext["category"] == "其他"
     assert pc["category"] == "管理协同"
+    assert plm["category"] == "管理协同"
     assert "内置" in ext["tags"]
     assert pc["mcp_config"]["mcpServers"]["testmate-pingcode"]["url"] == (
         "https://tm.example.com/mcp/pingcode"
+    )
+    assert plm["mcp_config"]["mcpServers"]["testmate-plm"]["url"] == (
+        "https://tm.example.com/mcp/plm"
     )
     assert ext["mcp_config"]["mcpServers"]["testmate-extensions"]["url"] == (
         "https://tm.example.com/mcp/skill"
@@ -139,6 +150,7 @@ async def test_list_without_setting_falls_back_to_request_base(
         ("testmate-extensions", "/mcp/skill"),
         ("testmate-kb", "/mcp/kb"),
         ("testmate-pingcode", "/mcp/pingcode"),
+        ("testmate-plm", "/mcp/plm"),
     ):
         server = _card(items, code)["mcp_config"]["mcpServers"][code]
         assert server["url"] == f"http://test{path}"

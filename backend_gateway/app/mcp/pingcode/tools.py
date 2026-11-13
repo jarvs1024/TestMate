@@ -1,4 +1,4 @@
-"""13 个 PingCode 工具的显式 schema 与 ToolSpec 声明."""
+"""18 个 PingCode 工具的显式 schema 与 ToolSpec 声明."""
 from __future__ import annotations
 
 from typing import Any
@@ -46,6 +46,29 @@ _DESCRIPTION_FIELDS = {
 }
 _PAGE = {"type": "integer", "minimum": 1, "default": 1}
 _PAGE_SIZE = {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
+_LIBRARY_ID = {
+    "type": "string",
+    "description": "用例库 _id；先用 pingcode_list_test_case_libraries 查询",
+}
+_CASE_FILTERS = {
+    "type": "array",
+    "description": (
+        "字段筛选，对应网页筛选器的 criteria.conditions。property_key 为字段 key，"
+        "operation 透传网页抓包值（常见 6=属于），value 为值数组，"
+        "logic 1=且（默认）、2=或；字段与选项 _id 用 pingcode_get_test_case_properties 解析"
+    ),
+    "items": {
+        "type": "object",
+        "properties": {
+            "property_key": {"type": "string"},
+            "operation": {"type": "integer"},
+            "value": {"type": "array"},
+            "logic": {"type": "integer"},
+        },
+        "required": ["property_key", "operation"],
+        "additionalProperties": False,
+    },
+}
 
 
 READ_SPECS = (
@@ -174,6 +197,73 @@ READ_SPECS = (
         handler=adapter.list_attachments,
     ),
     ToolSpec(
+        name="pingcode_list_test_case_libraries",
+        description="列出当前账号可见的 PingCode 测试用例库（testhub），返回 _id、名称与项目。后续用例工具必须传 library_id。",
+        input_schema=_object(),
+        scope="pingcode:read",
+        read_only=True,
+        handler=adapter.list_test_case_libraries,
+    ),
+    ToolSpec(
+        name="pingcode_search_test_cases",
+        description=(
+            "在指定 PingCode 测试用例库中按编号/标题搜索用例，支持网页筛选器同款字段条件。"
+            "identifier 传完整编号（如 HIMA3361-8077）或纯数字；返回用例编号、标题与预置条件。"
+        ),
+        input_schema=_object(
+            {
+                "library_id": _LIBRARY_ID,
+                "keyword": {"type": "string", "description": "标题关键字"},
+                "identifier": {
+                    "type": "string",
+                    "description": "用例编号，如 HIMA3361-8077（也接受纯数字 8077）",
+                },
+                "filters": _CASE_FILTERS,
+                "page": _PAGE,
+                "page_size": _PAGE_SIZE,
+            },
+            ["library_id"],
+        ),
+        scope="pingcode:read",
+        read_only=True,
+        handler=adapter.search_test_cases,
+    ),
+    ToolSpec(
+        name="pingcode_get_test_case",
+        description=(
+            "按编号获取测试用例详情（预置条件、步骤与预期结果），并解析状态名与用例目录名。"
+            "编号支持完整形式 HIMA3361-8077 或纯数字 8077。"
+        ),
+        input_schema=_object(
+            {
+                "identifier": {
+                    "type": "string",
+                    "description": "用例编号，如 HIMA3361-8077",
+                },
+                "library_id": _LIBRARY_ID,
+                "include_raw": {
+                    "type": "boolean",
+                    "description": "是否附带原始字段（创建人/更新人/时间等）",
+                },
+            },
+            ["library_id", "identifier"],
+        ),
+        scope="pingcode:read",
+        read_only=True,
+        handler=adapter.get_test_case,
+    ),
+    ToolSpec(
+        name="pingcode_get_test_case_properties",
+        description=(
+            "获取用例库字段字典：字段 key、中文名、类型与选项 _id↔text，"
+            "用于把筛选字段/选项名解析成 pingcode_search_test_cases 的 filters。"
+        ),
+        input_schema=_object({"library_id": _LIBRARY_ID}, ["library_id"]),
+        scope="pingcode:read",
+        read_only=True,
+        handler=adapter.get_test_case_properties,
+    ),
+    ToolSpec(
         name="pingcode_download_attachment",
         description=(
             "下载附件或截图（自动跟随 302 到对象存储）。图片内联返回 base64，其它返回同源下载链接。"
@@ -184,7 +274,11 @@ READ_SPECS = (
                 "url": {"type": "string", "description": "附件 URL，必须与 PingCode 同源"},
                 "file_id": {"type": "string", "description": "atlas 文件 id"},
                 "name": {"type": "string", "description": "文件名"},
-                "max_bytes": {"type": "integer", "minimum": 1, "description": "上限，默认 20MB"},
+                "max_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "上限，默认 20MB，最大 100MB",
+                },
                 "token": {
                     "type": "string",
                     "description": "atlas 公共文件 token；省略时自动获取",
@@ -218,7 +312,7 @@ WRITE_SPECS = (
     ),
     ToolSpec(
         name="pingcode_create_work_item",
-        description="创建 PingCode 工单。必须传 confirm=true；client_request_id 用于 10 分钟内幂等。",
+        description="创建 PingCode 工单。负责人 assignee 必填；提交前按项目字段模板校验必填项与选项值，不合法直接拒绝（先调用 pingcode_get_property_schema 查询）；attachments 传已上传的 file_id 列表，建单后自动关联；必须传 confirm=true；client_request_id 用于 10 分钟内幂等。",
         input_schema=_object(
             {
                 "project_id": {"type": "string"},
@@ -227,6 +321,11 @@ WRITE_SPECS = (
                 "properties": _PROPERTIES,
                 "description_template": _DESCRIPTION_TEMPLATE,
                 "description_fields": _DESCRIPTION_FIELDS,
+                "attachments": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "建单后关联的附件 file_id 列表，file_id 由 pingcode_upload_attachment 返回",
+                },
                 "confirm": {"type": "boolean"},
                 "client_request_id": {
                     "type": "string",
@@ -260,6 +359,51 @@ WRITE_SPECS = (
         scope="pingcode:write",
         read_only=False,
         handler=adapter.add_comment,
+    ),
+    ToolSpec(
+        name="pingcode_upload_attachment",
+        description=(
+            "上传附件或内联图片（单文件上限 100MB）。path 与 content_base64 二选一；"
+            "purpose=attachment 上传为工单附件并可传 work_item_id 立即关联，"
+            "purpose=inline 返回可插入描述 HTML 的 public_url；必须传 confirm=true；"
+            "client_request_id 用于 10 分钟内幂等。"
+        ),
+        input_schema=_object(
+            {
+                "path": {
+                    "type": "string",
+                    "description": "后端主机上的文件路径，与 content_base64 二选一",
+                },
+                "content_base64": {
+                    "type": "string",
+                    "description": "文件内容的 base64，与 path 二选一",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "文件名（决定 content-type 与下载名），默认取 path 的文件名",
+                },
+                "purpose": {
+                    "type": "string",
+                    "enum": ["attachment", "inline"],
+                    "default": "attachment",
+                    "description": "attachment=工单附件(scope=1); inline=描述内嵌图(scope=3)",
+                },
+                "work_item_id": {
+                    "type": "string",
+                    "description": "上传后立即关联的工单 _id，仅 purpose=attachment 可用",
+                },
+                "client_request_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "调用方生成的唯一 id，10 分钟内重复调用返回同一结果",
+                },
+                "confirm": {"type": "boolean"},
+            },
+            ["confirm"],
+        ),
+        scope="pingcode:write",
+        read_only=False,
+        handler=adapter.upload_attachment,
     ),
 )
 

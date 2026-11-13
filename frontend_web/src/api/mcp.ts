@@ -7,7 +7,9 @@ export type McpScope =
   | 'kb:read'
   | 'kb:write'
   | 'pingcode:read'
-  | 'pingcode:write';
+  | 'pingcode:write'
+  | 'plm:read'
+  | 'plm:write';
 
 export interface McpAuthorizationQuery {
   client_id: string;

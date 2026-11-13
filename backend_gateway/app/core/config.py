@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     # ===== 外部系统集成 (PingCode / PLM) =====
     PINGCODE_BASE_URL: str = "http://10.20.24.30"
     PINGCODE_TEAM_ID: str = "66209672995cb95d777b6aec"
+    # PLM 站点证书无法通过标准链校验 (线上实测), 默认关闭校验; 若换了可信证书可打开.
+    PLM_BASE_URL: str = "https://plm.twsc.com.cn"
+    PLM_VERIFY_TLS: bool = False
     # 凭据落库主密钥 (base64 32 字节). 生产必填, 开发/测试缺省时由
     # JWT_SECRET 经 HKDF 派生 —— 换 JWT_SECRET 会让已存凭据不可解.
     INTEGRATION_CREDENTIAL_KEY: str = ""

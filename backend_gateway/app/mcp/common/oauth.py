@@ -33,6 +33,8 @@ SCOPE_ORDER = (
     "kb:write",
     "pingcode:read",
     "pingcode:write",
+    "plm:read",
+    "plm:write",
 )
 SUPPORTED_SCOPES = frozenset(SCOPE_ORDER)
 SCOPE_HINT = " ".join(SCOPE_ORDER)
@@ -259,9 +261,11 @@ async def allowed_scopes(user: User) -> list[str]:
     scopes.append("kb:read")
     if can_write_kb(user):
         scopes.append("kb:write")
-    # 本期决策: pingcode 读写对所有活跃用户开放; PLM 未上线不暴露 scope.
+    # pingcode / plm 读写对所有活跃用户开放, 实际数据权限由各自账号凭据决定
     scopes.append("pingcode:read")
     scopes.append("pingcode:write")
+    scopes.append("plm:read")
+    scopes.append("plm:write")
     return scopes
 
 

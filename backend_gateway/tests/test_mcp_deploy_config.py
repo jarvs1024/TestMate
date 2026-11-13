@@ -267,7 +267,7 @@ async def test_real_app_lifespan_configures_after_seed_and_runs_mcp_manager(
 
     async with main.app.router.lifespan_context(main.app):
         assert managed == [dispatcher]
-        assert set(dispatcher.domains) == {"extensions", "kb", "pingcode"}
+        assert set(dispatcher.domains) == {"extensions", "kb", "pingcode", "plm"}
         for domain in ("extensions", "kb", "pingcode"):
             allowed = set(
                 dispatcher.domains[domain].settings.transport_security.allowed_hosts

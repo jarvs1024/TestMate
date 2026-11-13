@@ -19,7 +19,7 @@ export interface ScopeSystemMeta {
 export const SCOPE_SYSTEMS: ScopeSystemMeta[] = [
   { code: 'testmate', label: 'TestMate', hint: '平台内的扩展与知识库', enabled: true },
   { code: 'pingcode', label: 'PingCode', hint: '外部缺陷/需求系统', enabled: true },
-  { code: 'plm', label: 'PLM', hint: '接入后开放', enabled: false },
+  { code: 'plm', label: 'PLM', hint: '外部问题单与用例库系统', enabled: true },
 ];
 
 export interface ScopeMeta {
@@ -58,6 +58,16 @@ export const SCOPE_INFO: Record<McpScope, ScopeMeta> = {
     label: '写入 PingCode',
     description: '以你的名义在 PingCode 中创建缺陷/需求并发表评论。',
     system: 'pingcode',
+  },
+  'plm:read': {
+    label: '读取 PLM',
+    description: '查看 PLM 项目、问题单、评论和附件、用例库，并可下载附件。',
+    system: 'plm',
+  },
+  'plm:write': {
+    label: '写入 PLM',
+    description: '以你的名义在 PLM 中创建问题单并发表评论。',
+    system: 'plm',
   },
 };
 

@@ -14,6 +14,7 @@ from app.api.auth import get_current_user
 from app.db.session import get_session
 from app.integrations import credentials, crypto
 from app.integrations.pingcode import client as pingcode_client
+from app.integrations.plm import client as plm_client
 from app.integrations.redis import redis_client
 from app.integrations.providers import Provider, get_provider
 from app.models.integration import IntegrationCredential
@@ -25,7 +26,9 @@ logger = logging.getLogger(__name__)
 RATE_LIMIT = 3
 RATE_WINDOW_SECONDS = 10
 _UNBOUND = "unbound"
-_PLM_DISABLED = "PLM 集成尚未接入"
+_PROVIDER_DISABLED = "该平台集成尚未接入"
+_AUTH_ERRORS = (pingcode_client.PingCodeAuthError, plm_client.PlmAuthError)
+_UNAVAILABLE_ERRORS = (pingcode_client.PingCodeUnavailable, plm_client.PlmUnavailable)
 
 _transport_keypair: crypto.TransportKeyPair | None = None
 
@@ -61,6 +64,12 @@ def _provider_or_404(code: str) -> Provider:
     if provider is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未知的平台")
     return provider
+
+
+async def _signin(provider_code: str, username: str, password: str):
+    if provider_code == "plm":
+        return await plm_client.signin(username, password)
+    return await pingcode_client.signin(username, password)
 
 
 def _provider_out(provider: Provider, record: IntegrationCredential | None) -> dict[str, Any]:
@@ -126,15 +135,15 @@ async def put_credentials(
 ):
     provider = _provider_or_404(provider_code)
     if not provider.enabled:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_PLM_DISABLED)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_PROVIDER_DISABLED)
     await _enforce_rate_limit(user.id)
 
     username, password = _decode_payload(body.payload_encrypted)
     try:
-        login = await pingcode_client.signin(username, password)
-    except pingcode_client.PingCodeAuthError as exc:
+        login = await _signin(provider.code, username, password)
+    except _AUTH_ERRORS as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except pingcode_client.PingCodeUnavailable as exc:
+    except _UNAVAILABLE_ERRORS as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     record = await credentials.save_login(
@@ -167,7 +176,7 @@ async def test_connection(
 ):
     provider = _provider_or_404(provider_code)
     if not provider.enabled:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_PLM_DISABLED)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_PROVIDER_DISABLED)
     await _enforce_rate_limit(user.id)
 
     record = await credentials.get(session, user.id, provider.code)
@@ -183,11 +192,11 @@ async def test_connection(
             detail="凭据无法解密，请重新配置",
         ) from exc
     try:
-        login = await pingcode_client.signin(record.username, password)
-    except pingcode_client.PingCodeAuthError as exc:
+        login = await _signin(provider.code, record.username, password)
+    except _AUTH_ERRORS as exc:
         await credentials.record_failure(session, record, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except pingcode_client.PingCodeUnavailable as exc:
+    except _UNAVAILABLE_ERRORS as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     record = await credentials.save_login(
@@ -201,6 +210,6 @@ async def test_connection(
     login_at: datetime = record.last_login_at
     return {
         "display_name": login.display_name,
-        "team_name": login.team_name,
+        "team_name": getattr(login, "team_name", ""),
         "login_at": login_at,
     }

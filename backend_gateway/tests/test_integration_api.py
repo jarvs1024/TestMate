@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from app.db.session import AsyncSessionLocal
 from app.integrations import crypto
 from app.integrations.pingcode import client as pingcode_client
+from app.integrations.plm import client as plm_client
 from app.models.integration import IntegrationCredential
 
 BASE = "/api/v1/integrations"
@@ -104,7 +105,7 @@ async def test_providers_lists_pingcode_and_plm(client: httpx.AsyncClient, admin
     items = {item["code"]: item for item in response.json()["items"]}
     assert items["pingcode"]["enabled"] is True
     assert items["pingcode"]["bound"] is False
-    assert items["plm"]["enabled"] is False
+    assert items["plm"]["enabled"] is True
 
 
 async def test_unknown_provider_returns_404(client: httpx.AsyncClient, admin_user: dict):
@@ -112,18 +113,63 @@ async def test_unknown_provider_returns_404(client: httpx.AsyncClient, admin_use
     assert response.status_code == 404
 
 
-async def test_plm_write_returns_409(client: httpx.AsyncClient, admin_user: dict):
+def _plm_session() -> plm_client.PlmSession:
+    return plm_client.PlmSession(
+        access_token="plm-access",
+        username=USERNAME,
+        display_name=USERNAME,
+        cookies={"orgId": "org-1", "tenantid": "impwzqgp", "XSRF-TOKEN": "csrf!x"},
+        access_token_expires_at=datetime.now(UTC).replace(tzinfo=None)
+        + timedelta(minutes=120),
+    )
+
+
+def _fake_plm_signin(error: Exception | None = None, calls: list | None = None):
+    async def signin(username: str, password: str, **kwargs):
+        if calls is not None:
+            calls.append((username, password))
+        if error is not None:
+            raise error
+        return _plm_session()
+
+    return signin
+
+
+async def test_put_plm_credentials_and_test_connection(
+    client: httpx.AsyncClient, admin_user: dict, monkeypatch
+):
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(plm_client, "signin", _fake_plm_signin(calls=calls))
     encrypted = await _encrypt_payload(
         client, admin_user, {"username": USERNAME, "password": PASSWORD}
     )
+
     response = await client.put(
         f"{BASE}/plm/credentials",
         json={"payload_encrypted": encrypted},
         headers=_auth(admin_user),
     )
-    assert response.status_code == 409, response.text
-    response = await client.post(f"{BASE}/plm/test", headers=_auth(admin_user))
-    assert response.status_code == 409
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ok"
+    assert calls == [(USERNAME, PASSWORD)]
+
+    record = await _credential(admin_user["id"], provider="plm")
+    assert record is not None
+    assert (
+        crypto.decrypt_secret(
+            record.token_encrypted, user_id=admin_user["id"], provider="plm"
+        )
+        == "plm-access"
+    )
+
+    await _clear_rate_limit(admin_user["id"])
+    tested = await client.post(f"{BASE}/plm/test", headers=_auth(admin_user))
+    assert tested.status_code == 200, tested.text
+    assert tested.json()["display_name"] == USERNAME
+
+    deleted = await client.delete(f"{BASE}/plm/credentials", headers=_auth(admin_user))
+    assert deleted.status_code == 200
+    assert await _credential(admin_user["id"], provider="plm") is None
 
 
 # ---------------- 凭据写入 ----------------

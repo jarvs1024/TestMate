@@ -137,7 +137,36 @@ PINGCODE_ASSET = BuiltinAsset(
     ),
 )
 
-BUILTIN_ASSETS = (EXTENSIONS_ASSET, KB_ASSET, PINGCODE_ASSET)
+PLM_ASSET = BuiltinAsset(
+    code="testmate-plm",
+    mcp_path="/mcp/plm",
+    fields=_fields(
+        "testmate-plm",
+        name="TestMate PLM 助手",
+        icon="🧭",
+        summary="让 Agent 检索 PLM 问题单与用例库，按严格校验创建问题单并同步评论与附件",
+        description=(
+            "TestMate 平台自带的 PLM MCP 连接器。先在个人中心「平台认证」配置一次 PLM 账号，"
+            "平台会代你登录并自动续期；Agent 连上之后可以查询项目与人员字典、检索问题单、"
+            "读取详情 / 评论 / 附件、检索用例库，并在必填字段全部合规后创建问题单。"
+        ),
+        use_when="需要让 Agent 在会话里查询 PLM 问题单 / 用例, 或登记新问题单",
+        not_for="只需要人工在 PLM 网页处理问题单的场景",
+        category="管理协同",
+        tags=["内置", "PLM", "MCP"],
+        keywords=["内置", "PLM", "问题单", "用例库", "提单", "MCP", "评论", "附件"],
+        install_steps=[
+            "登录 TestMate → 个人中心 → 平台认证, 配置 PLM 账号并保存 (保存时即验证登录)",
+            "复制本页的 MCP 配置 JSON, 把 server 条目加到 Agent 的连接器配置里 (Qoder: 设置 → 连接器 → 添加连接器 → 自定义)",
+            "新建 API Token: 登录 TestMate → 个人中心 → 访问令牌 → 新建, 勾选 plm:read, 需要提单/评论再勾 plm:write",
+            "把配置里 headers.Authorization 的「<你的API Token>」替换成刚建的 token",
+            "重启 Agent 会话即可使用",
+            "备注: 建单必须关联项目并选择有效问题类型; 先调用 plm_get_create_meta 获取必填字段与选项 id",
+        ],
+    ),
+)
+
+BUILTIN_ASSETS = (EXTENSIONS_ASSET, KB_ASSET, PINGCODE_ASSET, PLM_ASSET)
 _BY_CODE = {asset.code: asset for asset in BUILTIN_ASSETS}
 
 

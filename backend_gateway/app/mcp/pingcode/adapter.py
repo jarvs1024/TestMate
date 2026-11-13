@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
+import mimetypes
+import time
+from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import httpx
 
@@ -19,8 +23,12 @@ from app.mcp.pingcode import normalize
 from app.mcp.pingcode.templates import render_description
 
 PROVIDER = "pingcode"
-MAX_BYTES = 20 * 1024 * 1024
+DEFAULT_DOWNLOAD_BYTES = 20 * 1024 * 1024
+MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 IDEMPOTENCY_TTL = 600
+UPLOAD_SCOPE_ATTACHMENT = 1
+UPLOAD_SCOPE_INLINE = 3
 _SCAN_PAGE = 100
 _SCAN_LIMIT = 5000
 
@@ -506,6 +514,419 @@ async def list_attachments(ctx: McpContext, id: str) -> dict[str, Any]:
     return {"items": items}
 
 
+# ── testhub 用例库 ──────────────────────────────────────────
+
+_TESTHUB_DEFAULT_PAGE_SIZE = 20
+_TESTHUB_MAX_PAGE_SIZE = 100
+_CASE_ATTRIBUTE_KEYS = (
+    "created_by", "created_at", "created_time", "creation_date",
+    "updated_by", "updated_at", "updated_time", "modify_date",
+    "assignee", "assignee_id", "executor", "maintainer",
+    "state", "status", "state_id", "state_type", "priority", "type",
+    "case_type", "maintenance", "suite_id", "suite_name", "module_id",
+    "module", "case_number",
+)
+
+
+def _paged_of(payload: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    value = _value_of(payload)
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)], {}
+    if isinstance(value, dict):
+        for key in ("value", "values", "items", "list", "cases", "rows", "testCases"):
+            item = value.get(key)
+            if isinstance(item, list):
+                return [x for x in item if isinstance(x, dict)], value
+        return [], value
+    return [], {}
+
+
+def _total_of(meta: dict[str, Any], size: int) -> int:
+    for key in ("count", "total", "total_count", "recordCount"):
+        value = meta.get(key)
+        if isinstance(value, (int, float)):
+            return int(value)
+    return size
+
+
+def _case_filters(raw: Any) -> list[dict[str, Any]]:
+    """筛选条件透传网页筛选器字段条件, 边界做结构校验."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise McpRuntimeError("invalid_arguments", "filters 必须是数组")
+    out: list[dict[str, Any]] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise McpRuntimeError("invalid_arguments", f"filters[{index}] 必须是对象")
+        key = str(item.get("property_key") or "").strip()
+        if not key:
+            raise McpRuntimeError("invalid_arguments", f"filters[{index}].property_key 必填")
+        try:
+            operation = int(item.get("operation"))
+        except (TypeError, ValueError) as exc:
+            raise McpRuntimeError(
+                "invalid_arguments", f"filters[{index}].operation 必须是数字 (6=属于)"
+            ) from exc
+        value = item.get("value")
+        if value is None:
+            values: list[Any] = []
+        elif isinstance(value, list):
+            values = value
+        else:
+            values = [value]
+        try:
+            logic = int(item.get("logic")) if item.get("logic") is not None else 1
+        except (TypeError, ValueError):
+            logic = 1
+        out.append(
+            {
+                "logic": logic,
+                "property_key": key,
+                "operation": operation,
+                "value": values,
+                "id": str(item.get("id") or f"{index}"),
+            }
+        )
+    return out
+
+
+def _short_case_id(value: Any) -> str:
+    text = str(value or "").strip()
+    return text.rsplit("-", 1)[-1] if "-" in text else text
+
+
+def _case_identifier(item: dict[str, Any]) -> str:
+    return str(item.get("whole_identifier") or item.get("identifier") or item.get("code") or "")
+
+
+def _case_steps(item: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = item.get("steps") or item.get("case_steps") or []
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for index, step in enumerate(raw):
+        if not isinstance(step, dict):
+            continue
+        raw_index = step.get("index")
+        if raw_index in (None, ""):
+            raw_index = step.get("step_index")
+        if raw_index in (None, ""):
+            raw_index = step.get("order")
+        if raw_index in (None, ""):
+            raw_index = index + 1
+        try:
+            number = int(raw_index)
+        except (TypeError, ValueError):
+            number = raw_index
+        out.append(
+            {
+                "index": number,
+                "description": step.get("description")
+                or step.get("step_description")
+                or step.get("name")
+                or "",
+                "expected_value": step.get("expected_value")
+                or step.get("expected")
+                or step.get("expected_result")
+                or "",
+            }
+        )
+    return out
+
+
+def _normalize_test_case(item: dict[str, Any], *, steps: bool = True) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "id": item.get("_id") or item.get("id") or "",
+        "identifier": _case_identifier(item),
+        "title": item.get("title") or item.get("name") or "",
+        "precondition": item.get("precondition") or item.get("preconditions") or "",
+    }
+    if steps:
+        out["steps"] = _case_steps(item)
+    return out
+
+
+def _case_attributes(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: item[key]
+        for key in _CASE_ATTRIBUTE_KEYS
+        if item.get(key) not in (None, "")
+    }
+
+
+async def _first_json(
+    ctx: McpContext, candidates: list[tuple[str, dict[str, Any] | None]]
+) -> Any:
+    """按候选端点顺序尝试; 全部失败时抛出最后一个错误."""
+    last: Exception | None = None
+    for path, params in candidates:
+        try:
+            return await _get_json(ctx, path, params)
+        except Exception as exc:  # noqa: BLE001 - 逐候选降级, 最后统一抛出
+            last = exc
+    if last is not None:
+        raise last
+    raise McpRuntimeError("not_found", "没有可用的接口端点")
+
+
+async def list_test_case_libraries(ctx: McpContext) -> dict[str, Any]:
+    payload = await _first_json(
+        ctx,
+        [
+            ("/api/testhub/test-libraries", {"pi": 0, "ps": 100}),
+            ("/api/testhub/test-libraries", {"ps": 100}),
+            ("/api/testhub/libraries", {"ps": 100}),
+        ],
+    )
+    raw_items, meta = _paged_of(payload)
+    items = [
+        {
+            "id": str(item.get("_id") or item.get("id") or ""),
+            "name": item.get("name") or "",
+            "identifier": str(item.get("short_id") or item.get("identifier") or ""),
+            "project_id": str(item.get("project_id") or ""),
+            "description": item.get("description") or "",
+            "case_count": item.get("case_count")
+            if item.get("case_count") is not None
+            else item.get("test_case_count"),
+        }
+        for item in raw_items
+        if item.get("_id") or item.get("id")
+    ]
+    return {"total": _total_of(meta, len(items)), "items": items}
+
+
+async def _fetch_case_page(
+    ctx: McpContext,
+    *,
+    library_id: str,
+    keyword: str,
+    identifier: str,
+    page: int,
+    page_size: int,
+    filters: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    search_keyword = (
+        str(identifier).strip().rsplit("-", 1)[-1]
+        if identifier
+        else str(keyword or "").strip()
+    )
+    body = {
+        "pi": max(0, page - 1),
+        "criteria": {
+            "search": {"keywords": search_keyword, "scopes": ["identifier", "title"]},
+            "mode": 1,
+            "conditions": filters,
+            "sort_by": "position",
+            "sort_direction": 1,
+        },
+        "scope": {"include_sub_suite": 1, "suite_id": "", "link_library_id": ""},
+        "ps": page_size,
+    }
+    payload = await _request(
+        ctx,
+        "POST",
+        f"/api/testhub/test-libraries/{quote(str(library_id), safe='')}/test-cases",
+        json=body,
+    )
+    raw_items, meta = _paged_of(payload)
+    return raw_items, _total_of(meta, len(raw_items))
+
+
+async def search_test_cases(
+    ctx: McpContext,
+    *,
+    library_id: str,
+    keyword: str = "",
+    identifier: str = "",
+    page: int = 1,
+    page_size: int = _TESTHUB_DEFAULT_PAGE_SIZE,
+    filters: Any = None,
+) -> dict[str, Any]:
+    if not library_id:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            "library_id 必填: 先用 pingcode_list_test_case_libraries 查询用例库 _id",
+        )
+    page = max(1, int(page or 1))
+    page_size = min(_TESTHUB_MAX_PAGE_SIZE, max(1, int(page_size or _TESTHUB_DEFAULT_PAGE_SIZE)))
+    raw_items, total = await _fetch_case_page(
+        ctx,
+        library_id=str(library_id),
+        keyword=keyword,
+        identifier=identifier,
+        page=page,
+        page_size=page_size,
+        filters=_case_filters(filters),
+    )
+    items = [_normalize_test_case(item, steps=False) for item in raw_items]
+    return {
+        "library_id": str(library_id),
+        "total": total,
+        "count": len(items),
+        "page": page,
+        "page_size": page_size,
+        "has_more": page * page_size < total if total else len(items) >= page_size,
+        "items": items,
+    }
+
+
+async def _library_states(ctx: McpContext, library_id: str) -> dict[str, dict[str, Any]]:
+    try:
+        payload = await _get_json(
+            ctx, "/api/testhub/test-case/states", {"library_id": library_id}
+        )
+    except Exception:  # noqa: BLE001 - 名字解析失败不影响用例详情
+        return {}
+    value = _value_of(payload)
+    items = value if isinstance(value, list) else []
+    out: dict[str, dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ident = str(item.get("_id") or item.get("id") or "")
+        if not ident:
+            continue
+        out[ident] = {
+            "name": str(item.get("name") or ""),
+            "state_type": item.get("state_type"),
+        }
+    return out
+
+
+def _flatten_suite_nodes(nodes: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not isinstance(nodes, list):
+        return out
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        out.append(node)
+        out.extend(_flatten_suite_nodes(node.get("children")))
+    return out
+
+
+async def _library_suites(ctx: McpContext, library_id: str) -> dict[str, str]:
+    encoded = quote(str(library_id), safe="")
+    try:
+        payload = await _first_json(
+            ctx,
+            [
+                (f"/api/testhub/test-libraries/{encoded}/direct/suites", None),
+                (f"/api/testhub/test-libraries/{encoded}/suites", None),
+            ],
+        )
+    except Exception:  # noqa: BLE001 - 同状态解析, 失败保留 suite_id
+        return {}
+    value = _value_of(payload)
+    return {
+        str(node.get("_id") or node.get("id") or ""): str(node.get("name") or "")
+        for node in _flatten_suite_nodes(value)
+        if node.get("_id") or node.get("id")
+    }
+
+
+async def get_test_case(
+    ctx: McpContext,
+    *,
+    identifier: str,
+    library_id: str,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    wanted = str(identifier or "").strip()
+    if not wanted:
+        raise McpRuntimeError("invalid_arguments", "identifier 必填, 如 HIMA3361-8077")
+    if not library_id:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            "library_id 必填: 先用 pingcode_list_test_case_libraries 查询用例库 _id",
+        )
+    full_form = "-" in wanted
+    page_size = 100
+    for page in range(1, 11):
+        raw_items, total = await _fetch_case_page(
+            ctx,
+            library_id=str(library_id),
+            keyword="",
+            identifier=wanted,
+            page=page,
+            page_size=page_size,
+            filters=[],
+        )
+        for item in raw_items:
+            full = _case_identifier(item)
+            matched = (
+                full.upper() == wanted.upper()
+                if full_form
+                else _short_case_id(full) == wanted
+            )
+            if not matched:
+                continue
+            out = _normalize_test_case(item)
+            attributes = _case_attributes(item)
+            state_id = item.get("state_id")
+            if state_id:
+                states = await _library_states(ctx, str(library_id))
+                state = states.get(str(state_id), {})
+                out["state"] = {
+                    "id": state_id,
+                    "name": state.get("name", ""),
+                    "state_type": item.get("state_type", state.get("state_type")),
+                }
+            suite_id = item.get("suite_id")
+            if suite_id:
+                suites = await _library_suites(ctx, str(library_id))
+                out["suite"] = {"id": suite_id, "name": suites.get(str(suite_id), "")}
+            if include_raw:
+                out["attributes"] = attributes
+                out["raw"] = item
+            elif attributes:
+                out["attributes"] = attributes
+            out["library_id"] = str(library_id)
+            return out
+        if len(raw_items) < page_size or (total and page * page_size >= total):
+            break
+    raise McpRuntimeError(
+        "not_found", f"未找到用例 {wanted} (library {library_id})"
+    )
+
+
+async def get_test_case_properties(ctx: McpContext, *, library_id: str) -> dict[str, Any]:
+    if not library_id:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            "library_id 必填: 先用 pingcode_list_test_case_libraries 查询用例库 _id",
+        )
+    payload = await _get_json(
+        ctx, "/api/testhub/test-case/view/properties", {"library_id": library_id}
+    )
+    value = _value_of(payload)
+    raw_fields = value if isinstance(value, list) else []
+    fields: list[dict[str, Any]] = []
+    for prop in raw_fields:
+        if not isinstance(prop, dict):
+            continue
+        item: dict[str, Any] = {
+            "key": str(prop.get("property_key") or prop.get("key") or "").replace("properties.", ""),
+            "name": prop.get("name") or "",
+        }
+        if prop.get("type") is not None:
+            item["type"] = prop.get("type")
+        if prop.get("is_system") is not None:
+            item["is_system"] = bool(prop.get("is_system"))
+        options = prop.get("options")
+        if isinstance(options, list) and options:
+            item["options"] = [
+                {"id": str(option.get("_id") or option.get("id") or ""), "text": option.get("text") or ""}
+                for option in options
+                if isinstance(option, dict)
+            ]
+        if item["key"]:
+            fields.append(item)
+    return {"library_id": str(library_id), "fields": fields}
+
+
 def _allowed_host() -> str:
     return (urlparse(_base_url()).hostname or "").lower()
 
@@ -601,7 +1022,7 @@ async def download_attachment(
     if not access_token and "/atlas/files/public/" in target:
         access_token = await _public_file_token(ctx)
 
-    limit = min(int(max_bytes or MAX_BYTES), MAX_BYTES)
+    limit = min(int(max_bytes or DEFAULT_DOWNLOAD_BYTES), MAX_DOWNLOAD_BYTES)
     content_type, data = await _download_bytes(target, access_token, limit)
     result: dict[str, Any] = {
         "content_type": content_type,
@@ -613,6 +1034,145 @@ async def download_attachment(
         return result
     result["url"] = target
     result["token"] = access_token
+    return result
+
+
+def _read_upload_source(
+    path: str | None, content_base64: str | None
+) -> tuple[bytes, str]:
+    if bool(path) == bool(content_base64):
+        raise McpRuntimeError(
+            "invalid_arguments", "path 与 content_base64 必须且只能提供一个"
+        )
+    if path:
+        target = Path(path).expanduser()
+        if not target.is_file():
+            raise McpRuntimeError("file_not_found", f"文件不存在或不是普通文件: {path}")
+        try:
+            return target.read_bytes(), target.name
+        except OSError as exc:
+            raise McpRuntimeError("file_not_found", f"读取文件失败: {path}") from exc
+    try:
+        return base64.b64decode(content_base64 or "", validate=True), ""
+    except (binascii.Error, ValueError) as exc:
+        raise McpRuntimeError("invalid_arguments", "content_base64 不是合法的 base64") from exc
+
+
+async def _upload_token(ctx: McpContext, scope: int, size: int) -> str:
+    payload = await _request(
+        ctx,
+        "GET",
+        "/api/typhon/secret/file/upload-token",
+        params={"scope": scope, "size": size},
+    )
+    if isinstance(payload, str) and payload:
+        return payload
+    if isinstance(payload, dict):
+        value = payload.get("value")
+        if isinstance(value, str) and value:
+            return value
+        if isinstance(value, dict) and isinstance(value.get("value"), str):
+            return value["value"]
+    raise McpRuntimeError("pingcode_error", "获取上传令牌失败")
+
+
+async def _link_attachment(
+    ctx: McpContext, work_item_id: str, file_id: str
+) -> dict[str, Any]:
+    payload = await _request(
+        ctx,
+        "POST",
+        f"/api/agile/work-items/{work_item_id}/attachment",
+        json={"file_id": file_id},
+    )
+    raw = _record_of(payload)
+    return {
+        "file_id": file_id,
+        "attachment_id": str(raw.get("_id") or raw.get("attachment_id") or ""),
+        "ok": True,
+    }
+
+
+async def upload_attachment(
+    ctx: McpContext,
+    *,
+    confirm: bool,
+    path: str | None = None,
+    content_base64: str | None = None,
+    name: str | None = None,
+    purpose: str = "attachment",
+    work_item_id: str | None = None,
+    client_request_id: str | None = None,
+) -> dict[str, Any]:
+    if confirm is not True:
+        raise McpRuntimeError(
+            "confirmation_required", "写操作需要显式 confirm=true 确认后才会提交"
+        )
+    if purpose not in ("attachment", "inline"):
+        raise McpRuntimeError("invalid_arguments", "purpose 只支持 attachment 或 inline")
+    if purpose == "inline" and work_item_id:
+        raise McpRuntimeError(
+            "invalid_arguments", "purpose=inline 时不能关联工单，内联图请直接用返回的 public_url"
+        )
+    if bool(path) == bool(content_base64):
+        raise McpRuntimeError(
+            "invalid_arguments", "path 与 content_base64 必须且只能提供一个"
+        )
+
+    key = (
+        f"mcp:pingcode:upload:{_user_id(ctx)}:{client_request_id}"
+        if client_request_id
+        else ""
+    )
+    if key:
+        async with redis_client() as redis:
+            cached = await redis.get(key)
+            if cached:
+                return json.loads(cached)
+
+    content, default_name = _read_upload_source(path, content_base64)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise McpRuntimeError("attachment_too_large", "附件超过 100MB 上限")
+    filename = (Path(name).name if name else default_name) or "upload.bin"
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    scope = UPLOAD_SCOPE_INLINE if purpose == "inline" else UPLOAD_SCOPE_ATTACHMENT
+
+    token = await _upload_token(ctx, scope, len(base64.b64encode(content)))
+    payload = await token_manager.upload_file(
+        _user_id(ctx),
+        "/atlas/file/upload",
+        token=token,
+        scope=scope,
+        filename=filename,
+        content=content,
+        content_type=content_type,
+    )
+    raw = _record_of(payload)
+    file_id = str(raw.get("_id") or raw.get("id") or "")
+    if not file_id:
+        raise McpRuntimeError("pingcode_error", "上传成功但未返回文件 id")
+
+    result: dict[str, Any] = {
+        "ok": True,
+        "file_id": file_id,
+        "name": filename,
+        "bytes": len(content),
+        "content_type": content_type,
+        "purpose": purpose,
+        "scope": scope,
+    }
+    if purpose == "inline":
+        result["public_url"] = f"{_base_url()}/atlas/files/public/{file_id}"
+    elif work_item_id:
+        linked = await _link_attachment(ctx, work_item_id, file_id)
+        result["attachment_id"] = linked["attachment_id"]
+        result["work_item_id"] = work_item_id
+
+    if key:
+        async with redis_client() as redis:
+            await redis.set(
+                key, json.dumps(result, ensure_ascii=False, default=str), ex=IDEMPOTENCY_TTL
+            )
     return result
 
 
@@ -672,6 +1232,8 @@ async def preview_work_item(
 
 
 _MULTI_VALUE_TYPES = {16, 20}
+_SELECT_TYPES = {6, 16, 20}
+_INJECTED_KEYS = {"project_id", "type", "participants"}
 
 
 def _coerce_properties(
@@ -707,6 +1269,89 @@ def _encode_value(value: Any) -> Any:
     return value
 
 
+def _is_empty_prop(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, dict)):
+        return not value
+    return False
+
+
+def _fill_required_defaults(fields: list[dict[str, Any]], props: dict[str, Any]) -> None:
+    """对齐 AiTestX: 隐藏必填项补默认值, 可见必填项仍由调用方提供."""
+    for field in fields:
+        if not field.get("required"):
+            continue
+        key = str(field.get("key") or "")
+        name = str(field.get("name") or key)
+        if not key or key in _INJECTED_KEYS or not _is_empty_prop(props.get(key)):
+            continue
+        if key == "start" or name == "开始时间":
+            props[key] = int(time.time())
+        elif name == "是否用例发现":
+            option = next(
+                (item for item in field.get("options") or [] if item.get("text") == "用例发现"),
+                None,
+            )
+            if option and option.get("_id"):
+                props[key] = option["_id"]
+        elif name == "重现步骤":
+            props[key] = "<p>见描述详情</p>" if field.get("type") == 2 else "见描述详情"
+        elif key == "description" or name == "描述":
+            default = field.get("default_value")
+            if isinstance(default, str) and default.strip():
+                props[key] = default
+
+
+def _validate_create_properties(
+    fields: list[dict[str, Any]], props: dict[str, Any]
+) -> None:
+    missing: list[str] = []
+    invalid: list[str] = []
+    for field in fields:
+        key = str(field.get("key") or "")
+        name = str(field.get("name") or key)
+        if not key or key in _INJECTED_KEYS:
+            continue
+        value = props.get(key)
+        if field.get("required") and _is_empty_prop(value):
+            missing.append(f"{name}({key})")
+            continue
+        options = field.get("options") or []
+        if (
+            _is_empty_prop(value)
+            or field.get("type") not in _SELECT_TYPES
+            or not options
+        ):
+            continue
+        allowed = {str(item.get("_id")) for item in options if item.get("_id")}
+        values = value if isinstance(value, list) else [value]
+        bad = [str(item) for item in values if str(item) not in allowed]
+        if bad:
+            invalid.append(f"{name}({key})={'/'.join(bad)}")
+    if not missing and not invalid:
+        return
+    parts: list[str] = []
+    if missing:
+        parts.append("缺少必填 " + ", ".join(missing))
+    if invalid:
+        parts.append("选项非法 " + ", ".join(invalid))
+    raise McpRuntimeError(
+        "invalid_arguments",
+        "创建工单参数不合法: "
+        + "; ".join(parts)
+        + "。请先调用 pingcode_get_property_schema 获取必填字段与选项 _id。",
+    )
+
+
+def _member_uid(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("uid") or value.get("id")
+    return value.strip() if isinstance(value, str) else ""
+
+
 async def create_work_item(
     ctx: McpContext,
     *,
@@ -718,12 +1363,23 @@ async def create_work_item(
     project_template_type: str | None = None,
     description_template: str | None = None,
     description_fields: dict[str, Any] | None = None,
+    attachments: list[str] | None = None,
 ) -> dict[str, Any]:
     if confirm is not True:
         raise McpRuntimeError(
             "confirmation_required", "写操作需要显式 confirm=true 确认后才会提交"
         )
+    file_ids: list[str] = []
+    for item in attachments or []:
+        if isinstance(item, str) and item.strip() and item.strip() not in file_ids:
+            file_ids.append(item.strip())
+    if attachments and not file_ids:
+        raise McpRuntimeError("invalid_arguments", "attachments 必须是 file_id 字符串数组")
     props = dict(properties or {})
+    if not _member_uid(props.get("assignee")):
+        raise McpRuntimeError(
+            "assignee_required", "创建工单必须指定负责人 assignee，为空时禁止创建"
+        )
     if description_template:
         if description_template != "standard":
             raise McpRuntimeError(
@@ -747,6 +1403,8 @@ async def create_work_item(
     else:
         fields = schema["fields"]
     props = _coerce_properties(props, fields)
+    _fill_required_defaults(fields, props)
+    _validate_create_properties(fields, props)
 
     values = [{"key": name, "value": _encode_value(value)} for name, value in props.items()]
     inserted = {item["key"] for item in values}
@@ -769,6 +1427,14 @@ async def create_work_item(
         "url": _work_item_url(work_item_id, identifier),
         "raw": raw,
     }
+    if file_ids:
+        linked = []
+        for file_id in file_ids:
+            try:
+                linked.append(await _link_attachment(ctx, work_item_id, file_id))
+            except McpRuntimeError as exc:
+                linked.append({"file_id": file_id, "ok": False, "error": str(exc)})
+        result["attachments"] = linked
     async with redis_client() as redis:
         await redis.set(key, json.dumps(result, ensure_ascii=False, default=str), ex=IDEMPOTENCY_TTL)
     return result

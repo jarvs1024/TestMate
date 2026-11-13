@@ -168,7 +168,7 @@ async def test_register_client_accepts_http_loopback_and_defaults_all_scopes(
     assert "client_secret" not in registered
     assert registered["scope"] == (
         "extensions:read extensions:write kb:read kb:write "
-        "pingcode:read pingcode:write"
+        "pingcode:read pingcode:write plm:read plm:write"
     )
     async with AsyncSessionLocal() as session:
         stored = await session.get(McpOAuthClient, registered["client_id"])
@@ -181,6 +181,8 @@ async def test_register_client_accepts_http_loopback_and_defaults_all_scopes(
             "kb:write",
             "pingcode:read",
             "pingcode:write",
+            "plm:read",
+            "plm:write",
         ]
 
 
@@ -299,6 +301,8 @@ async def test_allowed_scopes_uses_current_publish_policy_and_user_state():
         "kb:write",
         "pingcode:read",
         "pingcode:write",
+        "plm:read",
+        "plm:write",
     ]
 
     await set_setting("extensions.publisher_roles", "")
@@ -308,6 +312,8 @@ async def test_allowed_scopes_uses_current_publish_policy_and_user_state():
         "kb:write",
         "pingcode:read",
         "pingcode:write",
+        "plm:read",
+        "plm:write",
     ]
 
     user.is_active = False
@@ -321,6 +327,8 @@ async def test_viewer_allowed_scopes_include_kb_read_only():
         "kb:read",
         "pingcode:read",
         "pingcode:write",
+        "plm:read",
+        "plm:write",
     ]
 
 

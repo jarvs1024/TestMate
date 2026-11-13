@@ -3,13 +3,21 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations import crypto
-from app.integrations.pingcode.client import PingCodeSession
 from app.models.integration import IntegrationCredential
+
+
+class LoginSession(Protocol):
+    """PingCode / PLM 登录结果的最小共同契约."""
+
+    access_token: str
+    cookies: dict[str, str]
+    access_token_expires_at: datetime
 
 
 async def get(session: AsyncSession, user_id: int, provider: str) -> IntegrationCredential | None:
@@ -45,7 +53,7 @@ async def save_login(
     provider: str,
     username: str,
     password: str,
-    login: PingCodeSession,
+    login: LoginSession,
 ) -> IntegrationCredential:
     record = await get(session, user_id, provider)
     if record is None:
@@ -76,7 +84,7 @@ async def save_login(
 async def save_session(
     session: AsyncSession,
     record: IntegrationCredential,
-    login: PingCodeSession,
+    login: LoginSession,
 ) -> IntegrationCredential:
     """写回刷新得到的 token/cookie, 不动密码与用户名."""
     now = datetime.utcnow()

@@ -272,6 +272,46 @@ class PingCodeClient:
         except httpx.HTTPError as exc:
             raise PingCodeUnavailable("PingCode 不可达，请稍后再试") from exc
 
+        return self._decode(response)
+
+    async def upload_file(
+        self,
+        path: str,
+        *,
+        token: str,
+        scope: int,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        timeout: float | None = None,
+    ) -> Any:
+        """multipart 上传到 atlas; 依赖 cookie 会话与 upload-token, 不发送 JSON Content-Type."""
+        headers = {
+            "Authorization": f"Bearer {self.session.access_token}",
+            "X-Team-Id": self.session.team_id,
+            "Referer": f"{self.base_url}/",
+        }
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.base_url,
+                timeout=timeout or self.timeout,
+                headers=headers,
+                cookies=self.session.cookies or None,
+                transport=self._transport,
+                trust_env=False,
+            ) as client:
+                response = await client.post(
+                    path,
+                    params={"token": token, "scope": scope},
+                    files={"file": (filename, content, content_type)},
+                )
+        except httpx.HTTPError as exc:
+            raise PingCodeUnavailable("PingCode 不可达，请稍后再试") from exc
+
+        return self._decode(response)
+
+    @staticmethod
+    def _decode(response: httpx.Response) -> Any:
         if response.status_code in _AUTH_CODES:
             raise PingCodeSessionExpired("登录态已失效")
         if response.status_code >= 500:

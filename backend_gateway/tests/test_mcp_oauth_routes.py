@@ -28,6 +28,8 @@ SUPPORTED_SCOPES = [
     "kb:write",
     "pingcode:read",
     "pingcode:write",
+    "plm:read",
+    "plm:write",
 ]
 DISCOVERY_PATHS = [
     "/.well-known/oauth-authorization-server",
@@ -35,6 +37,7 @@ DISCOVERY_PATHS = [
     "/.well-known/oauth-protected-resource/mcp/skill",
     "/.well-known/oauth-protected-resource/mcp/kb",
     "/.well-known/oauth-protected-resource/mcp/pingcode",
+    "/.well-known/oauth-protected-resource/mcp/plm",
 ]
 
 
@@ -196,6 +199,18 @@ async def test_protected_resource_metadata_targets_mcp_pingcode(client):
     }
 
 
+async def test_protected_resource_metadata_targets_mcp_plm(client):
+    response = await client.get("/.well-known/oauth-protected-resource/mcp/plm")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "resource": f"{ISSUER}/mcp/plm",
+        "authorization_servers": [ISSUER],
+        "scopes_supported": SUPPORTED_SCOPES,
+        "bearer_methods_supported": ["header"],
+    }
+
+
 @pytest.mark.parametrize("path", DISCOVERY_PATHS)
 async def test_discovery_documents_advertise_all_supported_scopes(client, path):
     response = await client.get(path)
@@ -217,7 +232,7 @@ async def test_register_returns_task2_client_metadata_with_201(client):
         "response_types": ["code"],
         "scope": (
             "extensions:read extensions:write kb:read kb:write "
-            "pingcode:read pingcode:write"
+            "pingcode:read pingcode:write plm:read plm:write"
         ),
     }
     assert "client_secret" not in registered

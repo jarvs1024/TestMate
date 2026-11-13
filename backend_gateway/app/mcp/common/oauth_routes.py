@@ -156,3 +156,14 @@ async def protected_resource_metadata_pingcode():
         "scopes_supported": list(SCOPE_ORDER),
         "bearer_methods_supported": ["header"],
     }
+
+
+@router.get("/.well-known/oauth-protected-resource/mcp/plm")
+async def protected_resource_metadata_plm():
+    issuer = await _public_base()
+    return {
+        "resource": f"{issuer}/mcp/plm",
+        "authorization_servers": [issuer],
+        "scopes_supported": list(SCOPE_ORDER),
+        "bearer_methods_supported": ["header"],
+    }

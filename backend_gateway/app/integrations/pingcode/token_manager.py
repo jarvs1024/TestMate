@@ -105,6 +105,45 @@ class TokenManager:
                 "PingCode 登录态已失效，请到个人中心重新绑定账号"
             ) from exc
 
+    async def upload_file(
+        self,
+        user_id: int,
+        path: str,
+        *,
+        token: str,
+        scope: int,
+        filename: str,
+        content: bytes,
+        content_type: str,
+    ) -> Any:
+        session = await self.ensure_session(user_id)
+        try:
+            return await self._client(session).upload_file(
+                path,
+                token=token,
+                scope=scope,
+                filename=filename,
+                content=content,
+                content_type=content_type,
+            )
+        except client.PingCodeSessionExpired:
+            pass
+        session = await self.ensure_session(user_id, force=True)
+        try:
+            return await self._client(session).upload_file(
+                path,
+                token=token,
+                scope=scope,
+                filename=filename,
+                content=content,
+                content_type=content_type,
+            )
+        except client.PingCodeSessionExpired as exc:
+            await self._mark_reauth(user_id, "登录态已失效，请重新绑定账号")
+            raise IntegrationReauthRequired(
+                "PingCode 登录态已失效，请到个人中心重新绑定账号"
+            ) from exc
+
     # ── 缓存与冷却 ────────────────────────────────────────────
     def _cached(self, record: IntegrationCredential) -> client.PingCodeSession | None:
         if record.status != "ok" or not record.token_encrypted:
@@ -313,3 +352,24 @@ async def request(
     json: Any = None,
 ) -> Any:
     return await _default_manager.request(user_id, method, path, params=params, json=json)
+
+
+async def upload_file(
+    user_id: int,
+    path: str,
+    *,
+    token: str,
+    scope: int,
+    filename: str,
+    content: bytes,
+    content_type: str,
+) -> Any:
+    return await _default_manager.upload_file(
+        user_id,
+        path,
+        token=token,
+        scope=scope,
+        filename=filename,
+        content=content,
+        content_type=content_type,
+    )

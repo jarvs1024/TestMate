@@ -13,7 +13,8 @@ TestMate 要把 PingCode（内网 `http://10.20.24.30/`）的日常查询/提单
 2. 后端用账号密码完成登录，拿到 JWT 与会话 cookie；缓存登录态。
 3. 登录态过期时自动续期/重登，保证 MCP 长期稳定可用。
 4. 把 AiTestX 已实现的 PingCode MCP 工具迁入 TestMate 内置 MCP（新域 `/mcp/pingcode`）。
-5. 为后续 PLM（`https://plm.twsc.com.cn/`）预留同一套凭据/集成框架；本期只占位，不实现登录。
+5. 为 PLM（`https://plm.twsc.com.cn/`）复用同一套凭据/集成框架；PLM 服务端登录与 MCP 已在
+   [2026-11-14-plm-integration-design.md](2026-11-14-plm-integration-design.md) 实现。
 
 ## 2. 已核实事实（实现依据）
 
@@ -38,7 +39,8 @@ TestMate 要把 PingCode（内网 `http://10.20.24.30/`）的日常查询/提单
 
 已验证可用的读取接口：`/api/typhon/account/me`、`/api/typhon/team`（成员）、`/api/agile/projects/select-options`、`/api/agile/work-items`、`/api/agile/work-items/{id}`、`/api/agile/work-items/{id}/comments`、`/api/testhub/test-libraries`。
 
-PLM 现状：YonBIP/CAS 体系，入口 `/iuap-apcom-workbench-fe/.../yonbiplogin`，现有 AiTestX 实现依赖浏览器会话与 CAS 重定向探测；**本期不做服务端登录**。
+PLM 现状：YonBIP/CAS 体系，服务端登录与 14 个 MCP 工具已按
+[2026-11-14-plm-integration-design.md](2026-11-14-plm-integration-design.md) 落地。
 
 ## 3. 范围与非目标
 
@@ -48,8 +50,8 @@ PLM 现状：YonBIP/CAS 体系，入口 `/iuap-apcom-workbench-fe/.../yonbiplogi
 - PingCode 服务端登录、token/cookie 缓存、主动续期与 401 自动重登
 - 个人中心「外部系统」页签与 PingCode 凭据卡
 - REST API：凭据 CRUD、测试连接、公钥下发
-- 内置 MCP 域 `/mcp/pingcode` + 13 个工具 + `pingcode:read/write` scope
-- PLM 占位：同表、同 API、同 UI 框架，providers 列表显示「建设中」
+- 内置 MCP 域 `/mcp/pingcode` + 14 个工具 + `pingcode:read/write` scope
+- PLM：同表、同 API、同 UI 框架；服务端登录与 MCP 工具见 PLM 设计文档
 
 ### 非目标
 - PLM 的密码登录与工具（二期）
@@ -85,7 +87,7 @@ MCP /mcp/pingcode
 | `token_manager.py` | 单飞登录、缓存判定、刷新、失败冷却 |
 | `api.py` | `/api/v1/integrations` 路由 |
 | `pingcode/client.py` | PingCode HTTP 客户端（登录、请求、分页、错误归一） |
-| `pingcode/adapter.py` | 13 个工具的业务实现（从 AiTestX 移植） |
+| `pingcode/adapter.py` | 14 个工具的业务实现（从 AiTestX 移植） |
 | `pingcode/templates.py` | 标准 10 段提单描述模板 |
 | `pingcode/tools.py` | `ToolSpec` 列表 |
 | `pingcode/server.py` | `build_pingcode_server()` |
@@ -208,7 +210,7 @@ ensure_session(user):
 - `allowed_scopes(user)`：活跃用户同时获得 `pingcode:read` 与 `pingcode:write`（已确认：写权限给所有活跃用户）。
 - **存量令牌/授权**：新增 scope 不会自动加到已签发的静态令牌或 OAuth 授权里；个人中心「访问令牌」页重建令牌并勾选新 scope，或重新走一次 OAuth 授权即可。前端无需特殊处理。
 
-### 9.2 工具（首期 13 个，名称与 AiTestX 对齐）
+### 9.2 工具（首期 14 个，名称与 AiTestX 对齐）
 
 | 工具 | scope | 只读 | 关键参数 |
 |---|---|---|---|
@@ -223,14 +225,17 @@ ensure_session(user):
 | `pingcode_list_attachments` | read | 是 | `id` |
 | `pingcode_download_attachment` | read | 是 | `url?`, `file_id?`, `name?`, `max_bytes?`, `token?` |
 | `pingcode_preview_work_item` | read | 是 | `project_id`, `work_item_type_id`, `project_template_type?`, `properties`, `description_template?`, `description_fields?` |
-| `pingcode_create_work_item` | write | 否 | 同上 + `confirm`, `client_request_id` |
+| `pingcode_create_work_item` | write | 否 | 同上 + `attachments?`, `confirm`, `client_request_id` |
+| `pingcode_upload_attachment` | write | 否 | `path?`, `content_base64?`（二选一）, `name?`, `purpose?`（`attachment`/`inline`）, `work_item_id?`, `confirm`, `client_request_id?` |
 | `pingcode_add_comment` | write | 否 | `id`, `content`, `confirm` |
 
 实现约束：
 - 工具一律通过 `principal.user.id` 取凭据；未绑定返回 `integration_not_configured`（提示去个人中心绑定）。
-- `create_work_item` / `add_comment`：`confirm` 必须为 `true`，否则 `confirmation_required`。
-- `create_work_item` 必须带 `client_request_id`；命中 Redis 幂等键直接返回上次结果（10 分钟）。
-- `download_attachment`：图片返回 `{content_type, base64, bytes}`；非图片返回 `{url, token, name, bytes}`（客户端自行下载）；超过 `max_bytes`（默认 20MB）返回错误而不截断。
+- `create_work_item` / `add_comment` / `upload_attachment`：`confirm` 必须为 `true`，否则 `confirmation_required`。
+- `create_work_item` 必须带 `client_request_id`；`attachments` 为已上传 file_id 列表，建单成功后逐个调用 `POST /api/agile/work-items/{id}/attachment` 关联，单个失败只在该条结果里报 `ok: false`，不回滚工单；命中 Redis 幂等键（10 分钟）直接返回上次结果，附件不会重复关联。
+- `upload_attachment`：`path` 与 `content_base64` 恰好提供一个；`purpose=inline` 返回公共图片 URL，`purpose=attachment` 可带 `work_item_id` 直接关联；`client_request_id` 命中 Redis 幂等键直接返回上次结果（10 分钟）。
+- `download_attachment`：图片返回 `{content_type, base64, bytes}`；非图片返回 `{url, token, name, bytes}`（客户端自行下载）；超过 `max_bytes`（默认 20MB，上限 100MB）返回错误而不截断。
+- `upload_attachment` 单文件上限 100MB，超限返回 `attachment_too_large`。
 - 分页参数上限：`page_size <= 100`；`search_work_items` 默认 20。
 - 描述模板与 `description_fields` 渲染规则从 `pingcode/templates.py` 移植，字段缺失渲染为 `-`。
 
@@ -297,7 +302,7 @@ INTEGRATION_CREDENTIAL_KEY=<base64 32 bytes>
    - 并发 10 个请求只登录 1 次（单飞）。
 4. `client`：HTTP 200 + `code=401` 触发刷新并重试一次；重试仍失败抛错；非 401 错误映射。
 5. API：未登录 401；越权访问他人凭据不可达；PUT 解密失败 400；PLM 409；测试接口限流。
-6. MCP：13 个工具 schema 严格校验（多余字段拒绝）；scope 缺失拒绝；`confirm` 缺失拒绝；幂等键命中；未绑定凭据报错；审计记录 write 标记。
+6. MCP：14 个工具 schema 严格校验（多余字段拒绝）；scope 缺失拒绝；`confirm` 缺失拒绝；幂等键命中；未绑定凭据报错；审计记录 write 标记。
 
 ### 13.2 前端
 - Vitest 用例见 10.3；`vue-tsc` 通过。
@@ -306,7 +311,7 @@ INTEGRATION_CREDENTIAL_KEY=<base64 32 bytes>
 1. 浏览器打开 `http://127.0.0.1:8081`，个人中心 → 外部系统 → 录入账号密码 → 保存并验证。
 2. 测试连接展示真实姓名与团队名。
 3. Qoder 连接 `/mcp/pingcode`：`whoami`、`search_work_items(project_identifier="TF2")`、`get_work_item(identifier="TF2-<id>")`。
-4. **真实建单**：`preview_work_item` 干跑确认后，`create_work_item` 在 `TIANFU V100R001`（`663ede052100d4724722f6a6`）以「缺陷」（`662096879f86b6cac7599096`）创建一条标题为「【TestMate MCP 联调】请忽略」的工单；随后 `add_comment` 追加验证评论。记录工单 `identifier` 与 `id` 作为验收证据。
+4. **真实建单**：`preview_work_item` 干跑确认后，`create_work_item` 在 `TIANFU V100R001`（`663ede052100d4724722f6a6`）以「缺陷」（`662096879f86b6cac7599096`）创建一条标题为「【TestMate MCP 联调】请忽略」的工单；随后 `add_comment` 追加验证评论。记录工单 `identifier` 与 `id` 作为验收证据。附件路径：`upload_attachment` 上传截图（`purpose=attachment`）后用 `create_work_item.attachments` 关联；内嵌图用 `purpose=inline` 的 `public_url` 写入 `properties.description`；回读确认描述含该 URL、`attachment_count >= 1` 且附件列表可见。
 5. 重启后端进程后再次调用 `whoami`，确认登录态从加密缓存恢复（不重新输入密码）。
 6. 截图核对个人中心卡片状态；确认浏览器控制台 0 错误。
 
@@ -332,7 +337,7 @@ INTEGRATION_CREDENTIAL_KEY=<base64 32 bytes>
 ## 16. 分阶段实施
 
 1. **Phase 1**：模型 + migration 0036 + crypto + credentials + REST API（含测试）
-2. **Phase 2**：PingCode client + token manager + 13 个工具 + MCP 域 + scopes（含测试）
+2. **Phase 2**：PingCode client + token manager + 14 个工具 + MCP 域 + scopes（含测试）
 3. **Phase 3**：前端外部系统页签 + RSA 工具 + 测试
 4. **Phase 4**：真实账号端到端验收（含 TIANFU 建单）+ 文档
 5. **Phase 5**：PLM 占位与框架文档

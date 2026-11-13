@@ -329,6 +329,8 @@ async def test_token_scope_options_follow_current_capability(
             "kb:write",
             "pingcode:read",
             "pingcode:write",
+            "plm:read",
+            "plm:write",
         ]
     }
     assert stranger_scopes.status_code == 200, stranger_scopes.text
@@ -338,6 +340,8 @@ async def test_token_scope_options_follow_current_capability(
             "kb:read",
             "pingcode:read",
             "pingcode:write",
+            "plm:read",
+            "plm:write",
         ]
     }
 

@@ -13,7 +13,7 @@ class Provider:
 
 PROVIDERS = (
     Provider(code="pingcode", name="PingCode", enabled=True),
-    Provider(code="plm", name="PLM", enabled=False),
+    Provider(code="plm", name="PLM", enabled=True),
 )
 
 PROVIDER_BY_CODE = {provider.code: provider for provider in PROVIDERS}

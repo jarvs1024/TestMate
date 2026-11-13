@@ -1,4 +1,4 @@
-"""pingcode MCP 域: 13 个工具 schema、scope、幂等与适配输出 (mock 上游)."""
+"""pingcode MCP 域: 18 个工具 schema、scope、幂等与适配输出 (mock 上游)."""
 from __future__ import annotations
 
 import base64
@@ -14,8 +14,10 @@ from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from app.db.session import AsyncSessionLocal
 from app.integrations import crypto
+from app.integrations.pingcode import client as pingcode_client
 from app.integrations.pingcode import token_manager
 from app.mcp.common.context import McpContext, Principal
+from app.mcp.common.errors import McpRuntimeError
 from app.mcp.common.server import build_dispatcher, run_mcp_lifespan
 from app.mcp.pingcode import adapter, templates
 from app.mcp.pingcode.server import build_pingcode_server
@@ -37,6 +39,10 @@ TOOL_REQUIRED = {
     "pingcode_get_work_item": set(),
     "pingcode_list_comments": {"id"},
     "pingcode_list_attachments": {"id"},
+    "pingcode_list_test_case_libraries": set(),
+    "pingcode_search_test_cases": {"library_id"},
+    "pingcode_get_test_case": {"library_id", "identifier"},
+    "pingcode_get_test_case_properties": {"library_id"},
     "pingcode_download_attachment": set(),
     "pingcode_preview_work_item": {"project_id", "work_item_type_id", "properties"},
     "pingcode_create_work_item": {
@@ -47,6 +53,7 @@ TOOL_REQUIRED = {
         "client_request_id",
     },
     "pingcode_add_comment": {"id", "content", "confirm"},
+    "pingcode_upload_attachment": {"confirm"},
 }
 
 
@@ -130,6 +137,25 @@ class FakeAPI:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict | None, dict | None]] = []
         self.routes = {}
+        self.uploads: list[dict] = []
+        self.upload_result: dict = {"_id": "file-1"}
+        self.upload_error: Exception | None = None
+
+    async def upload(self, user_id, path, *, token, scope, filename, content, content_type):
+        self.uploads.append(
+            {
+                "user_id": user_id,
+                "path": path,
+                "token": token,
+                "scope": scope,
+                "filename": filename,
+                "content": content,
+                "content_type": content_type,
+            }
+        )
+        if self.upload_error is not None:
+            raise self.upload_error
+        return self.upload_result
 
     async def request(self, user_id, method, path, *, params=None, json=None):
         self.calls.append((method, path, params, json))
@@ -155,6 +181,7 @@ def fake_api(monkeypatch):
         return await api.request(user_id, method, path, params=params, json=json)
 
     monkeypatch.setattr(token_manager, "request", forward)
+    monkeypatch.setattr(token_manager, "upload_file", api.upload)
     monkeypatch.setattr(adapter, "redis_client", redis_factory)
     api.redis = redis
     return api
@@ -237,7 +264,7 @@ def _detail_payload() -> dict:
 
 
 # ── 契约: 13 个工具与严格 schema ────────────────────────────
-async def test_tools_list_exposes_thirteen_strict_schemas(user):
+async def test_tools_list_exposes_eighteen_strict_schemas(user):
     principal = Principal(
         user=user, client_id="test-client", scopes=frozenset({"pingcode:read"})
     )
@@ -642,18 +669,160 @@ async def test_create_requires_confirm(bound_user, fake_api):
     assert fake_api.calls == []
 
 
+async def test_create_requires_assignee(bound_user, fake_api):
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.create_work_item(
+                ctx,
+                project_id="p1",
+                work_item_type_id="t1",
+                properties={"title": "x", "assignee": ""},
+                confirm=True,
+                client_request_id="req-no-assignee",
+            )
+    assert excinfo.value.code == "assignee_required"
+    assert fake_api.calls == []
+
+
+async def test_create_accepts_assignee_member_object(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: _typed_schema()
+    fake_api.routes["/api/agile/work-item"] = lambda **_: {
+        "value": {"_id": "w11", "whole_identifier": "TF2-101"}
+    }
+    async with _context(bound_user) as ctx:
+        await adapter.create_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "有负责人", "assignee": {"uid": "u1", "name": "张三"}},
+            confirm=True,
+            client_request_id="req-assignee-object",
+        )
+
+    body = next(
+        json for _, path, _, json in fake_api.calls if path == "/api/agile/work-item"
+    )
+    values = {item["key"]: item["value"] for item in body["property_values"]}
+    assert values["assignee"] == "u1"
+    assert values["participants"] == ["u1"]
+
+
 def _typed_schema() -> dict:
     return {
         "value": {
             "properties": [
                 {"key": "title", "type": 1, "validators": {"is_required": True}},
-                {"key": "start", "type": 4, "validators": {"is_required": True}},
-                {"key": "ceshitexing", "type": 20, "validators": {"is_required": True}},
-                {"key": "kaifamokuai", "type": 20, "validators": {"is_required": True}},
+                {"key": "start", "type": 4, "validators": {}},
+                {"key": "ceshitexing", "type": 20, "validators": {}},
+                {"key": "kaifamokuai", "type": 20, "validators": {}},
             ]
         },
         "references": {},
     }
+
+
+def _create_schema(*properties: dict) -> dict:
+    return {"value": {"properties": list(properties)}, "references": {}}
+
+
+REQUIRED = {"validators": {"is_required": True}}
+
+
+async def test_create_rejects_missing_visible_required(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: _create_schema(
+        {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+        {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+        {
+            "key": "severity",
+            "name": "严重程度",
+            "type": 6,
+            **REQUIRED,
+            "options": [{"_id": "sev-1", "text": "严重"}],
+        },
+    )
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.create_work_item(
+                ctx,
+                project_id="p1",
+                work_item_type_id="t1",
+                properties={"title": "缺必填", "assignee": "u1"},
+                confirm=True,
+                client_request_id="req-missing-visible",
+            )
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert "严重程度" in str(excinfo.value)
+    assert "/api/agile/work-item" not in fake_api.paths()
+
+
+async def test_create_fills_hidden_required_defaults(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: _create_schema(
+        {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+        {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+        {"key": "start", "name": "开始时间", "type": 4, **REQUIRED},
+        {
+            "key": "shifouyonglifaxian",
+            "name": "是否用例发现",
+            "type": 6,
+            **REQUIRED,
+            "options": [
+                {"_id": "opt-case", "text": "用例发现"},
+                {"_id": "opt-manual", "text": "非用例发现"},
+            ],
+        },
+        {"key": "replay_step", "name": "重现步骤", "type": 2, **REQUIRED},
+    )
+    fake_api.routes["/api/agile/work-item"] = lambda **_: {
+        "value": {"_id": "w12", "whole_identifier": "TF2-102"}
+    }
+    async with _context(bound_user) as ctx:
+        await adapter.create_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "补隐藏必填", "assignee": "u1"},
+            confirm=True,
+            client_request_id="req-hidden-defaults",
+        )
+
+    body = next(
+        json for _, path, _, json in fake_api.calls if path == "/api/agile/work-item"
+    )
+    values = {item["key"]: item["value"] for item in body["property_values"]}
+    assert isinstance(values["start"], int)
+    assert values["shifouyonglifaxian"] == "opt-case"
+    assert values["replay_step"] == "<p>见描述详情</p>"
+    assert values["participants"] == ["u1"]
+
+
+async def test_create_rejects_invalid_option(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: _create_schema(
+        {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+        {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+        {
+            "key": "priority",
+            "name": "优先级",
+            "type": 6,
+            **REQUIRED,
+            "options": [{"_id": "prio-1", "text": "普通"}],
+        },
+    )
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.create_work_item(
+                ctx,
+                project_id="p1",
+                work_item_type_id="t1",
+                properties={"title": "非法选项", "assignee": "u1", "priority": "not-exist"},
+                confirm=True,
+                client_request_id="req-invalid-option",
+            )
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert "优先级" in str(excinfo.value)
+    assert "/api/agile/work-item" not in fake_api.paths()
+
 
 
 async def test_create_sends_multiselect_as_array_and_date_as_object(bound_user, fake_api):
@@ -670,6 +839,7 @@ async def test_create_sends_multiselect_as_array_and_date_as_object(bound_user, 
             properties={
                 "title": "多选编码",
                 "start": 1794500653,
+                "assignee": "u1",
                 "ceshitexing": "opt-c",
                 "kaifamokuai": ["opt-k1", "opt-k2"],
             },
@@ -822,7 +992,7 @@ async def test_create_reads_value_when_references_present(bound_user, fake_api):
             ctx,
             project_id="p1",
             work_item_type_id="t1",
-            properties={"title": "引用并存"},
+            properties={"title": "引用并存", "assignee": "u1"},
             confirm=True,
             client_request_id="req-ref-create",
         )
@@ -861,3 +1031,487 @@ async def test_list_members_reads_roles_when_references_present(bound_user, fake
 
     assert [item["id"] for item in data["items"]] == ["u1"]
     assert data["items"][0]["name"] == "张三"
+
+
+# ── 附件上传与 create attachments ──────────────────────────
+def _png_bytes() -> bytes:
+    return b"\x89PNG\r\n\x1a\n" + b"0" * 16
+
+
+def _upload_token_route(fake_api, token: str = "upload-token") -> None:
+    fake_api.routes["/api/typhon/secret/file/upload-token"] = lambda **_: token
+
+
+async def test_upload_requires_confirm(bound_user, fake_api, tmp_path):
+    src = tmp_path / "shot.png"
+    src.write_bytes(_png_bytes())
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.upload_attachment(
+                ctx, path=str(src), confirm=False, client_request_id="up-no-confirm"
+            )
+
+    assert excinfo.value.code == "confirmation_required"
+    assert fake_api.calls == []
+    assert fake_api.uploads == []
+
+
+async def test_upload_requires_exactly_one_source(bound_user, fake_api, tmp_path):
+    src = tmp_path / "shot.png"
+    src.write_bytes(_png_bytes())
+    payload = base64.b64encode(_png_bytes()).decode("ascii")
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as neither:
+            await adapter.upload_attachment(
+                ctx, confirm=True, client_request_id="up-none"
+            )
+        with pytest.raises(adapter.McpRuntimeError) as both:
+            await adapter.upload_attachment(
+                ctx,
+                path=str(src),
+                content_base64=payload,
+                confirm=True,
+                client_request_id="up-both",
+            )
+
+    assert neither.value.code == "invalid_arguments"
+    assert both.value.code == "invalid_arguments"
+    assert fake_api.uploads == []
+
+
+async def test_upload_from_path_sends_token_scope_and_file(bound_user, fake_api, tmp_path):
+    content = _png_bytes()
+    src = tmp_path / "shot.png"
+    src.write_bytes(content)
+    _upload_token_route(fake_api, "tok-1")
+    fake_api.upload_result = {"_id": "file-1"}
+    async with _context(bound_user) as ctx:
+        data = await adapter.upload_attachment(
+            ctx,
+            path=str(src),
+            confirm=True,
+            client_request_id="up-path",
+        )
+
+    token_call = next(
+        call for call in fake_api.calls if call[1] == "/api/typhon/secret/file/upload-token"
+    )
+    assert token_call[2] == {
+        "scope": 1,
+        "size": len(base64.b64encode(content)),
+    }
+    assert fake_api.uploads == [
+        {
+            "user_id": bound_user.id,
+            "path": "/atlas/file/upload",
+            "token": "tok-1",
+            "scope": 1,
+            "filename": "shot.png",
+            "content": content,
+            "content_type": "image/png",
+        }
+    ]
+    assert data["file_id"] == "file-1"
+    assert data["bytes"] == len(content)
+    assert data["content_type"] == "image/png"
+    assert data["purpose"] == "attachment"
+    assert data["scope"] == 1
+
+
+async def test_upload_inline_returns_public_url(bound_user, fake_api):
+    _upload_token_route(fake_api)
+    fake_api.upload_result = {"_id": "file-9"}
+    async with _context(bound_user) as ctx:
+        data = await adapter.upload_attachment(
+            ctx,
+            content_base64=base64.b64encode(_png_bytes()).decode("ascii"),
+            name="inline.png",
+            purpose="inline",
+            confirm=True,
+            client_request_id="up-inline",
+        )
+
+    token_call = next(
+        call for call in fake_api.calls if call[1] == "/api/typhon/secret/file/upload-token"
+    )
+    assert token_call[2]["scope"] == 3
+    assert fake_api.uploads[0]["scope"] == 3
+    assert data["public_url"] == f"{adapter._base_url()}/atlas/files/public/file-9"
+    assert "attachment_id" not in data
+
+
+async def test_upload_links_to_work_item(bound_user, fake_api):
+    _upload_token_route(fake_api)
+    fake_api.upload_result = {"_id": "file-2"}
+    fake_api.routes["/api/agile/work-items/w1/attachment"] = lambda **_: {
+        "value": {"_id": "att-1", "file_id": "file-2"}
+    }
+    async with _context(bound_user) as ctx:
+        data = await adapter.upload_attachment(
+            ctx,
+            content_base64=base64.b64encode(_png_bytes()).decode("ascii"),
+            name="linked.png",
+            work_item_id="w1",
+            confirm=True,
+            client_request_id="up-link",
+        )
+
+    link_call = next(
+        call for call in fake_api.calls if call[1] == "/api/agile/work-items/w1/attachment"
+    )
+    assert link_call[3] == {"file_id": "file-2"}
+    assert data["attachment_id"] == "att-1"
+    assert data["work_item_id"] == "w1"
+
+
+async def test_upload_rejects_inline_with_work_item(bound_user, fake_api):
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.upload_attachment(
+                ctx,
+                content_base64=base64.b64encode(_png_bytes()).decode("ascii"),
+                name="x.png",
+                purpose="inline",
+                work_item_id="w1",
+                confirm=True,
+                client_request_id="up-inline-link",
+            )
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert fake_api.uploads == []
+
+
+async def test_upload_rejects_oversize(bound_user, fake_api, monkeypatch):
+    monkeypatch.setattr(adapter, "MAX_UPLOAD_BYTES", 8)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.upload_attachment(
+                ctx,
+                content_base64=base64.b64encode(_png_bytes()).decode("ascii"),
+                name="big.png",
+                confirm=True,
+                client_request_id="up-big",
+            )
+
+    assert excinfo.value.code == "attachment_too_large"
+    assert fake_api.uploads == []
+
+
+async def test_upload_rejects_missing_file(bound_user, fake_api, tmp_path):
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.upload_attachment(
+                ctx,
+                path=str(tmp_path / "absent.png"),
+                confirm=True,
+                client_request_id="up-absent",
+            )
+
+    assert excinfo.value.code == "file_not_found"
+    assert fake_api.uploads == []
+
+
+async def test_upload_rejects_invalid_base64(bound_user, fake_api):
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.upload_attachment(
+                ctx,
+                content_base64="!!!not-base64!!!",
+                name="bad.png",
+                confirm=True,
+                client_request_id="up-bad-b64",
+            )
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert fake_api.uploads == []
+
+
+async def test_upload_is_idempotent(bound_user, fake_api):
+    _upload_token_route(fake_api)
+    payload = base64.b64encode(_png_bytes()).decode("ascii")
+    async with _context(bound_user) as ctx:
+        first = await adapter.upload_attachment(
+            ctx, content_base64=payload, name="once.png", confirm=True,
+            client_request_id="up-once",
+        )
+        second = await adapter.upload_attachment(
+            ctx, content_base64=payload, name="once.png", confirm=True,
+            client_request_id="up-once",
+        )
+
+    assert first == second
+    assert len(fake_api.uploads) == 1
+    assert fake_api.paths().count("/api/typhon/secret/file/upload-token") == 1
+
+
+async def test_upload_requires_write_scope(user):
+    principal = Principal(
+        user=user, client_id="test-client", scopes=frozenset({"pingcode:read"})
+    )
+    async with _server(principal) as client:
+        result = await call_tool(
+            client,
+            READ_TOKEN,
+            "pingcode_upload_attachment",
+            {"path": "/tmp/x.png", "confirm": True},
+            endpoint=ENDPOINT,
+        )
+
+    assert result.get("isError") is True
+    assert "scope" in result["content"][0]["text"].lower()
+
+
+def _attachment_create_routes(fake_api, *, fail_link: bool = False) -> None:
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = (
+        lambda **_: _typed_schema()
+    )
+    fake_api.routes["/api/agile/work-item"] = lambda **_: {
+        "value": {"_id": "w20", "whole_identifier": "TF2-120"}
+    }
+
+    def link(**_):
+        if fail_link:
+            raise pingcode_client.PingCodeBusinessError("附件关联失败", status=400)
+        return {"value": {"_id": "att-20", "file_id": "f2"}}
+
+    fake_api.routes["/api/agile/work-items/w20/attachment"] = link
+
+
+async def test_create_links_attachments(bound_user, fake_api):
+    _attachment_create_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        result = await adapter.create_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "带附件", "assignee": "u1"},
+            attachments=["f2", "f2", ""],
+            confirm=True,
+            client_request_id="req-att",
+        )
+
+    assert result["attachments"] == [
+        {"file_id": "f2", "attachment_id": "att-20", "ok": True}
+    ]
+    link_calls = [
+        call for call in fake_api.calls if call[1] == "/api/agile/work-items/w20/attachment"
+    ]
+    assert [call[3] for call in link_calls] == [{"file_id": "f2"}]
+    body = next(
+        json for _, path, _, json in fake_api.calls if path == "/api/agile/work-item"
+    )
+    values = {item["key"]: item["value"] for item in body["property_values"]}
+    assert "attachments" not in values
+
+
+async def test_create_surfaces_attachment_link_error(bound_user, fake_api):
+    _attachment_create_routes(fake_api, fail_link=True)
+    async with _context(bound_user) as ctx:
+        result = await adapter.create_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "附件失败", "assignee": "u1"},
+            attachments=["f2"],
+            confirm=True,
+            client_request_id="req-att-fail",
+        )
+
+    assert result["identifier"] == "TF2-120"
+    assert result["attachments"][0]["file_id"] == "f2"
+    assert result["attachments"][0]["ok"] is False
+    assert result["attachments"][0]["error"]
+
+
+async def test_create_idempotent_does_not_relink(bound_user, fake_api):
+    _attachment_create_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        first = await adapter.create_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "幂等附件", "assignee": "u1"},
+            attachments=["f2"],
+            confirm=True,
+            client_request_id="req-att-idem",
+        )
+        second = await adapter.create_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "幂等附件", "assignee": "u1"},
+            attachments=["f2"],
+            confirm=True,
+            client_request_id="req-att-idem",
+        )
+
+    assert first == second
+    assert fake_api.paths().count("/api/agile/work-items/w20/attachment") == 1
+
+
+# ── testhub 用例库 ─────────────────────────────────────────
+def _case_routes(fake_api):
+    libraries = {
+        "count": 1,
+        "value": [
+            {
+                "_id": "lib1",
+                "name": "HIMA 用例库",
+                "short_id": "HIMA3361",
+                "project_id": "p1",
+                "case_count": 12,
+            }
+        ],
+    }
+    cases = {
+        "count": 1,
+        "value": [
+            {
+                "_id": "case1",
+                "whole_identifier": "HIMA3361-8077",
+                "title": "掉盘后恢复",
+                "precondition": "设备已连接",
+                "steps": [
+                    {"index": "1", "description": "插拔", "expected_value": "识别"},
+                ],
+                "state_id": "st1",
+                "suite_id": "su1",
+                "created_by": "u1",
+                "updated_at": 1700000000,
+            }
+        ],
+    }
+    states = {"value": [{"_id": "st1", "name": "已评审", "state_type": 1}]}
+    suites = {"value": [{"_id": "su1", "name": "存储用例"}]}
+    fields = {
+        "value": [
+            {
+                "property_key": "properties.shiyongbanben",
+                "name": "适用版本",
+                "type": 1,
+                "is_system": False,
+                "options": [{"_id": "o1", "text": "V1.0"}],
+            }
+        ]
+    }
+
+    fake_api.routes["/api/testhub/test-libraries"] = lambda params, json: libraries
+    fake_api.routes["/api/testhub/test-libraries/lib1/test-cases"] = (
+        lambda params, json: cases
+    )
+    fake_api.routes["/api/testhub/test-case/states"] = lambda params, json: states
+    fake_api.routes["/api/testhub/test-libraries/lib1/direct/suites"] = (
+        lambda params, json: suites
+    )
+    fake_api.routes["/api/testhub/test-case/view/properties"] = (
+        lambda params, json: fields
+    )
+
+
+async def test_list_test_case_libraries(bound_user, fake_api):
+    _case_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        result = await adapter.list_test_case_libraries(ctx)
+
+    assert result["total"] == 1
+    assert result["items"][0] == {
+        "id": "lib1",
+        "name": "HIMA 用例库",
+        "identifier": "HIMA3361",
+        "project_id": "p1",
+        "description": "",
+        "case_count": 12,
+    }
+
+
+async def test_search_test_cases_builds_criteria(bound_user, fake_api):
+    _case_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        result = await adapter.search_test_cases(
+            ctx,
+            library_id="lib1",
+            identifier="HIMA3361-8077",
+            page=2,
+            page_size=50,
+            filters=[{"property_key": "shiyongbanben", "operation": 6, "value": ["o1"]}],
+        )
+
+    assert result["items"][0]["identifier"] == "HIMA3361-8077"
+    assert "steps" not in result["items"][0]
+    call = next(c for c in fake_api.calls if c[1] == "/api/testhub/test-libraries/lib1/test-cases")
+    assert call[0] == "POST"
+    body = call[3]
+    assert body["pi"] == 1
+    assert body["ps"] == 50
+    assert body["criteria"]["search"] == {"keywords": "8077", "scopes": ["identifier", "title"]}
+    assert body["criteria"]["conditions"][0]["property_key"] == "shiyongbanben"
+    assert body["criteria"]["conditions"][0]["operation"] == 6
+
+
+async def test_search_test_cases_requires_library_id(bound_user):
+    async with _context(bound_user) as ctx:
+        with pytest.raises(McpRuntimeError):
+            await adapter.search_test_cases(ctx, library_id="")
+
+
+async def test_search_test_cases_rejects_bad_filters(bound_user):
+    async with _context(bound_user) as ctx:
+        with pytest.raises(McpRuntimeError):
+            await adapter.search_test_cases(
+                ctx, library_id="lib1", filters=[{"operation": 6}]
+            )
+        with pytest.raises(McpRuntimeError):
+            await adapter.search_test_cases(
+                ctx, library_id="lib1", filters=[{"property_key": "x", "operation": "bad"}]
+            )
+
+
+async def test_get_test_case_matches_full_identifier_and_enriches(bound_user, fake_api):
+    _case_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        result = await adapter.get_test_case(
+            ctx, identifier="HIMA3361-8077", library_id="lib1"
+        )
+
+    assert result["identifier"] == "HIMA3361-8077"
+    assert result["steps"][0] == {
+        "index": 1,
+        "description": "插拔",
+        "expected_value": "识别",
+    }
+    assert result["state"] == {"id": "st1", "name": "已评审", "state_type": 1}
+    assert result["suite"] == {"id": "su1", "name": "存储用例"}
+    assert result["attributes"]["created_by"] == "u1"
+
+
+async def test_get_test_case_matches_short_identifier(bound_user, fake_api):
+    _case_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        result = await adapter.get_test_case(ctx, identifier="8077", library_id="lib1")
+
+    assert result["identifier"] == "HIMA3361-8077"
+
+
+async def test_get_test_case_not_found(bound_user, fake_api):
+    _case_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(McpRuntimeError) as exc:
+            await adapter.get_test_case(ctx, identifier="9999", library_id="lib1")
+
+    assert exc.value.code == "not_found"
+
+
+async def test_get_test_case_properties_normalizes(bound_user, fake_api):
+    _case_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        result = await adapter.get_test_case_properties(ctx, library_id="lib1")
+
+    assert result["fields"] == [
+        {
+            "key": "shiyongbanben",
+            "name": "适用版本",
+            "type": 1,
+            "is_system": False,
+            "options": [{"id": "o1", "text": "V1.0"}],
+        }
+    ]
