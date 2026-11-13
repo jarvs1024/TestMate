@@ -115,6 +115,27 @@ def _legacy_path_alias(app: Any, legacy: str, target: str) -> Any:
     return _LegacyPathAlias(app, legacy, target)
 
 
+def _with_bearer_scheme(scope: dict[str, Any]) -> dict[str, Any]:
+    """Accept a raw Authorization credential: some clients store static tokens without a scheme."""
+    headers = scope.get("headers")
+    if not headers:
+        return scope
+    normalized: list[tuple[bytes, bytes]] = []
+    changed = False
+    for key, value in headers:
+        if key.lower() == b"authorization":
+            raw = value.decode("latin-1").strip()
+            if raw and not any(char.isspace() for char in raw):
+                value = f"Bearer {raw}".encode("latin-1")
+                changed = True
+        normalized.append((key, value))
+    if not changed:
+        return scope
+    scope = dict(scope)
+    scope["headers"] = normalized
+    return scope
+
+
 class McpDispatcher:
     """A mountable dispatcher that is unavailable until lifespan configuration."""
 
@@ -145,6 +166,8 @@ class McpDispatcher:
         self._app = Starlette(routes=routes)
 
     async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            scope = _with_bearer_scheme(scope)
         if self._app is None:
             if scope["type"] == "http":
                 response = JSONResponse(

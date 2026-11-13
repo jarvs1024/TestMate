@@ -214,3 +214,46 @@ async def test_invalid_host_is_rejected_with_421():
         )
 
     assert response.status_code == 421
+
+
+async def test_scheme_less_authorization_is_treated_as_bearer():
+    async with _mcp_client() as client:
+        response = await client.post(
+            "/mcp/extensions",
+            json=_initialize_payload(),
+            headers={
+                "Authorization": TOKEN,
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+
+    assert response.status_code == 200
+    assert _result(response, 1)["serverInfo"]["name"] == "testmate-extensions"
+
+
+async def test_scheme_less_unknown_token_is_still_rejected():
+    async with _mcp_client() as client:
+        response = await client.post(
+            "/mcp/extensions",
+            json=_initialize_payload(),
+            headers={
+                "Authorization": "not-a-real-token",
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+
+    assert response.status_code == 401
+
+
+async def test_non_bearer_scheme_is_left_untouched():
+    async with _mcp_client() as client:
+        response = await client.post(
+            "/mcp/extensions",
+            json=_initialize_payload(),
+            headers={
+                "Authorization": f"Basic {TOKEN}",
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+
+    assert response.status_code == 401
