@@ -7,6 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 import pytest
+import httpx
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from mcp.server.auth.provider import AccessToken, TokenVerifier
@@ -529,6 +530,72 @@ async def test_download_attachment_returns_link_for_non_image(bound_user, monkey
     assert data["token"] == "t"
     assert data["bytes"] == 8
     assert "base64" not in data
+
+
+async def test_download_bytes_never_forwards_authorization_header():
+    """S3 预签名地址收到 Authorization 头会返回 InvalidRequest(400)。"""
+    seen: dict[str, object] = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        seen["headers"] = dict(request.headers)
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"log")
+
+    url = "http://10.20.24.30/atlas/file/download-url?action=download&token=tok"
+    content_type, data = await adapter._download_bytes(
+        url, "tok", 1024, transport=httpx.MockTransport(handler)
+    )
+
+    assert content_type == "text/plain"
+    assert data == b"log"
+    assert "authorization" not in seen["headers"]
+    assert "token=tok" in str(seen["url"])
+
+
+async def test_download_bytes_appends_token_for_public_file():
+    seen: dict[str, str] = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, headers={"content-type": "image/png"}, content=b"png")
+
+    await adapter._download_bytes(
+        "http://10.20.24.30/atlas/files/public/f9",
+        "pub",
+        1024,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert "token=pub" in seen["url"]
+
+
+async def test_download_bytes_rejects_json_error_payload():
+    def handler(request):
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=json.dumps({"code": 400401, "message": "missing token from request"}),
+        )
+
+    with pytest.raises(adapter.McpRuntimeError) as excinfo:
+        await adapter._download_bytes(
+            "http://10.20.24.30/atlas/files/public/f9",
+            "",
+            1024,
+            transport=httpx.MockTransport(handler),
+        )
+
+    assert excinfo.value.code == "download_failed"
+    assert "missing token" in str(excinfo.value)
+
+
+async def test_public_file_token_reads_value_beside_references(bound_user, monkeypatch):
+    async def fake_raw(ctx, method, path, **kwargs):
+        return {"value": "public-token", "references": {}}
+
+    monkeypatch.setattr(adapter, "_raw", fake_raw)
+    async with _context(bound_user) as ctx:
+        assert await adapter._public_file_token(ctx) == "public-token"
 
 
 async def test_preview_reports_missing_required(bound_user, fake_api):

@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import json
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
@@ -515,11 +515,31 @@ def _url_token(url: str) -> str:
     return (values.get("token") or [""])[0]
 
 
-async def _download_bytes(url: str, token: str, max_bytes: int) -> tuple[str, bytes]:
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+def _with_token(url: str, token: str) -> str:
+    """atlas 下载只认 query token; 补到 URL 上, 已带 token 时保持原样."""
+    if not token:
+        return url
+    parsed = urlparse(url)
+    if (parse_qs(parsed.query).get("token") or [""])[0]:
+        return url
+    separator = "&" if parsed.query else "?"
+    return f"{url}{separator}{urlencode({'token': token})}"
+
+
+async def _download_bytes(
+    url: str,
+    token: str,
+    max_bytes: int,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> tuple[str, bytes]:
+    # 不带 Authorization: 302 会跳到 S3 预签名地址, 多余的认证头会让 S3 返回 400.
+    target = _with_token(url, token)
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, trust_env=False) as http:
-            async with http.stream("GET", url, headers=headers) as response:
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=True, trust_env=False, transport=transport
+        ) as http:
+            async with http.stream("GET", target) as response:
                 if response.status_code >= 400:
                     raise McpRuntimeError(
                         "download_failed", f"附件下载失败 (HTTP {response.status_code})"
@@ -532,6 +552,18 @@ async def _download_bytes(url: str, token: str, max_bytes: int) -> tuple[str, by
                         raise McpRuntimeError("attachment_too_large", "附件超过大小上限")
     except httpx.HTTPError as exc:
         raise McpRuntimeError("download_failed", "附件下载失败") from exc
+    if content_type == "application/json":
+        try:
+            payload = json.loads(bytes(buffer))
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            code = payload.get("code")
+            if "error" in payload or (
+                isinstance(code, int) and not isinstance(code, bool) and code >= 400
+            ):
+                message = payload.get("message") or "附件下载失败"
+                raise McpRuntimeError("download_failed", str(message))
     return content_type, bytes(buffer)
 
 
@@ -540,8 +572,10 @@ async def _public_file_token(ctx: McpContext) -> str:
         payload = await _raw(ctx, "GET", "/api/typhon/secret/file/public-image-token")
     except (McpRuntimeError, client.PingCodeBusinessError):
         return ""
-    value = _value_of(payload)
-    return value if isinstance(value, str) else ""
+    if isinstance(payload, dict):
+        value = payload.get("value")
+        return value if isinstance(value, str) else ""
+    return payload if isinstance(payload, str) else ""
 
 
 async def download_attachment(
