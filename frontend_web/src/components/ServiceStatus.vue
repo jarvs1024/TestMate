@@ -1,7 +1,7 @@
 <template>
   <div class="foot">
     <div class="ft-lbl">📡 数据 / 工具</div>
-    <div v-for="s in services" :key="s.key" class="src" v-show="s.visible !== false">
+    <div v-for="s in visibleServices" :key="s.key" class="src">
       <span class="dot" :class="`s-${s.status}`"></span>
       <span class="name">{{ s.label }}</span>
       <span class="state">{{ s.statusText }}</span>
@@ -21,9 +21,15 @@
  * ⚠️ ReviewAgent 默认隐藏 —— 没配 base_url 时显示"未配置"会误导人.
  *
  * ⚠️ 2026-10-25: Dify 已整个下线 (平台不再接入), 面板里不再有它那一行.
+ *
+ * ⚠️ PingCode 行按「平台认证」里的绑定态显示 —— 没绑就不占位, 绑了才出现,
+ *    登录态正常显示「正常」, 需要重登显示告警. 侧栏面板本身走匿名健康检查,
+ *    认证状态这条要带用户 token (listIntegrationProviders), 两条请求各自兜底,
+ *    互不掩盖.
  */
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import axios from 'axios';
+import { listIntegrationProviders } from '@/api/integrations';
 
 interface ServiceHealth {
   key: string;
@@ -37,7 +43,10 @@ const services = ref<ServiceHealth[]>([
   { key: 'ragflow', label: 'RAGFlow', status: 'unknown', statusText: '...' },
   // ReviewAgent (代码检视唯一后端) — 默认隐藏, 配过 base_url 才显示
   { key: 'review_agent', label: 'ReviewAgent', status: 'off', statusText: '未配置', visible: false },
+  // PingCode — 平台认证里绑过账号才显示
+  { key: 'pingcode', label: 'PingCode', status: 'off', statusText: '未配置', visible: false },
 ]);
+const visibleServices = computed(() => services.value.filter((s) => s.visible !== false));
 const lastCheck = ref('—');
 let pollTimer: number | null = null;
 
@@ -47,6 +56,24 @@ function setSvc(key: string, st: 'ok' | 'warn' | 'off', txt?: string) {
   services.value[i].status = st;
   const map: Record<string, string> = { ok: '正常', warn: '部分', off: '未配置' };
   services.value[i].statusText = txt || map[st] || '未知';
+}
+
+async function pollPingCode() {
+  const i = services.value.findIndex((x) => x.key === 'pingcode');
+  if (i < 0) return;
+  try {
+    const { items } = await listIntegrationProviders();
+    const pc = items.find((p) => p.code === 'pingcode');
+    // 没绑账号 → 整行不出现 (侧栏只提示"正在用"的系统)
+    services.value[i].visible = !!pc?.bound;
+    if (!pc?.bound) return;
+    const ok = pc.status === 'ok';
+    services.value[i].status = ok ? 'ok' : 'warn';
+    services.value[i].statusText = ok ? '正常' : '需重登';
+  } catch {
+    // 取不到认证状态 (未登录 / 网络) → 隐藏, 不拿它当故障
+    services.value[i].visible = false;
+  }
 }
 
 async function poll() {
@@ -66,6 +93,7 @@ async function poll() {
   } catch {
     setSvc('ragflow', 'off');
   }
+  await pollPingCode();
   const d = new Date();
   lastCheck.value = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 }

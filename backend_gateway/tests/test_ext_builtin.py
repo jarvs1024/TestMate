@@ -16,7 +16,12 @@ from tests.conftest import set_setting
 
 API = "/api/v1/extensions"
 
-BUILTIN_CODES = ("testmate-extensions", "testmate-kb")
+BUILTIN_CODES = ("testmate-extensions", "testmate-kb", "testmate-pingcode")
+BUILTIN_CATEGORIES = {
+    "testmate-extensions": "其他",
+    "testmate-kb": "其他",
+    "testmate-pingcode": "管理协同",
+}
 
 
 def _card(items, code):
@@ -56,7 +61,7 @@ async def test_ensure_builtin_creates_rows(builtin_seeded):
         assert {a.code for a in rows} == set(BUILTIN_CODES)
         for a in rows:
             assert a.kind == "mcp"
-            assert a.category == "其他"
+            assert a.category == BUILTIN_CATEGORIES[a.code]
             assert a.author == "admin"
             assert a.publish_status == "published"
             assert "内置" in (a.tags or [])
@@ -84,7 +89,7 @@ async def test_ensure_builtin_idempotent_preserves_download_count(builtin_seeded
             await s.execute(select(func.count()).select_from(Asset).where(Asset.code.in_(BUILTIN_CODES)))
         ).scalar_one()
         a = (await s.execute(select(Asset).where(Asset.code == "testmate-extensions"))).scalar_one()
-        assert total == 2
+        assert total == 3
         assert a.download_count == 42
         assert a.name == "TestMate 扩展库助手"
 
@@ -99,12 +104,18 @@ async def test_list_marks_builtin_and_adapts_to_public_base_url(client, auth, bu
     items = r.json()["items"]
     ext = _card(items, "testmate-extensions")
     kb = _card(items, "testmate-kb")
+    pc = _card(items, "testmate-pingcode")
 
     assert ext["builtin"] is True and kb["builtin"] is True
+    assert pc["builtin"] is True
     # 卡片字段 (序列化层, 不只是 DB 行)
     assert ext["author"] == "admin"
     assert ext["category"] == "其他"
+    assert pc["category"] == "管理协同"
     assert "内置" in ext["tags"]
+    assert pc["mcp_config"]["mcpServers"]["testmate-pingcode"]["url"] == (
+        "https://tm.example.com/mcp/pingcode"
+    )
     assert ext["mcp_config"]["mcpServers"]["testmate-extensions"]["url"] == (
         "https://tm.example.com/mcp/skill"
     )
@@ -113,6 +124,7 @@ async def test_list_marks_builtin_and_adapts_to_public_base_url(client, auth, bu
     )
     assert "headers" not in ext["mcp_config"]["mcpServers"]["testmate-extensions"]
     assert "headers" not in kb["mcp_config"]["mcpServers"]["testmate-kb"]
+    assert "headers" not in pc["mcp_config"]["mcpServers"]["testmate-pingcode"]
 
 
 async def test_list_without_setting_falls_back_to_request_base(
@@ -123,7 +135,11 @@ async def test_list_without_setting_falls_back_to_request_base(
     r = await client.get(API, headers=auth, params={"kind": "mcp"})
     assert r.status_code == 200, r.text
     items = r.json()["items"]
-    for code, path in (("testmate-extensions", "/mcp/skill"), ("testmate-kb", "/mcp/kb")):
+    for code, path in (
+        ("testmate-extensions", "/mcp/skill"),
+        ("testmate-kb", "/mcp/kb"),
+        ("testmate-pingcode", "/mcp/pingcode"),
+    ):
         server = _card(items, code)["mcp_config"]["mcpServers"][code]
         assert server["url"] == f"http://test{path}"
         assert server["headers"] == {"Authorization": f"Bearer {BUILTIN_TOKEN_PLACEHOLDER}"}
@@ -139,6 +155,14 @@ async def test_get_builtin_detail(client, auth, builtin_seeded, clear_base_url_c
     body = r.json()
     assert body["builtin"] is True
     assert body["mcp_config"]["mcpServers"]["testmate-kb"]["url"] == "http://test/mcp/kb"
+
+    r = await client.get(f"{API}/testmate-pingcode", headers=auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["builtin"] is True
+    assert body["mcp_config"]["mcpServers"]["testmate-pingcode"]["url"] == (
+        "http://test/mcp/pingcode"
+    )
 
 
 # ---------- 复制计数 ----------

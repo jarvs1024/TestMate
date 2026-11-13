@@ -26,7 +26,14 @@ from app.db.session import AsyncSessionLocal
 from app.models.mcp import McpOAuthClient, McpOAuthGrant
 from app.models.user import User
 
-SCOPE_ORDER = ("extensions:read", "extensions:write", "kb:read", "kb:write")
+SCOPE_ORDER = (
+    "extensions:read",
+    "extensions:write",
+    "kb:read",
+    "kb:write",
+    "pingcode:read",
+    "pingcode:write",
+)
 SUPPORTED_SCOPES = frozenset(SCOPE_ORDER)
 SCOPE_HINT = " ".join(SCOPE_ORDER)
 _LEGACY_SCOPES = {"market:read": "extensions:read", "market:write": "extensions:write"}
@@ -252,6 +259,9 @@ async def allowed_scopes(user: User) -> list[str]:
     scopes.append("kb:read")
     if can_write_kb(user):
         scopes.append("kb:write")
+    # 本期决策: pingcode 读写对所有活跃用户开放; PLM 未上线不暴露 scope.
+    scopes.append("pingcode:read")
+    scopes.append("pingcode:write")
     return scopes
 
 

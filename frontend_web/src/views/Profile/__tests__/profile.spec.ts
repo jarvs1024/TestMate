@@ -17,15 +17,14 @@ function tab(w: VueWrapper, text: string) {
 }
 
 describe('个人中心', () => {
+  const stubs = {
+    GrantsPanel: { template: '<div data-test="grants-panel" />' },
+    McpTokens: { template: '<div data-test="tokens-panel" />' },
+    IntegrationAccounts: { template: '<div data-test="accounts-panel" />' },
+  };
+
   it('默认展示授权管理，可切换到访问令牌', async () => {
-    const w = mount(Profile, {
-      global: {
-        stubs: {
-          GrantsPanel: { template: '<div data-test="grants-panel" />' },
-          McpTokens: { template: '<div data-test="tokens-panel" />' },
-        },
-      },
-    });
+    const w = mount(Profile, { global: { stubs } });
 
     expect(w.find('[data-test="grants-panel"]').exists()).toBe(true);
     expect(w.find('[data-test="tokens-panel"]').exists()).toBe(false);
@@ -36,15 +35,17 @@ describe('个人中心', () => {
     w.unmount();
   });
 
+  it('可切换到平台认证配置', async () => {
+    const w = mount(Profile, { global: { stubs } });
+
+    await tab(w, '平台认证').trigger('click');
+    expect(w.find('[data-test="tokens-panel"]').exists()).toBe(false);
+    expect(w.find('[data-test="accounts-panel"]').exists()).toBe(true);
+    w.unmount();
+  });
+
   it('页内不再重复标题; 账号挂在动作条右侧', () => {
-    const w = mount(Profile, {
-      global: {
-        stubs: {
-          GrantsPanel: { template: '<div data-test="grants-panel" />' },
-          McpTokens: { template: '<div data-test="tokens-panel" />' },
-        },
-      },
-    });
+    const w = mount(Profile, { global: { stubs } });
 
     // 标题和 lede 归顶栏 (AppHeader) —— 页内再写一遍就是两个标题
     expect(w.find('h1').exists()).toBe(false);
@@ -55,6 +56,7 @@ describe('个人中心', () => {
     expect(actions.find('.kind-tabs').exists()).toBe(true);
     expect(actions.text()).toContain('授权管理');
     expect(actions.text()).toContain('访问令牌');
+    expect(actions.text()).toContain('平台认证');
     expect(actions.text()).toContain('tester@example.com');
     w.unmount();
   });

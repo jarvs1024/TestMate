@@ -13,12 +13,14 @@ from app.core.logging import setup_logging
 from app.core.security import decode_token
 from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, review_agent, extensions, software, platform
 from app.api import mcp as mcp_api
+from app.integrations import api as integrations_api
 from app.api.agents import seed_agents
 from app.core.settings_store import seed_defaults
 from app.db.session import init_db
 from app.mcp.common import oauth_routes
 from app.mcp.common.server import build_dispatcher, run_mcp_lifespan
 from app.mcp.kb.server import build_kb_server
+from app.mcp.pingcode.server import build_pingcode_server
 from app.mcp.skill.server import build_skill_server
 
 # 入口模块最顶端调用:配置 JSON 结构化日志
@@ -63,6 +65,10 @@ async def lifespan(app: FastAPI):
             allowed_hosts=allowed_hosts,
         ),
         "kb": build_kb_server(
+            public_base_url=public_base_url,
+            allowed_hosts=allowed_hosts,
+        ),
+        "pingcode": build_pingcode_server(
             public_base_url=public_base_url,
             allowed_hosts=allowed_hosts,
         ),
@@ -270,6 +276,9 @@ app.include_router(extensions.router, prefix="/api/v1/extensions", tags=["extens
 # 软件库 —— 与「扩展」完全分家: 那边真身在 GitLab, 这边真身在服务端磁盘.
 app.include_router(software.router, prefix="/api/v1/software", tags=["software"])
 app.include_router(mcp_api.router, prefix="/api/v1/mcp", tags=["mcp"])
+app.include_router(
+    integrations_api.router, prefix="/api/v1/integrations", tags=["integrations"]
+)
 app.include_router(oauth_routes.router, tags=["mcp-oauth"])
 app.mount("/mcp", mcp_dispatcher, name="mcp")
 

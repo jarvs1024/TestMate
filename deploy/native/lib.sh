@@ -392,6 +392,15 @@ gen_secret() {
   fi
 }
 
+# 严格标准 base64 的随机密钥 (不做 URL-safe 替换) —— 供应用侧严格解码的配置使用.
+gen_b64_key() {
+  if have_cmd openssl; then
+    openssl rand -base64 32 | tr -d '\n'
+  else
+    head -c 32 /dev/urandom | base64 | tr -d '\n'
+  fi
+}
+
 # ---------- 数据库 ----------
 
 mysql_client_cmd() {

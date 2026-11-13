@@ -2,7 +2,8 @@
   <section id="sec-mcp-tokens" class="card grp" aria-labelledby="mcp-tokens-title">
     <h2 id="mcp-tokens-title">访问令牌</h2>
     <p class="intro">
-      令牌以你当前账号的身份访问 TestMate 的集成服务（如 MCP），权限不会超过账号现有能力。令牌可在下方随时查看、复制或删除。
+      令牌以你当前账号的身份访问 TestMate 的集成服务（如内置 MCP），权限不会超过账号现有能力。
+      权限按系统区分：TestMate 平台能力、PingCode 平台账号；PLM 接入后再开放。令牌可在下方随时查看、复制或删除。
     </p>
 
     <div class="sub-grp">
@@ -25,10 +26,23 @@
         </label>
         <fieldset class="scope-field" :disabled="creating">
           <legend>权限 <b>*</b></legend>
-          <label><input v-model="form.scopes" type="checkbox" value="extensions:read" :disabled="!canRead" /> 读取资产</label>
-          <label><input v-model="form.scopes" type="checkbox" value="extensions:write" :disabled="!canWrite" /> 管理资产</label>
-          <label><input v-model="form.scopes" type="checkbox" value="kb:read" :disabled="!canKbRead" /> 读取知识库</label>
-          <label><input v-model="form.scopes" type="checkbox" value="kb:write" :disabled="!canKbWrite" /> 写入知识库</label>
+          <div v-for="system in SCOPE_SYSTEMS" :key="system.code" class="scope-group">
+            <div class="scope-system-head">
+              <b>{{ system.label }}</b>
+              <span>{{ system.hint }}</span>
+            </div>
+            <div v-if="scopesOfSystem(system.code).length" class="scope-options">
+              <label v-for="scope in scopesOfSystem(system.code)" :key="scope">
+                <input
+                  v-model="form.scopes"
+                  type="checkbox"
+                  :value="scope"
+                  :disabled="!allowedScopes.includes(scope)"
+                /> {{ scopeLabel(scope) }}
+              </label>
+            </div>
+            <p v-else class="scope-empty">接入后开放，当前令牌暂不包含该系统的权限。</p>
+          </div>
         </fieldset>
         <button type="button" class="mini-btn primary create-btn" :disabled="!canCreate" @click="create">
           {{ creating ? '创建中…' : '创建令牌' }}
@@ -65,8 +79,13 @@
               </button>
             </div>
             <p v-else class="legacy-note">该令牌创建于明文可见功能上线前，无法再次查看。</p>
-            <div class="token-scopes">
-              <span v-for="scope in token.scopes" :key="scope">{{ scopeText(scope) }}</span>
+            <div
+              v-for="group in groupScopes(token.scopes)"
+              :key="group.system.code"
+              class="token-scopes"
+            >
+              <span class="scope-system">{{ group.system.label }}</span>
+              <span v-for="scope in group.scopes" :key="scope">{{ scopeLabel(scope) }}</span>
             </div>
             <dl>
               <div><dt>创建</dt><dd>{{ formatTime(token.created_at) }}</dd></div>
@@ -104,6 +123,12 @@ import {
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { parseApiTime } from '@/utils/format';
 import { copyToClipboard } from '@/utils/clipboard';
+import {
+  SCOPE_SYSTEMS,
+  groupScopes,
+  scopeMeta,
+  scopesOfSystem,
+} from '@/utils/mcpScopes';
 
 const tokens = ref<McpToken[]>([]);
 const allowedScopes = ref<McpScope[]>(['extensions:read', 'kb:read']);
@@ -123,10 +148,6 @@ const form = reactive<{ name: string; scopes: McpScope[]; expiresAt: string }>({
   expiresAt: '',
 });
 
-const canRead = computed(() => allowedScopes.value.includes('extensions:read'));
-const canWrite = computed(() => allowedScopes.value.includes('extensions:write'));
-const canKbRead = computed(() => allowedScopes.value.includes('kb:read'));
-const canKbWrite = computed(() => allowedScopes.value.includes('kb:write'));
 const canCreate = computed(() => (
   !creating.value
   && !!form.name.trim()
@@ -138,15 +159,8 @@ function errorText(error: unknown, fallback: string): string {
   return httpErrorText(errorStatus(error), errorDetail(error), fallback);
 }
 
-const SCOPE_TEXT: Record<McpScope, string> = {
-  'extensions:read': '读取资产',
-  'extensions:write': '管理资产',
-  'kb:read': '读取知识库',
-  'kb:write': '写入知识库',
-};
-
-function scopeText(scope: McpScope): string {
-  return SCOPE_TEXT[scope] ?? scope;
+function scopeLabel(scope: McpScope): string {
+  return scopeMeta(scope).label;
 }
 
 function formatTime(value: string | null): string {
@@ -283,11 +297,17 @@ onBeforeUnmount(() => window.clearTimeout(copiedTimer));
 .field b, .scope-field b { color: var(--err); font-weight: 500; }
 .field input { width: 100%; min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink-900); font: inherit; }
 .field input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
-.scope-field { display: flex; grid-column: 1 / -1; gap: 16px; margin: 0; padding: 0; border: 0; color: var(--ink-700); font-size: 12px; }
+.scope-field { display: flex; flex-direction: column; grid-column: 1 / -1; gap: 10px; margin: 0; padding: 0; border: 0; color: var(--ink-700); font-size: 12px; }
 .scope-field legend { margin-bottom: 6px; }
-.scope-field label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.scope-field label:has(input:disabled) { cursor: not-allowed; color: var(--ink-500); }
-.scope-field input { accent-color: var(--primary); }
+.scope-group { display: flex; flex-direction: column; gap: 6px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); }
+.scope-system-head { display: flex; align-items: baseline; gap: 8px; }
+.scope-system-head b { color: var(--ink-900); font-size: 12px; }
+.scope-system-head span { color: var(--ink-500); font-size: 10.5px; }
+.scope-options { display: flex; gap: 18px; flex-wrap: wrap; }
+.scope-options label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.scope-options label:has(input:disabled) { cursor: not-allowed; color: var(--ink-500); }
+.scope-options input { accent-color: var(--primary); }
+.scope-empty { margin: 0; color: var(--ink-500); font-size: 11px; }
 .create-btn { grid-column: 1 / -1; justify-self: end; justify-content: center; min-height: 36px; }
 .form-hint { margin: 9px 0 0; color: var(--warn); font-size: 11.5px; }
 .inline-error { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0; padding: 9px 11px; border: 1px solid rgba(239, 68, 68, .25); border-radius: 8px; background: rgba(239, 68, 68, .06); color: var(--err); font-size: 12px; }
@@ -308,8 +328,9 @@ onBeforeUnmount(() => window.clearTimeout(copiedTimer));
 .token-value-row { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
 .token-value { min-width: 0; flex: 1; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink-900); font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; word-break: break-all; user-select: all; }
 .legacy-note { margin: 9px 0 0; color: var(--ink-500); font-size: 11.5px; }
-.token-scopes { display: flex; gap: 6px; margin-top: 8px; }
+.token-scopes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .token-scopes span { padding: 2px 7px; border-radius: 5px; background: var(--primary-soft); color: var(--ink-700); font-size: 10.5px; }
+.token-scopes .scope-system { background: var(--surface-sunken); color: var(--ink-500); font-family: var(--font-mono); }
 .token-main dl { display: flex; gap: 18px; flex-wrap: wrap; margin: 10px 0 0; }
 .token-main dl div { display: flex; gap: 5px; font-size: 10.5px; }
 .token-main dt { color: var(--ink-500); }

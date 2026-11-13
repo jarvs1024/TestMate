@@ -1,4 +1,4 @@
-"""平台内置连接器注册表 —— 扩展库助手 + 知识库助手.
+"""平台内置连接器注册表 —— 扩展库助手 + 知识库助手 + PingCode 助手.
 
 为什么不是普通资产:
     · 不落 GitLab —— 平台自己的一部分, 不该出现在仓库 index.json 里;
@@ -108,7 +108,36 @@ KB_ASSET = BuiltinAsset(
     ),
 )
 
-BUILTIN_ASSETS = (EXTENSIONS_ASSET, KB_ASSET)
+PINGCODE_ASSET = BuiltinAsset(
+    code="testmate-pingcode",
+    mcp_path="/mcp/pingcode",
+    fields=_fields(
+        "testmate-pingcode",
+        name="TestMate PingCode 助手",
+        icon="🐞",
+        summary="让 Agent 检索、创建与更新 PingCode 缺陷 / 需求，并同步评论与附件",
+        description=(
+            "TestMate 平台自带的 PingCode MCP 连接器。先在个人中心「平台认证」配置一次 "
+            "PingCode 账号，平台会代你登录并自动续期；Agent 连上之后可以按项目检索缺陷与需求、"
+            "查看详情与评论、创建工单、追加评论并读取附件。"
+        ),
+        use_when="需要让 Agent 在会话里查询或登记 PingCode 缺陷 / 需求",
+        not_for="只需要人工在 PingCode 网页处理工单的场景",
+        category="管理协同",
+        tags=["内置", "PingCode", "MCP"],
+        keywords=["内置", "PingCode", "缺陷", "需求", "工单", "MCP", "评论", "附件"],
+        install_steps=[
+            "登录 TestMate → 个人中心 → 平台认证, 配置 PingCode 账号并保存 (保存时即验证登录)",
+            "复制本页的 MCP 配置 JSON, 把 server 条目加到 Agent 的连接器配置里 (Qoder: 设置 → 连接器 → 添加连接器 → 自定义)",
+            "新建 API Token: 登录 TestMate → 个人中心 → 访问令牌 → 新建, 勾选 pingcode:read, 需要建单/评论再勾 pingcode:write",
+            "把配置里 headers.Authorization 的「<你的API Token>」替换成刚建的 token",
+            "重启 Agent 会话即可使用",
+            "备注: 登录态由平台自动续期, 若提示需重新登录, 回到平台认证重新保存账号即可",
+        ],
+    ),
+)
+
+BUILTIN_ASSETS = (EXTENSIONS_ASSET, KB_ASSET, PINGCODE_ASSET)
 _BY_CODE = {asset.code: asset for asset in BUILTIN_ASSETS}
 
 

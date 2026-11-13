@@ -240,6 +240,23 @@ describe('MCP 授权同意页', () => {
     w.unmount();
   });
 
+  it('PingCode scope 标注所属系统与中文说明', async () => {
+    api.previewMcpAuthorization.mockResolvedValueOnce({
+      ...PREVIEW,
+      scopes: ['pingcode:read', 'pingcode:write'],
+    });
+    const { wrapper: w } = await mountAuthorize();
+
+    expect(w.findAll('.scope-system').map((node) => node.text())).toEqual([
+      'PingCode',
+      'PingCode',
+    ]);
+    expect(w.text()).toContain('读取 PingCode');
+    expect(w.text()).toContain('写入 PingCode');
+    expect(w.text()).toContain('创建缺陷/需求并发表评论');
+    w.unmount();
+  });
+
   it('拒绝时保留存在但为空的 state', async () => {
     api.previewMcpAuthorization.mockResolvedValueOnce({ ...PREVIEW, state: '' });
     const { wrapper: w } = await mountAuthorize();

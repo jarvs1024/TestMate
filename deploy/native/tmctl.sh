@@ -359,6 +359,7 @@ ensure_env_file() {
       # 不做"整个文件重生成" —— 那会把用户改过的 EXTENSIONS_GIT_REMOTE 之类冲掉.
       log "--force: 重置所有口令 (其它配置保留)"
       env_set "$ENV_FILE" "JWT_SECRET"     "$(gen_secret 32)"
+      env_set "$ENV_FILE" "INTEGRATION_CREDENTIAL_KEY" "$(gen_b64_key)"
       env_set "$ENV_FILE" "MYSQL_PASSWORD"  "$(gen_secret 18)"
       env_set "$ENV_FILE" "ADMIN_DEFAULT_PASSWORD" "$(gen_secret 18)"
       chmod 600 "$ENV_FILE"
@@ -373,6 +374,11 @@ ensure_env_file() {
       env_set "$ENV_FILE" "REPO_ROOT" "$REPO_ROOT"
       ok "  已同步 REPO_ROOT -> $REPO_ROOT"
     fi
+    # 老配置没有凭据主密钥 —— 补生成, 否则生产启动校验会拒绝启动.
+    if [[ -z "$(cfg INTEGRATION_CREDENTIAL_KEY)" ]]; then
+      env_set "$ENV_FILE" "INTEGRATION_CREDENTIAL_KEY" "$(gen_b64_key)"
+      ok "  已补生成 INTEGRATION_CREDENTIAL_KEY"
+    fi
     return 0
   fi
 
@@ -382,6 +388,7 @@ ensure_env_file() {
   env_set "$ENV_FILE" "RUNTIME_DIR" "$RUNTIME_DIR"
   # 口令随机生成 —— 不让人手抄, 也不留弱口令
   env_set "$ENV_FILE" "JWT_SECRET"     "$(gen_secret 32)"
+  env_set "$ENV_FILE" "INTEGRATION_CREDENTIAL_KEY" "$(gen_b64_key)"
   env_set "$ENV_FILE" "MYSQL_PASSWORD"  "$(gen_secret 18)"
   env_set "$ENV_FILE" "ADMIN_DEFAULT_PASSWORD" "$(gen_secret 18)"
   chmod 600 "$ENV_FILE"
@@ -955,6 +962,7 @@ emit_env() {
     echo
     emit_env JWT_SECRET "$(cfg JWT_SECRET)"
     emit_env JWT_EXPIRE_MINUTES "$(cfg JWT_EXPIRE_MINUTES 10080)"
+    emit_env INTEGRATION_CREDENTIAL_KEY "$(cfg INTEGRATION_CREDENTIAL_KEY)"
     emit_env AUTH_EMAIL_DOMAIN "$(cfg AUTH_EMAIL_DOMAIN @twsc.com.cn)"
     echo
     emit_env MYSQL_HOST "$(cfg MYSQL_HOST 127.0.0.1)"
@@ -1878,6 +1886,13 @@ local_install() {
 
   log "8/9 生成应用配置"
   render_app_configs
+  # ⚠️ backend.env 刚重新生成过 → 若服务已由 launchd 接管, plist 必须跟着重生成
+  #    并重新装载, 否则新加的变量 (如 INTEGRATION_CREDENTIAL_KEY) 到不了进程.
+  #    (2026-11-12 踩过: 在已有 launchd 部署上跑 install, 后端因缺密钥起不来.)
+  if [[ "$(uname -s)" == "Darwin" ]] && local_launchd_loaded; then
+    render_launchd_units
+    launchd_reload_units
+  fi
 
   if [[ $OPT_NO_START -eq 1 ]]; then
     ok "装完了 (没启动) —— 起: $0 local start"
