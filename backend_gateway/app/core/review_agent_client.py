@@ -177,27 +177,22 @@ def _mr_sort_key(row: dict) -> tuple[int, float, int]:
 
 async def overview(since: str | None = None) -> dict:
     """对齐 pr-agent /metrics/overview 形态: mrs / suggestions / runs / severity_breakdown."""
-    params_mrs: dict[str, Any] = {"limit": 200}
     params_summary: dict[str, Any] = {}
     if since:
-        params_mrs["since"] = since
         params_summary["since"] = since
 
-    mrs_raw = await _get("/mrs", params_mrs) or {}
-    items = mrs_raw.get("mrs") if isinstance(mrs_raw, dict) else (mrs_raw or [])
-    state_count = {"opened": 0, "merged": 0, "closed": 0}
-    for m in items:
-        s = (m.get("state") or "opened").lower()
-        if s in state_count:
-            state_count[s] += 1
-        else:
-            state_count["closed"] += 1
-
-    # 并发拉 /metrics/overview + /summary, summary 给 by_command.total_tokens (单 run 0 但汇总有真实数据)
+    # 并发拉 /metrics/overview + /summary, summary 给 by_command.total_tokens (单 run 0 但汇总有真实数据).
+    # MR 状态计数直接用 /metrics/overview 的全表聚合, 不再拉 /mrs (会被 limit 截断).
     ov_data, summary_data = await asyncio.gather(
         _get("/metrics/overview", params_summary or None) or {},
         _get("/summary", params_summary or None) or {},
     )
+    mrs_ov = ov_data.get("mrs") or {}
+    state_count = {
+        "opened": int(mrs_ov.get("opened") or 0),
+        "merged": int(mrs_ov.get("merged") or 0),
+        "closed": int(mrs_ov.get("closed") or 0),
+    }
     by_status = ov_data.get("by_status") or {}
     runs_total = int(ov_data.get("total_runs") or 0)
     runs_failed = int(by_status.get("failed") or 0)
@@ -270,7 +265,7 @@ async def overview(since: str | None = None) -> dict:
     return {
         "since": since,
         "mrs": {
-            "total": len(items),
+            "total": int(mrs_ov.get("total") or 0),
             "merged": state_count["merged"],
             "open": state_count["opened"],
             "closed": state_count["closed"],
@@ -365,49 +360,39 @@ async def per_rule_stats(since: str | None = None) -> list[dict]:
 
 
 async def per_author_stats(since: str | None = None) -> list[dict]:
-    """/作者分布/ 表按 MR 作者聚合. 
-    ReviewAgent /metrics/authors 端点只返回每个 author 跑了多少次 review (runs 计数),
-    撑不起来 'MR / 建议 / 采纳率' 表. 这里从 list_mrs (limit=200, 已并发 enrich last_run +
-    suggestion_counts) 在 gateway 层聚合 per-MR-author 数据.
-    since 参数暂透传给 list_mrs, 未实现时不影响 main 行为."""
-    all_items = await list_mrs(limit=200, since=since)
+    """/作者分布/ 表按 MR 作者聚合.
 
-    by_author: dict[str, dict] = {}
-    for m in all_items:
-        author = m.get("author") or "(unknown)"
-        slot = by_author.setdefault(author, {
-            "author": author,
-            "mr_count": 0,
-            "merged_count": 0,
-            "suggestion_total": 0,
-            "applied": 0,
-            "dismissed": 0,
-            "runs_by_command": {},  # 命令分布: {command: {total, failed}}
-            "adoption_rate": 0.0,
+    直接取 ReviewAgent /metrics/authors 的全表聚合 (SQL group by), 不再拉
+    /mrs (limit=200) 逐 MR 汇总 — MR 数 / 建议数 / 采纳率不再被窗口截断.
+    """
+    params = {"since": since} if since else None
+    data = await _get("/metrics/authors", params) or {}
+    rows = data.get("authors") if isinstance(data, dict) else (data or [])
+
+    out: list[dict] = []
+    for a in rows:
+        # /metrics/authors 还包含只触发过 review、但没发过 MR 的 actor (codebot 等),
+        # 作者分布表只统计 MR 作者.
+        if not int(a.get("mr_count") or 0):
+            continue
+        total = int(a.get("suggestion_total") or 0)
+        applied = int(a.get("applied") or 0)
+        out.append({
+            "author": a.get("author") or "(unknown)",
+            "mr_count": int(a.get("mr_count") or 0),
+            "merged_count": int(a.get("merged_count") or 0),
+            "suggestion_total": total,
+            "suggestion_count": total,
+            "applied": applied,
+            "dismissed": int(a.get("dismissed") or 0),
+            "runs_by_command": {
+                cmd: {"total": int(n), "failed": 0}
+                for cmd, n in (a.get("runs_by_command") or {}).items()
+            },
+            "adoption_rate": round(applied / total, 4) if total else 0.0,
         })
-        slot["mr_count"] += 1
-        if (m.get("state") or "") == "merged":
-            slot["merged_count"] += 1
-        sc = m.get("suggestion_counts") or {}
-        slot["suggestion_total"] += int(sc.get("total") or 0)
-        slot["applied"] += int(sc.get("applied") or 0)
-        slot["dismissed"] += int(sc.get("dismissed") or 0)
-        lr = m.get("last_run") or {}
-        cmd = lr.get("command") or "(unknown)"
-        cmd_slot = slot["runs_by_command"].setdefault(cmd, {"total": 0, "failed": 0})
-        cmd_slot["total"] += 1
-        if (lr.get("status") or "") == "failed":
-            cmd_slot["failed"] += 1
-
-    # 采纳率 (applied / suggestion_total), 仅在该作者有过建议时算
-    for slot in by_author.values():
-        total = slot["suggestion_total"]
-        slot["adoption_rate"] = round(slot["applied"] / total, 4) if total else 0.0
-        # 兼容老 AuthorStat 字段名 (V2 type 里有 suggestion_count / applied / dismissed)
-        slot["suggestion_count"] = slot["suggestion_total"]
-
     # 按 mr_count desc, 跟 pr-agent /metrics/authors 默认排序一致
-    return sorted(by_author.values(), key=lambda x: (-x["mr_count"], x["author"]))
+    return sorted(out, key=lambda x: (-x["mr_count"], x["author"]))
 
 
 async def severity_breakdown(since: str | None = None, pr_url: str | None = None) -> list[dict]:
