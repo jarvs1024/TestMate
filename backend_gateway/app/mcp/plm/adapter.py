@@ -1020,15 +1020,19 @@ async def _test_case_list(
     simple_vos: list[dict[str, Any]],
     page: int,
     page_size: int,
-    catalog: dict[str, Any] | None = None,
+    catalog_ids: list[str] | None = None,
 ) -> dict[str, Any]:
+    vos = list(simple_vos)
+    if catalog_ids:
+        # PLM 的 ids+path 目录过滤分页会错位 (窗口重复/遗漏), 改用目录子树 id 集合过滤
+        vos.append({"field": "doc_classfiy_id", "op": "in", "value1": catalog_ids})
     body = {
         "page": {"pageSize": page_size, "pageIndex": page},
         "billnum": TEST_CASE_BILL,
         "condition": {
             "commonVOs": [],
             "filtersId": TEST_CASE_FILTERS_ID,
-            "simpleVOs": simple_vos,
+            "simpleVOs": vos,
             "isExtend": True,
         },
         "bEmptyWithoutFilterTree": True,
@@ -1048,11 +1052,6 @@ async def _test_case_list(
         "ownDomain": "IMP-GDS",
         "tplid": TEST_CASE_TPLID,
     }
-    if catalog is not None:
-        node_id = str(catalog.get("id") or "").strip()
-        if node_id:
-            body["ids"] = node_id
-            body["path"] = str(catalog.get("path") or f"{node_id}|")
     payload = await _request(
         ctx,
         "POST",
@@ -1292,13 +1291,18 @@ async def search_test_cases(
     catalog = await _resolve_case_catalog(
         ctx, catalog_id=catalog_id, catalog_name=catalog_name or category
     )
+    catalog_ids = (
+        [str(node["id"]) for node in _flatten_catalog([catalog]) if node.get("id")]
+        if catalog is not None
+        else None
+    )
     simple: list[dict[str, Any]] = [{"field": "newest_flag", "op": "eq", "value1": 1}]
     if identifier:
         simple.append({"field": "code", "op": "eq", "value1": str(identifier)})
     if keyword:
         simple.append({"field": "name", "op": "like", "value1": str(keyword)})
     payload = await _test_case_list(
-        ctx, simple_vos=simple, page=page, page_size=size, catalog=catalog
+        ctx, simple_vos=simple, page=page, page_size=size, catalog_ids=catalog_ids
     )
     items = [
         {

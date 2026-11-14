@@ -850,8 +850,10 @@ async def test_search_test_cases_filters_by_catalog_id(bound_user, fake_api):
     _install_catalog_route(fake_api)
 
     def list_route(json=None, **_):
-        assert json["ids"] == "sim"
-        assert json["path"] == "root|hima|sim|"
+        vos = json["condition"]["simpleVOs"]
+        assert {"field": "doc_classfiy_id", "op": "in", "value1": ["sim", "trim"]} in vos
+        assert "ids" not in json
+        assert "path" not in json
         assert json["partParam"]["containChildren"] is False
         return {
             "recordList": [
@@ -884,8 +886,9 @@ async def test_search_test_cases_resolves_catalog_name(bound_user, fake_api):
     _install_catalog_route(fake_api)
 
     def list_route(json=None, **_):
-        assert json["ids"] == "media"
-        assert json["path"] == "root|media|"
+        vos = json["condition"]["simpleVOs"]
+        assert {"field": "doc_classfiy_id", "op": "in", "value1": ["media"]} in vos
+        assert "ids" not in json
         return {"recordList": [], "recordCount": 0}
 
     fake_api.routes["/yonbip-mm-plmrd/bill/list"] = list_route
@@ -898,7 +901,8 @@ async def test_search_test_cases_category_is_catalog_name_alias(bound_user, fake
     _install_catalog_route(fake_api)
 
     def list_route(json=None, **_):
-        assert json["ids"] == "hima"
+        vos = json["condition"]["simpleVOs"]
+        assert {"field": "doc_classfiy_id", "op": "in", "value1": ["hima", "sim", "trim"]} in vos
         return {"recordList": [], "recordCount": 0}
 
     fake_api.routes["/yonbip-mm-plmrd/bill/list"] = list_route

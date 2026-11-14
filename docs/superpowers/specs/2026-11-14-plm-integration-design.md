@@ -73,6 +73,10 @@ Web 端把请求体 zlib 压缩（`CompressionStream('deflate')`）；服务端�
 | `plm_issue_create` | write | 严格建单，`confirm=true`，10 分钟幂等 |
 | `plm_issue_add_comment` | write | 追加评论，`confirm=true` |
 
+目录过滤：`plm_case_search` 先按 `catalog_id` / `catalog_name` 解析目录节点，再把该目录子树全部节点 id 作为
+`condition.simpleVOs` 的 `doc_classfiy_id in [...]` 过滤。PLM 的 `ids` + `path` 目录过滤在分页时会出现
+页窗错位（同一条重复、另一条遗漏），不复用。
+
 ## 5. 严格建单流程
 
 1. `confirm` 必须为 `true`；`client_request_id` 命中 Redis 幂等键时直接返回上次结果（TTL 600s）。
