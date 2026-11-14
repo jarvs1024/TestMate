@@ -456,7 +456,9 @@ def _flatten_ref(nodes: Any) -> list[dict[str, Any]]:
     return out
 
 
-async def _ref_data(ctx: McpContext, ref_code: str, *, keyword: str, page_size: int) -> list[dict[str, Any]]:
+async def _ref_data(
+    ctx: McpContext, ref_code: str, *, keyword: str, page_size: int, field: str = "name"
+) -> list[dict[str, Any]]:
     session = await _session(ctx)
     meta = await _ref_meta(ctx, ref_code)
     entity = meta.get("refEntity") if isinstance(meta.get("refEntity"), dict) else {}
@@ -483,7 +485,7 @@ async def _ref_data(ctx: McpContext, ref_code: str, *, keyword: str, page_size: 
             "commonVOs": [
                 {"itemName": "schemeName", "value1": "默认方案"},
                 {"itemName": "isDefault", "value1": True},
-                {"itemName": "name", "value1": keyword},
+                {"itemName": "name", "value1": keyword} if field == "name" else {"itemName": field, "value1": keyword},
             ],
             "filtersId": filter_id,
             "solutionId": solution_id,
@@ -691,15 +693,31 @@ async def _create_options(ctx: McpContext) -> tuple[dict[str, list[dict[str, str
     return options, projects, remote
 
 
+async def _member_by_code(ctx: McpContext, code: str) -> dict[str, str]:
+    if not code:
+        return {}
+    items = await _ref_data(ctx, MEMBER_REF_CODE, keyword=code, page_size=50, field="code")
+    return next((item for item in items if item["code"] == code), {})
+
+
 # ── 只读工具 ────────────────────────────────────────────────
 async def whoami(ctx: McpContext) -> dict[str, Any]:
     record = await credentials.get(ctx.session, _user_id(ctx), PROVIDER)
     if record is None:
         return {"configured": False, "provider": PROVIDER}
+    try:
+        member = await _member_by_code(ctx, record.username)
+    except McpRuntimeError:
+        member = {}
     return {
         "configured": True,
         "provider": PROVIDER,
         "username": record.username,
+        "user": {
+            "id": member.get("id", ""),
+            "code": member.get("code") or record.username,
+            "name": member.get("name", ""),
+        },
         "status": record.status,
         "last_login_at": record.last_login_at,
         "last_error": record.last_error,
@@ -907,7 +925,8 @@ async def _download_candidates(ctx: McpContext, file_id: str) -> list[str]:
             )
         except McpRuntimeError:
             payload = None
-        for item in payload if isinstance(payload, list) else []:
+        items = payload.get("list") if isinstance(payload, dict) else payload
+        for item in items if isinstance(items, list) else []:
             if not isinstance(item, dict):
                 continue
             raw = str(item.get("download") or item.get("url") or item.get("filePath") or item.get("fileKey") or "")
@@ -1199,20 +1218,14 @@ def _validate_or_raise(
     result = schema.validate_create(args, options)
     if result["ok"]:
         return
-    parts: list[str] = []
-    missing = [schema.field_name(key) + f"({key})" for key in result["missing_required"]]
-    if missing:
-        parts.append("缺少必填 " + ", ".join(missing))
-    invalid = [f"{schema.field_name(item['key'])}({item['key']}={item['value']})" for item in result["invalid_options"]]
-    if invalid:
-        parts.append("选项非法 " + ", ".join(invalid))
+    parts = [schema.describe_rejection(result, options)]
     if error:
         parts.append(error)
     raise McpRuntimeError(
         "invalid_arguments",
         "建单参数不合法: "
-        + "; ".join(parts)
-        + "。请先调用 plm_get_create_meta 获取必填字段与选项 id。",
+        + "。".join(item for item in parts if item)
+        + "。请先调用 plm_issue_get_create_meta 获取必填字段与选项 id。",
     )
 
 
@@ -1242,17 +1255,33 @@ async def _preview_payload(
 
 
 async def preview_question(ctx: McpContext, **args: Any) -> dict[str, Any]:
-    result, project, _options, remote, payload = await _preview_payload(ctx, args)
+    result, project, options, remote, payload = await _preview_payload(ctx, args)
     hints: list[str] = []
+    problems: list[str] = []
+    rejection = schema.describe_rejection(result, options)
+    if rejection:
+        problems.append(rejection)
+    if result["error"]:
+        problems.append(result["error"])
     if project is None:
-        hints.append("关联项目不在当前账号可见项目列表中: 先用 plm_list_projects 取 project_id / project_code")
+        problems.append(
+            "关联项目未匹配: 先用 plm_common_list_projects 确认 project_id / project_code, 缺项目会拒绝建单"
+        )
+        hints.append("关联项目不在当前账号可见项目列表中: 先用 plm_common_list_projects 取 project_id / project_code")
     if not remote:
-        hints.append("未取到 PLM 在线字典, 下拉选项为内置兜底值; 建单前请重试 plm_get_create_meta")
+        hints.append("未取到 PLM 在线字典, 下拉选项为内置兜底值; 建单前请重试 plm_issue_get_create_meta")
     return {
         "ok": bool(result["ok"] and project is not None),
         "missing_required": result["missing_required"],
         "invalid_options": result["invalid_options"],
-        "error": result["error"],
+        "missing_fields": [
+            schema.requirement_detail(key, options) for key in result["missing_required"]
+        ],
+        "invalid_fields": [
+            schema.requirement_detail(item["key"], options, value=item["value"])
+            for item in result["invalid_options"]
+        ],
+        "error": "; ".join(problems),
         "hints": hints,
         "payload": payload,
     }
@@ -1496,7 +1525,11 @@ async def _reserve_code(ctx: McpContext, question_type_id: str) -> dict[str, Any
         if attempt == 0:
             await asyncio.sleep(0.5)
     if not detail.get("schId"):
-        raise McpRuntimeError("plm_error", "PLM 未能返回问题类型流程 (getLcDetail schId 为空)")
+        raise McpRuntimeError(
+            "plm_error",
+            f"PLM 未能返回问题类型流程 (questionCgrId={question_type_id or '空'}, getLcDetail schId 为空)。"
+            "请用 plm_issue_get_create_meta 重新确认有效的问题类型 id。",
+        )
 
     code_payload = await _request(
         ctx,
@@ -1511,7 +1544,9 @@ async def _reserve_code(ctx: McpContext, question_type_id: str) -> dict[str, Any
     bill_id = str(code_data.get("id") or "")
     if not _WSD_RE.match(code) or not bill_id:
         raise McpRuntimeError(
-            "plm_error", f"PLM 未生成合规问题单号 (code={code or '空'})"
+            "plm_error",
+            f"PLM 未生成合规问题单号 (questionCgrId={question_type_id or '空'}, code={code or '空'})。"
+            "请用 plm_issue_get_create_meta 重新获取有效的问题类型 id 后重试。",
         )
     return {
         "code": code,
@@ -1729,10 +1764,23 @@ async def create_question(
         projects, str(args.get("project_id") or ""), str(args.get("project_code") or "")
     )
     if project is None:
+        wanted = ", ".join(
+            part
+            for part in (
+                f"project_id={args.get('project_id')}" if args.get("project_id") else "",
+                f"project_code={args.get('project_code')}" if args.get("project_code") else "",
+            )
+            if part
+        )
+        reason = (
+            f"传入的 {wanted} 未匹配到当前账号可见项目"
+            if wanted
+            else "project_id / project_code 均为空"
+        )
         raise McpRuntimeError(
             "invalid_arguments",
-            "必须关联项目: project_id / project_code 未匹配到当前账号可见项目。"
-            "请先调用 plm_list_projects 获取项目 id 或 code。",
+            f"必须关联项目: {reason}。"
+            "请先调用 plm_common_list_projects 获取项目 id 或 code 后再建单。",
         )
     args = {**args, "project_id": project["id"]}
     _validate_or_raise(args, options, "")

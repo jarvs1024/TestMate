@@ -32,32 +32,20 @@ ENDPOINT = "/mcp/plm"
 TOKEN = "plm-token"
 
 TOOL_REQUIRED = {
-    "plm_whoami": set(),
-    "plm_list_projects": set(),
-    "plm_get_create_meta": set(),
-    "plm_search_members": set(),
-    "plm_search_questions": set(),
-    "plm_get_question": set(),
-    "plm_list_comments": {"id"},
-    "plm_list_attachments": set(),
-    "plm_download_attachment": set(),
-    "plm_search_test_cases": set(),
-    "plm_get_test_case": {"identifier"},
-    "plm_preview_question": set(),
-    "plm_create_question": {
-        "name",
-        "questionCgrId",
-        "raisePerson",
-        "quesBelongArea",
-        "QuesmoduleSel",
-        "projectJD",
-        "questionTdArea",
-        "questionPriority",
-        "quesSever",
-        "attribute2",
-        "confirm",
-    },
-    "plm_add_comment": {"id", "content", "confirm"},
+    "plm_common_whoami": set(),
+    "plm_common_list_projects": set(),
+    "plm_common_search_members": set(),
+    "plm_issue_get_create_meta": set(),
+    "plm_issue_search": set(),
+    "plm_issue_get": set(),
+    "plm_issue_list_comments": {"id"},
+    "plm_issue_list_attachments": set(),
+    "plm_issue_download_attachment": set(),
+    "plm_case_search": set(),
+    "plm_case_get": {"identifier"},
+    "plm_issue_preview": set(),
+    "plm_issue_create": {"confirm"},
+    "plm_issue_add_comment": {"id", "content", "confirm"},
 }
 
 GROUP_ID = "mdf_11111111-1111-1111-1111-111111111111"
@@ -313,14 +301,14 @@ async def test_write_tool_requires_scope(user):
         result = await call_tool(
             client,
             TOKEN,
-            "plm_create_question",
+            "plm_issue_create",
             {
                 "name": "x",
                 "questionCgrId": "qt1",
                 "raisePerson": "u1",
                 "quesBelongArea": "1",
                 "QuesmoduleSel": "1",
-                "projectJD": "TR3",
+                "projectJD": "3",
                 "questionTdArea": "1",
                 "questionPriority": "1",
                 "quesSever": "2",
@@ -334,19 +322,49 @@ async def test_write_tool_requires_scope(user):
     assert "scope" in result["content"][0]["text"].lower()
 
 
+async def test_create_explains_missing_required_over_protocol(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    principal = Principal(
+        user=bound_user, client_id="test-client", scopes=frozenset({"plm:read", "plm:write"})
+    )
+    async with _server(principal) as client:
+        result = await call_tool(
+            client,
+            TOKEN,
+            "plm_issue_create",
+            {
+                "name": "x",
+                "project_code": "TIANFU",
+                "questionCgrId": "qt1",
+                "raisePerson": "u1",
+                "confirm": True,
+            },
+            endpoint=ENDPOINT,
+        )
+
+    text = result["content"][0]["text"]
+    assert result.get("isError") is True
+    assert "缺少必填" in text
+    assert "问题归属领域" in text
+    assert "quesBelongArea" in text
+    assert "attribute2" in text
+    assert "1=硬件" in text
+
+
 async def test_unknown_argument_is_rejected(user):
     principal = Principal(
         user=user, client_id="test-client", scopes=frozenset({"plm:read"})
     )
     async with _server(principal) as client:
         result = await call_tool(
-            client, TOKEN, "plm_whoami", {"unexpected": True}, endpoint=ENDPOINT
+            client, TOKEN, "plm_common_whoami", {"unexpected": True}, endpoint=ENDPOINT
         )
     assert result.get("isError") is True
 
 
 # ── 只读适配 ───────────────────────────────────────────────
-async def test_whoami_reports_bound_account(bound_user):
+async def test_whoami_reports_bound_account(bound_user, fake_api):
+    _install_common_routes(fake_api)
     async with _context(bound_user) as ctx:
         data = await adapter.whoami(ctx)
     assert data["configured"] is True
@@ -354,10 +372,42 @@ async def test_whoami_reports_bound_account(bound_user):
     assert data["status"] == "ok"
 
 
+async def test_whoami_resolves_name_by_login_code(bound_user, fake_api):
+    _install_common_routes(fake_api)
+
+    def ref_data(params=None, **_):
+        assert (params or {}).get("refCode") == adapter.MEMBER_REF_CODE
+        return {"recordList": [{"id": "u9", "name": "贾克江", "code": "demo-plm"}]}
+
+    fake_api.routes["/yonbip-mm-plmrd/bill/ref/getRefData"] = ref_data
+    async with _context(bound_user) as ctx:
+        data = await adapter.whoami(ctx)
+
+    assert data["user"] == {"id": "u9", "code": "demo-plm", "name": "贾克江"}
+    body = next(c for c in fake_api.calls if c["path"].endswith("getRefData"))["json"]
+    assert body["condition"]["commonVOs"][2] == {
+        "itemName": "code",
+        "value1": "demo-plm",
+    }
+
+
+async def test_whoami_falls_back_to_login_without_name(bound_user, fake_api, monkeypatch):
+    async def unavailable(*args, **kwargs):
+        raise adapter.McpRuntimeError("integration_unavailable", "PLM 暂不可达")
+
+    monkeypatch.setattr(adapter, "_member_by_code", unavailable)
+    async with _context(bound_user) as ctx:
+        data = await adapter.whoami(ctx)
+
+    assert data["username"] == "demo-plm"
+    assert data["user"] == {"id": "", "code": "demo-plm", "name": ""}
+
+
 async def test_whoami_reports_unbound(user):
     async with _context(user) as ctx:
         data = await adapter.whoami(ctx)
     assert data["configured"] is False
+
 
 
 async def test_list_projects_returns_my_projects(bound_user, fake_api):
@@ -379,8 +429,20 @@ async def test_get_create_meta_lists_required_and_options(bound_user, fake_api):
         data = await adapter.get_create_meta(ctx)
 
     assert data["remote_options"] is True
-    assert "project_id" in data["required"]
-    assert "attribute2" in data["required"]
+    assert data["required"] == [
+        "project_id",
+        "questionCgrId",
+        "raisePerson",
+        "quesBelongArea",
+        "QuesmoduleSel",
+        "projectJD",
+        "questionTdArea",
+        "questionPriority",
+        "quesSever",
+        "attribute2",
+    ]
+    attribute2 = next(f for f in data["fields"] if f["key"] == "attribute2")
+    assert attribute2["required"] is True
     assert data["defaults"] == {"genyinfenxi": "NA", "attribute1": "NA"}
     assert {"id": "qt1", "name": "软件缺陷"} in data["options"]["questionCgrId"]
     assert data["projects"][0]["code"] == "TIANFU"
@@ -424,6 +486,32 @@ async def test_search_questions_builds_condition_and_normalizes(bound_user, fake
     assert body["condition"]["simpleVOs"] == [
         {"field": "code", "op": "eq", "value1": "WSD202511130001"}
     ]
+
+
+async def test_search_status_uses_question_status_code(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_question_routes(
+        fake_api,
+        existing={
+            "id": "q1",
+            "code": "WSD202511130001",
+            "name": "偶现掉盘",
+            "ques_status": "13",
+            "lctemplate_attribute_id": "state1",
+            "lctemplate_attribute_id_name": "草稿",
+            "lctemplate_attribute_id_code": "Draft",
+            "raisePerson": "u1",
+            "raisePerson_name": "张三",
+        },
+    )
+    async with _context(bound_user) as ctx:
+        data = await adapter.search_questions(ctx, code="WSD202511130001")
+
+    item = data["items"][0]
+    assert item["status"] == "提交审核"
+    assert item["status_id"] == "state1"
+    assert item["status_code"] == "Draft"
+
 
 
 async def test_get_question_returns_description_and_inline_image(bound_user, fake_api):
@@ -527,6 +615,26 @@ async def test_download_attachment_inlines_image(bound_user, fake_api):
     assert data["bytes"] == 9
 
 
+async def test_download_attachment_resolves_file_id_from_infos_list(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    expected = adapter._base_url() + "/yms-def-bucket/private/a.png"
+    fake_api.routes["/iuap-apcom-file/rest/v1/file/infos"] = lambda **_: {
+        "list": [{"id": "f1", "filePath": expected, "name": "a.png"}]
+    }
+
+    def download(url):
+        assert url == expected
+        return (b"\x89PNG-data", "image/png", "a.png")
+
+    fake_api.routes["__download__"] = download
+    async with _context(bound_user) as ctx:
+        data = await adapter.download_attachment(ctx, file_id="f1")
+
+    assert data["content_type"] == "image/png"
+    assert base64.b64decode(data["base64"]) == b"\x89PNG-data"
+    assert data["bytes"] == 9
+
+
 async def test_search_test_cases_filters_newest_flag(bound_user, fake_api):
     _install_common_routes(fake_api)
 
@@ -598,7 +706,7 @@ def _create_args(**overrides):
         "raisePerson_name": "张三",
         "quesBelongArea": "1",
         "QuesmoduleSel": "2",
-        "projectJD": "TR3",
+        "projectJD": "3",
         "questionTdArea": "3",
         "questionPriority": "1",
         "quesSever": "2",
@@ -628,6 +736,58 @@ async def test_preview_reports_missing_and_unresolved_project(bound_user, fake_a
     assert bad["hints"]
 
 
+async def test_preview_reports_all_required_attributes(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    required = (
+        "quesBelongArea", "QuesmoduleSel", "projectJD",
+        "questionTdArea", "questionPriority", "quesSever", "attribute2",
+    )
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_question(
+            ctx, **{k: v for k, v in _create_args().items() if k not in required}
+        )
+
+    assert data["ok"] is False
+    assert data["missing_required"] == list(required)
+
+
+async def test_preview_explains_missing_required_fields(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    required = (
+        "quesBelongArea", "QuesmoduleSel", "projectJD",
+        "questionTdArea", "questionPriority", "quesSever", "attribute2",
+    )
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_question(
+            ctx, **{k: v for k, v in _create_args().items() if k not in required}
+        )
+
+    assert data["ok"] is False
+    details = {item["key"]: item for item in data["missing_fields"]}
+    assert set(details) == set(required)
+    assert details["projectJD"]["name"] == "项目阶段"
+    assert {"id": "3", "name": "TR3"} in details["projectJD"]["options"]
+    assert details["attribute2"]["name"] == "固件版本"
+    assert details["attribute2"]["type"] == "text"
+    assert "缺少必填" in data["error"]
+    for name in ("问题归属领域", "问题模块", "项目阶段", "提单领域", "优先级", "严重程度", "固件版本"):
+        assert name in data["error"]
+
+
+async def test_preview_explains_invalid_option_with_allowed_ids(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_question(ctx, **_create_args(projectJD="TR3", quesSever="9"))
+
+    assert data["ok"] is False
+    invalid = {item["key"]: item for item in data["invalid_fields"]}
+    assert invalid["projectJD"]["value"] == "TR3"
+    assert {"id": "3", "name": "TR3"} in invalid["projectJD"]["options"]
+    assert invalid["quesSever"]["name"] == "严重程度"
+    assert "选项非法" in data["error"]
+    assert "1=致命" in data["error"]
+
+
 async def test_preview_accepts_project_code_without_project_id(bound_user, fake_api):
     _install_common_routes(fake_api)
     async with _context(bound_user) as ctx:
@@ -655,6 +815,7 @@ async def test_create_rejects_unresolved_project(bound_user, fake_api):
 
     assert excinfo.value.code == "invalid_arguments"
     assert "必须关联项目" in str(excinfo.value)
+    assert "plm_common_list_projects" in str(excinfo.value)
     assert "/yonbip-mm-plmrd/bill/save" not in fake_api.paths()
 
 
@@ -666,8 +827,10 @@ async def test_create_rejects_missing_required_attribute(bound_user, fake_api):
                 ctx, **{k: v for k, v in _create_args().items() if k != "attribute2"}
             )
 
+    message = str(excinfo.value)
     assert excinfo.value.code == "invalid_arguments"
-    assert "attribute2" in str(excinfo.value)
+    assert "attribute2" in message
+    assert "固件版本" in message
     assert "/yonbip-mm-plmrd/questionCgr/getCode" not in fake_api.paths()
 
 
@@ -677,9 +840,27 @@ async def test_create_rejects_invalid_option(bound_user, fake_api):
         with pytest.raises(adapter.McpRuntimeError) as excinfo:
             await adapter.create_question(ctx, **_create_args(quesSever="9"))
 
+    message = str(excinfo.value)
     assert excinfo.value.code == "invalid_arguments"
-    assert "严重程度" in str(excinfo.value)
+    assert "严重程度" in message
+    assert "1=致命" in message
     assert "/yonbip-mm-plmrd/questionCgr/getCode" not in fake_api.paths()
+
+
+async def test_create_rejects_when_plm_returns_no_code(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_question_routes(fake_api)
+    _install_create_routes(fake_api, code="BAD")
+
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.create_question(ctx, **_create_args())
+
+    assert excinfo.value.code == "plm_error"
+    assert "未生成合规问题单号" in str(excinfo.value)
+    assert "questionCgrId" in str(excinfo.value)
+    assert "/yonbip-mm-plmrd/bill/save" not in fake_api.paths()
+
 
 
 def _install_create_routes(api: FakeAPI, *, code: str = "WSD202511130001") -> None:
@@ -729,7 +910,7 @@ async def test_create_happy_path_verifies_code_and_handler(bound_user, fake_api)
     assert fields["questionCgrId"] == "qt1"
     assert fields["questionCgrId_name"] == "软件缺陷"
     assert fields["raisePerson"] == "u1"
-    assert fields["projectJD"] == "TR3"
+    assert fields["projectJD"] == "3"
     assert fields["attribute2"] == "FW1.0"
     assert fields["qusDescribe"] == "<p>现象</p>"
 

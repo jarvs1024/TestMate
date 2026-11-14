@@ -53,33 +53,37 @@ Web 端把请求体 zlib 压缩（`CompressionStream('deflate')`）；服务端�
 
 ## 4. 工具清单
 
+命名规则与 PingCode 一致：`plm_<领域>_<动作>_<对象>`，领域分 `common`（通用）、`issue`（问题单）、`case`（用例库）。
+
 | 工具 | scope | 说明 |
 |---|---|---|
-| `plm_whoami` | read | 绑定状态与最近登录结果 |
-| `plm_list_projects` | read | 我名下可关联项目 |
-| `plm_get_create_meta` | read | 必填字段、下拉选项 id、项目列表与提示 |
-| `plm_search_members` | read | 人员字典（处理人） |
-| `plm_search_questions` | read | 问题单列表检索 |
-| `plm_get_question` | read | 详情 + 描述 + 内联截图 + 附件 |
-| `plm_list_comments` | read | 评论 |
-| `plm_list_attachments` | read | 附件与字段内嵌截图 |
-| `plm_download_attachment` | read | 附件下载（图片内联 base64） |
-| `plm_search_test_cases` | read | 用例库检索 |
-| `plm_get_test_case` | read | 用例详情（步骤/预期） |
-| `plm_preview_question` | write | 建单预校验，不提交 |
-| `plm_create_question` | write | 严格建单，`confirm=true`，10 分钟幂等 |
-| `plm_add_comment` | write | 追加评论，`confirm=true` |
+| `plm_common_whoami` | read | 绑定状态与最近登录结果 |
+| `plm_common_list_projects` | read | 我名下可关联项目 |
+| `plm_common_search_members` | read | 人员字典（处理人） |
+| `plm_issue_get_create_meta` | read | 必填字段、下拉选项 id、项目列表与提示 |
+| `plm_issue_search` | read | 问题单列表检索 |
+| `plm_issue_get` | read | 详情 + 描述 + 内联截图 + 附件 |
+| `plm_issue_list_comments` | read | 评论 |
+| `plm_issue_list_attachments` | read | 附件与字段内嵌截图 |
+| `plm_issue_download_attachment` | read | 附件下载（图片内联 base64） |
+| `plm_case_search` | read | 用例库检索 |
+| `plm_case_get` | read | 用例详情（步骤/预期） |
+| `plm_issue_preview` | write | 建单预校验，不提交 |
+| `plm_issue_create` | write | 严格建单，`confirm=true`，10 分钟幂等 |
+| `plm_issue_add_comment` | write | 追加评论，`confirm=true` |
 
 ## 5. 严格建单流程
 
 1. `confirm` 必须为 `true`；`client_request_id` 命中 Redis 幂等键时直接返回上次结果（TTL 600s）。
 2. 实时拉取模板选项、问题类型字典与我名下项目，合并内置兜底选项。
 3. 项目必须命中 `project_id` 或 `project_code`，否则拒绝（`invalid_arguments`）。
-4. 必填字段与选项校验（`schema.validate_create`）：
+4. 必填字段与选项校验（`schema.validate_create`，由 handler 统一拒绝以便返回中文说明）：
    - 必填：`name`、`questionCgrId`、`raisePerson`、`quesBelongArea`、`QuesmoduleSel`、`projectJD`、
-     `questionTdArea`、`questionPriority`、`quesSever`、`attribute2`；
+     `questionTdArea`、`questionPriority`、`quesSever`、`attribute2`（与 PLM 提单属性 * 一致）；
    - `genyinfenxi` / `attribute1` 省略时补 `NA`；
-   - 所有下拉值必须命中选项 id，传中文名会被拒绝。
+   - 所有下拉值必须命中选项 id，传中文名会被拒绝；
+   - 拒绝信息列出中文属性名与合法选项（如 `严重程度(quesSever=9) 合法: 1=致命, 2=严重, ...`），
+     `plm_issue_preview` 同时返回 `missing_fields` / `invalid_fields` 明细。
 5. 预占单号：`allowCreateQuestion`（失败可继续）→ `getLcDetail`（取 `schId`，失败 0.5s 后重试一次）→
    `getCode`，单号必须匹配 `^WSD\d{8,}$`。
 6. 单号查重：列表中已存在同 `code` 时中止（`plm_duplicate_code`），避免重复提单。

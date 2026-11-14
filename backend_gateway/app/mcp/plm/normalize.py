@@ -145,14 +145,30 @@ def _readable(value: Any) -> str:
     return "" if re.fullmatch(r"\d+", text) else text
 
 
+# 问题状态 (ques_status) 字典; 列表页「问题状态」列即此字段, 与流程态 (lctemplate_attribute_id) 不同.
+QUESTION_STATUS_NAMES = {
+    "12": "问题提交",
+    "13": "提交审核",
+    "10": "根因分析",
+    "2": "测试复现",
+    "3": "修正方案",
+    "4": "修正审核",
+    "6": "回归测试",
+    "8": "确认关闭",
+}
+
+
 def status_of(record: dict[str, Any]) -> str:
+    code = str(record.get("ques_status") or "").strip()
     return str(
         record.get("ques_status_name")
+        or QUESTION_STATUS_NAMES.get(code)
         or record.get("stateId")
         or record.get("lctemplate_attribute_id_name")
-        or record.get("ques_status")
+        or code
         or ""
     )
+
 
 
 def status_id_of(record: dict[str, Any]) -> str:

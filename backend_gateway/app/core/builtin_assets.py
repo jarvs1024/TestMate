@@ -161,7 +161,7 @@ PLM_ASSET = BuiltinAsset(
             "新建 API Token: 登录 TestMate → 个人中心 → 访问令牌 → 新建, 勾选 plm:read, 需要提单/评论再勾 plm:write",
             "把配置里 headers.Authorization 的「<你的API Token>」替换成刚建的 token",
             "重启 Agent 会话即可使用",
-            "备注: 建单必须关联项目并选择有效问题类型; 先调用 plm_get_create_meta 获取必填字段与选项 id",
+            "备注: 建单必须关联项目并选择有效问题类型; 先调用 plm_issue_get_create_meta 获取必填字段与选项 id",
         ],
     ),
 )

@@ -79,7 +79,7 @@ STATIC_FIELDS: tuple[dict[str, Any], ...] = (
         "name": "项目阶段",
         "type": "select",
         "required": True,
-        "options": [{"id": key, "name": key} for key in ("TR1", "TR2", "TR3", "TR4", "TR4A", "TR5", "TR6", "GA", "PDCP", "ADCP")],
+        "options": [{"id": str(i), "name": name} for i, name in enumerate(("TR1", "TR2", "TR3", "TR4", "TR4A", "TR5", "TR6", "GA", "PDCP", "ADCP"), start=1)],
     },
     {
         "key": "questionTdArea",
@@ -103,7 +103,7 @@ STATIC_FIELDS: tuple[dict[str, Any], ...] = (
         "name": "优先级",
         "type": "select",
         "required": True,
-        "options": [{"id": "1", "name": "高"}, {"id": "2", "name": "中"}, {"id": "3", "name": "低"}],
+        "options": [{"id": str(i), "name": f"P{i}"} for i in range(1, 33)] + [{"id": "0", "name": "P0"}],
     },
     {
         "key": "quesSever",
@@ -270,14 +270,14 @@ def describe_create_meta(
         }
         fields.append(item)
     hints = [
-        "建单必须关联项目: 先用 plm_list_projects 取 project_id (或 project_code); 缺项目会拒绝建单",
+        "建单必须关联项目: 先用 plm_common_list_projects 取 project_id (或 project_code); 缺项目会拒绝建单",
         "问题类型 questionCgrId 必须是当前字典 id; 否则不会生成问题单号, 建单被拒绝",
-        "下一步处理人 raisePerson 用 plm_search_members 查询; 提单后会反查确认处理人已写入",
-        "必填属性必须合规 (下拉字段只能用 options 中的 id); genyinfenxi / attribute1 省略时默认 NA",
-        "plm_create_question 会先预占 WSD 问题单号并做重复校验; 提交前可用 plm_preview_question 校验",
+        "下一步处理人 raisePerson 用 plm_common_search_members 查询; 提单后会反查确认处理人已写入",
+        "必填属性 (带 * 的下拉/文本) 必须填写, 且下拉只能用 options 中的 id; genyinfenxi / attribute1 省略时默认 NA",
+        "plm_issue_create 会先预占 WSD 问题单号并做重复校验; 提交前可用 plm_issue_preview 校验",
     ]
     if not remote_options:
-        hints.append("本次未取到 PLM 在线字典, 下拉 options 为内置兜底值, 建单前请重试 plm_get_create_meta")
+        hints.append("本次未取到 PLM 在线字典, 下拉 options 为内置兜底值, 建单前请重试 plm_issue_get_create_meta")
     return {
         "required": required_keys(),
         "defaults": DEFAULTS,
@@ -301,6 +301,65 @@ def describe_create_meta(
 def field_name(key: str) -> str:
     field = _FIELDS_BY_KEY.get(key)
     return str(field.get("name") if field else key)
+
+
+_REF_HINTS = {
+    "project_id": "先用 plm_common_list_projects 查询项目 id / code",
+    "questionCgrId": "先用 plm_issue_get_create_meta 查询问题类型 id",
+    "raisePerson": "先用 plm_common_search_members 查询人员 id",
+}
+
+
+def requirement_detail(
+    key: str, options: dict[str, list[dict[str, str]]] | None, *, value: Any = None
+) -> dict[str, Any]:
+    field = _FIELDS_BY_KEY.get(key, {})
+    kind = str(field.get("type") or "text")
+    item: dict[str, Any] = {"key": key, "name": field_name(key), "type": kind}
+    if kind == "select":
+        item["options"] = list((options or {}).get(key) or field.get("options") or [])
+    else:
+        item["hint"] = _REF_HINTS.get(key, "任意非空文本")
+    if value is not None:
+        item["value"] = value
+    return item
+
+
+def _option_summary(items: list[dict[str, str]], limit: int = 12) -> str:
+    parts = [f"{item.get('id')}={item.get('name')}" for item in items[:limit]]
+    if len(items) > limit:
+        parts.append(f"共{len(items)}项")
+    return ", ".join(parts)
+
+
+def describe_rejection(
+    result: dict[str, Any], options: dict[str, list[dict[str, str]]] | None
+) -> str:
+    parts: list[str] = []
+    missing = result.get("missing_required") or []
+    if missing:
+        entries = []
+        for key in missing:
+            text = f"{field_name(key)}({key})"
+            allowed = (options or {}).get(key) or []
+            if allowed:
+                text += f" 可选: {_option_summary(allowed)}"
+            else:
+                text += f", {_REF_HINTS.get(key, '任意非空文本')}"
+            entries.append(text)
+        parts.append("缺少必填 " + "; ".join(entries))
+    invalid = result.get("invalid_options") or []
+    if invalid:
+        entries = []
+        for item in invalid:
+            key = str(item.get("key") or "")
+            text = f"{field_name(key)}({key}={item.get('value')})"
+            allowed = (options or {}).get(key) or []
+            if allowed:
+                text += f" 合法: {_option_summary(allowed)}"
+            entries.append(text)
+        parts.append("选项非法 " + "; ".join(entries))
+    return "; ".join(parts)
 
 
 def attachment_payloads(items: Any) -> list[dict[str, Any]]:
