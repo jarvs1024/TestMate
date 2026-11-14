@@ -65,8 +65,23 @@ const request = axios.create({
   timeout: 30000,
 });
 
+/**
+ * 知识库请求跟随当前用户空间.
+ *
+ * ⚠️ `/kb/spaces` 自己**不带**空间头 —— 它是空间列表/管理接口, 跟"当前空间"无关.
+ * ⚠️ 直接读 localStorage 而不是引 store —— request.ts 是底层模块,
+ *    引 pinia store 会形成循环依赖 (store → api → request).
+ */
+function applyKbSpaceHeader(config: InternalAxiosRequestConfig) {
+  const url = String(config.url || '');
+  if (!url.startsWith('/kb/') || url.startsWith('/kb/spaces')) return;
+  const space = localStorage.getItem('testmate:kb-space') || '';
+  if (space) config.headers['X-KB-Space'] = space;
+}
+
 request.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const userStore = useUserStore();
+  applyKbSpaceHeader(config);
   // publicRead 路由 (代码检视): 登录用 user token (保留登录态体验: ack 按钮等);
   //  未登录用 ANONYMOUS_TOKEN (后端 get_optional_user 解码 sub=0 → anonymous user, 仍能调 review-agent/pr-agent GET)
   if (isPublicReadRoute()) {

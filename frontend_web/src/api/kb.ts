@@ -337,9 +337,13 @@ export async function downloadKbDocument(
   docName: string,
 ): Promise<void> {
   const token = localStorage.getItem('testmate:token') || '';
+  // fetch 不经过 axios 拦截器 —— 空间头要自己带, 否则下载的是默认空间的同名文档.
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  const space = localStorage.getItem('testmate:kb-space') || '';
+  if (space) headers['X-KB-Space'] = space;
   const r = await fetch(
     `/api/v1/kb/datasets/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}/download`,
-    { headers: { Authorization: `Bearer ${token}` } },
+    { headers },
   );
   if (!r.ok) {
     let detail = `HTTP ${r.status}`;
@@ -464,7 +468,59 @@ export interface KbAuditItem {
   actor_name: string;
   error: string;
   size: number;
+  /** RAGFlow 用户空间 —— 空串 = 多空间改造前的历史记录 */
+  space_id: string;
+  /** 空间名快照 (空间被删/改名后仍能看出当时是哪个空间) */
+  space_name: string;
   created_at: string;
+}
+
+/** RAGFlow 用户空间 (一把 API key 一个租户空间). */
+export interface KbSpace {
+  id: string;
+  name: string;
+  is_default: boolean;
+  configured: boolean;
+  /** 仅 admin 可见: 首 4 位 + 掩码 + 末 4 位 */
+  key_masked?: string;
+}
+
+export async function listKbSpaces(): Promise<{ items: KbSpace[]; default_id: string }> {
+  return (await request.get('/kb/spaces')) as { items: KbSpace[]; default_id: string };
+}
+
+export async function createKbSpace(payload: {
+  name: string;
+  api_key: string;
+  is_default?: boolean;
+}): Promise<{ ok: boolean; space: KbSpace }> {
+  return (await request.post('/kb/spaces', payload)) as { ok: boolean; space: KbSpace };
+}
+
+export async function updateKbSpace(
+  id: string,
+  payload: { name?: string; api_key?: string; is_default?: boolean },
+): Promise<{ ok: boolean; space: KbSpace }> {
+  return (await request.put(`/kb/spaces/${encodeURIComponent(id)}`, payload)) as {
+    ok: boolean;
+    space: KbSpace;
+  };
+}
+
+export async function deleteKbSpace(id: string): Promise<{ ok: boolean }> {
+  return (await request.delete(`/kb/spaces/${encodeURIComponent(id)}`)) as { ok: boolean };
+}
+
+export async function testKbSpace(id: string): Promise<{
+  ok: boolean;
+  status: string;
+  message: string;
+}> {
+  return (await request.post(`/kb/spaces/${encodeURIComponent(id)}/test`)) as {
+    ok: boolean;
+    status: string;
+    message: string;
+  };
 }
 
 /**
@@ -491,10 +547,14 @@ export interface KbAuditPage {
 export async function listKbAudits(
   page = 1,
   pageSize = 20,
+  spaceId = '',
 ): Promise<KbAuditPage> {
-  const r = (await request.get('/kb/audits', {
-    params: { page, page_size: pageSize },
-  })) as Partial<KbAuditPage> & { items?: KbAuditItem[] };
+  const params: Record<string, unknown> = { page, page_size: pageSize };
+  // ⚠️ 空 = 全部空间 —— 筛选**独立于**页面当前切换到的空间, 所以不走请求头.
+  if (spaceId) params.space_id = spaceId;
+  const r = (await request.get('/kb/audits', { params })) as Partial<KbAuditPage> & {
+    items?: KbAuditItem[];
+  };
 
   const items = r?.items || [];
   const total = Number(r?.total ?? items.length);
