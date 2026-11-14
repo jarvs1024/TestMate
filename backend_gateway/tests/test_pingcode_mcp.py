@@ -30,30 +30,29 @@ ENDPOINT = "/mcp/pingcode"
 READ_TOKEN = "pingcode-read-token"
 
 TOOL_REQUIRED = {
-    "pingcode_whoami": set(),
-    "pingcode_list_projects": set(),
-    "pingcode_list_work_item_types": {"project_id"},
-    "pingcode_get_property_schema": {"project_id", "work_item_type_id"},
-    "pingcode_list_members": {"project_id"},
-    "pingcode_search_work_items": set(),
-    "pingcode_get_work_item": set(),
-    "pingcode_list_comments": {"id"},
-    "pingcode_list_attachments": {"id"},
-    "pingcode_list_test_case_libraries": set(),
-    "pingcode_search_test_cases": {"library_id"},
-    "pingcode_get_test_case": {"library_id", "identifier"},
-    "pingcode_get_test_case_properties": {"library_id"},
-    "pingcode_download_attachment": set(),
-    "pingcode_preview_work_item": {"project_id", "work_item_type_id", "properties"},
-    "pingcode_create_work_item": {
+    "pingcode_common_whoami": set(),
+    "pingcode_common_list_projects": set(),
+    "pingcode_common_list_members": {"project_id"},
+    "pingcode_issue_list_types": {"project_id"},
+    "pingcode_issue_get_schema": {"project_id", "work_item_type_id"},
+    "pingcode_issue_search": set(),
+    "pingcode_issue_get": set(),
+    "pingcode_issue_list_comments": {"id"},
+    "pingcode_issue_list_attachments": {"id"},
+    "pingcode_issue_download_attachment": set(),
+    "pingcode_issue_preview": {"project_id", "work_item_type_id"},
+    "pingcode_issue_create": {
         "project_id",
         "work_item_type_id",
-        "properties",
         "confirm",
         "client_request_id",
     },
-    "pingcode_add_comment": {"id", "content", "confirm"},
-    "pingcode_upload_attachment": {"confirm"},
+    "pingcode_issue_add_comment": {"id", "content", "confirm"},
+    "pingcode_issue_upload_attachment": {"confirm"},
+    "pingcode_case_list_libraries": set(),
+    "pingcode_case_get_properties": {"library_id"},
+    "pingcode_case_search": {"library_id"},
+    "pingcode_case_get": {"library_id", "identifier"},
 }
 
 
@@ -184,6 +183,20 @@ def fake_api(monkeypatch):
     monkeypatch.setattr(token_manager, "upload_file", api.upload)
     monkeypatch.setattr(adapter, "redis_client", redis_factory)
     api.redis = redis
+    api.routes.setdefault(
+        "/api/agile/projects/select-options",
+        lambda **_: {
+            "value": [
+                {
+                    "_id": "p1",
+                    "identifier": "TF2",
+                    "name": "TIANFU",
+                    "template_type": "waterfall",
+                    "is_local_configure": 1,
+                }
+            ]
+        },
+    )
     return api
 
 
@@ -280,6 +293,19 @@ async def test_tools_list_exposes_eighteen_strict_schemas(user):
         assert set(schema.get("required", [])) == required, name
 
 
+async def test_search_test_cases_schema_exposes_person_filters(user):
+    principal = Principal(
+        user=user, client_id="test-client", scopes=frozenset({"pingcode:read"})
+    )
+    async with _server(principal) as client:
+        payload = await list_tools(client, READ_TOKEN, endpoint=ENDPOINT)
+
+    tools = {tool["name"]: tool for tool in payload["tools"]}
+    properties = tools["pingcode_case_search"]["inputSchema"]["properties"]
+    assert {"created_by", "updated_by"} <= set(properties)
+    assert tools["pingcode_case_search"]["inputSchema"]["required"] == ["library_id"]
+
+
 async def test_write_tool_requires_scope(user):
     principal = Principal(
         user=user, client_id="test-client", scopes=frozenset({"pingcode:read"})
@@ -288,7 +314,7 @@ async def test_write_tool_requires_scope(user):
         result = await call_tool(
             client,
             READ_TOKEN,
-            "pingcode_create_work_item",
+            "pingcode_issue_create",
             {
                 "project_id": "p1",
                 "work_item_type_id": "t1",
@@ -311,7 +337,7 @@ async def test_unknown_argument_is_rejected(user):
         result = await call_tool(
             client,
             READ_TOKEN,
-            "pingcode_whoami",
+            "pingcode_common_whoami",
             {"unexpected": True},
             endpoint=ENDPOINT,
         )
@@ -319,13 +345,72 @@ async def test_unknown_argument_is_rejected(user):
 
 
 # ── 适配输出 ───────────────────────────────────────────────
-async def test_whoami_reports_bound_account(bound_user):
+def _identity_routes(fake_api):
+    fake_api.routes["/api/typhon/account/me"] = lambda **_: {
+        "config": {},
+        "me": {
+            "uid": "d351677ae26a4704b5fde1e5efd0dbc9",
+            "name": "642355511",
+            "display_name": "贾克江",
+            "email": "jiakejiang@twsc.com.cn",
+            "mobile": "18782095665",
+        },
+    }
+    fake_api.routes["/api/typhon/team"] = lambda **_: {
+        "value": {
+            "members": [
+                {
+                    "uid": "d351677ae26a4704b5fde1e5efd0dbc9",
+                    "display_name": "贾克江",
+                    "name": "642355511",
+                },
+                {"uid": "u2", "display_name": "张三", "name": "zhangsan"},
+            ]
+        }
+    }
+
+
+async def test_whoami_reports_bound_account(bound_user, fake_api):
+    _identity_routes(fake_api)
     async with _context(bound_user) as ctx:
         data = await adapter.whoami(ctx)
 
     assert data["configured"] is True
     assert data["username"] == "demo-user"
     assert data["status"] == "ok"
+    assert data["user"]["display_name"] == "贾克江"
+    assert data["user"]["uid"] == "d351677ae26a4704b5fde1e5efd0dbc9"
+    assert data["user"]["email"] == "jiakejiang@twsc.com.cn"
+
+
+async def test_whoami_keeps_credentials_when_identity_fails(bound_user, fake_api):
+    def boom(**_):
+        raise pingcode_client.PingCodeUnavailable("down")
+
+    fake_api.routes["/api/typhon/account/me"] = boom
+    async with _context(bound_user) as ctx:
+        data = await adapter.whoami(ctx)
+
+    assert data["configured"] is True
+    assert data["status"] == "ok"
+    assert data["user"] is None
+
+
+async def test_whoami_retries_transient_identity_failure(bound_user, fake_api):
+    attempts = {"n": 0}
+
+    def flaky(**_):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise pingcode_client.PingCodeUnavailable("reset")
+        return {"me": {"uid": "u9", "display_name": "贾克江"}}
+
+    fake_api.routes["/api/typhon/account/me"] = flaky
+    async with _context(bound_user) as ctx:
+        data = await adapter.whoami(ctx)
+
+    assert data["user"]["uid"] == "u9"
+    assert attempts["n"] == 2
 
 
 async def test_whoami_reports_unbound(user):
@@ -408,7 +493,10 @@ async def test_property_schema_falls_back_to_global_on_404(bound_user, fake_api)
     fake_api.routes["/api/agile/work-item/creation-template/properties"] = schema
     async with _context(bound_user) as ctx:
         data = await adapter.get_property_schema(
-            ctx, project_id="p1", work_item_type_id="t1"
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            project_template_type="waterfall",
         )
 
     assert data["used_global_fallback"] is True
@@ -654,6 +742,217 @@ async def test_preview_reports_missing_required(bound_user, fake_api):
     assert "步骤一" in data["payload"]["properties"]["description"]
 
 
+async def test_preview_explains_missing_required_fields(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: _create_schema(
+        {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+        {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+        {
+            "key": "severity",
+            "name": "严重程度",
+            "type": 6,
+            **REQUIRED,
+            "options": [{"_id": "sev-1", "text": "严重"}, {"_id": "sev-2", "text": "一般"}],
+        },
+    )
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "x"},
+        )
+
+    assert data["ok"] is False
+    details = {item["key"]: item for item in data["missing_fields"]}
+    assert set(details) == {"assignee", "severity"}
+    assert details["severity"]["name"] == "严重程度"
+    assert details["severity"]["options"] == [
+        {"_id": "sev-1", "text": "严重"},
+        {"_id": "sev-2", "text": "一般"},
+    ]
+    assert "pingcode_common_list_members" in details["assignee"]["hint"]
+    assert "缺少必填" in data["error"]
+    assert "负责人(assignee)" in data["error"]
+    assert "严重程度(severity) 可选: sev-1=严重, sev-2=一般" in data["error"]
+
+
+async def test_preview_explains_invalid_option_with_allowed_ids(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: _create_schema(
+        {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+        {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+        {
+            "key": "priority",
+            "name": "优先级",
+            "type": 6,
+            **REQUIRED,
+            "options": [{"_id": "prio-1", "text": "普通"}],
+        },
+    )
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "x", "assignee": "u1", "priority": "bad"},
+        )
+
+    assert data["ok"] is False
+    invalid = {item["key"]: item for item in data["invalid_fields"]}
+    assert invalid["priority"]["name"] == "优先级"
+    assert invalid["priority"]["value"] == "bad"
+    assert invalid["priority"]["options"] == [{"_id": "prio-1", "text": "普通"}]
+    assert "选项非法" in data["error"]
+    assert "优先级(priority=bad) 合法: prio-1=普通" in data["error"]
+
+
+async def test_preview_required_fields_follow_project(bound_user, fake_api):
+    def schema(**kwargs):
+        params = kwargs.get("params") or {}
+        properties = [
+            {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+            {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+        ]
+        if params.get("scope[project_id]") == "p2":
+            properties.append(
+                {
+                    "key": "onlyP2",
+                    "name": "P2专属",
+                    "type": 6,
+                    **REQUIRED,
+                    "options": [{"_id": "o1", "text": "选项一"}],
+                }
+            )
+        return _create_schema(*properties)
+
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = schema
+    fake_api.routes["/api/agile/projects/select-options"] = lambda **_: {
+        "value": [
+            {
+                "_id": "p1",
+                "identifier": "TF2",
+                "name": "TIANFU",
+                "template_type": "waterfall",
+            },
+            {
+                "_id": "p2",
+                "identifier": "S3100",
+                "name": "S3100",
+                "template_type": "waterfall",
+            },
+        ]
+    }
+    async with _context(bound_user) as ctx:
+        one = await adapter.preview_work_item(
+            ctx, project_id="p1", work_item_type_id="t1", properties={}
+        )
+        two = await adapter.preview_work_item(
+            ctx, project_id="p2", work_item_type_id="t1", properties={}
+        )
+
+    assert one["missing_required"] == ["title", "assignee"]
+    assert "onlyP2" not in one["missing_required"]
+    assert "onlyP2" in two["missing_required"]
+    detail = {item["key"]: item for item in two["missing_fields"]}["onlyP2"]
+    assert detail["name"] == "P2专属"
+    assert detail["options"] == [{"_id": "o1", "text": "选项一"}]
+    assert "P2专属(onlyP2) 可选: o1=选项一" in two["error"]
+
+
+async def test_preview_uses_project_template_type(bound_user, fake_api):
+    fake_api.routes["/api/agile/projects/select-options"] = lambda **_: {
+        "value": [{"_id": "p1", "identifier": "TF2", "template_type": "scrum"}]
+    }
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: _create_schema(
+        {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+        {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+    )
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "x", "assignee": "u1"},
+        )
+
+    schema_call = next(
+        call
+        for call in fake_api.calls
+        if call[1] == "/api/agile/work-item/creation-template/properties"
+    )
+    assert schema_call[2]["scope[project_template_type]"] == "scrum"
+    assert data["payload"]["project_template_type"] == "scrum"
+    assert data["ok"] is True
+
+
+async def test_preview_rejects_global_fallback(bound_user, fake_api):
+    def schema(**kwargs):
+        raise adapter.client.PingCodeBusinessError(
+            "not found property definition by id or scope", status=404, code=404
+        )
+
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = schema
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.preview_work_item(
+                ctx, project_id="p1", work_item_type_id="t1", properties={}
+            )
+
+    assert excinfo.value.code == "project_schema_unavailable"
+    schema_calls = [
+        call
+        for call in fake_api.calls
+        if call[1] == "/api/agile/work-item/creation-template/properties"
+    ]
+    assert len(schema_calls) == 1
+
+
+async def test_preview_uses_global_template_for_shared_project(bound_user, fake_api):
+    fake_api.routes["/api/agile/projects/select-options"] = lambda **_: {
+        "value": [
+            {
+                "_id": "p1",
+                "identifier": "TF2",
+                "template_type": "waterfall",
+                "is_local_configure": 0,
+            }
+        ]
+    }
+    calls = {"count": 0}
+
+    def schema(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise adapter.client.PingCodeBusinessError(
+                "not found property definition by id or scope", status=404, code=404
+            )
+        return _create_schema(
+            {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+            {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+        )
+
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = schema
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_work_item(
+            ctx, project_id="p1", work_item_type_id="t1", properties={}
+        )
+
+    assert data["ok"] is False
+    assert data["missing_required"] == ["title", "assignee"]
+    assert calls["count"] == 2
+
+
+async def test_preview_rejects_project_not_creatable(bound_user, fake_api):
+    fake_api.routes["/api/agile/projects/select-options"] = lambda **_: {"value": []}
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.preview_work_item(
+                ctx, project_id="p9", work_item_type_id="t1", properties={}
+            )
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert "pingcode_common_list_projects" in str(excinfo.value)
+
+
 async def test_create_requires_confirm(bound_user, fake_api):
     async with _context(bound_user) as ctx:
         with pytest.raises(adapter.McpRuntimeError) as excinfo:
@@ -670,6 +969,10 @@ async def test_create_requires_confirm(bound_user, fake_api):
 
 
 async def test_create_requires_assignee(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: _create_schema(
+        {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+        {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+    )
     async with _context(bound_user) as ctx:
         with pytest.raises(adapter.McpRuntimeError) as excinfo:
             await adapter.create_work_item(
@@ -681,7 +984,9 @@ async def test_create_requires_assignee(bound_user, fake_api):
                 client_request_id="req-no-assignee",
             )
     assert excinfo.value.code == "assignee_required"
-    assert fake_api.calls == []
+    assert "负责人(assignee)" in str(excinfo.value)
+    assert "pingcode_common_list_members" in str(excinfo.value)
+    assert "/api/agile/work-item" not in fake_api.paths()
 
 
 async def test_create_accepts_assignee_member_object(bound_user, fake_api):
@@ -753,6 +1058,7 @@ async def test_create_rejects_missing_visible_required(bound_user, fake_api):
 
     assert excinfo.value.code == "invalid_arguments"
     assert "严重程度" in str(excinfo.value)
+    assert "sev-1=严重" in str(excinfo.value)
     assert "/api/agile/work-item" not in fake_api.paths()
 
 
@@ -821,6 +1127,47 @@ async def test_create_rejects_invalid_option(bound_user, fake_api):
 
     assert excinfo.value.code == "invalid_arguments"
     assert "优先级" in str(excinfo.value)
+    assert "prio-1=普通" in str(excinfo.value)
+    assert "/api/agile/work-item" not in fake_api.paths()
+
+
+async def test_create_explains_missing_required_over_protocol(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: _create_schema(
+        {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+        {"key": "assignee", "name": "负责人", "type": 9, **REQUIRED},
+        {
+            "key": "severity",
+            "name": "严重程度",
+            "type": 6,
+            **REQUIRED,
+            "options": [{"_id": "sev-1", "text": "严重"}],
+        },
+    )
+    principal = Principal(
+        user=bound_user,
+        client_id="test-client",
+        scopes=frozenset({"pingcode:read", "pingcode:write"}),
+    )
+    async with _server(principal) as client:
+        result = await call_tool(
+            client,
+            READ_TOKEN,
+            "pingcode_issue_create",
+            {
+                "project_id": "p1",
+                "work_item_type_id": "t1",
+                "confirm": True,
+                "client_request_id": "req-missing-over-protocol",
+            },
+            endpoint=ENDPOINT,
+        )
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "缺少必填" in text
+    assert "负责人(assignee)" in text
+    assert "严重程度(severity)" in text
+    assert "sev-1=严重" in text
     assert "/api/agile/work-item" not in fake_api.paths()
 
 
@@ -1252,7 +1599,7 @@ async def test_upload_requires_write_scope(user):
         result = await call_tool(
             client,
             READ_TOKEN,
-            "pingcode_upload_attachment",
+            "pingcode_issue_upload_attachment",
             {"path": "/tmp/x.png", "confirm": True},
             endpoint=ENDPOINT,
         )
@@ -1454,6 +1801,92 @@ async def test_search_test_cases_requires_library_id(bound_user):
             await adapter.search_test_cases(ctx, library_id="")
 
 
+async def test_search_test_cases_resolves_person_filters(bound_user, fake_api):
+    _case_routes(fake_api)
+    _identity_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        await adapter.search_test_cases(
+            ctx,
+            library_id="lib1",
+            created_by="贾克江",
+            updated_by="u2",
+        )
+
+    body = next(c[3] for c in fake_api.calls if c[1] == "/api/testhub/test-libraries/lib1/test-cases")
+    conditions = body["criteria"]["conditions"]
+    assert conditions[0]["property_key"] == "created_by"
+    assert conditions[0]["operation"] == 6
+    assert conditions[0]["value"] == [
+        {"id": "d351677ae26a4704b5fde1e5efd0dbc9", "type": 1}
+    ]
+    assert conditions[1]["property_key"] == "updated_by"
+    assert conditions[1]["value"] == [{"id": "u2", "type": 1}]
+    assert conditions[0]["id"] != conditions[1]["id"]
+
+
+async def test_search_test_cases_appends_person_filters_after_generic(bound_user, fake_api):
+    _case_routes(fake_api)
+    _identity_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        await adapter.search_test_cases(
+            ctx,
+            library_id="lib1",
+            filters=[{"property_key": "shiyongbanben", "operation": 6, "value": ["o1"]}],
+            created_by="贾克江, u2",
+        )
+
+    body = next(c[3] for c in fake_api.calls if c[1] == "/api/testhub/test-libraries/lib1/test-cases")
+    conditions = body["criteria"]["conditions"]
+    assert [c["property_key"] for c in conditions] == ["shiyongbanben", "created_by"]
+    assert conditions[1]["value"] == [
+        {"id": "d351677ae26a4704b5fde1e5efd0dbc9", "type": 1},
+        {"id": "u2", "type": 1},
+    ]
+
+
+async def test_search_test_cases_resolves_member_login_name(bound_user, fake_api):
+    _case_routes(fake_api)
+    _identity_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        await adapter.search_test_cases(ctx, library_id="lib1", created_by="642355511")
+
+    body = next(c[3] for c in fake_api.calls if c[1] == "/api/testhub/test-libraries/lib1/test-cases")
+    assert body["criteria"]["conditions"][0]["value"] == [
+        {"id": "d351677ae26a4704b5fde1e5efd0dbc9", "type": 1}
+    ]
+
+
+async def test_search_test_cases_rejects_unknown_person(bound_user, fake_api):
+    _case_routes(fake_api)
+    _identity_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(McpRuntimeError) as exc:
+            await adapter.search_test_cases(ctx, library_id="lib1", created_by="查无此人")
+
+    assert "created_by" in exc.value.message
+    assert not any(
+        c[1] == "/api/testhub/test-libraries/lib1/test-cases" for c in fake_api.calls
+    )
+
+
+async def test_search_test_cases_wraps_person_filter_values(bound_user, fake_api):
+    _case_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        await adapter.search_test_cases(
+            ctx,
+            library_id="lib1",
+            filters=[
+                {"property_key": "created_by", "operation": 6, "value": ["u1"]},
+                {"property_key": "shiyongbanben", "operation": 6, "value": ["o1"]},
+            ],
+        )
+
+    body = next(c[3] for c in fake_api.calls if c[1] == "/api/testhub/test-libraries/lib1/test-cases")
+    conditions = body["criteria"]["conditions"]
+    assert conditions[0]["value"] == [{"id": "u1", "type": 1}]
+    assert conditions[1]["value"] == ["o1"]
+
+
 async def test_search_test_cases_rejects_bad_filters(bound_user):
     async with _context(bound_user) as ctx:
         with pytest.raises(McpRuntimeError):
@@ -1515,3 +1948,86 @@ async def test_get_test_case_properties_normalizes(bound_user, fake_api):
             "options": [{"id": "o1", "text": "V1.0"}],
         }
     ]
+
+
+async def test_get_test_case_properties_reads_value_with_references(bound_user, fake_api):
+    fake_api.routes["/api/testhub/test-case/view/properties"] = lambda **_: {
+        "value": [
+            {
+                "property_key": "properties.shiyongbanben",
+                "name": "适用版本",
+                "type": 1,
+                "is_system": False,
+                "options": [{"_id": "o1", "text": "V1.0"}],
+            }
+        ],
+        "references": {},
+    }
+    async with _context(bound_user) as ctx:
+        result = await adapter.get_test_case_properties(ctx, library_id="lib1")
+
+    assert result["fields"] == [
+        {
+            "key": "shiyongbanben",
+            "name": "适用版本",
+            "type": 1,
+            "is_system": False,
+            "options": [{"id": "o1", "text": "V1.0"}],
+        }
+    ]
+
+
+async def test_get_test_case_resolves_state_and_suite_with_references(bound_user, fake_api):
+    _case_routes(fake_api)
+    fake_api.routes["/api/testhub/test-case/states"] = lambda **_: {
+        "value": [{"_id": "st1", "name": "已评审", "state_type": 1}],
+        "references": {},
+    }
+    fake_api.routes["/api/testhub/test-libraries/lib1/direct/suites"] = lambda **_: {
+        "value": [{"_id": "su1", "name": "存储用例"}],
+        "references": {},
+    }
+    async with _context(bound_user) as ctx:
+        result = await adapter.get_test_case(
+            ctx, identifier="HIMA3361-8077", library_id="lib1"
+        )
+
+    assert result["state"] == {"id": "st1", "name": "已评审", "state_type": 1}
+    assert result["suite"] == {"id": "su1", "name": "存储用例"}
+
+
+async def test_preview_fills_hidden_required_defaults(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: {
+        "value": {
+            "properties": [
+                {"key": "title", "name": "标题", "type": 1, **REQUIRED},
+                {"key": "start", "name": "开始时间", "type": 4, **REQUIRED},
+                {
+                    "key": "shifouyonglifaxian",
+                    "name": "是否用例发现",
+                    "type": 6,
+                    "options": [
+                        {"_id": "opt-case", "text": "用例发现"},
+                        {"_id": "opt-manual", "text": "人工发现"},
+                    ],
+                    **REQUIRED,
+                },
+                {"key": "replay_step", "name": "重现步骤", "type": 2, **REQUIRED},
+            ]
+        },
+        "references": {},
+    }
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_work_item(
+            ctx,
+            project_id="p1",
+            work_item_type_id="t1",
+            properties={"title": "只有标题"},
+        )
+
+    assert data["ok"] is True
+    assert data["missing_required"] == []
+    props = data["payload"]["properties"]
+    assert isinstance(props["start"], int)
+    assert props["shifouyonglifaxian"] == "opt-case"
+    assert props["replay_step"] == "<p>见描述详情</p>"

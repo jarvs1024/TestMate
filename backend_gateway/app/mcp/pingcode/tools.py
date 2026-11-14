@@ -48,14 +48,16 @@ _PAGE = {"type": "integer", "minimum": 1, "default": 1}
 _PAGE_SIZE = {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
 _LIBRARY_ID = {
     "type": "string",
-    "description": "用例库 _id；先用 pingcode_list_test_case_libraries 查询",
+    "description": "用例库 _id；先用 pingcode_case_list_libraries 查询",
 }
 _CASE_FILTERS = {
     "type": "array",
     "description": (
         "字段筛选，对应网页筛选器的 criteria.conditions。property_key 为字段 key，"
         "operation 透传网页抓包值（常见 6=属于），value 为值数组，"
-        "logic 1=且（默认）、2=或；字段与选项 _id 用 pingcode_get_test_case_properties 解析"
+        "logic 1=且（默认）、2=或；字段与选项 _id 用 pingcode_case_get_properties 解析。"
+        "人员字段（created_by/updated_by）的 value 元素传裸 uid 或 {\"id\": uid, \"type\": 1}，"
+        "字符串会按 uid 自动包装"
     ),
     "items": {
         "type": "object",
@@ -64,6 +66,7 @@ _CASE_FILTERS = {
             "operation": {"type": "integer"},
             "value": {"type": "array"},
             "logic": {"type": "integer"},
+            "id": {"type": "string", "description": "条件 id，可选"},
         },
         "required": ["property_key", "operation"],
         "additionalProperties": False,
@@ -73,15 +76,19 @@ _CASE_FILTERS = {
 
 READ_SPECS = (
     ToolSpec(
-        name="pingcode_whoami",
-        description="返回当前 TestMate 账号绑定的 PingCode 配置状态与最近登录结果，用于确认集成是否可用。",
+        name="pingcode_common_whoami",
+        description=(
+            "返回当前 TestMate 账号绑定的 PingCode 配置状态、最近登录结果，"
+            "以及真实登录的 PingCode 用户（user: uid/name/display_name/email/mobile）。"
+            "username 只是登录账号，user 才是登录后的成员身份。"
+        ),
         input_schema=_object(),
         scope="pingcode:read",
         read_only=True,
         handler=adapter.whoami,
     ),
     ToolSpec(
-        name="pingcode_list_projects",
+        name="pingcode_common_list_projects",
         description="列出当前账号可提单的 PingCode 项目。",
         input_schema=_object(),
         scope="pingcode:read",
@@ -89,7 +96,7 @@ READ_SPECS = (
         handler=adapter.list_projects,
     ),
     ToolSpec(
-        name="pingcode_list_work_item_types",
+        name="pingcode_issue_list_types",
         description="列出指定项目可创建的工单类型及其必填字段 key。",
         input_schema=_object({"project_id": _PROJECT_ID}, ["project_id"]),
         scope="pingcode:read",
@@ -97,15 +104,18 @@ READ_SPECS = (
         handler=adapter.list_work_item_types,
     ),
     ToolSpec(
-        name="pingcode_get_property_schema",
-        description="返回工单字段定义（中文名、类型、是否必填、选项）。",
+        name="pingcode_issue_get_schema",
+        description=(
+            "返回工单字段定义（中文名、类型、是否必填、选项），必填项按项目自身的字段模板解析。"
+            "返回 template_type 与 used_global_fallback（全局兜底时为 true）。"
+        ),
         input_schema=_object(
             {
                 "project_id": _PROJECT_ID,
                 "work_item_type_id": _WORK_ITEM_TYPE_ID,
                 "project_template_type": {
                     "type": "string",
-                    "description": "模板类型，默认 waterfall",
+                    "description": "模板类型；省略时按项目自身的 template_type 解析",
                 },
             },
             ["project_id", "work_item_type_id"],
@@ -115,7 +125,7 @@ READ_SPECS = (
         handler=adapter.get_property_schema,
     ),
     ToolSpec(
-        name="pingcode_list_members",
+        name="pingcode_common_list_members",
         description="列出项目成员（提单时用于 assignee / participants）。",
         input_schema=_object({"project_id": _PROJECT_ID}, ["project_id"]),
         scope="pingcode:read",
@@ -123,7 +133,7 @@ READ_SPECS = (
         handler=adapter.list_members,
     ),
     ToolSpec(
-        name="pingcode_search_work_items",
+        name="pingcode_issue_search",
         description=(
             "按项目与可选条件搜索工单/缺陷，返回精简列表（含状态/负责人/类型中文名）。"
             "state_id(s) 服务端过滤；type_id、assignee_id 本地过滤。"
@@ -154,7 +164,7 @@ READ_SPECS = (
         handler=adapter.search_work_items,
     ),
     ToolSpec(
-        name="pingcode_get_work_item",
+        name="pingcode_issue_get",
         description=(
             "获取工单详情：属性（中文名+值）、描述 HTML/纯文本、内联截图（images）、"
             "附件（含可直接下载的 url+token）、评论数。id 与 identifier 至少给一个；"
@@ -175,7 +185,7 @@ READ_SPECS = (
         handler=adapter.get_work_item,
     ),
     ToolSpec(
-        name="pingcode_list_comments",
+        name="pingcode_issue_list_comments",
         description="列出工单评论（富文本转纯文本，含作者名与评论内附件）。",
         input_schema=_object(
             {"id": {"type": "string", "description": "工单 _id"}, "page": _PAGE, "page_size": _PAGE_SIZE},
@@ -186,7 +196,7 @@ READ_SPECS = (
         handler=adapter.list_comments,
     ),
     ToolSpec(
-        name="pingcode_list_attachments",
+        name="pingcode_issue_list_attachments",
         description=(
             "列出工单附件（file_id、attachment_id、名称、大小、类型、可直接下载的 url 与 token）。"
             "数据来自工单详情的 references.attachments。"
@@ -197,17 +207,21 @@ READ_SPECS = (
         handler=adapter.list_attachments,
     ),
     ToolSpec(
-        name="pingcode_list_test_case_libraries",
-        description="列出当前账号可见的 PingCode 测试用例库（testhub），返回 _id、名称与项目。后续用例工具必须传 library_id。",
+        name="pingcode_case_list_libraries",
+        description=(
+            "列出当前账号可见的 PingCode 测试用例库（testhub），返回 _id、名称、identifier 与描述。"
+            "上游列表接口不提供 project_id/case_count（实际为 null）。后续用例工具必须传 library_id。"
+        ),
         input_schema=_object(),
         scope="pingcode:read",
         read_only=True,
         handler=adapter.list_test_case_libraries,
     ),
     ToolSpec(
-        name="pingcode_search_test_cases",
+        name="pingcode_case_search",
         description=(
-            "在指定 PingCode 测试用例库中按编号/标题搜索用例，支持网页筛选器同款字段条件。"
+            "在指定 PingCode 测试用例库中按编号/标题搜索用例，支持网页筛选器同款字段条件，"
+            "以及 created_by/updated_by 人员筛选（人名或 uid，多人用逗号分隔）。"
             "identifier 传完整编号（如 HIMA3361-8077）或纯数字；返回用例编号、标题与预置条件。"
         ),
         input_schema=_object(
@@ -219,6 +233,14 @@ READ_SPECS = (
                     "description": "用例编号，如 HIMA3361-8077（也接受纯数字 8077）",
                 },
                 "filters": _CASE_FILTERS,
+                "created_by": {
+                    "type": "string",
+                    "description": "创建人：显示名/登录名或 uid，多人用逗号/空格分隔",
+                },
+                "updated_by": {
+                    "type": "string",
+                    "description": "更新人：显示名/登录名或 uid，多人用逗号/空格分隔",
+                },
                 "page": _PAGE,
                 "page_size": _PAGE_SIZE,
             },
@@ -229,7 +251,7 @@ READ_SPECS = (
         handler=adapter.search_test_cases,
     ),
     ToolSpec(
-        name="pingcode_get_test_case",
+        name="pingcode_case_get",
         description=(
             "按编号获取测试用例详情（预置条件、步骤与预期结果），并解析状态名与用例目录名。"
             "编号支持完整形式 HIMA3361-8077 或纯数字 8077。"
@@ -253,10 +275,10 @@ READ_SPECS = (
         handler=adapter.get_test_case,
     ),
     ToolSpec(
-        name="pingcode_get_test_case_properties",
+        name="pingcode_case_get_properties",
         description=(
             "获取用例库字段字典：字段 key、中文名、类型与选项 _id↔text，"
-            "用于把筛选字段/选项名解析成 pingcode_search_test_cases 的 filters。"
+            "用于把筛选字段/选项名解析成 pingcode_case_search 的 filters。"
         ),
         input_schema=_object({"library_id": _LIBRARY_ID}, ["library_id"]),
         scope="pingcode:read",
@@ -264,7 +286,7 @@ READ_SPECS = (
         handler=adapter.get_test_case_properties,
     ),
     ToolSpec(
-        name="pingcode_download_attachment",
+        name="pingcode_issue_download_attachment",
         description=(
             "下载附件或截图（自动跟随 302 到对象存储）。图片内联返回 base64，其它返回同源下载链接。"
             "list_attachments 返回的 url 已带 token，直接传入即可；描述里的截图可用 file_id（自动补 public token）。"
@@ -293,38 +315,49 @@ READ_SPECS = (
 
 WRITE_SPECS = (
     ToolSpec(
-        name="pingcode_preview_work_item",
-        description="校验并组装建单 payload，不提交。用于提交前确认必填字段。",
+        name="pingcode_issue_preview",
+        description=(
+            "校验并组装建单 payload，不提交。必填项按 project_id 所属项目自身的字段模板判定，"
+            "不同项目可能不同；项目不可提单时报错，项目自带模板但取不到时也报错，"
+            "只有共用全局模板的项目（is_local_configure=0）才用全局模板。"
+            "返回 ok、missing_fields 与 invalid_fields：缺少必填或选项非法时列出字段中文名、类型提示与合法选项 _id。"
+        ),
         input_schema=_object(
             {
                 "project_id": {"type": "string"},
                 "work_item_type_id": {"type": "string"},
-                "project_template_type": {"type": "string"},
+                "project_template_type": {
+                    "type": "string",
+                    "description": "模板类型；省略时按项目自身的 template_type 解析",
+                },
                 "properties": _PROPERTIES,
                 "description_template": _DESCRIPTION_TEMPLATE,
                 "description_fields": _DESCRIPTION_FIELDS,
             },
-            ["project_id", "work_item_type_id", "properties"],
+            ["project_id", "work_item_type_id"],
         ),
         scope="pingcode:write",
         read_only=True,
         handler=adapter.preview_work_item,
     ),
     ToolSpec(
-        name="pingcode_create_work_item",
-        description="创建 PingCode 工单。负责人 assignee 必填；提交前按项目字段模板校验必填项与选项值，不合法直接拒绝（先调用 pingcode_get_property_schema 查询）；attachments 传已上传的 file_id 列表，建单后自动关联；必须传 confirm=true；client_request_id 用于 10 分钟内幂等。",
+        name="pingcode_issue_create",
+        description="创建 PingCode 工单。负责人 assignee 必填；提交前按项目字段模板校验必填项与选项值，不合法直接拒绝并列出字段中文名、类型提示与合法选项 _id（先调用 pingcode_issue_get_schema 查询）；attachments 传已上传的 file_id 列表，建单后自动关联；必须传 confirm=true；client_request_id 用于 10 分钟内幂等。",
         input_schema=_object(
             {
                 "project_id": {"type": "string"},
                 "work_item_type_id": {"type": "string"},
-                "project_template_type": {"type": "string"},
+                "project_template_type": {
+                    "type": "string",
+                    "description": "模板类型；省略时按项目自身的 template_type 解析",
+                },
                 "properties": _PROPERTIES,
                 "description_template": _DESCRIPTION_TEMPLATE,
                 "description_fields": _DESCRIPTION_FIELDS,
                 "attachments": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "建单后关联的附件 file_id 列表，file_id 由 pingcode_upload_attachment 返回",
+                    "description": "建单后关联的附件 file_id 列表，file_id 由 pingcode_issue_upload_attachment 返回",
                 },
                 "confirm": {"type": "boolean"},
                 "client_request_id": {
@@ -336,7 +369,6 @@ WRITE_SPECS = (
             [
                 "project_id",
                 "work_item_type_id",
-                "properties",
                 "confirm",
                 "client_request_id",
             ],
@@ -346,7 +378,7 @@ WRITE_SPECS = (
         handler=adapter.create_work_item,
     ),
     ToolSpec(
-        name="pingcode_add_comment",
+        name="pingcode_issue_add_comment",
         description="给工单添加评论。必须传 confirm=true。",
         input_schema=_object(
             {
@@ -361,7 +393,7 @@ WRITE_SPECS = (
         handler=adapter.add_comment,
     ),
     ToolSpec(
-        name="pingcode_upload_attachment",
+        name="pingcode_issue_upload_attachment",
         description=(
             "上传附件或内联图片（单文件上限 100MB）。path 与 content_base64 二选一；"
             "purpose=attachment 上传为工单附件并可传 work_item_id 立即关联，"

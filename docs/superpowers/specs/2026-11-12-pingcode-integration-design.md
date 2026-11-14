@@ -210,29 +210,37 @@ ensure_session(user):
 - `allowed_scopes(user)`：活跃用户同时获得 `pingcode:read` 与 `pingcode:write`（已确认：写权限给所有活跃用户）。
 - **存量令牌/授权**：新增 scope 不会自动加到已签发的静态令牌或 OAuth 授权里；个人中心「访问令牌」页重建令牌并勾选新 scope，或重新走一次 OAuth 授权即可。前端无需特殊处理。
 
-### 9.2 工具（首期 14 个，名称与 AiTestX 对齐）
+### 9.2 工具（18 个，命名 `pingcode_<领域>_<动作>_<对象>`）
+
+领域三档：`common`（通用：账号/项目/成员）、`issue`（问题单：工单/缺陷/评论/附件）、`case`（用例库：testhub）。
 
 | 工具 | scope | 只读 | 关键参数 |
 |---|---|---|---|
-| `pingcode_whoami` | read | 是 | 无 |
-| `pingcode_list_projects` | read | 是 | 无 |
-| `pingcode_list_work_item_types` | read | 是 | `project_id` |
-| `pingcode_get_property_schema` | read | 是 | `project_id`, `work_item_type_id`, `project_template_type?` |
-| `pingcode_list_members` | read | 是 | `project_id` |
-| `pingcode_search_work_items` | read | 是 | `project_id?`, `project_identifier?`, `keyword?`, `type_id?`, `state_id?`, `state_ids?`, `assignee_id?`, `updated_after?`, `page?`, `page_size?` |
-| `pingcode_get_work_item` | read | 是 | `id?`, `identifier?`, `project_id?`（后两者至少一个） |
-| `pingcode_list_comments` | read | 是 | `id`, `page?`, `page_size?` |
-| `pingcode_list_attachments` | read | 是 | `id` |
-| `pingcode_download_attachment` | read | 是 | `url?`, `file_id?`, `name?`, `max_bytes?`, `token?` |
-| `pingcode_preview_work_item` | read | 是 | `project_id`, `work_item_type_id`, `project_template_type?`, `properties`, `description_template?`, `description_fields?` |
-| `pingcode_create_work_item` | write | 否 | 同上 + `attachments?`, `confirm`, `client_request_id` |
-| `pingcode_upload_attachment` | write | 否 | `path?`, `content_base64?`（二选一）, `name?`, `purpose?`（`attachment`/`inline`）, `work_item_id?`, `confirm`, `client_request_id?` |
-| `pingcode_add_comment` | write | 否 | `id`, `content`, `confirm` |
+| `pingcode_common_whoami` | read | 是 | 无 |
+| `pingcode_common_list_projects` | read | 是 | 无 |
+| `pingcode_common_list_members` | read | 是 | `project_id` |
+| `pingcode_issue_list_types` | read | 是 | `project_id` |
+| `pingcode_issue_get_schema` | read | 是 | `project_id`, `work_item_type_id`, `project_template_type?` |
+| `pingcode_issue_search` | read | 是 | `project_id?`, `project_identifier?`, `keyword?`, `type_id?`, `state_id?`, `state_ids?`, `assignee_id?`, `updated_after?`, `page?`, `page_size?` |
+| `pingcode_issue_get` | read | 是 | `id?`, `identifier?`, `project_id?`（后两者至少一个） |
+| `pingcode_issue_list_comments` | read | 是 | `id`, `page?`, `page_size?` |
+| `pingcode_issue_list_attachments` | read | 是 | `id` |
+| `pingcode_issue_download_attachment` | read | 是 | `url?`, `file_id?`, `name?`, `max_bytes?`, `token?` |
+| `pingcode_issue_preview` | read | 是 | `project_id`, `work_item_type_id`, `project_template_type?`, `properties`, `description_template?`, `description_fields?` |
+| `pingcode_issue_create` | write | 否 | 同上 + `attachments?`, `confirm`, `client_request_id` |
+| `pingcode_issue_upload_attachment` | write | 否 | `path?`, `content_base64?`（二选一）, `name?`, `purpose?`（`attachment`/`inline`）, `work_item_id?`, `confirm`, `client_request_id?` |
+| `pingcode_issue_add_comment` | write | 否 | `id`, `content`, `confirm` |
+| `pingcode_case_list_libraries` | read | 是 | 无 |
+| `pingcode_case_get_properties` | read | 是 | `library_id` |
+| `pingcode_case_search` | read | 是 | `library_id`, `keyword?`, `identifier?`, `filters?`, `created_by?`, `updated_by?`, `page?`, `page_size?` |
+| `pingcode_case_get` | read | 是 | `library_id`, `identifier` |
 
 实现约束：
 - 工具一律通过 `principal.user.id` 取凭据；未绑定返回 `integration_not_configured`（提示去个人中心绑定）。
 - `create_work_item` / `add_comment` / `upload_attachment`：`confirm` 必须为 `true`，否则 `confirmation_required`。
 - `create_work_item` 必须带 `client_request_id`；`attachments` 为已上传 file_id 列表，建单成功后逐个调用 `POST /api/agile/work-items/{id}/attachment` 关联，单个失败只在该条结果里报 `ok: false`，不回滚工单；命中 Redis 幂等键（10 分钟）直接返回上次结果，附件不会重复关联。
+- `preview_work_item` / `create_work_item`：`properties` 允许省略。缺少必填或选项值非法时拒绝，并给出字段中文名、类型提示与合法选项 `_id=text`；`preview` 另返回 `missing_fields` / `invalid_fields`。必填校验放在 handler 而非 inputSchema，避免 MCP 客户端预校验只回裸字段名。`assignee` 为空时返回 `assignee_required`（提示用 `pingcode_common_list_members` 查成员 uid）。
+- 必填字段按 `project_id` 所属项目自身的字段模板判定：省略 `project_template_type` 时从 `GET /api/agile/projects/select-options?can_create_work_item=1` 解析该项目的 `template_type`；项目不在可提单列表时返回 `invalid_arguments`（提示用 `pingcode_common_list_projects`）。`is_local_configure=1` 的项目必须命中项目级模板，404 时 `preview_work_item` 返回 `project_schema_unavailable`，避免用全局必填项误导调用方；`is_local_configure=0` 的项目本来就共用全局模板，取全局是项目真实配置而非兜底。`get_property_schema` 返回 `template_type`、`is_local_configure` 与 `used_global_fallback`。`create_work_item` 保留原有兜底（模板取不到时交由 PingCode 校验）。
 - `upload_attachment`：`path` 与 `content_base64` 恰好提供一个；`purpose=inline` 返回公共图片 URL，`purpose=attachment` 可带 `work_item_id` 直接关联；`client_request_id` 命中 Redis 幂等键直接返回上次结果（10 分钟）。
 - `download_attachment`：图片返回 `{content_type, base64, bytes}`；非图片返回 `{url, token, name, bytes}`（客户端自行下载）；超过 `max_bytes`（默认 20MB，上限 100MB）返回错误而不截断。
 - `upload_attachment` 单文件上限 100MB，超限返回 `attachment_too_large`。

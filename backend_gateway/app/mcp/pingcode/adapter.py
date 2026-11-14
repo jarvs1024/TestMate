@@ -1,10 +1,13 @@
 """PingCode 域工具适配层: 结构化输出、错误收敛与幂等写入."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
+import logging
 import mimetypes
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -21,6 +24,8 @@ from app.mcp.common.context import McpContext
 from app.mcp.common.errors import McpRuntimeError
 from app.mcp.pingcode import normalize
 from app.mcp.pingcode.templates import render_description
+
+logger = logging.getLogger(__name__)
 
 PROVIDER = "pingcode"
 DEFAULT_DOWNLOAD_BYTES = 20 * 1024 * 1024
@@ -117,6 +122,35 @@ async def _get_json(ctx: McpContext, path: str, params: dict[str, Any] | None = 
     return await _request(ctx, "GET", path, params=params)
 
 
+async def _identity(ctx: McpContext) -> dict[str, Any] | None:
+    """真实登录的 PingCode 用户; 凭据里的 username 只是登录账号."""
+    payload: Any = None
+    for attempt in (1, 2):
+        try:
+            payload = await _get_json(ctx, "/api/typhon/account/me")
+            break
+        except Exception:  # 身份读取失败不影响配置状态展示
+            if attempt == 2:
+                logger.warning("pingcode.identity_failed", exc_info=True)
+                return None
+            # 进程刚启动时的首次外连偶发 ReadError, 重试一次即可恢复
+            await asyncio.sleep(0.5)
+    record = _record_of(payload)
+    me = record.get("me") if isinstance(record.get("me"), dict) else record
+    uid = str(me.get("uid") or me.get("_id") or "")
+    display_name = str(me.get("display_name") or me.get("name") or "")
+    if not uid and not display_name:
+        logger.warning("pingcode.identity_empty_payload")
+        return None
+    return {
+        "uid": uid,
+        "name": str(me.get("name") or ""),
+        "display_name": display_name,
+        "email": str(me.get("email") or ""),
+        "mobile": str(me.get("mobile") or ""),
+    }
+
+
 async def whoami(ctx: McpContext) -> dict[str, Any]:
     record = await credentials.get(ctx.session, _user_id(ctx), PROVIDER)
     if record is None:
@@ -128,6 +162,7 @@ async def whoami(ctx: McpContext) -> dict[str, Any]:
         "status": record.status,
         "last_login_at": record.last_login_at,
         "last_error": record.last_error,
+        "user": await _identity(ctx),
     }
 
 
@@ -200,14 +235,39 @@ def _schema_fields(properties: Any) -> list[dict[str, Any]]:
     return fields
 
 
+async def _resolve_project(ctx: McpContext, project_id: str) -> dict[str, Any]:
+    payload = await _get_json(
+        ctx, "/api/agile/projects/select-options", {"can_create_work_item": 1}
+    )
+    for project in _list_of(payload):
+        if str(project.get("_id") or "") == str(project_id):
+            return {
+                "template_type": str(project.get("template_type") or "waterfall"),
+                "is_local_configure": project.get("is_local_configure") == 1,
+            }
+    raise McpRuntimeError(
+        "invalid_arguments",
+        f"项目 {project_id} 不在当前账号可提单项目列表中，"
+        "无法确定项目字段模板。请先调用 pingcode_common_list_projects 获取项目 _id。",
+    )
+
+
 async def get_property_schema(
     ctx: McpContext,
     project_id: str,
     work_item_type_id: str,
     project_template_type: str | None = None,
+    *,
+    allow_global_fallback: bool = True,
 ) -> dict[str, Any]:
+    project = None
+    if project_template_type:
+        template_type = project_template_type
+    else:
+        project = await _resolve_project(ctx, project_id)
+        template_type = project["template_type"]
     base_params = {
-        "scope[project_template_type]": project_template_type or "waterfall",
+        "scope[project_template_type]": template_type,
         "scope[work_item_type]": work_item_type_id,
     }
     used_global = False
@@ -221,6 +281,15 @@ async def get_property_schema(
     except client.PingCodeBusinessError as exc:
         if exc.status != 404 and exc.code != 404:
             raise McpRuntimeError("pingcode_error", str(exc)) from exc
+        # is_local_configure=0 的项目本来就共用全局模板, 取全局不算错配;
+        # 项目自带模板却 404 才是真异常, 严格模式下直接报错而不是拿全局必填项误导调用方.
+        if not allow_global_fallback and (project is None or project["is_local_configure"]):
+            raise McpRuntimeError(
+                "project_schema_unavailable",
+                f"项目 {project_id} 的工单字段模板不可用，无法按项目校验必填项。"
+                "请确认 project_id 与 work_item_type_id 正确"
+                "（项目可调用 pingcode_common_list_projects 获取）。",
+            ) from exc
         used_global = True
         payload = await _raw(
             ctx,
@@ -231,6 +300,8 @@ async def get_property_schema(
     properties = _record_of(payload).get("properties")
     return {
         "used_global_fallback": used_global,
+        "template_type": template_type,
+        "is_local_configure": None if project is None else project["is_local_configure"],
         "fields": _schema_fields(properties),
     }
 
@@ -549,6 +620,70 @@ def _total_of(meta: dict[str, Any], size: int) -> int:
     return size
 
 
+_PERSON_PROPERTY_KEYS = {"created_by", "updated_by"}
+_PERSON_SPLIT = re.compile(r"[,，、\s]+")
+
+
+def _member_value(uid: str) -> dict[str, Any]:
+    # 人员字段值必须是 {id, type:1}; 裸 uid 会被服务端拒为 Unknown member type.
+    return {"id": uid, "type": 1}
+
+
+async def _team_roster(ctx: McpContext) -> dict[str, list[str]] | None:
+    try:
+        payload = await _get_json(ctx, "/api/typhon/team")
+    except Exception:  # noqa: BLE001 - 花名册拉不到时按 uid 直传
+        return None
+    record = _record_of(payload)
+    members = record.get("members")
+    if not isinstance(members, list):
+        return None
+    roster: dict[str, list[str]] = {}
+    for member in members:
+        if not isinstance(member, dict):
+            continue
+        uid = str(member.get("uid") or member.get("id") or member.get("_id") or "")
+        labels = [
+            label
+            for label in (
+                str(member.get("display_name") or ""),
+                str(member.get("name") or ""),
+            )
+            if label
+        ]
+        if uid and labels:
+            roster[uid] = labels
+    return roster or None
+
+
+async def _person_values(ctx: McpContext, raw: Any, field: str) -> list[dict[str, Any]]:
+    """人名 (显示名/登录名) 或 uid, 逗号/空格分隔 → 人员条件值数组."""
+    tokens = [token for token in _PERSON_SPLIT.split(str(raw or "").strip()) if token]
+    if not tokens:
+        raise McpRuntimeError("invalid_arguments", f"{field} 不能为空")
+    roster = await _team_roster(ctx)
+    if not roster:
+        return [_member_value(uid) for uid in dict.fromkeys(tokens)]
+    by_name: dict[str, list[str]] = {}
+    for uid, labels in roster.items():
+        for label in labels:
+            by_name.setdefault(label, []).append(uid)
+    uids: list[str] = []
+    missing: list[str] = []
+    for token in tokens:
+        if token in roster:
+            uids.append(token)
+        elif token in by_name:
+            uids.extend(by_name[token])
+        else:
+            missing.append(token)
+    if missing:
+        raise McpRuntimeError(
+            "invalid_arguments", f"{field} 找不到成员: {', '.join(missing)}"
+        )
+    return [_member_value(uid) for uid in dict.fromkeys(uids)]
+
+
 def _case_filters(raw: Any) -> list[dict[str, Any]]:
     """筛选条件透传网页筛选器字段条件, 边界做结构校验."""
     if raw is None:
@@ -575,6 +710,13 @@ def _case_filters(raw: Any) -> list[dict[str, Any]]:
             values = value
         else:
             values = [value]
+        if key in _PERSON_PROPERTY_KEYS:
+            values = [
+                _member_value(entry.strip())
+                if isinstance(entry, str) and entry.strip()
+                else entry
+                for entry in values
+            ]
         try:
             logic = int(item.get("logic")) if item.get("logic") is not None else 1
         except (TypeError, ValueError):
@@ -743,14 +885,29 @@ async def search_test_cases(
     page: int = 1,
     page_size: int = _TESTHUB_DEFAULT_PAGE_SIZE,
     filters: Any = None,
+    created_by: str = "",
+    updated_by: str = "",
 ) -> dict[str, Any]:
     if not library_id:
         raise McpRuntimeError(
             "invalid_arguments",
-            "library_id 必填: 先用 pingcode_list_test_case_libraries 查询用例库 _id",
+            "library_id 必填: 先用 pingcode_case_list_libraries 查询用例库 _id",
         )
     page = max(1, int(page or 1))
     page_size = min(_TESTHUB_MAX_PAGE_SIZE, max(1, int(page_size or _TESTHUB_DEFAULT_PAGE_SIZE)))
+    conditions = _case_filters(filters)
+    for field, raw in (("created_by", created_by), ("updated_by", updated_by)):
+        if not raw:
+            continue
+        conditions.append(
+            {
+                "logic": 1,
+                "property_key": field,
+                "operation": 6,
+                "value": await _person_values(ctx, raw, field),
+                "id": f"person-{len(conditions)}",
+            }
+        )
     raw_items, total = await _fetch_case_page(
         ctx,
         library_id=str(library_id),
@@ -758,7 +915,7 @@ async def search_test_cases(
         identifier=identifier,
         page=page,
         page_size=page_size,
-        filters=_case_filters(filters),
+        filters=conditions,
     )
     items = [_normalize_test_case(item, steps=False) for item in raw_items]
     return {
@@ -779,8 +936,7 @@ async def _library_states(ctx: McpContext, library_id: str) -> dict[str, dict[st
         )
     except Exception:  # noqa: BLE001 - 名字解析失败不影响用例详情
         return {}
-    value = _value_of(payload)
-    items = value if isinstance(value, list) else []
+    items = _list_of(payload)
     out: dict[str, dict[str, Any]] = {}
     for item in items:
         if not isinstance(item, dict):
@@ -819,10 +975,9 @@ async def _library_suites(ctx: McpContext, library_id: str) -> dict[str, str]:
         )
     except Exception:  # noqa: BLE001 - 同状态解析, 失败保留 suite_id
         return {}
-    value = _value_of(payload)
     return {
         str(node.get("_id") or node.get("id") or ""): str(node.get("name") or "")
-        for node in _flatten_suite_nodes(value)
+        for node in _flatten_suite_nodes(_list_of(payload))
         if node.get("_id") or node.get("id")
     }
 
@@ -840,7 +995,7 @@ async def get_test_case(
     if not library_id:
         raise McpRuntimeError(
             "invalid_arguments",
-            "library_id 必填: 先用 pingcode_list_test_case_libraries 查询用例库 _id",
+            "library_id 必填: 先用 pingcode_case_list_libraries 查询用例库 _id",
         )
     full_form = "-" in wanted
     page_size = 100
@@ -896,13 +1051,12 @@ async def get_test_case_properties(ctx: McpContext, *, library_id: str) -> dict[
     if not library_id:
         raise McpRuntimeError(
             "invalid_arguments",
-            "library_id 必填: 先用 pingcode_list_test_case_libraries 查询用例库 _id",
+            "library_id 必填: 先用 pingcode_case_list_libraries 查询用例库 _id",
         )
     payload = await _get_json(
         ctx, "/api/testhub/test-case/view/properties", {"library_id": library_id}
     )
-    value = _value_of(payload)
-    raw_fields = value if isinstance(value, list) else []
+    raw_fields = _list_of(payload)
     fields: list[dict[str, Any]] = []
     for prop in raw_fields:
         if not isinstance(prop, dict):
@@ -1185,13 +1339,17 @@ async def preview_work_item(
     *,
     project_id: str,
     work_item_type_id: str,
-    properties: dict[str, Any],
+    properties: dict[str, Any] | None = None,
     project_template_type: str | None = None,
     description_template: str | None = None,
     description_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     schema = await get_property_schema(
-        ctx, project_id, work_item_type_id, project_template_type
+        ctx,
+        project_id,
+        work_item_type_id,
+        project_template_type,
+        allow_global_fallback=False,
     )
     props = dict(properties or {})
     if description_template:
@@ -1201,34 +1359,30 @@ async def preview_work_item(
             )
         props["description"] = render_description(description_fields or {})
     props = _coerce_properties(props, schema["fields"])
+    _fill_required_defaults(schema["fields"], props)
 
-    def injected(key: str) -> bool:
-        if key == "project_id":
-            return bool(project_id)
-        if key == "type":
-            return bool(work_item_type_id)
-        if key == "participants":
-            return props.get("participants") is not None or props.get("assignee") is not None
-        return False
-
-    missing = [
-        field["key"]
-        for field in schema["fields"]
-        if field["required"]
-        and not injected(field["key"])
-        and props.get(field["key"]) in (None, "")
-    ]
-    return {
-        "ok": not missing,
-        "missing_required": missing,
+    injected = {"project_id", "type"}
+    if props.get("participants") is not None or props.get("assignee") is not None:
+        injected.add("participants")
+    missing_fields, invalid_fields = _collect_create_errors(
+        schema["fields"], props, injected=injected
+    )
+    result: dict[str, Any] = {
+        "ok": not missing_fields and not invalid_fields,
+        "missing_required": [item["key"] for item in missing_fields],
+        "missing_fields": missing_fields,
+        "invalid_fields": invalid_fields,
         "payload": {
             "project_id": project_id,
             "work_item_type_id": work_item_type_id,
-            "project_template_type": project_template_type or "waterfall",
+            "project_template_type": schema["template_type"],
             "properties": props,
             "description_text": _strip_html(props.get("description", "")),
         },
     }
+    if missing_fields or invalid_fields:
+        result["error"] = _describe_create_errors(missing_fields, invalid_fields)
+    return result
 
 
 _MULTI_VALUE_TYPES = {16, 20}
@@ -1305,19 +1459,64 @@ def _fill_required_defaults(fields: list[dict[str, Any]], props: dict[str, Any])
                 props[key] = default
 
 
-def _validate_create_properties(
-    fields: list[dict[str, Any]], props: dict[str, Any]
-) -> None:
-    missing: list[str] = []
-    invalid: list[str] = []
+_FIELD_HINTS = {
+    2: "富文本 HTML 字符串",
+    4: "Unix 秒时间戳或 {date, with_time}",
+    6: "选项 _id，先用 pingcode_issue_get_schema 查询合法选项",
+    9: "成员 uid，先用 pingcode_common_list_members 查询",
+    16: "选项 _id 数组，先用 pingcode_issue_get_schema 查询合法选项",
+    20: "选项 _id 数组，先用 pingcode_issue_get_schema 查询合法选项",
+}
+_MISSING = object()
+
+
+def _option_summary(options: list[dict[str, Any]], limit: int = 12) -> str:
+    parts = [f"{item.get('_id')}={item.get('text')}" for item in options[:limit]]
+    if len(options) > limit:
+        parts.append(f"共{len(options)}项")
+    return ", ".join(parts)
+
+
+def _field_requirement(
+    field: dict[str, Any], *, value: Any = _MISSING
+) -> dict[str, Any]:
+    key = str(field.get("key") or "")
+    kind = field.get("type")
+    item: dict[str, Any] = {
+        "key": key,
+        "name": field.get("name") or key,
+        "type": kind,
+    }
+    options = field.get("options") or []
+    if options:
+        item["options"] = [
+            {"_id": option.get("_id"), "text": option.get("text")}
+            for option in options
+            if option.get("_id")
+        ]
+    else:
+        item["hint"] = _FIELD_HINTS.get(kind, "任意非空文本")
+    if value is not _MISSING:
+        item["value"] = value
+    return item
+
+
+def _collect_create_errors(
+    fields: list[dict[str, Any]],
+    props: dict[str, Any],
+    *,
+    injected: set[str] | frozenset[str] = frozenset(),
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    missing: list[dict[str, Any]] = []
+    invalid: list[dict[str, Any]] = []
+    injected_keys = _INJECTED_KEYS | set(injected)
     for field in fields:
         key = str(field.get("key") or "")
-        name = str(field.get("name") or key)
-        if not key or key in _INJECTED_KEYS:
+        if not key or key in injected_keys:
             continue
         value = props.get(key)
         if field.get("required") and _is_empty_prop(value):
-            missing.append(f"{name}({key})")
+            missing.append(_field_requirement(field))
             continue
         options = field.get("options") or []
         if (
@@ -1330,19 +1529,45 @@ def _validate_create_properties(
         values = value if isinstance(value, list) else [value]
         bad = [str(item) for item in values if str(item) not in allowed]
         if bad:
-            invalid.append(f"{name}({key})={'/'.join(bad)}")
-    if not missing and not invalid:
-        return
+            invalid.append(_field_requirement(field, value="/".join(bad)))
+    return missing, invalid
+
+
+def _describe_create_errors(
+    missing: list[dict[str, Any]], invalid: list[dict[str, Any]]
+) -> str:
     parts: list[str] = []
     if missing:
-        parts.append("缺少必填 " + ", ".join(missing))
+        entries = []
+        for item in missing:
+            text = f"{item['name']}({item['key']})"
+            if item.get("options"):
+                text += f" 可选: {_option_summary(item['options'])}"
+            else:
+                text += f", {item.get('hint') or '任意非空文本'}"
+            entries.append(text)
+        parts.append("缺少必填 " + "; ".join(entries))
     if invalid:
-        parts.append("选项非法 " + ", ".join(invalid))
+        entries = []
+        for item in invalid:
+            text = f"{item['name']}({item['key']}={item['value']})"
+            if item.get("options"):
+                text += f" 合法: {_option_summary(item['options'])}"
+            entries.append(text)
+        parts.append("选项非法 " + "; ".join(entries))
+    return "; ".join(parts)
+
+
+def _raise_create_errors(
+    missing: list[dict[str, Any]], invalid: list[dict[str, Any]]
+) -> None:
+    if not missing and not invalid:
+        return
     raise McpRuntimeError(
         "invalid_arguments",
         "创建工单参数不合法: "
-        + "; ".join(parts)
-        + "。请先调用 pingcode_get_property_schema 获取必填字段与选项 _id。",
+        + _describe_create_errors(missing, invalid)
+        + "。请先调用 pingcode_issue_get_schema 获取必填字段与选项 _id。",
     )
 
 
@@ -1357,7 +1582,7 @@ async def create_work_item(
     *,
     project_id: str,
     work_item_type_id: str,
-    properties: dict[str, Any],
+    properties: dict[str, Any] | None = None,
     confirm: bool,
     client_request_id: str,
     project_template_type: str | None = None,
@@ -1376,10 +1601,6 @@ async def create_work_item(
     if attachments and not file_ids:
         raise McpRuntimeError("invalid_arguments", "attachments 必须是 file_id 字符串数组")
     props = dict(properties or {})
-    if not _member_uid(props.get("assignee")):
-        raise McpRuntimeError(
-            "assignee_required", "创建工单必须指定负责人 assignee，为空时禁止创建"
-        )
     if description_template:
         if description_template != "standard":
             raise McpRuntimeError(
@@ -1404,7 +1625,16 @@ async def create_work_item(
         fields = schema["fields"]
     props = _coerce_properties(props, fields)
     _fill_required_defaults(fields, props)
-    _validate_create_properties(fields, props)
+    missing, invalid = _collect_create_errors(fields, props)
+    if not _member_uid(props.get("assignee")):
+        detail = _describe_create_errors(missing, invalid)
+        parts = [detail] if detail else []
+        parts.append("创建工单必须指定负责人 assignee，为空时禁止创建")
+        parts.append(
+            "请先调用 pingcode_common_list_members 获取成员 uid 后填入 assignee"
+        )
+        raise McpRuntimeError("assignee_required", "。".join(parts))
+    _raise_create_errors(missing, invalid)
 
     values = [{"key": name, "value": _encode_value(value)} for name, value in props.items()]
     inserted = {item["key"] for item in values}
