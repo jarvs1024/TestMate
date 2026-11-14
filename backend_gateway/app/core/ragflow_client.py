@@ -3,31 +3,33 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
+from urllib.parse import quote, unquote
 
 import httpx
 
-from app.core.settings_store import get, _rewrite_loopback
-from urllib.parse import quote, unquote
+from app.core.ragflow_spaces import credential_for
+from app.core.settings_store import _rewrite_loopback
 
 logger = logging.getLogger(__name__)
 
 
-async def _config() -> tuple[str, str]:
-    """(base_url, api_key) 实时从 DB / 兜底 .env 读."""
-    base = (await get("ragflow.base_url", "")) or ""
-    key = (await get("ragflow.api_key", "")) or ""
-    return _rewrite_loopback(base).rstrip("/"), key
+async def _config(space_id: str | None = None) -> tuple[str, str]:
+    """(base_url, api_key) —— 按用户空间实时解析, 空 = 默认空间."""
+    base, key, _space = await credential_for(space_id)
+    return _rewrite_loopback(base or "").rstrip("/"), key or ""
 
 
-async def _headers() -> dict[str, str]:
-    _, key = await _config()
+async def _headers(space_id: str | None = None) -> dict[str, str]:
+    _, key = await _config(space_id)
     return {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
 
 
-async def list_datasets(page: int = 1, page_size: int = 50) -> list[dict[str, Any]]:
+async def list_datasets(
+    page: int = 1, page_size: int = 50, space_id: str | None = None
+) -> list[dict[str, Any]]:
     # ⚠️ **page_size 上限是 100** —— 传更大的 RAGFlow 会返回 `code=101`(错误)
     #    + **空的 data**, 看起来就像"一个库都没有" (真机踩过: 传 200 导致
     #    "数据集不存在"的假象). 这里直接夹住, 别让调用方踩.
@@ -35,12 +37,12 @@ async def list_datasets(page: int = 1, page_size: int = 50) -> list[dict[str, An
         page_size = 100
     if page_size < 1:
         page_size = 1
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         return []
     url = f"{base}/datasets"
     async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(url, headers=await _headers(), params={"page": page, "page_size": page_size})
+        r = await client.get(url, headers=await _headers(space_id), params={"page": page, "page_size": page_size})
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -90,6 +92,7 @@ async def create_dataset(
     chunk_method: str = CHUNK_NAIVE,
     embedding_model: str = "",
     permission: str = "me",
+    space_id: str | None = None,
 ) -> dict[str, Any]:
     """新建一个数据集 (代理 RAGFlow POST /datasets).
 
@@ -105,7 +108,7 @@ async def create_dataset(
        (`项目管理` → `项目管理(1)`), 所以这里先查重名, 撞了就直接报错,
        不让用户以为建出来的是个新库.
     """
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         raise RuntimeError("RAGFlow 未配置")
     name = (name or "").strip()
@@ -115,7 +118,7 @@ async def create_dataset(
         raise ValueError("数据集名称最长 128 个字符")
 
     # 重名检查 —— RAGFlow 会自动加后缀, 与其建出个 `xx(1)` 不如当场报错
-    for d in await list_datasets(page=1, page_size=100):
+    for d in await list_datasets(page=1, page_size=100, space_id=space_id):
         if (d.get("name") or "").strip().lower() == name.lower():
             raise ValueError(f"已经有一个叫「{name}」的数据集了")
 
@@ -130,7 +133,7 @@ async def create_dataset(
         body["embedding_model"] = embedding_model
     url = f"{base}/datasets"
     async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.post(url, headers=await _headers(), json=body)
+        r = await client.post(url, headers=await _headers(space_id), json=body)
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -151,6 +154,7 @@ async def update_dataset(
     description: str | None = None,
     chunk_method: str | None = None,
     language: str | None = None,
+    space_id: str | None = None,
 ) -> dict[str, Any]:
     """改数据集 (代理 RAGFlow PUT /datasets/{id}).
 
@@ -164,7 +168,7 @@ async def update_dataset(
        建库时传 language 会被 RAGFlow 判 "Extra inputs are not permitted" (真机实测).
        但 `UpdateDatasetReq` 有, 所以建完库再补一次 PUT 就能设上.
     """
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         raise RuntimeError("RAGFlow 未配置")
     body: dict[str, Any] = {}
@@ -180,7 +184,7 @@ async def update_dataset(
         return {}
     url = f"{base}/datasets/{quote(dataset_id, safe='')}"
     async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.put(url, headers=await _headers(), json=body)
+        r = await client.put(url, headers=await _headers(space_id), json=body)
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -188,7 +192,7 @@ async def update_dataset(
         return data.get("data") or {}
 
 
-async def delete_dataset(dataset_id: str) -> bool:
+async def delete_dataset(dataset_id: str, space_id: str | None = None) -> bool:
     """删掉一个数据集 (连同里面的文档 / 分段 / 源文件).
 
     ⚠️ **路由是 `DELETE /datasets` + body `{"ids": [...]}`** ——
@@ -199,14 +203,14 @@ async def delete_dataset(dataset_id: str) -> bool:
        但列表里可能还短暂看得到那个库. 所以调用方删完要**刷新**列表,
        别以为没删掉就再点一次 (那会真删第二遍).
     """
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         raise RuntimeError("RAGFlow 未配置")
     url = f"{base}/datasets"
     # 删一个大库要清不少文件, 给足超时
     async with httpx.AsyncClient(timeout=120.0) as client:
         r = await client.request(
-            "DELETE", url, headers=await _headers(), json={"ids": [dataset_id]},
+            "DELETE", url, headers=await _headers(space_id), json={"ids": [dataset_id]},
         )
         r.raise_for_status()
         data = r.json()
@@ -223,9 +227,10 @@ async def list_documents(
     desc: bool = True,
     keywords: str = "",
     run: str = "",
+    space_id: str | None = None,
 ) -> dict[str, Any]:
     """列出某个 dataset 下的 documents (代理 RAGFlow GET /datasets/{id}/documents)."""
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         return {"docs": [], "total": 0, "_mock": True}
     url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents"
@@ -237,7 +242,7 @@ async def list_documents(
     if run:
         params["run"] = run
     async with httpx.AsyncClient(timeout=15.0) as client:
-        r = await client.get(url, headers=await _headers(), params=params)
+        r = await client.get(url, headers=await _headers(space_id), params=params)
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -249,12 +254,13 @@ async def list_doc_chunks(
     page: int = 1,
     page_size: int = 100,
     keywords: str = "",
+    space_id: str | None = None,
 ) -> dict[str, Any]:
     """列出某 document 下的 chunks (代理 RAGFlow GET .../documents/{doc_id}/chunks).
 
     返回 RAGFlow 原始 data: { chunks: [...], doc: {...}, total: int }
     """
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         return {"chunks": [], "doc": {}, "total": 0, "_mock": True}
     url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/{quote(document_id, safe='')}/chunks"
@@ -262,7 +268,7 @@ async def list_doc_chunks(
     if keywords:
         params["keywords"] = keywords
     async with httpx.AsyncClient(timeout=20.0) as client:
-        r = await client.get(url, headers=await _headers(), params=params)
+        r = await client.get(url, headers=await _headers(space_id), params=params)
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -270,18 +276,20 @@ async def list_doc_chunks(
         return data.get("data") or {"chunks": [], "doc": {}, "total": 0}
 
 
-async def ingest_documents(doc_ids: list[str], run: str = "1", delete: bool = False) -> bool:
+async def ingest_documents(
+    doc_ids: list[str], run: str = "1", delete: bool = False, space_id: str | None = None
+) -> bool:
     """重跑 / 取消 / 启动 documents 解析 (代理 RAGFlow POST /documents/ingest).
 
     run: "1" = start, "2" = cancel
     """
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         return False
     url = f"{base}/documents/ingest"
     body = {"doc_ids": doc_ids, "run": run, "delete": delete}
     async with httpx.AsyncClient(timeout=15.0) as client:
-        r = await client.post(url, headers=await _headers(), json=body)
+        r = await client.post(url, headers=await _headers(space_id), json=body)
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -304,6 +312,7 @@ async def ingest_documents(doc_ids: list[str], run: str = "1", delete: bool = Fa
 async def upload_documents(
     dataset_id: str,
     files: list[tuple[str, bytes, str]],
+    space_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """上传文档到 dataset (multipart/form-data).
 
@@ -312,7 +321,7 @@ async def upload_documents(
     ⚠️ headers 里**不能**带 Content-Type —— httpx 要自己算 multipart 的 boundary,
        写死了 boundary 就对不上了 (RAGFlow 会报 "No file part!").
     """
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         return []
     if not files:
@@ -353,7 +362,9 @@ def _filename_from_disposition(value: str) -> str:
     return ""
 
 
-async def download_document(dataset_id: str, document_id: str) -> tuple[bytes, str, str]:
+async def download_document(
+    dataset_id: str, document_id: str, space_id: str | None = None
+) -> tuple[bytes, str, str]:
     """下载文档的**原始文件**.
 
     返回 (内容, 文件名, content-type).
@@ -362,7 +373,7 @@ async def download_document(dataset_id: str, document_id: str) -> tuple[bytes, s
        不是文件 —— 必须先看 content-type 再决定是不是当文件返回,
        否则用户会下载到一个叫「xxx.pdf」的 JSON 错误, 打开全是乱码.
     """
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         raise RuntimeError("RAGFlow 未配置")
     url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/{quote(document_id, safe='')}"
@@ -387,6 +398,7 @@ async def update_document(
     parser_config: dict[str, Any] | None = None,
     chunk_method: str | None = None,
     enabled: int | None = None,
+    space_id: str | None = None,
 ) -> dict[str, Any]:
     """改文档的**配置** (代理 RAGFlow PATCH /datasets/{id}/documents/{doc}).
 
@@ -402,7 +414,7 @@ async def update_document(
        **故意不传 chunk_method**, 只搬 `parser_config`,
        解析由我们自己用 ingest 启动 (可控, 失败也能重试).
     """
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         raise RuntimeError("RAGFlow 未配置")
     body: dict[str, Any] = {}
@@ -418,7 +430,7 @@ async def update_document(
         return {}
     url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/{quote(document_id, safe='')}"
     async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.patch(url, headers=await _headers(), json=body)
+        r = await client.patch(url, headers=await _headers(space_id), json=body)
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -426,7 +438,9 @@ async def update_document(
         return data.get("data") or {}
 
 
-async def parse_documents(dataset_id: str, document_ids: list[str]) -> bool:
+async def parse_documents(
+    dataset_id: str, document_ids: list[str], space_id: str | None = None
+) -> bool:
     """**重新解析**已存在的文档 (代理 RAGFlow POST /datasets/{id}/documents/parse).
 
     ⚠️ 这是「重新跑一遍解析」, **不换文件内容** ——
@@ -434,14 +448,14 @@ async def parse_documents(dataset_id: str, document_ids: list[str]) -> bool:
     ⚠️ 跟 `ingest_documents` 的区别: ingest 是「启动/取消」队列,
        parse 是「强制重新解析」(会清掉旧分段重来).
     """
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         return False
     if not document_ids:
         return False
     url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents/parse"
     async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.post(url, headers=await _headers(), json={"document_ids": document_ids})
+        r = await client.post(url, headers=await _headers(space_id), json={"document_ids": document_ids})
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -449,9 +463,14 @@ async def parse_documents(dataset_id: str, document_ids: list[str]) -> bool:
         return True
 
 
-async def delete_documents(dataset_id: str, doc_ids: list[str] | None = None, delete_all: bool = False) -> bool:
+async def delete_documents(
+    dataset_id: str,
+    doc_ids: list[str] | None = None,
+    delete_all: bool = False,
+    space_id: str | None = None,
+) -> bool:
     """删除 documents (代理 RAGFlow DELETE /datasets/{id}/documents)."""
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         return False
     url = f"{base}/datasets/{quote(dataset_id, safe='')}/documents"
@@ -461,7 +480,7 @@ async def delete_documents(dataset_id: str, doc_ids: list[str] | None = None, de
     else:
         body["delete_all"] = delete_all
     async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.request("DELETE", url, headers=await _headers(), json=body)
+        r = await client.request("DELETE", url, headers=await _headers(space_id), json=body)
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -479,8 +498,9 @@ async def retrieval(
     keyword: bool = False,
     highlight: bool = True,
     page_size: int = 10,
+    space_id: str | None = None,
 ) -> dict[str, Any]:
-    base, key = await _config()
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         return {"chunks": [], "doc_aggs": [], "total": 0, "_mock": True}
     url = f"{base}/retrieval"
@@ -497,7 +517,7 @@ async def retrieval(
     if document_ids:
         body["document_ids"] = document_ids
     async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.post(url, headers=await _headers(), json=body)
+        r = await client.post(url, headers=await _headers(space_id), json=body)
         r.raise_for_status()
         data = r.json()
         if data.get("code", 0) != 0:
@@ -505,13 +525,13 @@ async def retrieval(
         return data.get("data") or {"chunks": [], "doc_aggs": [], "total": 0}
 
 
-async def probe() -> tuple[str, str]:
-    base, key = await _config()
+async def probe(space_id: str | None = None) -> tuple[str, str]:
+    base, key = await _config(space_id)
     if not base or "xxxxx" in key or "mock" in key:
         return ("off", "未配置")
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get(f"{base}/datasets?page=1&page_size=1", headers=await _headers())
+            r = await client.get(f"{base}/datasets?page=1&page_size=1", headers=await _headers(space_id))
             if r.status_code < 500 and r.json().get("code") == 0:
                 return ("ok", "正常")
             return ("warn", f"HTTP {r.status_code}")
