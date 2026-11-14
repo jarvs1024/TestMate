@@ -214,6 +214,11 @@
                   </div>
                 </div>
               </div>
+
+              <!-- 👥 用户空间 —— 一把 RAGFlow Key = 一个空间, 知识库页据此切换 -->
+              <div v-if="isAdmin" class="sub-grp sub3">
+                <KbSpaces />
+              </div>
             </div>
 
             <!-- 🧰 软件库 -->
@@ -513,6 +518,7 @@ import { getExtConfig, listNotifications, previewNotifications, type AssetNotifi
 import { listUsers, type ManagedUser } from '@/api/users';
 import SettingRow from './components/SettingRow.vue';
 import UserManage from './components/UserManage.vue';
+import KbSpaces from './components/KbSpaces.vue';
 import { useUserStore } from '@/stores/user';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import { parseApiTime } from '@/utils/format';
