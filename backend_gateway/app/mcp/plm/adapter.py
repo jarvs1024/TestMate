@@ -207,12 +207,37 @@ def _question_url(question_id: str) -> str:
 
 
 # ── 问题单列表 / 详情 ────────────────────────────────────────
+def _updated_moment(value: Any) -> datetime | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        seconds = int(value)
+        if abs(seconds) >= 1_000_000_000_000:
+            seconds //= 1000
+        try:
+            return datetime.fromtimestamp(seconds)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, str) and value.strip():
+        text = value.strip()
+        if re.fullmatch(r"-?\d+", text):
+            return _updated_moment(int(text))
+        try:
+            moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return moment.astimezone() if moment.tzinfo is not None else moment
+    return None
+
+
 def _updated_filter(value: Any) -> str:
-    try:
-        seconds = int(value) - 1
-    except (TypeError, ValueError):
-        return ""
-    return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d %H:%M:%S")
+    moment = _updated_moment(value)
+    if moment is None:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            "updated_after 无法解析: "
+            f"{value!r}；支持 Unix 秒/毫秒时间戳或 ISO 时间"
+            "（如 2026-11-13 或 2026-11-13T08:30:00）",
+        )
+    return (moment - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 async def _question_list(ctx: McpContext, *, simple_vos: list[dict], page: int, page_size: int) -> dict[str, Any]:

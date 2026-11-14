@@ -157,6 +157,32 @@ describe('个人中心 · 平台认证', () => {
     expect(w.text()).toContain('张三');
   });
 
+  it('测试连接只展示中文用户名，没有团队信息时不出现空括号', async () => {
+    api.testIntegrationConnection.mockResolvedValueOnce({
+      display_name: '贾克江',
+      team_name: '',
+      login_at: '2026-11-12T09:00:00Z',
+    });
+    const w = await mountAccounts([BOUND, PLM]);
+
+    await button(w, '测试连接').trigger('click');
+    await flushPromises();
+
+    expect(w.text()).toContain('连接正常：贾克江');
+    expect(w.text()).not.toContain('（）');
+    w.unmount();
+  });
+
+  it('平台卡片使用品牌图标而不是字母缩写', async () => {
+    const w = await mountAccounts([BOUND, PLM]);
+
+    const marks = w.findAll('.pc-mark');
+    expect(marks).toHaveLength(2);
+    expect(marks.every((mark) => mark.find('svg').exists())).toBe(true);
+    expect(marks.map((mark) => mark.text())).toEqual(['', '']);
+    w.unmount();
+  });
+
   it('解除绑定需要确认，成功后回到未配置状态', async () => {
     const w = await mountAccounts([BOUND, PLM]);
     api.listIntegrationProviders.mockResolvedValue({ items: [UNBOUND, PLM] });

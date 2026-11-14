@@ -116,6 +116,20 @@ def _strip_tags(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", value)).strip()
 
 
+_USER_NAME_RE = re.compile(r'"userName"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _landing_display_name(html: str) -> str:
+    """登录落地页 window.getUserInfo 里带真实姓名; 拿不到就退回登录账号."""
+    match = _USER_NAME_RE.search(html or "")
+    if not match:
+        return ""
+    try:
+        return jsonlib.loads(f'"{match.group(1)}"').strip()
+    except ValueError:
+        return match.group(1).strip()
+
+
 def _login_message(html: str) -> str:
     match = re.search(r'id="msg"[^>]*>(.*?)</div>', html, re.S)
     if match:
@@ -227,7 +241,7 @@ async def signin(
             return PlmSession(
                 access_token=cookies.get("yht_access_token") or "plm-session",
                 username=username,
-                display_name=username,
+                display_name=_landing_display_name(response.text or "") or username,
                 cookies=cookies,
                 access_token_expires_at=datetime.utcnow()
                 + timedelta(minutes=SESSION_MINUTES),

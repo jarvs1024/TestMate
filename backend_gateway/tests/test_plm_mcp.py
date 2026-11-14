@@ -489,6 +489,58 @@ async def test_search_questions_builds_condition_and_normalizes(bound_user, fake
     ]
 
 
+async def test_search_questions_updated_after_accepts_iso(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_question_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        await adapter.search_questions(ctx, updated_after="2026-11-13T08:30:00")
+
+    body = next(c for c in fake_api.calls if c["path"] == "/yonbip-mm-plmrd/bill/list")["json"]
+    assert body["condition"]["simpleVOs"] == [
+        {"field": "modifiedtime", "op": "gt", "value1": "2026-11-13 08:29:59"}
+    ]
+
+
+async def test_search_questions_updated_after_accepts_milliseconds(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_question_routes(fake_api)
+    millis = 1_794_528_000_123
+    expected = datetime.fromtimestamp(millis // 1000 - 1).strftime("%Y-%m-%d %H:%M:%S")
+    async with _context(bound_user) as ctx:
+        await adapter.search_questions(ctx, updated_after=millis)
+
+    body = next(c for c in fake_api.calls if c["path"] == "/yonbip-mm-plmrd/bill/list")["json"]
+    assert body["condition"]["simpleVOs"] == [
+        {"field": "modifiedtime", "op": "gt", "value1": expected}
+    ]
+
+
+async def test_search_questions_updated_after_keeps_seconds(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_question_routes(fake_api)
+    seconds = 1_794_528_000
+    expected = datetime.fromtimestamp(seconds - 1).strftime("%Y-%m-%d %H:%M:%S")
+    async with _context(bound_user) as ctx:
+        await adapter.search_questions(ctx, updated_after=seconds)
+
+    body = next(c for c in fake_api.calls if c["path"] == "/yonbip-mm-plmrd/bill/list")["json"]
+    assert body["condition"]["simpleVOs"] == [
+        {"field": "modifiedtime", "op": "gt", "value1": expected}
+    ]
+
+
+async def test_search_questions_rejects_invalid_updated_after(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_question_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.search_questions(ctx, updated_after="昨天")
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert "updated_after" in excinfo.value.message
+    assert "Unix" in excinfo.value.message
+
+
 async def test_search_status_uses_question_status_code(bound_user, fake_api):
     _install_common_routes(fake_api)
     _install_question_routes(

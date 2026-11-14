@@ -1,4 +1,4 @@
-"""PingCode 登录客户端的契约解析 (mock transport, 不连内网)."""
+"""PingCode 登录客户端: 登录契约解析与登录态下的真实用户名解析."""
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +12,52 @@ import pytest
 from app.integrations.pingcode import client
 
 COOKIE = "s-66209672995cb95d777b6aec"
+
+
+def _session(**overrides) -> client.PingCodeSession:
+    values = {
+        "access_token": "tok",
+        "team_id": "team-1",
+        "display_name": "642355511",
+        "team_name": "企业级产品中心",
+        "cookies": {"s-team-1": "cookie"},
+        "access_token_expires_at": datetime.utcnow() + timedelta(minutes=30),
+    }
+    values.update(overrides)
+    return client.PingCodeSession(**values)
+
+
+async def test_fetch_display_name_prefers_chinese_name():
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers.get("authorization", "")
+        seen["cookie"] = request.headers.get("cookie", "")
+        return httpx.Response(
+            200,
+            json={"data": {"me": {"name": "642355511", "display_name": "贾克江"}}},
+        )
+
+    name = await client.fetch_display_name(
+        _session(), base_url="http://pingcode.test", transport=httpx.MockTransport(handler)
+    )
+
+    assert name == "贾克江"
+    assert seen["path"] == "/api/typhon/account/me"
+    assert seen["auth"] == "Bearer tok"
+    assert seen["cookie"] == "s-team-1=cookie"
+
+
+async def test_fetch_display_name_returns_empty_when_identity_unavailable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"message": "boom"})
+
+    name = await client.fetch_display_name(
+        _session(), base_url="http://pingcode.test", transport=httpx.MockTransport(handler)
+    )
+
+    assert name == ""
 
 
 async def test_signin_sends_md5_and_parses_session():

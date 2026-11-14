@@ -49,6 +49,7 @@ class McpApiToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     token_value: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
     scopes: Mapped[list] = mapped_column(JSON, default=list)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

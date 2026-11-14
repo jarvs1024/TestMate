@@ -414,12 +414,21 @@ async def list_members(ctx: McpContext, project_id: str) -> dict[str, Any]:
     return {"items": members}
 
 
+def _updated_at_seconds(value: Any) -> int:
+    try:
+        seconds = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return seconds // 1000 if seconds >= 1_000_000_000_000 else seconds
+
+
 async def _scan_work_items(
     ctx: McpContext,
     params: dict[str, Any],
     *,
     type_id: str | None,
     assignee_id: str | None,
+    updated_after: int | None = None,
 ) -> dict[str, Any]:
     collected: list[dict[str, Any]] = []
     references: dict[str, Any] = {}
@@ -444,6 +453,12 @@ async def _scan_work_items(
         filtered = [item for item in filtered if (item.get("type_id") or item.get("type")) == type_id]
     if assignee_id:
         filtered = [item for item in filtered if item.get("assignee") == assignee_id]
+    if updated_after is not None:
+        filtered = [
+            item
+            for item in filtered
+            if _updated_at_seconds(item.get("updated_at")) >= updated_after
+        ]
     return {"items": filtered, "total": len(filtered), "references": references, "scanned": len(collected)}
 
 
@@ -474,11 +489,22 @@ async def search_work_items(
         params["keywords"] = keyword
     if filters:
         params["state_ids"] = ",".join(str(item) for item in filters)
-    if updated_after:
-        params["updated_at"] = f">={int(updated_after)}"
+    try:
+        after = int(updated_after) if updated_after is not None else None
+    except (TypeError, ValueError):
+        raise McpRuntimeError(
+            "invalid_arguments",
+            f"updated_after 必须是 Unix 秒时间戳，当前值: {updated_after!r}",
+        ) from None
 
-    if type_id or assignee_id:
-        scanned = await _scan_work_items(ctx, params, type_id=type_id, assignee_id=assignee_id)
+    if type_id or assignee_id or after is not None:
+        scanned = await _scan_work_items(
+            ctx,
+            params,
+            type_id=type_id,
+            assignee_id=assignee_id,
+            updated_after=after,
+        )
         start = (page - 1) * page_size
         page_items = scanned["items"][start : start + page_size]
         items = [

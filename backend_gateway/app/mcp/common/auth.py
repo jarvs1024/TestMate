@@ -14,13 +14,16 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.mcp.common.context import Principal
 from app.mcp.common.oauth import (
-    OAuthError,
     allowed_scopes,
     normalize_scope,
     resolve_public_base,
 )
 from app.models.mcp import McpApiToken, McpOAuthGrant
 from app.models.user import User
+
+#: 静态令牌固定前缀, 便于识别与密钥扫描; 令牌本身是不透明随机串.
+STATIC_TOKEN_PREFIX = "tm_"
+STATIC_TOKEN_BYTES = 24
 
 
 async def _mcp_audience(public_base: str | None = None) -> str | None:
@@ -65,19 +68,9 @@ def _access_token(
     )
 
 
-async def issue_static_token(user: User, public_base: str | None = None) -> str:
-    """Issue a static MCP JWT; its database record alone controls scopes/expiry."""
-    audience = await _mcp_audience(public_base)
-    if audience is None:
-        raise OAuthError("invalid_request", "未配置 extensions.public_base_url")
-    payload = {
-        "sub": str(user.id),
-        "token_version": int(user.token_version),
-        "aud": audience,
-        "typ": "mcp-static",
-        "jti": secrets.token_urlsafe(32),
-    }
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+async def issue_static_token(user: User) -> str:
+    """签发不透明静态令牌: 固定前缀 + 随机串, 以数据库记录为唯一真源."""
+    return f"{STATIC_TOKEN_PREFIX}{secrets.token_urlsafe(STATIC_TOKEN_BYTES)}"
 
 
 class McpTokenVerifier(TokenVerifier):
@@ -86,6 +79,8 @@ class McpTokenVerifier(TokenVerifier):
     async def verify_token(self, token: str) -> AccessToken | None:
         if not isinstance(token, str) or not token:
             return None
+        if token.startswith(STATIC_TOKEN_PREFIX):
+            return await self._verify_opaque_static(token)
         audience = await _mcp_audience()
         if audience is None:
             return None
@@ -158,6 +153,47 @@ class McpTokenVerifier(TokenVerifier):
                 client_id=grant.client_id,
                 scopes=frozenset(effective),
                 grant_id=grant.id,
+            )
+            return _access_token(token, principal, effective)
+
+    async def _verify_opaque_static(self, token: str) -> AccessToken | None:
+        token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
+
+        async with AsyncSessionLocal() as session:
+            record = (
+                await session.execute(
+                    select(McpApiToken).where(McpApiToken.token_hash == token_hash)
+                )
+            ).scalar_one_or_none()
+            now = datetime.utcnow()
+            if (
+                record is None
+                or record.revoked_at is not None
+                or (record.expires_at is not None and record.expires_at <= now)
+            ):
+                return None
+            user = await session.get(User, record.user_id)
+            if (
+                user is None
+                or not user.is_active
+                or (record.token_version or 0) != (user.token_version or 0)
+            ):
+                return None
+            record_scopes = _scopes(record.scopes)
+            if record_scopes is None:
+                return None
+            effective = [
+                scope for scope in await allowed_scopes(user) if scope in record_scopes
+            ]
+            if not effective:
+                return None
+            record.last_used_at = now
+            await session.commit()
+            principal = Principal(
+                user=user,
+                client_id=f"static:{record.id}",
+                scopes=frozenset(effective),
+                grant_id=None,
             )
             return _access_token(token, principal, effective)
 

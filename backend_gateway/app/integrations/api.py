@@ -207,9 +207,15 @@ async def test_connection(
         password=password,
         login=login,
     )
+    display_name = login.display_name
+    if provider.code == "pingcode":
+        # 登录响应里的 display_name 其实是账号名, 中文名要按登录态再查一次
+        real_name = await pingcode_client.fetch_display_name(login)
+        if real_name:
+            display_name = real_name
     login_at: datetime = record.last_login_at
     return {
-        "display_name": login.display_name,
+        "display_name": display_name,
         "team_name": getattr(login, "team_name", ""),
         "login_at": login_at,
     }

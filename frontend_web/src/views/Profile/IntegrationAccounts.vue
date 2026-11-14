@@ -26,7 +26,43 @@
         :class="{ locked: !provider.enabled, bound: provider.bound }"
       >
         <header class="pc-head">
-          <span class="pc-mark" :class="provider.code">{{ provider.name.slice(0, 2).toUpperCase() }}</span>
+          <span class="pc-mark" :class="provider.code" aria-hidden="true">
+            <svg
+              v-if="provider.code === 'pingcode'"
+              class="pc-logo"
+              viewBox="0 0 32 32"
+              fill="none"
+            >
+              <rect width="32" height="32" rx="8" fill="#6698FF" />
+              <path
+                d="M9 9.5 16 16l-7 6.5"
+                stroke="#fff"
+                stroke-width="3.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M16 9.5 23 16l-7 6.5"
+                stroke="#BDDAFF"
+                stroke-width="3.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <svg
+              v-else-if="provider.code === 'plm'"
+              class="pc-logo"
+              viewBox="0 0 32 32"
+              fill="none"
+            >
+              <path d="M16 16V4a12 12 0 0 1 12 12Z" fill="#EB4335" />
+              <path d="M16 16h12a12 12 0 0 1-12 12Z" fill="#FBBC05" />
+              <path d="M16 16v12A12 12 0 0 1 4 16Z" fill="#4285F4" />
+              <path d="M16 16H4A12 12 0 0 1 16 4Z" fill="#34A853" />
+              <circle cx="16" cy="16" r="3.4" fill="#fff" />
+            </svg>
+            <template v-else>{{ provider.name.slice(0, 2).toUpperCase() }}</template>
+          </span>
           <div class="pc-title">
             <h3>{{ provider.name }}</h3>
             <p>{{ hintOf(provider) }}</p>
@@ -249,9 +285,10 @@ async function test(provider: IntegrationProvider) {
   delete notices[provider.code];
   try {
     const result = await testIntegrationConnection(provider.code);
+    const team = result.team_name.trim();
     notices[provider.code] = {
       tone: 'ok',
-      text: `连接正常：${result.display_name}（${result.team_name}）`,
+      text: `连接正常：${result.display_name}${team ? `（${team}）` : ''}`,
     };
   } catch (error) {
     notices[provider.code] = { tone: 'error', text: errorText(error, '连接测试失败') };
@@ -299,9 +336,10 @@ onMounted(load);
 .provider-card.bound { border-color: rgba(16, 185, 129, .28); }
 .provider-card.locked { background: var(--surface-sunken); }
 .pc-head { display: flex; align-items: flex-start; gap: 11px; }
-.pc-mark { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; background: var(--primary-soft); color: var(--primary-ink, var(--ink-900)); font-family: var(--font-mono); font-size: 12px; font-weight: 700; letter-spacing: .4px; }
-.pc-mark.pingcode { background: rgba(59, 130, 246, .14); color: var(--primary); }
-.pc-mark.plm { background: var(--surface-sunken); color: var(--ink-500); }
+.pc-mark { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: 0 0 34px; overflow: hidden; border-radius: 9px; background: var(--primary-soft); color: var(--primary-ink, var(--ink-900)); font-family: var(--font-mono); font-size: 12px; font-weight: 700; letter-spacing: .4px; }
+.pc-logo { display: block; width: 32px; height: 32px; }
+.pc-mark.pingcode { background: transparent; }
+.pc-mark.plm { border: 1px solid rgba(15, 23, 42, .08); background: #fff; }
 .pc-title { min-width: 0; flex: 1; }
 .pc-title h3 { margin: 0; color: var(--ink-900); font-size: 14px; }
 .pc-title p { margin: 3px 0 0; color: var(--ink-500); font-size: 11.5px; line-height: 1.6; }

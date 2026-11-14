@@ -610,6 +610,48 @@ async def test_search_resolves_identifier_and_names(bound_user, fake_api):
     assert fake_api.calls[-1][2]["keywords"] == "掉盘"
 
 
+async def test_search_filters_updated_after_client_side(bound_user, fake_api):
+    fake_api.routes["/api/agile/work-items"] = lambda **_: {
+        "value": [
+            {
+                "_id": "w1",
+                "whole_identifier": "TF2-1",
+                "title": "旧单",
+                "updated_at": 1000,
+            },
+            {
+                "_id": "w2",
+                "whole_identifier": "TF2-2",
+                "title": "新单",
+                "updated_at": 3000,
+            },
+        ],
+        "count": 2,
+        "references": _reference_payload(),
+    }
+    async with _context(bound_user) as ctx:
+        data = await adapter.search_work_items(
+            ctx, project_id="p1", updated_after=2000
+        )
+
+    assert data["total"] == 1
+    assert [item["identifier"] for item in data["items"]] == ["TF2-2"]
+    assert data["filtered_client_side"] is True
+    assert "updated_at" not in fake_api.calls[-1][2]
+
+
+async def test_search_rejects_invalid_updated_after(bound_user, fake_api):
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.search_work_items(
+                ctx, project_id="p1", updated_after="yesterday"
+            )
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert "updated_after" in excinfo.value.message
+    assert "Unix 秒" in excinfo.value.message
+
+
 async def test_search_rejects_unknown_project(bound_user, fake_api):
     fake_api.routes["/api/agile/projects/select-options"] = lambda **_: {"value": []}
     async with _context(bound_user) as ctx:

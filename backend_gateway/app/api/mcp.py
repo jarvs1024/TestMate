@@ -265,16 +265,25 @@ async def create_token(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"当前账号无权授予 {', '.join(denied)}",
         )
-    try:
-        plaintext = await issue_static_token(user)
-    except OAuthError as exc:
-        raise _oauth_error(exc) from exc
+    existing = await session.scalar(
+        select(McpApiToken.id).where(
+            McpApiToken.user_id == user.id,
+            McpApiToken.name == payload.name,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"令牌名称「{payload.name}」已存在，请换一个名称",
+        )
+    plaintext = await issue_static_token(user)
 
     record = McpApiToken(
         name=payload.name,
         token_hash=hashlib.sha256(plaintext.encode("ascii")).hexdigest(),
         token_value=plaintext,
         user_id=user.id,
+        token_version=int(user.token_version or 0),
         scopes=payload.scopes,
         expires_at=payload.expires_at,
     )

@@ -339,6 +339,11 @@ async def test_put_twice_updates_single_row(
 
 async def test_test_endpoint_forces_login(client: httpx.AsyncClient, admin_user: dict, monkeypatch):
     monkeypatch.setattr(pingcode_client, "signin", _fake_signin())
+
+    async def no_identity(session, **kwargs):
+        return ""
+
+    monkeypatch.setattr(pingcode_client, "fetch_display_name", no_identity)
     encrypted = await _encrypt_payload(
         client, admin_user, {"username": USERNAME, "password": PASSWORD}
     )
@@ -358,6 +363,34 @@ async def test_test_endpoint_forces_login(client: httpx.AsyncClient, admin_user:
     assert body["login_at"]
     assert calls == [(USERNAME, PASSWORD)]
     assert "jwt-access-token" not in response.text
+
+
+async def test_test_endpoint_prefers_real_display_name(
+    client: httpx.AsyncClient, admin_user: dict, monkeypatch
+):
+    await _clear_rate_limit(admin_user["id"])
+    monkeypatch.setattr(pingcode_client, "signin", _fake_signin())
+
+    shown: dict[str, str] = {}
+
+    async def identity(session, **kwargs):
+        shown["display_name"] = session.display_name
+        return "贾克江"
+
+    monkeypatch.setattr(pingcode_client, "fetch_display_name", identity)
+    encrypted = await _encrypt_payload(
+        client, admin_user, {"username": USERNAME, "password": PASSWORD}
+    )
+    await client.put(
+        f"{BASE}/pingcode/credentials",
+        json={"payload_encrypted": encrypted},
+        headers=_auth(admin_user),
+    )
+
+    response = await client.post(f"{BASE}/pingcode/test", headers=_auth(admin_user))
+    assert response.status_code == 200, response.text
+    assert response.json()["display_name"] == "贾克江"
+    assert shown["display_name"] == "测试同学"
 
 
 async def test_test_endpoint_without_credentials_returns_409(

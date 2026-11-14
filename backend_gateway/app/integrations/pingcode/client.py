@@ -18,6 +18,7 @@ from app.core.config import settings
 
 LOGIN_PATH = "/api/typhon/team/signin"
 REFRESH_PATH = "/api/typhon/account/access-token"
+IDENTITY_PATH = "/api/typhon/account/me"
 PROLONG_PATH = "/api/typhon/passport/prolong-logged-state"
 SESSION_MINUTES = 90
 DEFAULT_TIMEOUT = 30.0
@@ -141,6 +142,42 @@ async def signin(
         cookies=cookies,
         access_token_expires_at=datetime.utcnow() + timedelta(minutes=SESSION_MINUTES),
     )
+
+
+async def fetch_display_name(
+    session: PingCodeSession,
+    *,
+    base_url: str | None = None,
+    timeout: float = 10.0,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> str:
+    """登录响应只有账号名 (如 642355511), 中文名要从 /account/me 补.
+
+    只用于界面展示, 拿不到就返回空串, 不阻断登录/测试连接.
+    """
+    base = (base_url or settings.PINGCODE_BASE_URL).rstrip("/")
+    try:
+        async with httpx.AsyncClient(
+            base_url=base,
+            timeout=timeout,
+            transport=transport,
+            cookies=session.cookies or None,
+            trust_env=False,
+        ) as client:
+            response = await client.get(
+                IDENTITY_PATH,
+                headers={"Authorization": f"Bearer {session.access_token}"},
+            )
+            if response.status_code >= 400:
+                return ""
+            body = response.json()
+    except (httpx.HTTPError, ValueError):
+        return ""
+    record = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(record, dict):
+        record = body if isinstance(body, dict) else {}
+    me = record.get("me") if isinstance(record.get("me"), dict) else record
+    return _pick(me, "display_name", "name")
 
 
 def _token_of(value: Any) -> str:

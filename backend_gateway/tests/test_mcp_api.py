@@ -371,6 +371,9 @@ async def test_static_token_plaintext_is_visible_and_db_stores_sha256(
     assert set(created) == TOKEN_METADATA_FIELDS
     plaintext = created["token"]
     assert plaintext
+    assert plaintext.startswith("tm_")
+    assert len(plaintext) == 35
+    assert "." not in plaintext
     assert created["name"] == "CI static token"
     assert created["user_id"] == publisher_user["id"]
     assert created["username"] == publisher_user["username"]
@@ -386,6 +389,7 @@ async def test_static_token_plaintext_is_visible_and_db_stores_sha256(
         assert stored.token_hash == hashlib.sha256(plaintext.encode("ascii")).hexdigest()
         assert stored.token_hash != plaintext
         assert stored.token_value == plaintext
+        assert stored.token_version == 0
 
     verified = await McpTokenVerifier().verify_token(plaintext)
     assert verified is not None
@@ -406,8 +410,8 @@ async def test_static_token_plaintext_is_visible_and_db_stores_sha256(
 async def test_repeated_static_token_issuance_creates_distinct_active_tokens(
     client, publisher_user
 ):
-    first, _ = await _create_token(client, publisher_user)
-    second, _ = await _create_token(client, publisher_user)
+    first, _ = await _create_token(client, publisher_user, name="CI static token")
+    second, _ = await _create_token(client, publisher_user, name="CI static token 2")
 
     assert first["id"] != second["id"]
     assert first["token"] != second["token"]
@@ -489,6 +493,47 @@ async def test_deleting_missing_static_token_returns_404(client, publisher_user)
     )
 
     assert response.status_code == 404, response.text
+
+
+async def test_duplicate_token_name_is_rejected_for_same_user(client, publisher_user):
+    await _create_token(client, publisher_user, name="CI static token")
+
+    response = await client.post(
+        "/api/v1/mcp/tokens",
+        json={"name": "CI static token", "scopes": ["extensions:read"]},
+        headers=_auth(publisher_user),
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "令牌名称「CI static token」已存在，请换一个名称"
+
+
+async def test_duplicate_token_name_check_ignores_surrounding_spaces(
+    client, publisher_user
+):
+    await _create_token(client, publisher_user, name="CI static token")
+
+    response = await client.post(
+        "/api/v1/mcp/tokens",
+        json={"name": "  CI static token  ", "scopes": ["extensions:read"]},
+        headers=_auth(publisher_user),
+    )
+
+    assert response.status_code == 409, response.text
+
+
+async def test_token_name_may_repeat_across_users(
+    client, publisher_user, stranger_user
+):
+    first, _ = await _create_token(
+        client, publisher_user, name="shared name", scopes=["extensions:read"]
+    )
+    second, _ = await _create_token(
+        client, stranger_user, name="shared name", scopes=["extensions:read"]
+    )
+
+    assert first["id"] != second["id"]
+    assert first["name"] == second["name"]
 
 
 @pytest.mark.parametrize(

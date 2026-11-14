@@ -63,7 +63,7 @@ def _without_audience(token: str) -> str:
 
 
 async def _static_token(user: User, scopes=("kb:read",)) -> str:
-    token = await auth.issue_static_token(user, PUBLIC_BASE)
+    token = await auth.issue_static_token(user)
     async with AsyncSessionLocal() as session:
         session.add(
             McpApiToken(
@@ -123,14 +123,16 @@ async def test_mcp_token_cannot_call_rest_but_can_call_kb_mcp(user, monkeypatch,
     token = await _static_token(user) if kind == "static" else await _oauth_token(user)
 
     async with _app(monkeypatch) as client:
+        rest_token = _without_audience(token) if kind == "oauth" else token
         rest = await client.get(
             "/api/v1/kb/datasets",
-            headers={"Authorization": f"Bearer {_without_audience(token)}"},
+            headers={"Authorization": f"Bearer {rest_token}"},
         )
         tools = await list_tools(client, token, endpoint=ENDPOINT)
 
     assert rest.status_code == 401, rest.text
-    assert rest.json()["detail"] == "token 类型无效"
+    if kind == "oauth":
+        assert rest.json()["detail"] == "token 类型无效"
     assert len(tools["tools"]) == 12
     assert "kb_dataset_list" in {t["name"] for t in tools["tools"]}
 

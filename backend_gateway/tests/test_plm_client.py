@@ -35,7 +35,7 @@ def _session(**overrides) -> client.PlmSession:
     return client.PlmSession(**values)
 
 
-def _login_transport():
+def _login_transport(landing_html: str = "<html>home</html>"):
     seen: dict[str, object] = {"posts": 0, "gets": []}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -60,7 +60,7 @@ def _login_transport():
         if path == "/login":
             return httpx.Response(
                 200,
-                text="<html>home</html>",
+                text=landing_html,
                 headers=[
                     ("set-cookie", "orgId=org-1; Path=/"),
                     ("set-cookie", "tenantid=impwzqgp; Path=/"),
@@ -84,6 +84,19 @@ async def test_signin_follows_cas_and_collects_session():
     assert session.cookies["yht_access_token"] == "access"
     assert session.access_token == "access"
     assert session.access_token_expires_at > datetime.utcnow()
+
+
+async def test_signin_reads_display_name_from_landing_page():
+    landing = (
+        "<html><script>window.getUserInfo = function() {"
+        ' return {"company":"PLM研发管理系统","userName":"贾克江","userCode":"2268"};'
+        "}</script></html>"
+    )
+    transport, _ = _login_transport(landing_html=landing)
+
+    session = await client.signin("2268", "secret", transport=transport, verify=False)
+
+    assert session.display_name == "贾克江"
 
 
 async def test_signin_reports_wrong_password():

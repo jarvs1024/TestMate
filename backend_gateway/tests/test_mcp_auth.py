@@ -86,10 +86,46 @@ async def _static_credential(
     scopes: list[str] | None = None,
 ) -> tuple[str, McpApiToken, User]:
     user = user or await _user()
-    token = await auth.issue_static_token(user, PUBLIC_BASE)
+    token = await auth.issue_static_token(user)
     async with AsyncSessionLocal() as session:
         record = McpApiToken(
             name="MCP auth test token",
+            token_hash=hashlib.sha256(token.encode("ascii")).hexdigest(),
+            user_id=user.id,
+            scopes=list(scopes if scopes is not None else ALL_SCOPES),
+            token_version=user.token_version,
+        )
+        session.add(record)
+        await session.commit()
+        await session.refresh(record)
+    return token, record, user
+
+
+def _legacy_static_jwt(user: User) -> str:
+    """旧版静态令牌格式: 自签 JWT, 仍需继续可用."""
+    return jwt.encode(
+        {
+            "sub": str(user.id),
+            "token_version": int(user.token_version),
+            "aud": AUDIENCE,
+            "typ": "mcp-static",
+            "jti": uuid.uuid4().hex,
+        },
+        settings.JWT_SECRET,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+
+async def _legacy_static_credential(
+    user: User | None = None,
+    *,
+    scopes: list[str] | None = None,
+) -> tuple[str, McpApiToken, User]:
+    user = user or await _user()
+    token = _legacy_static_jwt(user)
+    async with AsyncSessionLocal() as session:
+        record = McpApiToken(
+            name="MCP legacy static token",
             token_hash=hashlib.sha256(token.encode("ascii")).hexdigest(),
             user_id=user.id,
             scopes=list(scopes if scopes is not None else ALL_SCOPES),
@@ -228,7 +264,7 @@ async def test_malformed_signed_subjects_return_none(credential_type: str, subje
         token, _, _ = await _oauth_credential()
         record = None
     else:
-        token, record, _ = await _static_credential()
+        token, record, _ = await _legacy_static_credential()
     token = _resign(token, sub=subject)
     if record is not None:
         await _update_static(
@@ -309,6 +345,26 @@ async def test_write_only_oauth_token_is_rejected_after_write_capability_is_lost
     assert await auth.McpTokenVerifier().verify_token(token) is None
 
 
+async def test_issued_static_token_is_short_prefixed_opaque_secret():
+    user = await _user()
+    token = await auth.issue_static_token(user)
+
+    assert token.startswith("tm_")
+    assert len(token) == 35
+    assert token[3:].isascii()
+    assert "." not in token
+    assert token != await auth.issue_static_token(user)
+
+
+async def test_issue_static_token_does_not_require_public_base_url():
+    user = await _user()
+    await set_setting("extensions.public_base_url", "")
+
+    token = await auth.issue_static_token(user)
+
+    assert token.startswith("tm_")
+
+
 async def test_valid_static_token_returns_db_scoped_principal_and_has_no_jwt_scopes():
     token, record, user = await _static_credential()
 
@@ -324,21 +380,17 @@ async def test_valid_static_token_returns_db_scoped_principal_and_has_no_jwt_sco
     assert principal.client_id == f"static:{record.id}"
     assert principal.grant_id is None
     assert principal.scopes == frozenset(ALL_SCOPES)
-    claims = jwt.decode(
-        token,
-        settings.JWT_SECRET,
-        algorithms=[settings.JWT_ALGORITHM],
-        audience=AUDIENCE,
-    )
-    jti = claims.pop("jti")
-    assert isinstance(jti, str)
-    assert jti
-    assert claims == {
-        "sub": str(user.id),
-        "token_version": user.token_version,
-        "aud": AUDIENCE,
-        "typ": "mcp-static",
-    }
+
+
+async def test_legacy_jwt_static_token_still_verifies():
+    token, record, user = await _legacy_static_credential()
+
+    result = await auth.McpTokenVerifier().verify_token(token)
+
+    assert isinstance(result, AccessToken)
+    assert result.client_id == f"static:{record.id}"
+    assert result.scopes == ALL_SCOPES
+    assert result.claims["principal"].user.id == user.id
 
 
 @pytest.mark.parametrize("change", ["revoked", "expired", "token_version", "inactive"])
@@ -358,7 +410,7 @@ async def test_static_rejects_revocation_expiry_and_current_user_invalidation(ch
 
 @pytest.mark.parametrize("mutation", ["wrong_aud", "wrong_typ", "wrong_signature", "wrong_sub"])
 async def test_static_rejects_invalid_jwt_bindings(mutation: str):
-    token, record, user = await _static_credential()
+    token, record, user = await _legacy_static_credential()
     if mutation == "wrong_aud":
         token = _resign(token, aud="http://example.test/mcp")
     elif mutation == "wrong_typ":
@@ -417,7 +469,7 @@ async def test_mcp_token_type_is_rejected_even_without_aud_claim(client, credent
     """
     user = await _user(token_version=0)
     if credential == "static":
-        token, record, _ = await _static_credential(user)
+        token, record, _ = await _legacy_static_credential(user)
         record_id = record.id
     else:
         token, _, _ = await _oauth_credential(user)
@@ -456,7 +508,7 @@ async def test_mcp_token_is_anonymous_on_optional_auth(credential):
     """
     user = await _user(token_version=0)
     if credential == "static":
-        token, record, _ = await _static_credential(user)
+        token, record, _ = await _legacy_static_credential(user)
     else:
         token, _, _ = await _oauth_credential(user)
         record = None
