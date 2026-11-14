@@ -82,7 +82,7 @@ async def _client(user):
 async def test_tools_list_has_all_twelve(writer, fake_rf):
     async with _client(writer) as client:
         result = await list_tools(client, TOKEN, endpoint=ENDPOINT)
-    assert len(result["tools"]) == 12
+    assert len(result["tools"]) == 13
     names = {tool["name"] for tool in result["tools"]}
     assert "kb_document_write_ticket" in names
     descriptions = {tool["name"]: tool.get("description", "") for tool in result["tools"]}

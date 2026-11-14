@@ -11,6 +11,8 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.api import kb
+from app.core import ragflow_spaces
+from app.core.ragflow_spaces import RagflowSpaceError
 from app.core.security import create_kb_upload_ticket
 from app.mcp.common.context import McpContext
 from app.mcp.common.errors import McpRuntimeError
@@ -49,6 +51,8 @@ async def _call(operation):
         return await operation
     except McpRuntimeError:
         raise
+    except RagflowSpaceError as exc:
+        raise McpRuntimeError("invalid_arguments", exc.message) from None
     except HTTPException as exc:
         raise _business_error(exc) from None
     except Exception:
@@ -56,10 +60,22 @@ async def _call(operation):
         raise McpRuntimeError("kb_unavailable", "知识库服务暂时不可用，请稍后重试。") from None
 
 
-async def _require_dataset(dataset_id: str) -> dict[str, Any]:
+async def _space_fields(space_id: str | None) -> dict[str, str]:
+    """把空间 id 解析成 (id, 名称) —— 回给调用方, 免得只看到一串 sp_xxxx."""
+    if not space_id:
+        return {"space_id": "", "space_name": ""}
+    space = await _call(ragflow_spaces.resolve(space_id))
+    if space is None:
+        return {"space_id": "", "space_name": ""}
+    return {"space_id": space.id, "space_name": space.name}
+
+
+async def _require_dataset(dataset_id: str, space_id: str | None = None) -> dict[str, Any]:
     page = 1
     while page <= 5:
-        items = await _call(kb._dataset_items(page=page, page_size=100))
+        items = await _call(
+            kb._dataset_items(page=page, page_size=100, space_id=space_id)
+        )
         for item in items:
             if str(item.get("id") or "") == dataset_id:
                 return item
@@ -69,18 +85,37 @@ async def _require_dataset(dataset_id: str) -> dict[str, Any]:
     raise McpRuntimeError("not_found", "数据集不存在")
 
 
-async def dataset_list(ctx: McpContext, *, page=1, page_size=50, keyword=""):
+async def space_list(ctx: McpContext, **_kwargs):
+    rows = await _call(ragflow_spaces.list_spaces())
+    return {
+        "items": [
+            {"id": s.id, "name": s.name, "is_default": s.is_default} for s in rows
+        ],
+        "default_id": next((s.id for s in rows if s.is_default), ""),
+    }
+
+
+async def dataset_list(ctx: McpContext, *, page=1, page_size=50, keyword="", space_id=""):
+    sid = space_id or None
     if keyword:
         all_items = await _call(
-            kb._dataset_items(page=1, page_size=500, keyword=keyword)
+            kb._dataset_items(page=1, page_size=500, keyword=keyword, space_id=sid)
         )
         start = max(page - 1, 0) * page_size
         items = all_items[start:start + page_size]
         has_more = start + page_size < len(all_items)
     else:
-        items = await _call(kb._dataset_items(page=page, page_size=page_size))
+        items = await _call(
+            kb._dataset_items(page=page, page_size=page_size, space_id=sid)
+        )
         has_more = len(items) == page_size
-    return {"items": items, "page": page, "page_size": page_size, "has_more": has_more}
+    return {
+        "items": items,
+        "page": page,
+        "page_size": page_size,
+        "has_more": has_more,
+        **await _space_fields(sid),
+    }
 
 
 async def document_list(
@@ -93,24 +128,30 @@ async def document_list(
     desc=True,
     keywords="",
     run="",
+    space_id="",
 ):
-    return await _call(
+    sid = space_id or None
+    result = await _call(
         kb.get_documents(
             dataset_id=dataset_id, page=page, page_size=page_size, orderby=orderby,
             desc=desc, keywords=keywords, run=run, _user=ctx.principal.user,
+            space_id=sid,
         )
     )
+    return {**result, **await _space_fields(sid)}
 
 
 async def document_search(
-    ctx: McpContext, *, keywords, dataset_id="", limit=200
+    ctx: McpContext, *, keywords, dataset_id="", limit=200, space_id=""
 ):
-    return await _call(
+    sid = space_id or None
+    result = await _call(
         kb.search_documents(
             keywords=keywords, dataset_id=dataset_id, limit=limit,
-            _user=ctx.principal.user,
+            _user=ctx.principal.user, space_id=sid,
         )
     )
+    return {**result, **await _space_fields(sid)}
 
 
 async def document_chunks(
@@ -121,19 +162,28 @@ async def document_chunks(
     page=1,
     page_size=100,
     keywords="",
+    space_id="",
 ):
-    return await _call(
+    sid = space_id or None
+    result = await _call(
         kb.get_doc_chunks(
             dataset_id=dataset_id, document_id=document_id, page=page,
             page_size=page_size, keywords=keywords, _user=ctx.principal.user,
+            space_id=sid,
         )
     )
+    return {**result, **await _space_fields(sid)}
 
 
-async def _status_document(dataset_id: str, document_id: str, name: str) -> dict:
+async def _status_document(
+    dataset_id: str, document_id: str, name: str, space_id: str | None = None
+) -> dict:
     if name:
         data = await _call(
-            kb.list_documents(dataset_id=dataset_id, page=1, page_size=100, keywords=name)
+            kb.list_documents(
+                dataset_id=dataset_id, page=1, page_size=100, keywords=name,
+                space_id=space_id,
+            )
         )
         for doc in data.get("docs") or []:
             if doc.get("name") == name or str(doc.get("id") or "") == document_id:
@@ -142,7 +192,7 @@ async def _status_document(dataset_id: str, document_id: str, name: str) -> dict
         if name:
             raise McpRuntimeError("not_found", "文档不存在")
         raise McpRuntimeError("invalid_arguments", "document_id 或 name 至少提供一个")
-    doc = await _call(kb._find_document(dataset_id, document_id))
+    doc = await _call(kb._find_document(dataset_id, document_id, space_id=space_id))
     if not doc:
         raise McpRuntimeError("not_found", "文档不存在")
     return doc
@@ -155,10 +205,12 @@ async def document_status(
     document_id="",
     name="",
     wait_seconds=0,
+    space_id="",
 ):
+    sid = space_id or None
     deadline = _monotonic() + max(int(wait_seconds), 0)
     while True:
-        doc = await _status_document(dataset_id, document_id, name)
+        doc = await _status_document(dataset_id, document_id, name, space_id=sid)
         run = str(doc.get("run") or "UNSTART")
         finished = run in {"DONE", "FAIL", "CANCEL"}
         timed_out = wait_seconds > 0 and not finished and _monotonic() >= deadline
@@ -172,6 +224,7 @@ async def document_status(
                 "chunk_count": doc.get("chunk_count", 0),
                 "token_count": doc.get("token_count", 0),
                 "timed_out": timed_out,
+                **await _space_fields(sid),
             }
         await _sleep(max(0.0, min(2.0, deadline - _monotonic())))
 
@@ -188,7 +241,9 @@ async def search(
     keyword=False,
     highlight=True,
     page_size=10,
+    space_id="",
 ):
+    sid = space_id or None
     payload = kb.SearchIn(
         question=question,
         dataset_ids=dataset_ids,
@@ -200,12 +255,16 @@ async def search(
         highlight=highlight,
         page_size=page_size,
     )
-    return await _call(kb.search(payload=payload, _user=ctx.principal.user))
+    result = await _call(
+        kb.search(payload=payload, _user=ctx.principal.user, space_id=sid)
+    )
+    return {**result, **await _space_fields(sid)}
 
 
-async def health(ctx: McpContext):
-    status, message = await _call(kb.probe())
-    return {"status": status, "message": message}
+async def health(ctx: McpContext, *, space_id=""):
+    sid = space_id or None
+    status, message = await _call(kb.probe(space_id=sid))
+    return {"status": status, "message": message, **await _space_fields(sid)}
 
 
 # ============ 文本写工具 (2026-11-06 Task 7) ============
@@ -252,7 +311,8 @@ def _prepare_text(name: str, content: str, content_type: str | None):
 
 
 def _write_result(
-    docs, errors, ingest_started, warnings, *, count_key="uploaded", replaced=None
+    docs, errors, ingest_started, warnings, *, count_key="uploaded", replaced=None,
+    space=None,
 ):
     state = "submitted" if not errors else ("failed" if not docs else "partial")
     result = {
@@ -264,6 +324,7 @@ def _write_result(
         "warning": " ".join(dict.fromkeys(warnings)),
         "docs": docs,
         "errors": errors,
+        **(space or {}),
     }
     if replaced is not None:
         result["replaced"] = replaced
@@ -271,12 +332,17 @@ def _write_result(
 
 
 async def dataset_create(
-    ctx: McpContext, *, name, description="", chunk_method="naive", language="Chinese"
+    ctx: McpContext, *, name, description="", chunk_method="naive", language="Chinese",
+    space_id="",
 ):
+    sid = space_id or None
     payload = kb.CreateDatasetIn(
         name=name, description=description, chunk_method=chunk_method, language=language
     )
-    return await _call(kb.create_kb_dataset(payload=payload, user=ctx.principal.user))
+    result = await _call(
+        kb.create_kb_dataset(payload=payload, user=ctx.principal.user, space_id=sid)
+    )
+    return {**result, **await _space_fields(sid)}
 
 
 async def document_upload(
@@ -287,9 +353,11 @@ async def document_upload(
     content=None,
     content_type=None,
     documents=None,
+    space_id="",
 ):
+    sid = space_id or None
     items = _upload_items(name, content, content_type, documents)
-    await _require_dataset(dataset_id)
+    await _require_dataset(dataset_id, space_id=sid)
 
     prepared = []
     errors = []
@@ -310,7 +378,9 @@ async def document_upload(
     for _, file_tuple in prepared:
         try:
             result = await _call(
-                kb.upload_prepared_documents(dataset_id, [file_tuple], ctx.principal.user)
+                kb.upload_prepared_documents(
+                    dataset_id, [file_tuple], ctx.principal.user, space_id=sid
+                )
             )
         except McpRuntimeError as exc:
             errors.append(
@@ -344,7 +414,9 @@ async def document_upload(
                     "ingest_started": doc_ingest,
                 }
             )
-    return _write_result(docs, errors, ingest_started, warnings)
+    return _write_result(
+        docs, errors, ingest_started, warnings, space=await _space_fields(sid)
+    )
 
 
 async def document_update(
@@ -354,7 +426,9 @@ async def document_update(
     document_id=None,
     content=None,
     documents=None,
+    space_id="",
 ):
+    sid = space_id or None
     if documents is not None:
         if not 1 <= len(documents) <= MAX_MCP_BATCH_DOCS:
             raise McpRuntimeError("invalid_arguments", "documents 需为 1..5 篇")
@@ -365,7 +439,7 @@ async def document_update(
                 "invalid_arguments", "请提供 document_id+content 或 documents 数组"
             )
         items = [{"document_id": document_id, "content": content}]
-    await _require_dataset(dataset_id)
+    await _require_dataset(dataset_id, space_id=sid)
 
     total_bytes = sum(
         len(str(item.get("content") or "").encode("utf-8")) for item in items
@@ -383,7 +457,7 @@ async def document_update(
         # 找到旧文档后才知道名字 —— 失败项要尽量带出它, 方便调用方定位是哪一篇.
         name_hint = ""
         try:
-            old = await _call(kb._find_document(dataset_id, old_id))
+            old = await _call(kb._find_document(dataset_id, old_id, space_id=sid))
             if not old:
                 raise McpRuntimeError("not_found", "文档不存在")
             name_hint = str(old.get("name") or "")
@@ -392,7 +466,8 @@ async def document_update(
             )
             result = await _call(
                 kb.replace_document(
-                    dataset_id, old_id, name, payload, ctype, ctx.principal.user
+                    dataset_id, old_id, name, payload, ctype, ctx.principal.user,
+                    space_id=sid,
                 )
             )
         except McpRuntimeError as exc:
@@ -427,19 +502,22 @@ async def document_update(
     if replaced_ids:
         replaced = replaced_ids[0] if len(items) == 1 else replaced_ids
     return _write_result(
-        docs, errors, ingest_started, warnings, count_key="updated", replaced=replaced
+        docs, errors, ingest_started, warnings, count_key="updated", replaced=replaced,
+        space=await _space_fields(sid),
     )
 
 
-async def document_reparse(ctx: McpContext, *, dataset_id, document_id):
+async def document_reparse(ctx: McpContext, *, dataset_id, document_id, space_id=""):
+    sid = space_id or None
     # 先确认数据集存在 —— 否则未知 dataset 会被 `_find_document` 报成「文档不存在」.
-    await _require_dataset(dataset_id)
+    await _require_dataset(dataset_id, space_id=sid)
     result = await _call(
         kb.reparse_kb_document(
-            dataset_id=dataset_id, document_id=document_id, user=ctx.principal.user
+            dataset_id=dataset_id, document_id=document_id, user=ctx.principal.user,
+            space_id=sid,
         )
     )
-    doc = await _call(kb._find_document(dataset_id, document_id)) or {}
+    doc = await _call(kb._find_document(dataset_id, document_id, space_id=sid)) or {}
     name = result.get("name") or doc.get("name") or ""
     run = str(doc.get("run") or "UNSTART")
     return {
@@ -461,6 +539,7 @@ async def document_reparse(ctx: McpContext, *, dataset_id, document_id):
             }
         ],
         "errors": [],
+        **await _space_fields(sid),
     }
 
 
@@ -469,8 +548,9 @@ async def document_reparse(ctx: McpContext, *, dataset_id, document_id):
 #    不经过 MCP 通道 (base64 会膨胀 + 撑爆 JSON 请求体).
 
 
-async def document_write_ticket(ctx: McpContext, *, dataset_id):
-    await _require_dataset(dataset_id)
+async def document_write_ticket(ctx: McpContext, *, dataset_id, space_id=""):
+    sid = space_id or None
+    await _require_dataset(dataset_id, space_id=sid)
     base = (await resolve_public_base()).strip().rstrip("/")
     if not base:
         raise McpRuntimeError(
@@ -480,6 +560,7 @@ async def document_write_ticket(ctx: McpContext, *, dataset_id):
         user_id=int(ctx.principal.user.id),
         token_version=int(ctx.principal.user.token_version or 0),
         dataset_id=dataset_id,
+        space_id=sid,
     )
     expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
     return {
@@ -493,6 +574,7 @@ async def document_write_ticket(ctx: McpContext, *, dataset_id):
         "max_bytes_per_file": kb.MAX_UPLOAD_BYTES,
         "max_files_per_request": kb.MAX_UPLOAD_FILES,
         "reusable": True,
+        "space_id": sid or "",
         "note": (
             "30 分钟内可复用；上传多篇就重复 -F file；替换时加 -F document_id=<id>。"
             "批量超过 30 分钟就重新签票，已传文件不受影响。"

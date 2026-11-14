@@ -20,6 +20,14 @@ def _object(properties: dict[str, Any] | None = None, required: list[str] | None
 _STRING_LIST = {"type": "array", "items": {"type": "string"}}
 _INT = {"type": "integer"}
 
+#: 目标 RAGFlow 用户空间; 空 = 默认空间 (可用 kb_space_list 查 id).
+#: ⚠️ 有 default 所以不算 required —— MCP 客户端缓存 tools/list 后不会因此重连.
+_SPACE_ID = {
+    "type": "string",
+    "default": "",
+    "description": "目标用户空间 id；留空使用默认空间（可用 kb_space_list 查看）",
+}
+
 
 READ_SPECS = (
     ToolSpec(
@@ -29,6 +37,7 @@ READ_SPECS = (
             "page": {**_INT, "minimum": 1, "default": 1},
             "page_size": {**_INT, "minimum": 1, "maximum": 100, "default": 50},
             "keyword": {"type": "string", "default": ""},
+            "space_id": _SPACE_ID,
         }),
         scope="kb:read",
         read_only=True,
@@ -45,6 +54,7 @@ READ_SPECS = (
             "desc": {"type": "boolean", "default": True},
             "keywords": {"type": "string", "default": ""},
             "run": {"type": "string", "default": ""},
+            "space_id": _SPACE_ID,
         }, ["dataset_id"]),
         scope="kb:read",
         read_only=True,
@@ -57,6 +67,7 @@ READ_SPECS = (
             "keywords": {"type": "string", "minLength": 1},
             "dataset_id": {"type": "string", "default": ""},
             "limit": {**_INT, "minimum": 1, "maximum": 500, "default": 200},
+            "space_id": _SPACE_ID,
         }, ["keywords"]),
         scope="kb:read",
         read_only=True,
@@ -71,6 +82,7 @@ READ_SPECS = (
             "page": {**_INT, "minimum": 1, "default": 1},
             "page_size": {**_INT, "minimum": 1, "maximum": 100, "default": 100},
             "keywords": {"type": "string", "default": ""},
+            "space_id": _SPACE_ID,
         }, ["dataset_id", "document_id"]),
         scope="kb:read",
         read_only=True,
@@ -88,6 +100,7 @@ READ_SPECS = (
             "document_id": {"type": "string", "default": ""},
             "name": {"type": "string", "default": ""},
             "wait_seconds": {**_INT, "minimum": 0, "maximum": 60, "default": 0},
+            "space_id": _SPACE_ID,
         }, ["dataset_id"]),
         scope="kb:read",
         read_only=True,
@@ -106,6 +119,7 @@ READ_SPECS = (
             "keyword": {"type": "boolean", "default": False},
             "highlight": {"type": "boolean", "default": True},
             "page_size": {**_INT, "minimum": 1, "maximum": 50, "default": 10},
+            "space_id": _SPACE_ID,
         }, ["question", "dataset_ids"]),
         scope="kb:read",
         read_only=True,
@@ -114,10 +128,18 @@ READ_SPECS = (
     ToolSpec(
         name="kb_health",
         description="检查 RAGFlow 知识库服务是否可达。",
-        input_schema=_object(),
+        input_schema=_object({"space_id": _SPACE_ID}),
         scope="kb:read",
         read_only=True,
         handler=adapter.health,
+    ),
+    ToolSpec(
+        name="kb_space_list",
+        description="列出可用的 RAGFlow 用户空间，default_id 为默认空间。",
+        input_schema=_object(),
+        scope="kb:read",
+        read_only=True,
+        handler=adapter.space_list,
     ),
 )
 
@@ -149,6 +171,7 @@ WRITE_SPECS = (
             "description": {"type": "string", "maxLength": 500, "default": ""},
             "chunk_method": {"type": "string", "enum": list(CHUNK_METHODS), "default": "naive"},
             "language": {"type": "string", "enum": list(KB_LANGUAGES), "default": "Chinese"},
+            "space_id": _SPACE_ID,
         }, ["name"]),
         scope="kb:write",
         read_only=False,
@@ -167,6 +190,7 @@ WRITE_SPECS = (
             "content": {"type": "string"},
             "content_type": {"type": "string"},
             "documents": {"type": "array", "items": UPLOAD_ITEM, "minItems": 1, "maxItems": 5},
+            "space_id": _SPACE_ID,
         }, ["dataset_id"]),
         scope="kb:write",
         read_only=False,
@@ -184,6 +208,7 @@ WRITE_SPECS = (
             "document_id": {"type": "string", "minLength": 1},
             "content": {"type": "string"},
             "documents": {"type": "array", "items": UPDATE_ITEM, "minItems": 1, "maxItems": 5},
+            "space_id": _SPACE_ID,
         }, ["dataset_id"]),
         scope="kb:write",
         read_only=False,
@@ -195,6 +220,7 @@ WRITE_SPECS = (
         input_schema=_object({
             "dataset_id": {"type": "string", "minLength": 1},
             "document_id": {"type": "string", "minLength": 1},
+            "space_id": _SPACE_ID,
         }, ["dataset_id", "document_id"]),
         scope="kb:write",
         read_only=False,
@@ -208,7 +234,8 @@ WRITE_SPECS = (
             " 签票成功只代表拿到上传凭证；上传成功后仍需用 kb_document_status 查询解析状态。"
         ),
         input_schema=_object(
-            {"dataset_id": {"type": "string", "minLength": 1}}, ["dataset_id"]
+            {"dataset_id": {"type": "string", "minLength": 1}, "space_id": _SPACE_ID},
+            ["dataset_id"],
         ),
         scope="kb:write",
         read_only=False,

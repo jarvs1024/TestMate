@@ -28,6 +28,7 @@ READ_TOOLS = {
     "kb_document_status",
     "kb_search",
     "kb_health",
+    "kb_space_list",
 }
 
 #: §8.1: tools/list 暴露的必须恰好是这 12 个工具, 且各自的 required 就是这张表.
@@ -39,6 +40,7 @@ EXPECTED_REQUIRED = {
     "kb_document_status": {"dataset_id"},
     "kb_search": {"question", "dataset_ids"},
     "kb_health": set(),
+    "kb_space_list": set(),
     "kb_dataset_create": {"name"},
     "kb_document_upload": {"dataset_id"},
     "kb_document_update": {"dataset_id"},
@@ -108,7 +110,7 @@ class FakeKB:
         docs = [d for d in self.docs if not keywords or keywords.lower() in d["name"].lower()]
         return {"docs": docs, "total": len(docs)}
 
-    async def find_document(self, dataset_id, document_id):
+    async def find_document(self, dataset_id, document_id, space_id=None):
         return next((d for d in self.docs if d["id"] == document_id), None)
 
 
@@ -133,7 +135,7 @@ def fake_kb(monkeypatch):
     monkeypatch.setattr(kb_mod, "list_documents", fake.list_documents)
     monkeypatch.setattr(kb_mod, "_find_document", fake.find_document)
 
-    async def search_documents(keywords="", dataset_id="", limit=200, _user=None):
+    async def search_documents(keywords="", dataset_id="", limit=200, _user=None, space_id=None):
         items = [d for d in fake.docs if keywords.lower() in d["name"].lower()]
         return {"items": items, "total": len(items), "keywords": keywords,
                 "datasets": [], "truncated": False}
@@ -293,7 +295,7 @@ async def test_status_polls_until_done(principals, fake_kb, monkeypatch):
 
     states = iter(["RUNNING", "RUNNING", "DONE"])
 
-    async def fake_find(dataset_id, document_id):
+    async def fake_find(dataset_id, document_id, space_id=None):
         return {"id": document_id, "name": "a.md", "run": next(states, "DONE"),
                 "progress": 1.0, "progress_msg": "", "chunk_count": 2, "token_count": 20}
 
@@ -323,7 +325,7 @@ async def test_status_polls_until_done(principals, fake_kb, monkeypatch):
 async def test_status_timeout_returns_current_state(principals, fake_kb, monkeypatch):
     from app.mcp.kb import adapter
 
-    async def fake_find(dataset_id, document_id):
+    async def fake_find(dataset_id, document_id, space_id=None):
         return {"id": document_id, "name": "a.md", "run": "RUNNING",
                 "progress": 0.3, "progress_msg": "切片中", "chunk_count": 0, "token_count": 0}
 
@@ -363,7 +365,7 @@ async def test_status_fail_returns_progress_msg_without_waiting(
     """§8.1: run=FAIL 是终态 —— 原样带出 progress_msg, 且不能空转到 deadline。"""
     from app.mcp.kb import adapter
 
-    async def fake_find(dataset_id, document_id):
+    async def fake_find(dataset_id, document_id, space_id=None):
         return {"id": document_id, "name": "a.md", "run": "FAIL",
                 "progress": 0.4, "progress_msg": "解析失败：文件格式不支持",
                 "chunk_count": 0, "token_count": 0}

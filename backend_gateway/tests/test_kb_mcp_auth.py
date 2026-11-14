@@ -133,7 +133,7 @@ async def test_mcp_token_cannot_call_rest_but_can_call_kb_mcp(user, monkeypatch,
     assert rest.status_code == 401, rest.text
     if kind == "oauth":
         assert rest.json()["detail"] == "token 类型无效"
-    assert len(tools["tools"]) == 12
+    assert len(tools["tools"]) == 13
     assert "kb_dataset_list" in {t["name"] for t in tools["tools"]}
 
 

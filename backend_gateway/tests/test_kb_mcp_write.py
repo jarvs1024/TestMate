@@ -306,7 +306,7 @@ async def test_upload_zero_created_docs_is_reported_as_failure(
     """F1: RAGFlow 返回空 data 时核心函数仍 ok=True —— 不能谎报提交成功。"""
     import app.api.kb as kb_mod
 
-    async def empty(dataset_id, prepared, user):
+    async def empty(dataset_id, prepared, user, space_id=None):
         return {
             "ok": True, "uploaded": 0, "ingest_started": False, "warning": "", "docs": [],
         }
