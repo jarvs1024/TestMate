@@ -60,6 +60,10 @@ TEST_CASE_BILL = "178cbfe6-e700-4667-8116-711341ab6f97"
 TEST_CASE_DETAIL_BILL = "40deda4a-a9ea-460f-93f4-21e3fa85914d"
 TEST_CASE_FILTERS_ID = "1654391937173688320"
 TEST_CASE_TPLID = "2482853480615641099"
+TEST_CASE_TREE_NAME = "gds.documentClassify.documentClassify"
+DEFAULT_TREE_DEPTH = 3
+MAX_TREE_DEPTH = 6
+MAX_TREE_NODES = 1000
 
 MAX_PAGE_SIZE = 100
 MAX_SCAN_PAGES = 20
@@ -1011,7 +1015,12 @@ async def _fetch_for(ctx: McpContext, url: str, max_bytes: int) -> tuple[bytes, 
 
 # ── 用例库 ──────────────────────────────────────────────────
 async def _test_case_list(
-    ctx: McpContext, *, simple_vos: list[dict[str, Any]], page: int, page_size: int
+    ctx: McpContext,
+    *,
+    simple_vos: list[dict[str, Any]],
+    page: int,
+    page_size: int,
+    catalog: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     body = {
         "page": {"pageSize": page_size, "pageIndex": page},
@@ -1039,6 +1048,11 @@ async def _test_case_list(
         "ownDomain": "IMP-GDS",
         "tplid": TEST_CASE_TPLID,
     }
+    if catalog is not None:
+        node_id = str(catalog.get("id") or "").strip()
+        if node_id:
+            body["ids"] = node_id
+            body["path"] = str(catalog.get("path") or f"{node_id}|")
     payload = await _request(
         ctx,
         "POST",
@@ -1068,30 +1082,230 @@ async def _test_case_list(
     }
 
 
+async def _test_case_tree(ctx: McpContext) -> list[dict[str, Any]]:
+    payload = await _request(
+        ctx,
+        "POST",
+        "/yonbip-mm-plmrd/bill/querytree",
+        params={
+            "domainKey": "IMP-BASE",
+            "serviceCode": TEST_CASE_SERVICE,
+            "locale": "zh_CN",
+            "terminalType": "1",
+        },
+        json={
+            "billnum": TEST_CASE_BILL,
+            "treename": TEST_CASE_TREE_NAME,
+            "tplid": TEST_CASE_TPLID,
+        },
+    )
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    nodes = payload.get("data") or payload.get("recordList") or payload.get("tree") or []
+    if isinstance(nodes, dict):
+        nodes = nodes.get("children") or nodes.get("recordList") or nodes.get("data") or []
+    return [item for item in nodes if isinstance(item, dict)] if isinstance(nodes, list) else []
+
+
+def _flatten_catalog(nodes: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict):
+            continue
+        out.append(node)
+        out.extend(_flatten_catalog(node.get("children")))
+    return out
+
+
+def _catalog_index(nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for node in _flatten_catalog(nodes):
+        node_id = str(node.get("id") or "")
+        if node_id:
+            index[node_id] = node
+    return index
+
+
+def _catalog_label(node: dict[str, Any], index: dict[str, dict[str, Any]]) -> str:
+    names: list[str] = []
+    seen: set[str] = set()
+    current: dict[str, Any] | None = node
+    while current is not None:
+        node_id = str(current.get("id") or "")
+        if node_id in seen:
+            break
+        seen.add(node_id)
+        name = str(current.get("name") or "")
+        if name:
+            names.append(name)
+        parent = str(current.get("parent") or "")
+        if not parent or parent in {"0", node_id}:
+            break
+        current = index.get(parent)
+    return " / ".join(reversed(names))
+
+
+def _prune_catalog(
+    node: dict[str, Any],
+    *,
+    depth: int,
+    max_depth: int,
+    keyword: str,
+    state: dict[str, Any],
+) -> dict[str, Any] | None:
+    if state["total"] >= MAX_TREE_NODES:
+        state["truncated"] = True
+        return None
+    state["total"] += 1
+    name = str(node.get("name") or "")
+    item: dict[str, Any] = {
+        "id": str(node.get("id") or ""),
+        "name": name,
+        "code": str(node.get("code") or ""),
+        "parent": str(node.get("parent") or ""),
+        "path": str(node.get("path") or ""),
+        "level": int(node.get("level") or depth),
+        "has_children": bool(node.get("children")),
+    }
+    matched = bool(keyword) and keyword in name.lower()
+    if matched:
+        item["matched"] = True
+    children = node.get("children")
+    children = children if isinstance(children, list) else []
+    if matched:
+        return item
+    if keyword and (not children or depth >= max_depth):
+        state["total"] -= 1
+        return None
+    if not children or depth >= max_depth:
+        return item
+    kept: list[dict[str, Any]] = []
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        pruned = _prune_catalog(
+            child, depth=depth + 1, max_depth=max_depth, keyword=keyword, state=state
+        )
+        if pruned is not None:
+            kept.append(pruned)
+    if keyword and not kept:
+        state["total"] -= 1
+        return None
+    if kept:
+        item["children"] = kept
+    return item
+
+
+async def list_case_catalogs(
+    ctx: McpContext,
+    *,
+    catalog_id: str = "",
+    keyword: str = "",
+    max_depth: int = DEFAULT_TREE_DEPTH,
+) -> dict[str, Any]:
+    depth = _clamp(max_depth, DEFAULT_TREE_DEPTH, MAX_TREE_DEPTH)
+    nodes = await _test_case_tree(ctx)
+    roots: list[dict[str, Any]] = nodes
+    wanted = str(catalog_id or "").strip()
+    if wanted:
+        node = _catalog_index(nodes).get(wanted)
+        if node is None:
+            raise McpRuntimeError(
+                "not_found",
+                f"未找到用例目录 {wanted}; 先用 plm_case_catalog_tree 查看可用目录 id",
+            )
+        roots = [node]
+    text = str(keyword or "").strip().lower()
+    state: dict[str, Any] = {"total": 0, "truncated": False}
+    results = [
+        item
+        for item in (
+            _prune_catalog(node, depth=1, max_depth=depth, keyword=text, state=state)
+            for node in roots
+        )
+        if item is not None
+    ]
+    return {
+        "total": state["total"],
+        "depth": depth,
+        "truncated": state["truncated"],
+        "roots": results,
+    }
+
+
+async def _resolve_case_catalog(
+    ctx: McpContext, *, catalog_id: str = "", catalog_name: str = ""
+) -> dict[str, Any] | None:
+    wanted_id = str(catalog_id or "").strip()
+    name = str(catalog_name or "").strip()
+    if not wanted_id and not name:
+        return None
+    nodes = await _test_case_tree(ctx)
+    index = _catalog_index(nodes)
+    if wanted_id:
+        node = index.get(wanted_id)
+        if node is None:
+            raise McpRuntimeError(
+                "catalog_not_found",
+                f"未找到用例目录 {wanted_id}; 先用 plm_case_catalog_tree 查询目录 id",
+            )
+        return node
+    wanted = name.lower()
+    flattened = _flatten_catalog(nodes)
+    exact = [node for node in flattened if str(node.get("name") or "").lower() == wanted]
+    if len(exact) == 1:
+        return exact[0]
+    candidates = exact or [
+        node for node in flattened if wanted in str(node.get("name") or "").lower()
+    ]
+    if not candidates:
+        raise McpRuntimeError(
+            "catalog_not_found",
+            f"未找到用例目录「{name}」; 先用 plm_case_catalog_tree 按关键字查询目录 id",
+        )
+    if len(candidates) == 1:
+        return candidates[0]
+    listing = "; ".join(
+        f"{_catalog_label(node, index)} ({node.get('id')})" for node in candidates[:10]
+    )
+    raise McpRuntimeError(
+        "ambiguous_catalog",
+        f"目录名「{name}」匹配到 {len(candidates)} 个节点: {listing}; 请改用唯一 catalog_id",
+    )
+
+
 async def search_test_cases(
     ctx: McpContext,
     *,
     keyword: str = "",
     identifier: str = "",
     category: str = "",
+    catalog_id: str = "",
+    catalog_name: str = "",
     page: int = 1,
     page_size: int = 20,
 ) -> dict[str, Any]:
     page = _clamp(page, 1, 1000)
     size = _clamp(page_size, 20, MAX_PAGE_SIZE)
+    catalog = await _resolve_case_catalog(
+        ctx, catalog_id=catalog_id, catalog_name=catalog_name or category
+    )
     simple: list[dict[str, Any]] = [{"field": "newest_flag", "op": "eq", "value1": 1}]
     if identifier:
         simple.append({"field": "code", "op": "eq", "value1": str(identifier)})
     if keyword:
         simple.append({"field": "name", "op": "like", "value1": str(keyword)})
-    if category:
-        simple.append({"field": "doc_classfiy_id_name_tree", "op": "like", "value1": str(category)})
-    payload = await _test_case_list(ctx, simple_vos=simple, page=page, page_size=size)
+    payload = await _test_case_list(
+        ctx, simple_vos=simple, page=page, page_size=size, catalog=catalog
+    )
     items = [
         {
             "id": record.get("id") or record.get("_id") or "",
             "identifier": record.get("code") or "",
             "title": record.get("name") or "",
+            "catalog": str(record.get("doc_classfiy_id_name") or ""),
         }
         for record in payload["records"]
     ]

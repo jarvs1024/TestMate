@@ -1,4 +1,4 @@
-"""PLM MCP 域: 14 个工具 schema/scope、只读适配、严格建单与幂等 (mock 上游)."""
+"""PLM MCP 域: 15 个工具 schema/scope、只读适配、严格建单与幂等 (mock 上游)."""
 from __future__ import annotations
 
 import base64
@@ -43,6 +43,7 @@ TOOL_REQUIRED = {
     "plm_issue_download_attachment": set(),
     "plm_case_search": set(),
     "plm_case_get": {"identifier"},
+    "plm_case_catalog_tree": set(),
     "plm_issue_preview": set(),
     "plm_issue_create": {"confirm"},
     "plm_issue_add_comment": {"id", "content", "confirm"},
@@ -276,8 +277,8 @@ async def _server(principal: Principal):
         yield client
 
 
-# ── 契约: 14 个工具与严格 schema ────────────────────────────
-async def test_tools_list_exposes_fourteen_strict_schemas(user):
+# ── 契约: 15 个工具与严格 schema ────────────────────────────
+async def test_tools_list_exposes_fifteen_strict_schemas(user):
     principal = Principal(
         user=user, client_id="test-client", scopes=frozenset({"plm:read"})
     )
@@ -656,7 +657,12 @@ async def test_search_test_cases_filters_newest_flag(bound_user, fake_api):
         data = await adapter.search_test_cases(ctx, identifier="HIMA3361-8077")
 
     assert data["items"] == [
-        {"id": "c1", "identifier": "HIMA3361-8077", "title": "掉盘后恢复"}
+        {
+            "id": "c1",
+            "identifier": "HIMA3361-8077",
+            "title": "掉盘后恢复",
+            "catalog": "",
+        }
     ]
 
 
@@ -694,6 +700,235 @@ async def test_get_test_case_not_found(bound_user, fake_api):
         with pytest.raises(adapter.McpRuntimeError) as excinfo:
             await adapter.get_test_case(ctx, identifier="9999")
     assert excinfo.value.code == "not_found"
+
+
+# ── 用例目录树与按目录检索 ──────────────────────────────────
+def _catalog_tree() -> list[dict]:
+    return [
+        {
+            "id": "root",
+            "name": "测试用例库",
+            "code": "PF-00000001",
+            "parent": "0",
+            "path": "root|",
+            "level": 1,
+            "children": [
+                {
+                    "id": "hima",
+                    "name": "Hima",
+                    "code": "HIMA3361",
+                    "parent": "root",
+                    "path": "root|hima|",
+                    "level": 2,
+                    "children": [
+                        {
+                            "id": "sim",
+                            "name": "similar_io",
+                            "code": "HIMA-1",
+                            "parent": "hima",
+                            "path": "root|hima|sim|",
+                            "level": 3,
+                            "children": [
+                                {
+                                    "id": "trim",
+                                    "name": "trim",
+                                    "code": "HIMA-2",
+                                    "parent": "sim",
+                                    "path": "root|hima|sim|trim|",
+                                    "level": 4,
+                                    "children": [],
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "id": "media",
+                    "name": "介质筛选项目",
+                    "code": "JZ",
+                    "parent": "root",
+                    "path": "root|media|",
+                    "level": 2,
+                    "children": [],
+                },
+                {
+                    "id": "dup1",
+                    "name": "trim",
+                    "code": "D1",
+                    "parent": "root",
+                    "path": "root|dup1|",
+                    "level": 2,
+                    "children": [],
+                },
+                {
+                    "id": "dup2",
+                    "name": "trim",
+                    "code": "D2",
+                    "parent": "root",
+                    "path": "root|dup2|",
+                    "level": 2,
+                    "children": [],
+                },
+            ],
+        }
+    ]
+
+
+def _install_catalog_route(api: FakeAPI) -> None:
+    api.routes["/yonbip-mm-plmrd/bill/querytree"] = lambda **_: _catalog_tree()
+
+
+async def test_case_catalog_tree_returns_nested_nodes(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_catalog_route(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.list_case_catalogs(ctx, max_depth=2)
+
+    assert data["truncated"] is False
+    root = data["roots"][0]
+    assert root["name"] == "测试用例库"
+    assert [node["name"] for node in root["children"]] == [
+        "Hima",
+        "介质筛选项目",
+        "trim",
+        "trim",
+    ]
+    hima = root["children"][0]
+    assert hima["has_children"] is True
+    assert "children" not in hima
+    call = next(
+        item
+        for item in fake_api.calls
+        if item["path"] == "/yonbip-mm-plmrd/bill/querytree"
+    )
+    assert call["json"]["treename"] == adapter.TEST_CASE_TREE_NAME
+    assert call["json"]["billnum"] == adapter.TEST_CASE_BILL
+    assert call["params"]["domainKey"] == "IMP-BASE"
+
+
+async def test_case_catalog_tree_keyword_keeps_ancestors(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_catalog_route(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.list_case_catalogs(ctx, keyword="similar", max_depth=4)
+
+    root = data["roots"][0]
+    hima = root["children"][0]
+    similar = hima["children"][0]
+    assert similar["name"] == "similar_io"
+    assert similar["matched"] is True
+    assert "children" not in similar
+    assert [node["name"] for node in root["children"]] == ["Hima"]
+
+
+async def test_case_catalog_tree_rejects_unknown_catalog(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_catalog_route(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.list_case_catalogs(ctx, catalog_id="missing")
+
+    assert excinfo.value.code == "not_found"
+    assert "missing" in excinfo.value.message
+
+
+async def test_case_catalog_tree_truncates_large_tree(
+    bound_user, fake_api, monkeypatch
+):
+    _install_common_routes(fake_api)
+    _install_catalog_route(fake_api)
+    monkeypatch.setattr(adapter, "MAX_TREE_NODES", 2)
+    async with _context(bound_user) as ctx:
+        data = await adapter.list_case_catalogs(ctx, max_depth=4)
+
+    assert data["truncated"] is True
+    assert data["total"] <= 2
+
+
+async def test_search_test_cases_filters_by_catalog_id(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_catalog_route(fake_api)
+
+    def list_route(json=None, **_):
+        assert json["ids"] == "sim"
+        assert json["path"] == "root|hima|sim|"
+        assert json["partParam"]["containChildren"] is False
+        return {
+            "recordList": [
+                {
+                    "id": "c1",
+                    "code": "HIMA3361-8077",
+                    "name": "掉盘后恢复",
+                    "doc_classfiy_id_name": "trim",
+                }
+            ],
+            "recordCount": 1,
+        }
+
+    fake_api.routes["/yonbip-mm-plmrd/bill/list"] = list_route
+    async with _context(bound_user) as ctx:
+        data = await adapter.search_test_cases(ctx, catalog_id="sim")
+
+    assert data["items"] == [
+        {
+            "id": "c1",
+            "identifier": "HIMA3361-8077",
+            "title": "掉盘后恢复",
+            "catalog": "trim",
+        }
+    ]
+
+
+async def test_search_test_cases_resolves_catalog_name(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_catalog_route(fake_api)
+
+    def list_route(json=None, **_):
+        assert json["ids"] == "media"
+        assert json["path"] == "root|media|"
+        return {"recordList": [], "recordCount": 0}
+
+    fake_api.routes["/yonbip-mm-plmrd/bill/list"] = list_route
+    async with _context(bound_user) as ctx:
+        await adapter.search_test_cases(ctx, catalog_name="介质筛选项目")
+
+
+async def test_search_test_cases_category_is_catalog_name_alias(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_catalog_route(fake_api)
+
+    def list_route(json=None, **_):
+        assert json["ids"] == "hima"
+        return {"recordList": [], "recordCount": 0}
+
+    fake_api.routes["/yonbip-mm-plmrd/bill/list"] = list_route
+    async with _context(bound_user) as ctx:
+        await adapter.search_test_cases(ctx, category="Hima")
+
+
+async def test_search_test_cases_rejects_ambiguous_catalog_name(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_catalog_route(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.search_test_cases(ctx, catalog_name="trim")
+
+    assert excinfo.value.code == "ambiguous_catalog"
+    assert "dup1" in excinfo.value.message
+    assert "dup2" in excinfo.value.message
+    assert "catalog_id" in excinfo.value.message
+
+
+async def test_search_test_cases_rejects_unknown_catalog_name(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_catalog_route(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.search_test_cases(ctx, catalog_name="不存在的目录")
+
+    assert excinfo.value.code == "catalog_not_found"
+    assert "plm_case_catalog_tree" in excinfo.value.message
+
 
 
 # ── 建单预览与严格校验 ──────────────────────────────────────

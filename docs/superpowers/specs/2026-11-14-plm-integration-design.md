@@ -41,7 +41,7 @@ Web 端把请求体 zlib 压缩（`CompressionStream('deflate')`）；服务端�
 ## 3. 范围与非目标
 
 ### 本期范围
-- `/mcp/plm` 14 个工具 + `plm:read` / `plm:write` scope
+- `/mcp/plm` 15 个工具 + `plm:read` / `plm:write` scope
 - 内置连接器卡片 `testmate-plm`（扩展库展示，配置随部署地址自适应）
 - 严格建单校验 + WSD 单号预占 + 重复单号中止 + 保存后反查
 - 附件随建单上传（最多 3 个、单个 ≤10MB、合计 ≤20MB，共享同一 `businessId`）
@@ -66,7 +66,8 @@ Web 端把请求体 zlib 压缩（`CompressionStream('deflate')`）；服务端�
 | `plm_issue_list_comments` | read | 评论 |
 | `plm_issue_list_attachments` | read | 附件与字段内嵌截图 |
 | `plm_issue_download_attachment` | read | 附件下载（图片内联 base64） |
-| `plm_case_search` | read | 用例库检索 |
+| `plm_case_catalog_tree` | read | 用例目录树（可按 `catalog_id` / `keyword` 定位节点） |
+| `plm_case_search` | read | 用例库检索，支持 `catalog_id` / `catalog_name` 按目录过滤 |
 | `plm_case_get` | read | 用例详情（步骤/预期） |
 | `plm_issue_preview` | write | 建单预校验，不提交 |
 | `plm_issue_create` | write | 严格建单，`confirm=true`，10 分钟幂等 |
@@ -114,7 +115,9 @@ Web 端把请求体 zlib 压缩（`CompressionStream('deflate')`）；服务端�
 | `plm_duplicate_code` | WSD 单号已存在 |
 | `plm_verify_failed` | 保存后反查不到单据或处理人未写入 |
 | `plm_error` | 其它 PLM 业务错误（单号生成失败等） |
-| `not_found` | 问题单 / 用例不存在 |
+| `not_found` | 问题单 / 用例 / 目录节点不存在 |
+| `catalog_not_found` | 按名称检索时目录不存在 |
+| `ambiguous_catalog` | 目录名重名，需改用 `catalog_id` |
 | `download_failed` | 附件下载失败 |
 
 ## 7. 代码结构

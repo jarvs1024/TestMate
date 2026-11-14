@@ -1,4 +1,4 @@
-"""14 个 PLM 工具的显式 schema 与 ToolSpec 声明 (对齐 AiTestX)."""
+"""15 个 PLM 工具的显式 schema 与 ToolSpec 声明 (对齐 AiTestX)."""
 from __future__ import annotations
 
 from typing import Any
@@ -255,16 +255,58 @@ READ_SPECS = (
         handler=adapter.download_attachment,
     ),
     ToolSpec(
+        name="plm_case_catalog_tree",
+        description=(
+            "获取 PLM 用例库目录树, 返回节点 id/名称/编码/父子路径。"
+            "可按 catalog_id 只看某节点子树, 或用 keyword 模糊匹配并保留祖先路径; "
+            "拿到目录 id 后传给 plm_case_search 的 catalog_id 即可按目录检索用例。"
+        ),
+        input_schema=_object(
+            {
+                "catalog_id": {
+                    "type": "string",
+                    "description": "目录节点 id; 指定后返回该节点开始的子树",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "目录名称关键字, 命中节点会带 matched=true 并保留祖先路径",
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 6,
+                    "default": 3,
+                    "description": "返回层级深度, 默认 3, 最大 6",
+                },
+            }
+        ),
+        scope="plm:read",
+        read_only=True,
+        handler=adapter.list_case_catalogs,
+    ),
+    ToolSpec(
         name="plm_case_search",
         description=(
-            "搜索 PLM 用例库, 按编号/标题/目录过滤, 返回用例编号、标题、模块与预置条件。"
-            "identifier 传完整编号或纯数字。"
+            "搜索 PLM 用例库, 按编号/标题/目录过滤, 返回用例编号、标题与所属模块。"
+            "identifier 传完整编号或纯数字; 按目录检索时优先传 catalog_id "
+            "(由 plm_case_catalog_tree 获取), 也支持 catalog_name 精确名称。"
         ),
         input_schema=_object(
             {
                 "keyword": {"type": "string", "description": "用例标题关键字"},
                 "identifier": {"type": "string", "description": "用例编号, 如 HIMA3361-8077"},
-                "category": {"type": "string", "description": "用例目录/模块关键字"},
+                "catalog_id": {
+                    "type": "string",
+                    "description": "目录节点 id (来自 plm_case_catalog_tree), 含子目录用例",
+                },
+                "catalog_name": {
+                    "type": "string",
+                    "description": "目录名称, 如 Hima; 重名时返回候选 id, 建议改用 catalog_id",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "catalog_name 的兼容别名",
+                },
                 "page": _PAGE,
                 "page_size": _PAGE_SIZE,
             }
