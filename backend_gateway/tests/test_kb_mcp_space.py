@@ -1,5 +1,6 @@
 """MCP: space_id 透传、kb_space_list 与未知空间的中文报错."""
 import pytest
+from fastapi import HTTPException
 
 from app.core import ragflow_spaces as rs
 from app.mcp.common.errors import McpRuntimeError
@@ -69,6 +70,29 @@ async def test_unknown_space_is_invalid_arguments(monkeypatch):
     assert exc.value.code == "invalid_arguments"
     assert "用户空间不存在" in exc.value.message
     assert "空间A" in exc.value.message, "报错要列出可选空间, 便于调用方改参数"
+
+
+@pytest.mark.asyncio
+async def test_unknown_space_fails_before_touching_ragflow(monkeypatch):
+    """未知空间必须在**调用业务函数之前**就报中文错误.
+
+    ⚠️ kb 的 REST 包装层把底层异常统一转成 502, 到了 adapter 只剩
+       「知识库服务暂时不可用」—— 用户看不出是自己传错了 space_id.
+       所以 adapter 先 resolve 再动手, 这条用例守住顺序.
+    """
+    await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    called = {"n": 0}
+
+    async def fake_items(page=1, page_size=50, keyword="", space_id=None):
+        called["n"] += 1
+        raise HTTPException(status_code=502, detail="ragflow error: boom")
+
+    monkeypatch.setattr(adapter.kb, "_dataset_items", fake_items)
+    with pytest.raises(McpRuntimeError) as exc:
+        await adapter.dataset_list(None, space_id="sp_nope")
+    assert exc.value.code == "invalid_arguments"
+    assert "用户空间不存在" in exc.value.message
+    assert called["n"] == 0, "未知空间不该走到 RAGFlow 调用"
 
 
 @pytest.mark.asyncio

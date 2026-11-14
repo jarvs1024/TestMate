@@ -80,7 +80,7 @@ def fake_http(monkeypatch):
 
     monkeypatch.setattr(rc.httpx, "AsyncClient", FakeClient)
 
-    async def _cfg():
+    async def _cfg(space_id=None):
         return ("http://ragflow.test", "key-123")
 
     monkeypatch.setattr(rc, "_config", _cfg)

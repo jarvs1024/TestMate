@@ -70,6 +70,17 @@ async def _space_fields(space_id: str | None) -> dict[str, str]:
     return {"space_id": space.id, "space_name": space.name}
 
 
+async def _space_scope(space_id: str) -> tuple[str | None, dict[str, str]]:
+    """先解析并校验空间, 再动手.
+
+    ⚠️ 必须**在调用业务函数之前** — kb 的 REST 包装层把异常统一转成 502,
+       未知空间到了那层就只剩「知识库服务暂时不可用」, 用户根本不知道
+       是自己传错了 space_id.
+    """
+    sid = space_id or None
+    return sid, await _space_fields(sid)
+
+
 async def _require_dataset(dataset_id: str, space_id: str | None = None) -> dict[str, Any]:
     page = 1
     while page <= 5:
@@ -96,7 +107,7 @@ async def space_list(ctx: McpContext, **_kwargs):
 
 
 async def dataset_list(ctx: McpContext, *, page=1, page_size=50, keyword="", space_id=""):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     if keyword:
         all_items = await _call(
             kb._dataset_items(page=1, page_size=500, keyword=keyword, space_id=sid)
@@ -114,7 +125,7 @@ async def dataset_list(ctx: McpContext, *, page=1, page_size=50, keyword="", spa
         "page": page,
         "page_size": page_size,
         "has_more": has_more,
-        **await _space_fields(sid),
+        **space_fields,
     }
 
 
@@ -130,7 +141,7 @@ async def document_list(
     run="",
     space_id="",
 ):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     result = await _call(
         kb.get_documents(
             dataset_id=dataset_id, page=page, page_size=page_size, orderby=orderby,
@@ -138,20 +149,20 @@ async def document_list(
             space_id=sid,
         )
     )
-    return {**result, **await _space_fields(sid)}
+    return {**result, **space_fields}
 
 
 async def document_search(
     ctx: McpContext, *, keywords, dataset_id="", limit=200, space_id=""
 ):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     result = await _call(
         kb.search_documents(
             keywords=keywords, dataset_id=dataset_id, limit=limit,
             _user=ctx.principal.user, space_id=sid,
         )
     )
-    return {**result, **await _space_fields(sid)}
+    return {**result, **space_fields}
 
 
 async def document_chunks(
@@ -164,7 +175,7 @@ async def document_chunks(
     keywords="",
     space_id="",
 ):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     result = await _call(
         kb.get_doc_chunks(
             dataset_id=dataset_id, document_id=document_id, page=page,
@@ -172,7 +183,7 @@ async def document_chunks(
             space_id=sid,
         )
     )
-    return {**result, **await _space_fields(sid)}
+    return {**result, **space_fields}
 
 
 async def _status_document(
@@ -207,7 +218,7 @@ async def document_status(
     wait_seconds=0,
     space_id="",
 ):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     deadline = _monotonic() + max(int(wait_seconds), 0)
     while True:
         doc = await _status_document(dataset_id, document_id, name, space_id=sid)
@@ -224,7 +235,7 @@ async def document_status(
                 "chunk_count": doc.get("chunk_count", 0),
                 "token_count": doc.get("token_count", 0),
                 "timed_out": timed_out,
-                **await _space_fields(sid),
+                **space_fields,
             }
         await _sleep(max(0.0, min(2.0, deadline - _monotonic())))
 
@@ -243,7 +254,7 @@ async def search(
     page_size=10,
     space_id="",
 ):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     payload = kb.SearchIn(
         question=question,
         dataset_ids=dataset_ids,
@@ -258,13 +269,13 @@ async def search(
     result = await _call(
         kb.search(payload=payload, _user=ctx.principal.user, space_id=sid)
     )
-    return {**result, **await _space_fields(sid)}
+    return {**result, **space_fields}
 
 
 async def health(ctx: McpContext, *, space_id=""):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     status, message = await _call(kb.probe(space_id=sid))
-    return {"status": status, "message": message, **await _space_fields(sid)}
+    return {"status": status, "message": message, **space_fields}
 
 
 # ============ 文本写工具 (2026-11-06 Task 7) ============
@@ -335,14 +346,14 @@ async def dataset_create(
     ctx: McpContext, *, name, description="", chunk_method="naive", language="Chinese",
     space_id="",
 ):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     payload = kb.CreateDatasetIn(
         name=name, description=description, chunk_method=chunk_method, language=language
     )
     result = await _call(
         kb.create_kb_dataset(payload=payload, user=ctx.principal.user, space_id=sid)
     )
-    return {**result, **await _space_fields(sid)}
+    return {**result, **space_fields}
 
 
 async def document_upload(
@@ -355,7 +366,7 @@ async def document_upload(
     documents=None,
     space_id="",
 ):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     items = _upload_items(name, content, content_type, documents)
     await _require_dataset(dataset_id, space_id=sid)
 
@@ -415,7 +426,7 @@ async def document_upload(
                 }
             )
     return _write_result(
-        docs, errors, ingest_started, warnings, space=await _space_fields(sid)
+        docs, errors, ingest_started, warnings, space=space_fields
     )
 
 
@@ -428,7 +439,7 @@ async def document_update(
     documents=None,
     space_id="",
 ):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     if documents is not None:
         if not 1 <= len(documents) <= MAX_MCP_BATCH_DOCS:
             raise McpRuntimeError("invalid_arguments", "documents 需为 1..5 篇")
@@ -503,12 +514,12 @@ async def document_update(
         replaced = replaced_ids[0] if len(items) == 1 else replaced_ids
     return _write_result(
         docs, errors, ingest_started, warnings, count_key="updated", replaced=replaced,
-        space=await _space_fields(sid),
+        space=space_fields,
     )
 
 
 async def document_reparse(ctx: McpContext, *, dataset_id, document_id, space_id=""):
-    sid = space_id or None
+    sid, space_fields = await _space_scope(space_id)
     # 先确认数据集存在 —— 否则未知 dataset 会被 `_find_document` 报成「文档不存在」.
     await _require_dataset(dataset_id, space_id=sid)
     result = await _call(
@@ -539,7 +550,7 @@ async def document_reparse(ctx: McpContext, *, dataset_id, document_id, space_id
             }
         ],
         "errors": [],
-        **await _space_fields(sid),
+        **space_fields,
     }
 
 
@@ -549,7 +560,7 @@ async def document_reparse(ctx: McpContext, *, dataset_id, document_id, space_id
 
 
 async def document_write_ticket(ctx: McpContext, *, dataset_id, space_id=""):
-    sid = space_id or None
+    sid, _ = await _space_scope(space_id)
     await _require_dataset(dataset_id, space_id=sid)
     base = (await resolve_public_base()).strip().rstrip("/")
     if not base:
