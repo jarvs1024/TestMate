@@ -16,6 +16,21 @@
         <span class="rf-status" :class="`s-${rfStatus}`" v-if="rfStatus">
           <span class="dot"></span>{{ rfMsg }}
         </span>
+        <!-- 用户空间切换: 概览/数据集/文档/操作全部跟随 -->
+        <span class="kb-space">
+          <span class="kb-space-lbl">用户空间</span>
+          <select
+            data-test="kb-space-select"
+            class="kb-sel"
+            :value="kbSpaceStore.currentId"
+            :disabled="!kbSpaceStore.spaces.length"
+            @change="onSpaceChange(($event.target as HTMLSelectElement).value)">
+            <option v-if="!kbSpaceStore.spaces.length" value="">未配置空间</option>
+            <option v-for="s in kbSpaceStore.spaces" :key="s.id" :value="s.id">
+              {{ s.name }}{{ s.is_default ? '（默认）' : '' }}
+            </option>
+          </select>
+        </span>
       </h2>
       <div class="stats">
         <div class="stat"><div class="num">{{ datasets.length }}</div><div class="lbl">数据集</div></div>
@@ -380,8 +395,20 @@
                MouseEvent 当成 page 参数传进去, 页码直接变成 NaN -->
           <button class="reload" @click="loadAudits()" :disabled="auditLoading">↻ 刷新</button>
         </h2>
-        <!-- ⚠️ 总条数得说清楚 —— 这是 admin 的治理视图, 要知道一共发生过多少事 -->
-        <span class="ds-count" v-if="auditTotal">共 {{ auditTotal }} 条</span>
+        <div class="ds-tools">
+          <!-- ⚠️ 空间筛选**独立于**页面当前切换到的空间 —— 治理视角常要跨空间看 -->
+          <select
+            v-model="auditSpace"
+            data-test="kb-audit-space"
+            class="kb-sel"
+            title="按用户空间筛选操作记录"
+            @change="loadAudits(1)">
+            <option value="">全部空间</option>
+            <option v-for="s in kbSpaceStore.spaces" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+          <!-- ⚠️ 总条数得说清楚 —— 这是 admin 的治理视图, 要知道一共发生过多少事 -->
+          <span class="ds-count" v-if="auditTotal">共 {{ auditTotal }} 条</span>
+        </div>
       </div>
       <div v-if="auditError" class="empty err">
         操作记录加载失败：{{ auditError }}
@@ -394,13 +421,14 @@
         <table class="ds-tbl">
           <thead>
             <tr>
-              <th>时间</th><th>谁</th><th>动作</th><th>数据集</th><th>文档</th><th>大小</th><th>结果</th>
+              <th>时间</th><th>谁</th><th>空间</th><th>动作</th><th>数据集</th><th>文档</th><th>大小</th><th>结果</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="a in audits" :key="a.id">
               <td class="mono">{{ fmtIso(a.created_at) || '—' }}</td>
               <td class="mono">{{ a.actor_name || '—' }}</td>
+              <td>{{ a.space_name || '—' }}</td>
               <td><span class="run-badge" :class="a.error ? 'run-fail' : 'run-done'">{{ auditActionLabel(a.action) }}</span></td>
               <td>{{ a.dataset_name || a.dataset_id || '—' }}</td>
               <td class="nm"><span class="doc-name">{{ a.doc_name || '—' }}</span></td>
@@ -408,10 +436,10 @@
               <td class="mono" :class="{ 'dt-err': a.error }" :title="a.error">{{ a.error ? '失败' : '成功' }}</td>
             </tr>
             <tr v-if="!audits.length && !auditLoading">
-              <td colspan="7" class="empty">还没有操作记录</td>
+              <td colspan="8" class="empty">还没有操作记录</td>
             </tr>
             <tr v-if="auditLoading">
-              <td colspan="7" class="empty">加载中…</td>
+              <td colspan="8" class="empty">加载中…</td>
             </tr>
           </tbody>
         </table>
@@ -762,6 +790,7 @@ import {
 } from '@/api/kb';
 import { useThemeStore } from '@/stores/theme';
 import { useUserStore } from '@/stores/user';
+import { useKbSpaceStore } from '@/stores/kbSpace';
 import CapabilityShell from '@/components/CapabilityShell.vue';
 import {
   fmtSize, fmtTime, fmtIso, fmtChunkMethod, docIcon,
@@ -789,6 +818,16 @@ const canWrite = computed(() => {
  *    所以门槛更高, 而且前端还要**输入库名**二次确认.
  */
 const isAdmin = computed(() => userStore.user?.role === 'admin');
+
+const kbSpaceStore = useKbSpaceStore();
+/**
+ * 空间切换代次.
+ *
+ * ⚠️ 切换空间后立刻重拉, 但**切换前发出的请求还在飞** —— 它们回来时会把
+ *    旧空间的数据写进页面 (概览数字对、数据集却是上一个空间的). 每次切换
+ *    自增, 请求回来时比对代次, 对不上就丢弃.
+ */
+const spaceEpoch = ref(0);
 
 const datasets = ref<KbDataset[]>([]);
 const loading = ref(false);
@@ -931,6 +970,7 @@ async function loadDocs(datasetId: string, force = false, silent = false) {
   //    也不该把文档列表清空 (网络抖一下, 用户看着文档全没了, 更慌).
   //    静默失败 → 保留上一次的数据, 等下一轮.
   if (!force && docsByDataset.value[datasetId]) return; // 已缓存, 不重复拉
+  const epoch = spaceEpoch.value;
   docLoadingByDs.value[datasetId] = true;
   try {
     // RAGFlow 单页上限 100, 分页拿全量用于准确汇总 totalSize
@@ -944,9 +984,11 @@ async function loadDocs(datasetId: string, force = false, silent = false) {
       if (!r.docs.length) break;
       all.push(...r.docs);
     }
+    if (epoch !== spaceEpoch.value) return;   // 切换过空间 —— 别把旧空间的文档写进来
     docsByDataset.value[datasetId] = all;
     delete docErrorByDs.value[datasetId];   // 这次成功了 —— 撤掉上次的错误
   } catch (e: any) {
+    if (epoch !== spaceEpoch.value) return;
     if (!silent) {
       // ⚠️ **不要把列表清空** (2026-10-29 整改) ——
       //    以前这里 `docsByDataset[datasetId] = []`, 表格于是显示「暂无文档」,
@@ -1571,6 +1613,30 @@ const auditPage = ref(1);
 const auditPageSize = ref(10);
 const auditTotal = ref(0);
 const auditPages = ref(1);
+// ⚠️ 空 = 全部空间 —— 跟页面当前切换到的空间**无关** (治理视图要能跨空间看)
+const auditSpace = ref('');
+
+/**
+ * 切换用户空间: 保存选择 → 清空所有按空间取到的数据 → 重拉.
+ *
+ * ⚠️ 清缓存是必须的 —— 不清的话 loadDocs 会命中旧空间的缓存, 表里还是旧文档.
+ */
+async function onSpaceChange(id: string) {
+  if (!id || id === kbSpaceStore.currentId) return;
+  if (!kbSpaceStore.switchTo(id)) return;
+  spaceEpoch.value += 1;
+  datasets.value = [];
+  docsByDataset.value = {};
+  docLoadingByDs.value = {};
+  docErrorByDs.value = {};
+  expandedId.value = '';
+  rfStatus.value = '';
+  rfMsg.value = '';
+  audits.value = [];
+  await loadAll();
+  void warmupAllDocs(true);
+  if (isAdmin.value) await loadAudits(1);
+}
 
 function auditActionLabel(a: string): string {
   // ⚠️ 2026-10-29: **delete 和 delete_doc 要分开** ——
@@ -1706,7 +1772,9 @@ async function loadAudits(page?: number) {
   auditLoading.value = true;
   auditError.value = '';
   try {
-    const r = await listKbAudits(auditPage.value, auditPageSize.value);
+    const r = await listKbAudits(
+      auditPage.value, auditPageSize.value, auditSpace.value || undefined,
+    );
     audits.value = r.items || [];
     // ⚠️ 这里再做一次兜底 —— 测试里 mock 掉的是整个 listKbAudits,
     //    api 层那套归一化不会跑, 组件自己也得扛住缺字段的情况
@@ -1789,6 +1857,7 @@ async function retryChunks() {
 
 // === 数据加载 ===
 async function loadAll() {
+  const epoch = spaceEpoch.value;
   loading.value = true;
   dsError.value = '';
   // ⚠️ **健康检查跟列表加载要分开 try** (2026-10-29 整改) ——
@@ -1797,15 +1866,18 @@ async function loadAll() {
   //    **可 `/kb/datasets` 压根没被请求过**. 用户以为知识库挂了, 其实只是探针抖了.
   try {
     const h = await kbHealth({ silent: true });
+    if (epoch !== spaceEpoch.value) return;   // 切换过空间 —— 这是旧响应
     rfStatus.value = h.status as any;
     rfMsg.value = h.message || h.status;
   } catch (e: any) {
+    if (epoch !== spaceEpoch.value) return;
     // ⚠️ 探针失败只把徽标置灰, **不能**因此不加载列表
     rfStatus.value = 'warn';
     rfMsg.value = '健康检查失败（列表仍会加载）';
   }
   try {
     const r = await listDatasets({ silent: true });
+    if (epoch !== spaceEpoch.value) return;
     datasets.value = r.items;
     // 清掉已展开 dataset 不存在的 docs
     const keep = new Set(r.items.map(x => x.id));
@@ -1834,8 +1906,10 @@ async function loadAll() {
  *    这里刷的是纯列表接口, 代价小.
  */
 async function reloadDatasets() {
+  const epoch = spaceEpoch.value;
   try {
     const r = await listDatasets({ silent: true });
+    if (epoch !== spaceEpoch.value) return;
     datasets.value = r.items;
   } catch {
     // 静默 —— 计数只是暂时不准, 不该因此打断用户手上的事
@@ -1858,6 +1932,13 @@ async function warmupAllDocs(force = false) {
 }
 
 onMounted(async () => {
+  // 空间列表要先拿到 —— 请求头里的 X-KB-Space 来自 localStorage, 这一步负责
+  // 校验「存着的 id 是否还有效」 (空间被删了就退回默认空间, 否则整页 404).
+  try {
+    await kbSpaceStore.load();
+  } catch {
+    // 空间列表失败不阻塞页面: 没头 = 默认空间, 跟改造前行为一致
+  }
   await Promise.allSettled([
     loadAll(),
     loadShareConfig(),
@@ -1875,6 +1956,9 @@ onMounted(async () => {
 .kb { display: flex; flex-direction: column; gap: 10px; }
 .card-overview { padding: 14px 18px; }
 .card-overview h2 { margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+/* 空间切换器贴标题行右侧; 状态徽标在它左边 */
+.kb-space { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.kb-space-lbl { font-size: 11px; color: var(--ink-500); }
 .card-overview .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .card-overview .stat { text-align: center; padding: 8px 6px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 8px; }
 .card-overview .num { font-size: 20px; font-weight: 800; font-family: var(--font-mono); line-height: 1; letter-spacing: -0.5px; background: var(--primary-grad-text); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; }
@@ -1933,6 +2017,11 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900);
 .pg-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
 .pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .pg-size { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.kb-sel {
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+  color: var(--ink-700); font-size: 12px; padding: 3px 6px; font-family: inherit;
+  cursor: pointer;
+}
 .pg-select {
   border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
   color: var(--ink-700); font-size: 12px; padding: 3px 6px; font-family: inherit;

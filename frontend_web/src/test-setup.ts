@@ -28,6 +28,22 @@
  *   「localStorage 不可用时退化成会话级 id」那条用例会假绿.
  */
 
+import { beforeEach } from 'vitest';
+import { createPinia, setActivePinia } from 'pinia';
+
+/**
+ * 每个用例一套**全新的** pinia.
+ *
+ * ⚠️ 组件里直接 `useXxxStore()` 的用例 (比如知识库页的空间 store) 不需要
+ *    自己在 mount options 里装 pinia —— 没有 active pinia 会直接抛
+ *    "getActivePinia was called with no active Pinia", 整个 suite 红.
+ * ⚠️ 用例自己再 `setActivePinia(...)` 也没问题: setup 的 beforeEach 先跑,
+ *    用例里的覆盖在后面.
+ */
+beforeEach(() => {
+  setActivePinia(createPinia());
+});
+
 /** 内存版 Storage —— 完整实现 Web Storage 接口 (含 clear, 浏览器语义) */
 class MemoryStorage implements Storage {
   private readonly _map = new Map<string, string>();
