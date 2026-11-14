@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.security import decode_token
-from app.api import auth, kb, machines, notify, health, agents, settings as settings_api, review_agent, extensions, software, platform
+from app.api import auth, kb, kb_spaces, machines, notify, health, agents, settings as settings_api, review_agent, extensions, software, platform
 from app.api import mcp as mcp_api
 from app.integrations import api as integrations_api
 from app.api.agents import seed_agents
@@ -274,6 +274,7 @@ async def _request_logging(request: Request, call_next):
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(machines.router, prefix="/api/v1/machines", tags=["machines"])
+app.include_router(kb_spaces.router, prefix="/api/v1/kb/spaces", tags=["kb-spaces"])
 app.include_router(kb.router, prefix="/api/v1/kb", tags=["kb"])
 app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
