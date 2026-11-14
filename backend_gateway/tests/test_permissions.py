@@ -46,7 +46,6 @@ async def test_normal_user_cannot_read_credentials(client, stranger_user):
     for k in (
         "dingtalk.extensions_webhook",     # URL 里带 access_token
         "dingtalk.review_webhook",
-        "ragflow.api_key",
         "review_agent.api_token",
         "dingtalk.extensions_secret",
         "dingtalk.review_secret",
@@ -74,7 +73,7 @@ async def test_admin_still_sees_credentials(client, admin_user):
     keys = _schema_keys(r)
     assert "dingtalk.extensions_webhook" in keys
     assert "dingtalk.review_webhook" in keys
-    assert "ragflow.api_key" in keys
+    assert "review_agent.api_token" in keys
 
 
 async def test_normal_user_cannot_change_settings(client, stranger_user):

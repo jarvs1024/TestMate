@@ -244,12 +244,12 @@ async def test_create_agent_rejects_unknown_enum_values(client, admin_user):
 # ---------- ⑩ secret 空值不改 ----------
 
 async def test_empty_secret_value_does_not_wipe_credential(client, admin_user):
-    """PUT secret 项传空值 = 不改 —— 原来会把 RAGFlow api_key 直接清空."""
+    """PUT secret 项传空值 = 不改 —— 原来会把凭据直接清空."""
     from tests.conftest import set_setting
 
-    await set_setting("ragflow.api_key", "super-secret-key")
+    await set_setting("review_agent.api_token", "super-secret-key")
     r = await client.put(
-        "/api/v1/settings/ragflow.api_key",
+        "/api/v1/settings/review_agent.api_token",
         json={"value": "", "update_secret": True},
         headers={"Authorization": f"Bearer {admin_user['token']}"},
     )
@@ -257,16 +257,16 @@ async def test_empty_secret_value_does_not_wipe_credential(client, admin_user):
 
     from app.core.settings_store import get
 
-    assert (await get("ragflow.api_key", "")) == "super-secret-key", "空值把凭据清空了"
+    assert (await get("review_agent.api_token", "")) == "super-secret-key", "空值把凭据清空了"
 
 
 async def test_non_empty_secret_value_is_written(client, admin_user):
     from app.core.settings_store import get
 
     r = await client.put(
-        "/api/v1/settings/ragflow.api_key",
+        "/api/v1/settings/review_agent.api_token",
         json={"value": "new-key-123", "update_secret": True},
         headers={"Authorization": f"Bearer {admin_user['token']}"},
     )
     assert r.status_code == 200, r.text
-    assert (await get("ragflow.api_key", "")) == "new-key-123"
+    assert (await get("review_agent.api_token", "")) == "new-key-123"

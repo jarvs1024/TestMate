@@ -43,6 +43,10 @@ async def lifespan(app: FastAPI):
     await init_db()
     await seed_agents()
     await seed_defaults()  # 把 .env 里的值首次落库, 后续 UI 改 DB
+    # 多用户空间: 无空间时把旧 ragflow.api_key 迁成默认空间 (幂等)
+    from app.core import ragflow_spaces
+
+    await ragflow_spaces.ensure_legacy_space()
 
     # 内置连接器 (扩展库助手 + 知识库助手) —— 幂等种子, 见 app/core/builtin_assets.py
     from app.core.builtin_assets import ensure_builtin_assets

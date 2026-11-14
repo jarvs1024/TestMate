@@ -65,6 +65,8 @@ _TABLES = (
     "kb_audits",
     "kb_dataset_meta",
     "kb_document_meta",
+    # 知识库用户空间 (多 key)
+    "ragflow_spaces",
 )
 
 

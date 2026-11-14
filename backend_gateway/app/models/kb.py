@@ -27,6 +27,10 @@ class KbAudit(Base):
     __tablename__ = "kb_audits"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    #: RAGFlow 用户空间 (多 key 改造后): 空串 = 改造前的老记录
+    space_id: Mapped[str] = mapped_column(String(32), nullable=False, default="", index=True)
+    #: 空间名快照 —— 空间被删/改名后, 审计里仍能看出当时是哪个空间
+    space_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     dataset_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
     dataset_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     document_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
@@ -44,6 +48,8 @@ class KbAudit(Base):
     __table_args__ = (
         # ⚠️ 查"某个数据集最近发生了什么" —— 页面上的审计列表按这个顺序查
         Index("ix_kb_audits_dataset_created", "dataset_id", "created_at"),
+        # 按用户空间筛操作记录
+        Index("ix_kb_audits_space_created", "space_id", "created_at"),
     )
 
 

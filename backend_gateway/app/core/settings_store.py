@@ -134,14 +134,6 @@ SETTING_SCHEMA: list[dict] = [
         "is_secret": False,
     },
     {
-        "key": "ragflow.api_key",
-        "category": "data-source",
-        "value_type": "secret",
-        "default": settings.RAGFLOW_API_KEY,
-        "description": "RAGFlow API Key (ragflow-xxxxx)",
-        "is_secret": True,
-    },
-    {
         "key": "review_agent.base_url",
         "category": "data-source",
         "value_type": "url",
