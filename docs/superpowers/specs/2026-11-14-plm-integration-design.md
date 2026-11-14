@@ -84,13 +84,23 @@ Web 端把请求体 zlib 压缩（`CompressionStream('deflate')`）；服务端�
    - 所有下拉值必须命中选项 id，传中文名会被拒绝；
    - 拒绝信息列出中文属性名与合法选项（如 `严重程度(quesSever=9) 合法: 1=致命, 2=严重, ...`），
      `plm_issue_preview` 同时返回 `missing_fields` / `invalid_fields` 明细。
-5. 预占单号：`allowCreateQuestion`（失败可继续）→ `getLcDetail`（取 `schId`，失败 0.5s 后重试一次）→
+5. 问题描述（`description_template`，默认 `standard`）：
+   - `standard`：复用 PingCode/AiTestX 同一份 10 段模板渲染 `description_fields`
+     （问题描述 / 测试环境 / 版本信息 / 测试仪器 / 软件工具 / 被测设备 / 测试用例信息 / 定位履历 /
+     初步分析结论 / 测试日志），未填字段渲染为 `-`；
+   - 渲染后按 PLM 富文本归一化：10 等分栅格（标签 `colspan=2`、内容 `colspan=8`、段标题 `colspan=10`）、
+     字号 12px + `line-height:1.65`、换行转 `<br>`，与 AiTestX `applyTableGridForEqualCols` /
+     `plmNormalizeDescHtml` 对齐；
+   - `custom`：直接使用 `description` 原文；省略时按标题生成段落；
+   - 其它取值拒绝（`invalid_arguments`），`plm_issue_preview` 的 payload 返回
+     `description_template`、`description_text` 与渲染后的 `values.description`。
+6. 预占单号：`allowCreateQuestion`（失败可继续）→ `getLcDetail`（取 `schId`，失败 0.5s 后重试一次）→
    `getCode`，单号必须匹配 `^WSD\d{8,}$`。
-6. 单号查重：列表中已存在同 `code` 时中止（`plm_duplicate_code`），避免重复提单。
-7. 附件（可选）：先 `bill/add` 取槽位，再上传；任一失败即中止，不保存半成品。
-8. `bill/save` 提交完整字段（项目关联对象、流程模板、状态、处理人、附件槽位等）。
-9. 保存后反查：按单号查列表，且 `raisePerson` 必须一致；否则 `plm_verify_failed`。
-10. 结果返回单号、id、可打开链接、项目、处理人、状态、附件数与是否验证通过。
+7. 单号查重：列表中已存在同 `code` 时中止（`plm_duplicate_code`），避免重复提单。
+8. 附件（可选）：先 `bill/add` 取槽位，再上传；任一失败即中止，不保存半成品。
+9. `bill/save` 提交完整字段（项目关联对象、流程模板、状态、处理人、附件槽位等）。
+10. 保存后反查：按单号查列表，且 `raisePerson` 必须一致；否则 `plm_verify_failed`。
+11. 结果返回单号、id、可打开链接、项目、处理人、状态、附件数与是否验证通过。
 
 ## 6. 错误码
 
@@ -115,6 +125,7 @@ Web 端把请求体 zlib 压缩（`CompressionStream('deflate')`）；服务端�
 | `backend_gateway/app/integrations/plm/session_manager.py` | 登录态缓存、单飞、失败冷却、重登重试 |
 | `backend_gateway/app/mcp/plm/normalize.py` | 记录到稳定输出的纯函数 |
 | `backend_gateway/app/mcp/plm/schema.py` | 建单字段、选项与严格校验 |
+| `backend_gateway/app/mcp/plm/templates.py` | 标准 10 段描述模板 + PLM 栅格/字号归一化 |
 | `backend_gateway/app/mcp/plm/adapter.py` | 14 个 handler 与接口实现 |
 | `backend_gateway/app/mcp/plm/tools.py` / `server.py` | ToolSpec 与 FastMCP 注册 |
 | `backend_gateway/tests/test_plm_mcp.py` | schema/scope、只读适配、严格建单、幂等、附件 |

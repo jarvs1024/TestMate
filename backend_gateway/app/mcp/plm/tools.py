@@ -67,9 +67,31 @@ _CREATE_PROPERTIES: dict[str, Any] = {
     "attribute2": {"type": "string", "minLength": 1, "description": "固件版本 (必填)"},
     "genyinfenxi": {"type": "string", "description": "产品型号, 省略时默认 NA"},
     "attribute1": {"type": "string", "description": "产品类别, 省略时默认 NA"},
+    "description_template": {
+        "type": "string",
+        "enum": ["standard", "custom"],
+        "default": "standard",
+        "description": (
+            "问题描述模板: standard=默认标准 10 段模板 (问题描述/测试环境/版本信息/测试仪器/"
+            "软件工具/被测设备/测试用例信息/定位履历/初步分析结论/测试日志); "
+            "custom=直接使用 description 原文"
+        ),
+    },
     "description": {
         "type": "string",
-        "description": "问题描述 (支持 HTML); 省略时用标题生成段落",
+        "description": "自定义问题描述 (支持 HTML), 仅 description_template=custom 时生效; standard 下忽略",
+    },
+    "description_fields": {
+        "type": "object",
+        "description": (
+            "standard 模板字段: featureModule 测试特性/开发模块, preconditions 预置条件, "
+            "steps 关键操作步骤, expectedResult 预期效果, failurePhenomenon 测试失败现象, "
+            "hostIp/hostSn/hostOs/hostSsdTopology 测试环境, fpgaVersion/fwVersion/driverVersion 版本信息, "
+            "instrumentName/instrumentIpSn/instrumentVersion 测试仪器, softwareTools 软件工具, "
+            "hwVersion/dutFwVersion/dutSn 被测设备, caseId/scriptInfo/scriptRepo/scriptModifications 测试用例信息, "
+            "analysisTrace 定位履历, analyzer/initialReason/occurTime 初步分析结论, "
+            "logSerial/logTrace/logOs/logTool 测试日志; 未填字段渲染为 -"
+        ),
     },
     "attachments": {"type": "array", "items": _ATTACHMENT, "maxItems": 3},
     "confirm": {"type": "boolean", "description": "必须为 true 才会提交"},
@@ -275,6 +297,7 @@ WRITE_SPECS = (
         name="plm_issue_preview",
         description=(
             "校验并组装建单 payload, 不提交。用于提交前确认项目已关联、必填字段与选项合法。"
+            "问题描述默认使用标准 10 段模板 (description_fields 渲染), description_template=custom 时改用 description 原文。"
             "字段同 plm_issue_create (confirm 除外)。"
         ),
         input_schema=_object(
@@ -290,6 +313,7 @@ WRITE_SPECS = (
             "创建 PLM 问题单。严格校验: 必须关联项目 (project_id/project_code)、问题类型必须有效并能预占 WSD 单号、"
             "必须指定处理人 raisePerson; 必填属性必须填写且下拉选项必须合规, 否则直接拒绝; "
             "保存后会反查单号与处理人, 未落库或处理人未写入时返回 plm_verify_failed。"
+            "问题描述默认按标准 10 段模板渲染 description_fields (未填字段为 -), 需要原文时传 description_template=custom。"
             "先调用 plm_issue_get_create_meta 获取字段与选项 id; 必须传 confirm=true; "
             "client_request_id 用于 10 分钟内幂等。"
         ),

@@ -712,6 +712,7 @@ def _create_args(**overrides):
         "quesSever": "2",
         "attribute2": "FW1.0",
         "description": "<p>现象</p>",
+        "description_template": "custom",
         "confirm": True,
     }
     args.update(overrides)
@@ -796,6 +797,88 @@ async def test_preview_accepts_project_code_without_project_id(bound_user, fake_
     assert data["ok"] is True
     assert "project_id" not in data["missing_required"]
     assert data["payload"]["project_resolved"] is True
+
+
+def _standard_fields() -> dict[str, str]:
+    return {
+        "featureModule": "掉电测试",
+        "preconditions": "设备已连接",
+        "steps": "1. 上电\n2. 掉电",
+        "expectedResult": "系统正常",
+        "failurePhenomenon": "FBB 返回异常",
+        "hostIp": "10.20.24.30",
+        "caseId": "HIMA3361-8077",
+    }
+
+
+def _standard_args(**overrides):
+    args = _create_args(description=None, description_fields=_standard_fields())
+    args.pop("description_template", None)
+    args.update(overrides)
+    return args
+
+
+async def test_preview_defaults_to_standard_description_template(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_question(ctx, **_standard_args())
+
+    assert data["ok"] is True
+    payload = data["payload"]
+    assert payload["description_template"] == "standard"
+    html = payload["values"]["description"]
+    assert "1. 问题描述" in html
+    assert "10. 测试日志" in html
+    assert "掉电测试" in html
+    assert "FBB 返回异常" in html
+    assert "HIMA3361-8077" in html
+
+
+async def test_preview_standard_template_uses_plm_grid_and_fonts(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_question(ctx, **_standard_args())
+
+    html = data["payload"]["values"]["description"]
+    assert "<colgroup>" + "<col>" * 10 + "</colgroup>" in html
+    assert 'colspan="2" width="150"' in html
+    assert 'colspan="8" style="background-color:#ffffff' in html
+    assert 'colspan="10" style="background-color:#e5e7eb' in html
+    assert "font-size:12px;line-height:1.65;" in html
+    assert "font-size:11px" not in html
+
+
+async def test_preview_standard_template_renders_missing_fields_as_dash(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_question(ctx, **_standard_args(description_fields={}))
+
+    html = data["payload"]["values"]["description"]
+    assert "10. 测试日志" in html
+    assert "用例执行成功" in html
+    assert "> -</td>" in html or ">-</td>" in html
+
+
+async def test_preview_custom_template_keeps_raw_description(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.preview_question(ctx, **_create_args())
+
+    assert data["payload"]["description_template"] == "custom"
+    assert data["payload"]["values"]["description"] == "<p>现象</p>"
+
+
+async def test_preview_rejects_unknown_description_template(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.preview_question(
+                ctx, **_create_args(description_template="pretty")
+            )
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert "standard" in str(excinfo.value)
+    assert "custom" in str(excinfo.value)
 
 
 async def test_create_requires_confirm(bound_user, fake_api):
@@ -913,6 +996,25 @@ async def test_create_happy_path_verifies_code_and_handler(bound_user, fake_api)
     assert fields["projectJD"] == "3"
     assert fields["attribute2"] == "FW1.0"
     assert fields["qusDescribe"] == "<p>现象</p>"
+
+
+async def test_create_defaults_to_standard_description_template(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_question_routes(fake_api)
+    _install_create_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        await adapter.create_question(
+            ctx, **_standard_args(client_request_id="req-std")
+        )
+
+    html = fake_api.saved_fields["qusDescribe"]
+    assert "1. 问题描述" in html
+    assert "10. 测试日志" in html
+    assert "掉电测试" in html
+    assert "关键操作步骤" in html
+    assert "1. 上电<br>2. 掉电" in html
+    assert 'colspan="8" style="background-color:#ffffff' in html
+    assert "font-size:12px;line-height:1.65;" in html
 
 
 async def test_create_reports_server_assigned_id(bound_user, fake_api):

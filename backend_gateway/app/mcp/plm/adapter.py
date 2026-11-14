@@ -29,7 +29,7 @@ from app.integrations.plm import client, session_manager
 from app.integrations.redis import redis_client
 from app.mcp.common.context import McpContext
 from app.mcp.common.errors import McpRuntimeError
-from app.mcp.plm import normalize, schema
+from app.mcp.plm import normalize, schema, templates
 
 PROVIDER = "plm"
 DEFAULT_DOWNLOAD_BYTES = 20 * 1024 * 1024
@@ -1243,12 +1243,18 @@ async def _preview_payload(
         projects, str(args.get("project_id") or ""), str(args.get("project_code") or "")
     )
     result = schema.validate_create(args, options)
+    template = _description_template(args)
+    description_html = _description_html(args)
+    values = _create_values(args)
+    values["description"] = description_html
     payload = {
         "project_id": project["id"] if project else (args.get("project_id") or ""),
         "project_code": project["code"] if project else (args.get("project_code") or ""),
         "project_name": project["name"] if project else "",
         "project_resolved": project is not None,
-        "values": _create_values(args),
+        "description_template": template,
+        "description_text": normalize.html_to_text(description_html),
+        "values": values,
         "attachments": len(args.get("attachments") or []),
     }
     return result, project, options, remote, payload
@@ -1559,7 +1565,27 @@ async def _reserve_code(ctx: McpContext, question_type_id: str) -> dict[str, Any
     }
 
 
+DESCRIPTION_TEMPLATES = ("standard", "custom")
+
+
+def _description_template(args: dict[str, Any]) -> str:
+    template = str(args.get("description_template") or "standard").strip()
+    if template not in DESCRIPTION_TEMPLATES:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            f"description_template 不支持 {template}; "
+            "合法值: standard (默认标准 10 段模板)、custom (自定义 description)",
+        )
+    return template
+
+
 def _description_html(args: dict[str, Any]) -> str:
+    template = _description_template(args)
+    if template == "standard":
+        fields = args.get("description_fields")
+        if fields is not None and not isinstance(fields, dict):
+            raise McpRuntimeError("invalid_arguments", "description_fields 必须是对象")
+        return templates.render_description(fields)
     raw = str(args.get("description") or args.get("qusDescribe") or "").strip()
     if raw:
         return raw
@@ -1577,6 +1603,7 @@ def _build_save_fields(
     biz_user: str,
     slots: list[str],
     uploaded: list[dict[str, Any]],
+    description_html: str,
 ) -> dict[str, Any]:
     now = datetime.now()
     values = _create_values(args)
@@ -1593,7 +1620,7 @@ def _build_save_fields(
         "name": str(args.get("name") or ""),
         "code": reserved["code"],
         "id": reserved["id"],
-        "qusDescribe": _description_html(args),
+        "qusDescribe": description_html,
         "reviewerPerson": raise_person,
         "reviewerPerson_name": raise_name,
         "raisePerson": raise_person,
@@ -1784,6 +1811,7 @@ async def create_question(
         )
     args = {**args, "project_id": project["id"]}
     _validate_or_raise(args, options, "")
+    description_html = _description_html(args)
 
     question_type_id = str(args.get("questionCgrId") or "")
     question_type_name = next(
@@ -1822,6 +1850,7 @@ async def create_question(
         biz_user=biz_user,
         slots=slots,
         uploaded=uploaded,
+        description_html=description_html,
     )
     received = await _save(ctx, fields, org_id)
 
