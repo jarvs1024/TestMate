@@ -37,11 +37,11 @@ class FakeRagflow:
         self.deleted: list[str] = []
         self.fail_delete = False
 
-    async def list_datasets(self, page=1, page_size=50):
+    async def list_datasets(self, page=1, page_size=50, space_id=None):
         return list(self.datasets.values())
 
     async def create_dataset(self, name, description="", chunk_method="naive",
-                             embedding_model="", permission="me"):
+                             embedding_model="", permission="me", space_id=None):
         did = f"ds-new-{len(self.created) + 1}"
         ds = {
             "id": did, "name": name, "description": description,
@@ -52,7 +52,7 @@ class FakeRagflow:
         self.datasets[did] = ds
         return ds
 
-    async def upload_documents(self, dataset_id, files):
+    async def upload_documents(self, dataset_id, files, space_id=None):
         out = []
         for name, data, _ctype in files:
             doc = {
@@ -67,17 +67,17 @@ class FakeRagflow:
             out.append(doc)
         return out
 
-    async def ingest_documents(self, doc_ids, run="1", delete=False):
+    async def ingest_documents(self, doc_ids, run="1", delete=False, space_id=None):
         return True
 
     async def list_documents(self, dataset_id, page=1, page_size=30,
-                             orderby="create_time", desc=True, keywords="", run=""):
+                             orderby="create_time", desc=True, keywords="", run="", space_id=None):
         # ⚠️ 这个**必须**打桩 —— 不打的话会走真的 RAGFlow, 拿到的是线上真库的文档,
         #    跟这里 fake 出来的 doc id 对不上, 断言就成了"查无此文"
         docs = [d for d in self.docs if d.get("_ds") == dataset_id]
         return {"docs": docs, "total": len(docs)}
 
-    async def delete_dataset(self, dataset_id):
+    async def delete_dataset(self, dataset_id, space_id=None):
         if self.fail_delete:
             raise RuntimeError("ragflow 炸了")
         self.deleted.append(dataset_id)

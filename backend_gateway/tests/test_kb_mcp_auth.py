@@ -97,7 +97,7 @@ async def _oauth_token(user: User, scopes=("kb:read",)) -> str:
 
 @asynccontextmanager
 async def _app(monkeypatch):
-    async def list_datasets(page=1, page_size=50):
+    async def list_datasets(page=1, page_size=50, space_id=None):
         return [{"id": "ds-1", "name": "技术文档", "description": "",
                  "chunk_method": "naive", "embedding_model": "emb",
                  "permission": "me", "document_count": 0, "chunk_count": 0}]

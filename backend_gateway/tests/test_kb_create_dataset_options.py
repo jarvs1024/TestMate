@@ -37,11 +37,11 @@ class FakeRagflow:
         #: 模拟「补语言那一步失败」
         self.fail_update = False
 
-    async def list_datasets(self, page=1, page_size=50):
+    async def list_datasets(self, page=1, page_size=50, space_id=None):
         return []
 
     async def create_dataset(self, name, description="", chunk_method="naive",
-                             embedding_model="", permission="me"):
+                             embedding_model="", permission="me", space_id=None):
         ds = {
             "id": f"ds-new-{len(self.created) + 1}",
             "name": name,
@@ -62,7 +62,7 @@ class FakeRagflow:
         return ds
 
     async def update_dataset(self, dataset_id, name=None, description=None,
-                             chunk_method=None, language=None):
+                             chunk_method=None, language=None, space_id=None):
         if self.fail_update:
             raise RuntimeError("ragflow 炸了")
         call = {"dataset_id": dataset_id, "language": language,
@@ -70,7 +70,7 @@ class FakeRagflow:
         self.updated.append(call)
         return {"id": dataset_id, "language": language}
 
-    async def delete_dataset(self, dataset_id):
+    async def delete_dataset(self, dataset_id, space_id=None):
         return True
 
 

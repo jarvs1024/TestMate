@@ -29,7 +29,7 @@ class FakeRagflow:
         self.deleted: list[tuple[str, list[str] | None, bool]] = []
         self.fail = False
 
-    async def list_datasets(self, page=1, page_size=50):
+    async def list_datasets(self, page=1, page_size=50, space_id=None):
         return [
             {"id": "ds-1", "name": "协议文档", "chunk_method": "naive",
              "document_count": 2, "chunk_count": 30},
@@ -44,7 +44,7 @@ class FakeRagflow:
             "total": 2,
         }
 
-    async def delete_documents(self, dataset_id, doc_ids=None, delete_all=False):
+    async def delete_documents(self, dataset_id, doc_ids=None, delete_all=False, space_id=None):
         if self.fail:
             raise RuntimeError("ragflow 炸了")
         self.deleted.append((dataset_id, list(doc_ids) if doc_ids else None, delete_all))

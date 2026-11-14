@@ -37,11 +37,11 @@ class FakeRagflow:
         self.calls: list[dict] = []
         self.next_id = "ds-new"
 
-    async def list_datasets(self, page=1, page_size=50):
+    async def list_datasets(self, page=1, page_size=50, space_id=None):
         return self.datasets
 
     async def create_dataset(self, name, description="", chunk_method="naive",
-                             embedding_model="", permission="me"):
+                             embedding_model="", permission="me", space_id=None):
         self.calls.append({
             "name": name,
             "description": description,
@@ -237,7 +237,7 @@ async def test_duplicate_name_returns_422(client, publisher_user, monkeypatch):
     import app.api.kb as kb_mod
 
     async def _dup(name, description="", chunk_method="naive",
-                   embedding_model="", permission="me"):
+                   embedding_model="", permission="me", **kw):
         raise ValueError(f"已经有一个叫「{name}」的数据集了")
 
     monkeypatch.setattr(kb_mod, "create_dataset", _dup)

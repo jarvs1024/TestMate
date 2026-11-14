@@ -99,12 +99,12 @@ class FakeKB:
         ]
         self.runs = ["RUNNING", "DONE"]
 
-    async def list_datasets(self, page=1, page_size=50):
+    async def list_datasets(self, page=1, page_size=50, space_id=None):
         start = (page - 1) * page_size
         return self.datasets[start:start + page_size]
 
     async def list_documents(self, dataset_id, page=1, page_size=30,
-                             orderby="create_time", desc=True, keywords="", run=""):
+                             orderby="create_time", desc=True, keywords="", run="", space_id=None):
         docs = [d for d in self.docs if not keywords or keywords.lower() in d["name"].lower()]
         return {"docs": docs, "total": len(docs)}
 
@@ -138,7 +138,7 @@ def fake_kb(monkeypatch):
         return {"items": items, "total": len(items), "keywords": keywords,
                 "datasets": [], "truncated": False}
 
-    async def list_doc_chunks(dataset_id, document_id, page=1, page_size=100, keywords=""):
+    async def list_doc_chunks(dataset_id, document_id, page=1, page_size=100, keywords="", space_id=None):
         return {"chunks": [{"id": "c-1", "content": "hello"}], "total": 1,
                 "doc": {"id": document_id, "name": "a.md"}}
 
@@ -146,7 +146,7 @@ def fake_kb(monkeypatch):
         return {"total": 1, "chunks": [{"id": "c-1", "content": "hello",
                 "similarity": 0.9}], "doc_aggs": [], "elapsed_ms": 7}
 
-    async def probe():
+    async def probe(space_id=None):
         return "ok", "RAGFlow 可用"
 
     monkeypatch.setattr(kb_mod, "search_documents", search_documents)

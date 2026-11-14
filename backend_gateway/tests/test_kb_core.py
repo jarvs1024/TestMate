@@ -7,7 +7,7 @@ from tests.test_kb_update_document import FakeRagflow
 
 
 class _PaginatedFake(FakeRagflow):
-    async def list_datasets(self, page=1, page_size=50):
+    async def list_datasets(self, page=1, page_size=50, space_id=None):
         items = list(self.datasets.values())
         start = (page - 1) * page_size
         return items[start:start + page_size]

@@ -38,12 +38,12 @@ class FakeRagflow:
         #: 记录每次 list_documents 传了什么 keywords
         self.calls: list[dict] = []
 
-    async def list_datasets(self, page=1, page_size=50):
+    async def list_datasets(self, page=1, page_size=50, space_id=None):
         if self.list_datasets_fail:
             raise RuntimeError("ragflow 炸了")
         return list(self.datasets.values())
 
-    async def upload_documents(self, dataset_id, files):
+    async def upload_documents(self, dataset_id, files, space_id=None):
         out = []
         for name, data, _ctype in files:
             doc = {"id": f"d-up-{len(self.docs) + 1}", "name": name,
@@ -52,11 +52,11 @@ class FakeRagflow:
             out.append(doc)
         return out
 
-    async def ingest_documents(self, doc_ids, run="1", delete=False):
+    async def ingest_documents(self, doc_ids, run="1", delete=False, space_id=None):
         return True
 
     async def list_documents(self, dataset_id, page=1, page_size=30,
-                             orderby="create_time", desc=True, keywords="", run=""):
+                             orderby="create_time", desc=True, keywords="", run="", space_id=None):
         self.calls.append({"dataset_id": dataset_id, "keywords": keywords, "page": page})
         docs = [d for d in self.docs if d.get("_ds") == dataset_id]
         if keywords:

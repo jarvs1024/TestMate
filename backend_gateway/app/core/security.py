@@ -151,15 +151,18 @@ def create_kb_upload_ticket(
     user_id: int,
     token_version: int,
     dataset_id: str,
+    space_id: str | None = None,
     ttl_seconds: int = KB_UPLOAD_TICKET_TTL,
 ) -> tuple[str, int]:
-    """签发绑定用户 + 数据集的短时上传票，返回 (ticket, expires_in_seconds)。"""
+    """签发绑定用户 + 数据集 (+ 用户空间) 的短时上传票，返回 (ticket, expires_in_seconds)。"""
     expire = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
     payload: dict[str, Any] = {
         "typ": KB_UPLOAD_TICKET_TYPE,
         "uid": int(user_id),
         "tv": int(token_version),
         "ds": dataset_id,
+        #: 空串 = 默认空间 (兼容改造前签出的票)
+        "sid": space_id or "",
         "exp": expire,
     }
     ticket = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)

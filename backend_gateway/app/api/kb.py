@@ -26,7 +26,9 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_user
+from app.core import ragflow_spaces
 from app.core.kb_policy import can_write_kb
+from app.core.ragflow_spaces import RagflowSpaceError
 from app.core.security import decode_kb_upload_ticket
 from app.db.session import AsyncSessionLocal
 from app.core.ragflow_client import (
@@ -55,6 +57,27 @@ MAX_UPLOAD_BYTES = MAX_UPLOAD_FILE_MB * 1024 * 1024
 def _can_write(user: User) -> bool:
     """保留旧函数名，判定统一走 core.kb_policy。"""
     return can_write_kb(user)
+
+
+async def kb_space(request: Request) -> str | None:
+    """解析请求头 ``X-KB-Space``; 空 = 默认空间."""
+    raw = (request.headers.get("X-KB-Space") or "").strip()
+    if not raw:
+        return None
+    try:
+        sp = await ragflow_spaces.resolve(raw)
+    except RagflowSpaceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+    return sp.id if sp else None
+
+
+async def _space_meta(space_id: str | None) -> tuple[str, str]:
+    """(空间 id, 空间名) —— 写成审计快照; 解析不到就空串, 不能因此失败."""
+    try:
+        sp = await ragflow_spaces.resolve(space_id)
+    except RagflowSpaceError:
+        return "", ""
+    return (sp.id, sp.name) if sp else ("", "")
 
 
 #: 知识库文档名的清洗规则 —— **故意比软件包那套宽得多**
@@ -126,6 +149,7 @@ class CreateDatasetIn(BaseModel):
 async def create_kb_dataset(
     payload: CreateDatasetIn,
     user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """新建一个知识库数据集 (代理 RAGFlow POST /datasets).
 
@@ -155,7 +179,7 @@ async def create_kb_dataset(
     emb = (payload.embedding_model or "").strip()
     if not emb:
         try:
-            for d in await list_datasets(page=1, page_size=50):
+            for d in await list_datasets(page=1, page_size=50, space_id=space_id):
                 if d.get("embedding_model"):
                     emb = str(d["embedding_model"])
                     break
@@ -168,6 +192,7 @@ async def create_kb_dataset(
             description=(payload.description or "").strip(),
             chunk_method=chunk_method,
             embedding_model=emb,
+            space_id=space_id,
         )
     except ValueError as e:
         # 重名 / 名称不合法 —— 是用户能自己改的, 不是服务器故障
@@ -188,7 +213,7 @@ async def create_kb_dataset(
     lang_warn = ""
     if ds_id and language:
         try:
-            await update_dataset(ds_id, language=language)
+            await update_dataset(ds_id, language=language, space_id=space_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("set dataset language failed: %s", e)
             lang_warn = f"语言没能设成「{language}」(RAGFlow 拒绝了), 可以稍后在详情里改"
@@ -217,6 +242,7 @@ async def create_kb_dataset(
         action="create", user=user,
         dataset_id=str(ds.get("id") or ""),
         dataset_name=str(ds.get("name") or payload.name),
+        space_id=space_id,
     )
     return result
 
@@ -225,6 +251,7 @@ async def create_kb_dataset(
 async def delete_kb_dataset(
     dataset_id: str,
     user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """删除整个数据集. **admin only**.
 
@@ -244,7 +271,7 @@ async def delete_kb_dataset(
     ds_name, doc_count, chunk_count = "", 0, 0
     try:
         # ⚠️ page_size 只能是 100 以内 —— 传 200 RAGFlow 会返回 code=101 + 空 data
-        for d in await list_datasets(page=1, page_size=100):
+        for d in await list_datasets(page=1, page_size=100, space_id=space_id):
             if str(d.get("id") or "") == dataset_id:
                 ds_name = str(d.get("name") or "")
                 doc_count = int(d.get("document_count") or 0)
@@ -261,18 +288,21 @@ async def delete_kb_dataset(
         raise HTTPException(status_code=404, detail="数据集不存在")
 
     try:
-        await delete_dataset(dataset_id)
+        await delete_dataset(dataset_id, space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("delete_dataset failed")
         await _audit(
             action="delete", user=user, dataset_id=dataset_id,
-            dataset_name=ds_name, error=str(e)[:500],
+            dataset_name=ds_name, error=str(e)[:500], space_id=space_id,
         )
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
     # 本地的归属记录也清掉 —— 库都没了, 归属也就没了
     await _drop_dataset_ownership(dataset_id)
-    await _audit(action="delete", user=user, dataset_id=dataset_id, dataset_name=ds_name)
+    await _audit(
+        action="delete", user=user, dataset_id=dataset_id,
+        dataset_name=ds_name, space_id=space_id,
+    )
     return {
         "ok": True,
         "deleted": {
@@ -323,18 +353,21 @@ async def _clean_dataset_rows(rows: list[dict]) -> list[dict]:
 
 
 async def _dataset_items(
-    page: int = 1, page_size: int = 50, keyword: str = ""
+    page: int = 1,
+    page_size: int = 50,
+    keyword: str = "",
+    space_id: str | None = None,
 ) -> list[dict]:
     """REST 用默认参数；MCP 用分页参数。keyword 模式最多扫 5 页。"""
     try:
         needle = (keyword or "").strip().lower()
         if not needle:
             return await _clean_dataset_rows(
-                await list_datasets(page=page, page_size=page_size)
+                await list_datasets(page=page, page_size=page_size, space_id=space_id)
             )
         matches: list[dict] = []
         for p in range(1, 6):
-            rows = await list_datasets(page=p, page_size=100)
+            rows = await list_datasets(page=p, page_size=100, space_id=space_id)
             matches.extend(await _clean_dataset_rows(rows))
             if len(rows) < 100:
                 break
@@ -351,9 +384,12 @@ async def _dataset_items(
 
 
 @router.get("/datasets")
-async def get_datasets(_user: User = Depends(get_current_user)) -> dict:
+async def get_datasets(
+    _user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
+) -> dict:
     """列出 RAGFlow datasets (代理)."""
-    items = await _dataset_items(page=1, page_size=50)
+    items = await _dataset_items(page=1, page_size=50, space_id=space_id)
     return {"items": items, "total": len(items)}
 
 
@@ -369,12 +405,14 @@ async def get_documents(
     keywords: str = "",
     run: str = "",
     _user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """列出某 dataset 下的 documents (代理 RAGFlow)."""
     try:
         data = await list_documents(
             dataset_id=dataset_id, page=page, page_size=page_size,
             orderby=orderby, desc=desc, keywords=keywords, run=run,
+            space_id=space_id,
         )
         docs = data.get("docs") or []
         # 精简字段, 不传 thumbnail (RAGFlow 相对路径没法直接展示)
@@ -430,6 +468,7 @@ async def search_documents(
     dataset_id: str = "",
     limit: int = 200,
     _user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """按**文件名**搜文档 (默认跨**所有**数据集).
 
@@ -449,7 +488,7 @@ async def search_documents(
     limit = max(1, min(int(limit or 200), 500))
 
     try:
-        datasets = await list_datasets(page=1, page_size=100)
+        datasets = await list_datasets(page=1, page_size=100, space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("search_documents: 取数据集列表失败")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
@@ -471,6 +510,7 @@ async def search_documents(
             try:
                 data = await list_documents(
                     dataset_id=ds_id, page=page, page_size=100, keywords=kw,
+                    space_id=space_id,
                 )
             except Exception as e:  # noqa: BLE001 — 一个库搜失败不能拖垮整个搜索
                 logger.warning("搜文档失败 (库 %s): %s", ds_name, e)
@@ -544,6 +584,7 @@ async def get_doc_chunks(
     page_size: int = 100,
     keywords: str = "",
     _user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """列出某 document 下的 chunks (代理 RAGFlow).
 
@@ -555,7 +596,10 @@ async def get_doc_chunks(
     if page_size < 1:
         page_size = 30
     try:
-        data = await list_doc_chunks(dataset_id, document_id, page=page, page_size=page_size, keywords=keywords)
+        data = await list_doc_chunks(
+            dataset_id, document_id, page=page, page_size=page_size,
+            keywords=keywords, space_id=space_id,
+        )
         # 精简 chunks: content 不裁, 但去掉 content_ltks (很大)
         chunks = data.get("chunks") or []
         cleaned = []
@@ -594,18 +638,23 @@ async def _audit(
     doc_name: str = "",
     size: int = 0,
     error: str = "",
+    space_id: str | None = None,
 ) -> None:
     """写一条知识库操作审计.
 
     ⚠️ **审计写不进去也不能让主流程失败** —— 审计是旁路, 不是主路.
        (RAGFlow 已经收下文件了, 却因为审计表写不进而报错, 那是"文件传了但显示失败")
+    ⚠️ 空间名是**快照** —— 空间以后被删/改名, 历史记录仍能看出当时在哪个空间.
     """
     try:
         from app.db.session import AsyncSessionLocal
         from app.models.kb import KbAudit
 
+        s_id, s_name = await _space_meta(space_id)
         async with AsyncSessionLocal() as s:
             s.add(KbAudit(
+                space_id=s_id,
+                space_name=s_name,
                 dataset_id=dataset_id or "",
                 dataset_name=dataset_name or "",
                 document_id=document_id or "",
@@ -621,13 +670,15 @@ async def _audit(
         logger.warning("写知识库审计失败 (已忽略): %s", e)
 
 
-async def _dataset_info(dataset_id: str) -> tuple[str, str]:
+async def _dataset_info(
+    dataset_id: str, space_id: str | None = None
+) -> tuple[str, str]:
     """取数据集的 (名称, 分块方式) —— 给审计和提示用.
 
     ⚠️ 取不到就返回空串, **不能因此失败** —— 上传本身跟这个没关系.
     """
     try:
-        for d in await list_datasets(page=1, page_size=100):
+        for d in await list_datasets(page=1, page_size=100, space_id=space_id):
             if d.get("id") == dataset_id:
                 return str(d.get("name") or ""), str(d.get("chunk_method") or "")
     except Exception as e:  # noqa: BLE001
@@ -789,21 +840,22 @@ async def upload_prepared_documents(
     dataset_id: str,
     prepared: list[tuple[str, bytes, str]],
     user: User,
+    space_id: str | None = None,
 ) -> dict:
     """上传已读入内存的文件并自动发起解析 —— 不等待解析完成。
 
     前置条件: 调用方须先校验上传数量/字节上限 (REST: MAX_UPLOAD_FILES/MAX_UPLOAD_BYTES; MCP: 各自批量上限)。
     """
-    ds_name, chunk_method = await _dataset_info(dataset_id)
+    ds_name, chunk_method = await _dataset_info(dataset_id, space_id=space_id)
     try:
-        created = await upload_documents(dataset_id, prepared)
+        created = await upload_documents(dataset_id, prepared, space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("upload_documents failed")
         await _audit(
             action="upload", user=user, dataset_id=dataset_id, dataset_name=ds_name,
             doc_name=", ".join(n for n, _, _ in prepared),
             size=sum(len(d) for _, d, _ in prepared),
-            error=str(e)[:500],
+            error=str(e)[:500], space_id=space_id,
         )
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
@@ -820,7 +872,7 @@ async def upload_prepared_documents(
         logger.info("数据集 %s 是 manual 分块, 跳过自动解析: %s", dataset_id, warning)
     elif ids:
         try:
-            ingest_ok = await ingest_documents(ids, run="1")
+            ingest_ok = await ingest_documents(ids, run="1", space_id=space_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("上传后启动解析失败 (文档已入库, 需手动重跑): %s", e)
 
@@ -828,7 +880,7 @@ async def upload_prepared_documents(
         await _audit(
             action="upload", user=user, dataset_id=dataset_id, dataset_name=ds_name,
             document_id=str(d.get("id") or ""), doc_name=str(d.get("name") or ""),
-            size=int(d.get("size") or 0),
+            size=int(d.get("size") or 0), space_id=space_id,
         )
         await _save_document_owner(d, dataset_id, user)
 
@@ -873,6 +925,9 @@ async def ticket_upload(dataset_id: str, request: Request) -> dict:
     if not can_write_kb(user):
         raise HTTPException(status_code=403, detail="只读账号不能上传文档")
 
+    # 票里带着签发时的空间 —— 直传必须落到同一个空间, 否则会"传成功但列表里没有"
+    space_id = str(claims.get("sid") or "") or None
+
     try:
         form = await request.form(
             max_files=MAX_UPLOAD_FILES, max_fields=MAX_UPLOAD_FILES
@@ -894,7 +949,7 @@ async def ticket_upload(dataset_id: str, request: Request) -> dict:
             return await replace_document(
                 dataset_id, replace_id, raw_name, payload,
                 getattr(upload, "content_type", "") or "application/octet-stream",
-                user,
+                user, space_id=space_id,
             )
 
         prepared: list[tuple[str, bytes, str]] = []
@@ -911,7 +966,9 @@ async def ticket_upload(dataset_id: str, request: Request) -> dict:
             )
         if not prepared:
             raise HTTPException(status_code=422, detail="没有可上传的文件 (空文件)")
-        return await upload_prepared_documents(dataset_id, prepared, user)
+        return await upload_prepared_documents(
+            dataset_id, prepared, user, space_id=space_id
+        )
     finally:
         await form.close()
 
@@ -921,6 +978,7 @@ async def upload_docs(
     dataset_id: str,
     file: list[UploadFile] = File(...),
     user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """上传文档到指定数据集 (multipart/form-data, 字段名 `file`).
 
@@ -958,7 +1016,7 @@ async def upload_docs(
     if not prepared:
         raise HTTPException(status_code=422, detail="没有可上传的文件 (空文件)")
 
-    return await upload_prepared_documents(dataset_id, prepared, user)
+    return await upload_prepared_documents(dataset_id, prepared, user, space_id=space_id)
 
 
 # ============ 文档更新 / 重新解析 (2026-10-29) ============
@@ -1002,7 +1060,9 @@ def _fit_kb_name_bytes(name: str, limit: int = RAGFLOW_DOC_NAME_BYTES) -> str:
     return (stem_b + ext) or name[:limit]
 
 
-async def _find_document(dataset_id: str, document_id: str) -> dict:
+async def _find_document(
+    dataset_id: str, document_id: str, space_id: str | None = None
+) -> dict:
     """在某数据集里找到指定文档, 返回 RAGFlow 的**原始 doc dict** (找不到返回 {}).
 
     ⚠️ **不能用 `GET /datasets/{id}/documents/{doc}`** —— 那个接口返回的是
@@ -1012,7 +1072,9 @@ async def _find_document(dataset_id: str, document_id: str) -> dict:
     """
     page = 1
     while page <= 50:          # 最多翻 50 页 = 5000 篇, 够了
-        data = await list_documents(dataset_id=dataset_id, page=page, page_size=100)
+        data = await list_documents(
+            dataset_id=dataset_id, page=page, page_size=100, space_id=space_id
+        )
         docs = data.get("docs") or []
         for d in docs:
             if str(d.get("id") or "") == document_id:
@@ -1023,12 +1085,14 @@ async def _find_document(dataset_id: str, document_id: str) -> dict:
     return {}
 
 
-async def _safe_delete_documents(dataset_id: str, doc_ids: list[str]) -> None:
+async def _safe_delete_documents(
+    dataset_id: str, doc_ids: list[str], space_id: str | None = None
+) -> None:
     """删文档 —— **失败只记日志, 不抛异常** (用于失败回滚)."""
     if not doc_ids:
         return
     try:
-        await delete_documents(dataset_id, doc_ids=doc_ids)
+        await delete_documents(dataset_id, doc_ids=doc_ids, space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("回滚删除文档失败 (%s): %s", ", ".join(doc_ids), e)
 
@@ -1086,6 +1150,7 @@ async def replace_document(
     payload: bytes,
     content_type: str,
     user: User,
+    space_id: str | None = None,
 ) -> dict:
     """替换一篇文档的内容 —— 旧文档在提交阶段删除, 不等待解析。"""
     raw_name = (name or "").strip()
@@ -1096,7 +1161,7 @@ async def replace_document(
         raise HTTPException(status_code=422, detail="文件是空的")
 
     try:
-        old = await _find_document(dataset_id, document_id)
+        old = await _find_document(dataset_id, document_id, space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("更新文档: 查旧文档失败")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
@@ -1105,7 +1170,7 @@ async def replace_document(
 
     old_name = str(old.get("name") or "")
     old_chunk_method = str(old.get("chunk_method") or "")
-    ds_name, ds_chunk_method = await _dataset_info(dataset_id)
+    ds_name, ds_chunk_method = await _dataset_info(dataset_id, space_id=space_id)
 
     old_ext = os.path.splitext(old_name.lower())[1]
     new_ext = os.path.splitext(target_name.lower())[1]
@@ -1120,13 +1185,16 @@ async def replace_document(
 
     try:
         created = await upload_documents(
-            dataset_id, [(target_name, payload, content_type or "application/octet-stream")]
+            dataset_id,
+            [(target_name, payload, content_type or "application/octet-stream")],
+            space_id=space_id,
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("更新文档: 上传新文件失败")
         await _audit(
             action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
             document_id=document_id, doc_name=old_name, error=str(e)[:500],
+            space_id=space_id,
         )
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
@@ -1136,17 +1204,19 @@ async def replace_document(
         await _audit(
             action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
             document_id=document_id, doc_name=old_name, error="ragflow 没返回新文档 id",
+            space_id=space_id,
         )
         raise HTTPException(status_code=502, detail="ragflow 没有返回新文档 id")
 
     try:
-        await delete_documents(dataset_id, doc_ids=[document_id])
+        await delete_documents(dataset_id, doc_ids=[document_id], space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("更新文档: 删旧文档失败")
-        await _safe_delete_documents(dataset_id, [new_id])
+        await _safe_delete_documents(dataset_id, [new_id], space_id=space_id)
         await _audit(
             action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
             document_id=document_id, doc_name=old_name, error=str(e)[:500],
+            space_id=space_id,
         )
         raise HTTPException(status_code=502, detail=f"删除旧版本失败: {e}")
 
@@ -1154,7 +1224,7 @@ async def replace_document(
     current_name = str(new_doc.get("name") or target_name)
     if current_name != target_name:
         try:
-            await update_document(dataset_id, new_id, name=target_name)
+            await update_document(dataset_id, new_id, name=target_name, space_id=space_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("更新文档: 改名失败 (新文档仍叫 %s): %s", current_name, e)
             warnings.append(f"内容已更新, 但改名失败 —— 文档现在叫「{current_name}」(原因: {e})")
@@ -1175,7 +1245,7 @@ async def replace_document(
         )
     else:
         try:
-            ingest_ok = await ingest_documents([new_id], run="1")
+            ingest_ok = await ingest_documents([new_id], run="1", space_id=space_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("更新后启动解析失败 (文档已更新, 需手动重跑): %s", e)
             warnings.append(f"解析启动失败 —— 请稍后用「重新解析」重跑 (原因: {e})")
@@ -1186,6 +1256,7 @@ async def replace_document(
     await _audit(
         action="update", user=user, dataset_id=dataset_id, dataset_name=ds_name,
         document_id=new_id, doc_name=audit_name[:255], size=len(payload),
+        space_id=space_id,
     )
 
     return {
@@ -1208,6 +1279,7 @@ async def update_kb_document(
     document_id: str,
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """**替换**一篇文档的内容 (换新文件), 旧版直接删除.
 
@@ -1236,7 +1308,7 @@ async def update_kb_document(
 
     return await replace_document(
         dataset_id, document_id, raw_name, payload,
-        file.content_type or "application/octet-stream", user,
+        file.content_type or "application/octet-stream", user, space_id=space_id,
     )
 
 
@@ -1245,6 +1317,7 @@ async def reparse_kb_document(
     dataset_id: str,
     document_id: str,
     user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """**重新解析**一篇文档 (内容不变, 重跑一遍切片 / 向量化).
 
@@ -1260,29 +1333,30 @@ async def reparse_kb_document(
         raise HTTPException(status_code=403, detail="只读账号不能重新解析")
 
     try:
-        doc = await _find_document(dataset_id, document_id)
+        doc = await _find_document(dataset_id, document_id, space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("重新解析: 查文档失败")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
-    ds_name, _ = await _dataset_info(dataset_id)
+    ds_name, _ = await _dataset_info(dataset_id, space_id=space_id)
     doc_name = str(doc.get("name") or "")
 
     try:
-        await parse_documents(dataset_id, [document_id])
+        await parse_documents(dataset_id, [document_id], space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("reparse_document failed")
         await _audit(
             action="reparse", user=user, dataset_id=dataset_id, dataset_name=ds_name,
             document_id=document_id, doc_name=doc_name, error=str(e)[:500],
+            space_id=space_id,
         )
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
     await _audit(
         action="reparse", user=user, dataset_id=dataset_id, dataset_name=ds_name,
-        document_id=document_id, doc_name=doc_name,
+        document_id=document_id, doc_name=doc_name, space_id=space_id,
     )
     return {"ok": True, "document_id": document_id, "name": doc_name}
 
@@ -1324,6 +1398,7 @@ async def download_doc(
     dataset_id: str,
     document_id: str,
     _user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> Response:
     """下载文档的**原始文件**.
 
@@ -1333,7 +1408,9 @@ async def download_doc(
        原样透传, 不能包成 {"data": ...}.
     """
     try:
-        content, filename, ctype = await download_document(dataset_id, document_id)
+        content, filename, ctype = await download_document(
+            dataset_id, document_id, space_id=space_id
+        )
     except Exception as e:  # noqa: BLE001
         logger.exception("download_document failed")
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
@@ -1353,6 +1430,7 @@ async def get_audits(
     page: int = 1,
     page_size: int = 20,
     limit: int | None = None,
+    space_id: str = "",
     user: User = Depends(get_current_user),
 ) -> dict:
     """知识库操作审计 (谁在什么时候传了什么) —— **分页**.
@@ -1376,6 +1454,11 @@ async def get_audits(
 
     ⚠️ `limit` 保留为**向后兼容别名** —— 老脚本/老前端还在用 `?limit=50`,
        传了就当 page_size 用 (仍返回第一页).
+
+    ⚠️ `space_id` 是**独立的筛选条件**, 不跟随 `X-KB-Space` 请求头 ——
+       操作记录要能"跨空间看" (默认空 = 全部空间), 而页面当前切换到的空间
+       是另一回事. 每条记录都回带当时的 `space_id` / `space_name`
+       (空间被删/改名后仍能看出当时是哪个空间).
     """
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="只有管理员能查看操作记录")
@@ -1396,19 +1479,23 @@ async def get_audits(
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="page / page_size 必须是整数")
 
+    space_filter = (space_id or "").strip()
+
+    def _page_stmt(offset: int):
+        stmt = select(KbAudit)
+        if space_filter:
+            stmt = stmt.where(KbAudit.space_id == space_filter)
+        return stmt.order_by(desc(KbAudit.id)).offset(offset).limit(page_size)
+
     try:
         async with AsyncSessionLocal() as s:
             # ⚠️ total 必须是**真实总条数**, 不是本页条数
-            total = int(
-                (await s.execute(select(func.count()).select_from(KbAudit))).scalar_one()
-            )
+            count_stmt = select(func.count()).select_from(KbAudit)
+            if space_filter:
+                count_stmt = count_stmt.where(KbAudit.space_id == space_filter)
+            total = int((await s.execute(count_stmt)).scalar_one())
             rows = (
-                await s.execute(
-                    select(KbAudit)
-                    .order_by(desc(KbAudit.id))
-                    .offset((page - 1) * page_size)
-                    .limit(page_size)
-                )
+                await s.execute(_page_stmt((page - 1) * page_size))
             ).scalars().all()
         pages = max(1, (total + page_size - 1) // page_size)
         # ⚠️ 页码越界 (比如刚删过数据, 或前端还停在旧页码) → 回到最后一页
@@ -1416,14 +1503,7 @@ async def get_audits(
         if rows == [] and total > 0 and page > pages:
             page = pages
             async with AsyncSessionLocal() as s:
-                rows = (
-                    await s.execute(
-                        select(KbAudit)
-                        .order_by(desc(KbAudit.id))
-                        .offset((page - 1) * page_size)
-                        .limit(page_size)
-                    )
-                ).scalars().all()
+                rows = (await s.execute(_page_stmt((page - 1) * page_size))).scalars().all()
         return {
             "items": [
                 {
@@ -1436,6 +1516,8 @@ async def get_audits(
                     "actor_name": r.actor_name,
                     "error": r.error,
                     "size": r.size,
+                    "space_id": r.space_id or "",
+                    "space_name": r.space_name or "",
                     "created_at": r.created_at.isoformat() + "Z" if r.created_at else "",
                 }
                 for r in rows
@@ -1463,12 +1545,15 @@ async def ingest(
     dataset_id: str,
     payload: IngestIn,
     user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """启动/取消文档解析. admin only."""
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="admin only")
     try:
-        ok = await ingest_documents(payload.doc_ids, run=payload.run, delete=payload.delete)
+        ok = await ingest_documents(
+            payload.doc_ids, run=payload.run, delete=payload.delete, space_id=space_id
+        )
         return {"ok": ok}
     except Exception as e:
         logger.exception("ingest failed")
@@ -1485,6 +1570,7 @@ async def delete_docs(
     dataset_id: str,
     payload: DeleteDocsIn,
     user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
 ) -> dict:
     """删除 dataset 下的文档. admin only.
 
@@ -1502,7 +1588,7 @@ async def delete_docs(
     #    顺带把库名也取一下, 免得审计里只有一个光秃秃的 dataset_id.
     ds_name = ""
     try:
-        for d in await list_datasets(page=1, page_size=100):
+        for d in await list_datasets(page=1, page_size=100, space_id=space_id):
             if str(d.get("id") or "") == dataset_id:
                 ds_name = str(d.get("name") or "")
                 break
@@ -1512,7 +1598,11 @@ async def delete_docs(
     doc_names: list[str] = []
     try:
         wanted = set(payload.ids or [])
-        docs = (await list_documents(dataset_id, page=1, page_size=100)).get("docs") or []
+        docs = (
+            await list_documents(
+                dataset_id, page=1, page_size=100, space_id=space_id
+            )
+        ).get("docs") or []
         if payload.delete_all or not wanted:
             doc_names = [str(d.get("name") or "") for d in docs]
         else:
@@ -1524,12 +1614,16 @@ async def delete_docs(
     doc_label = ", ".join(n for n in doc_names if n)[:250]
 
     try:
-        ok = await delete_documents(dataset_id, doc_ids=payload.ids, delete_all=payload.delete_all)
+        ok = await delete_documents(
+            dataset_id, doc_ids=payload.ids, delete_all=payload.delete_all,
+            space_id=space_id,
+        )
     except Exception as e:
         logger.exception("delete_docs failed")
         await _audit(
             action="delete_doc", user=user, dataset_id=dataset_id,
             dataset_name=ds_name, doc_name=doc_label, error=str(e)[:500],
+            space_id=space_id,
         )
         raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
 
@@ -1538,7 +1632,7 @@ async def delete_docs(
     #    混用的话 admin 在操作记录里分不清删的是库还是文档.
     await _audit(
         action="delete_doc", user=user, dataset_id=dataset_id,
-        dataset_name=ds_name, doc_name=doc_label,
+        dataset_name=ds_name, doc_name=doc_label, space_id=space_id,
     )
     return {"ok": ok}
 
@@ -1555,8 +1649,16 @@ class SearchIn(BaseModel):
 
 
 @router.post("/search")
-async def search(payload: SearchIn, _user: User = Depends(get_current_user)) -> dict:
-    """RAGFlow 检索代理."""
+async def search(
+    payload: SearchIn,
+    _user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
+) -> dict:
+    """RAGFlow 检索代理.
+
+    ⚠️ 检索走 `X-KB-Space` 指定的空间 (没传 = 默认空间); 知识库页上
+       检索 / 对话两个 iframe 是 RAGFlow 自己的页面, 不受这里影响.
+    """
     try:
         data = await retrieval(
             question=payload.question,
@@ -1568,6 +1670,7 @@ async def search(payload: SearchIn, _user: User = Depends(get_current_user)) -> 
             keyword=payload.keyword,
             highlight=payload.highlight,
             page_size=payload.page_size,
+            space_id=space_id,
         )
         # 精简 chunks: 去掉 content_ltks (很大, 前端不用)
         chunks = data.get("chunks", [])
@@ -1598,12 +1701,15 @@ async def search(payload: SearchIn, _user: User = Depends(get_current_user)) -> 
 
 
 @router.get("/health")
-async def health(_user: User = Depends(get_current_user)) -> dict:
-    """知识库 (RAGFlow) 可达性.
+async def health(
+    _user: User = Depends(get_current_user),
+    space_id: str | None = Depends(kb_space),
+) -> dict:
+    """知识库 (RAGFlow) 可达性 —— 探的是**当前空间**的那把 key.
 
     ⚠️ **要登录**: 以前这个端点无鉴权, 谁都能探到 RAGFlow 的地址/错误详情
        (探针报错里带 base_url 和 api_key 的一部分) —— 登录用户之间的情报没必要共享.
     """
-    status, msg = await probe()
+    status, msg = await probe(space_id=space_id)
     return {"status": status, "message": msg}
 

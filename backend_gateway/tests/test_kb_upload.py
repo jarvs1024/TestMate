@@ -29,7 +29,7 @@ class FakeRagflow:
         self.ingests: list[list[str]] = []
         self.created: list[dict] = []
 
-    async def upload_documents(self, dataset_id, files):
+    async def upload_documents(self, dataset_id, files, space_id=None):
         self.uploads.append((dataset_id, files))
         out = []
         for name, data, _ctype in files:
@@ -44,14 +44,14 @@ class FakeRagflow:
             out.append(doc)
         return out
 
-    async def ingest_documents(self, doc_ids, run="1", delete=False):
+    async def ingest_documents(self, doc_ids, run="1", delete=False, space_id=None):
         self.ingests.append(list(doc_ids))
         return True
 
-    async def list_datasets(self, page=1, page_size=50):
+    async def list_datasets(self, page=1, page_size=50, space_id=None):
         return [{"id": "ds-1", "name": "协议文档", "chunk_method": "naive"}]
 
-    async def download_document(self, dataset_id, document_id):
+    async def download_document(self, dataset_id, document_id, space_id=None):
         return b"hello from ragflow", "note.txt", "text/plain; charset=utf-8"
 
 
@@ -242,7 +242,7 @@ async def test_download_with_chinese_filename_does_not_500(client, admin_user, f
     """
     import app.api.kb as kb_mod
 
-    async def _cn(dataset_id, document_id):
+    async def _cn(dataset_id, document_id, **kw):
         return b"content", "知识库上传验证.txt", "text/plain; charset=utf-8"
 
     monkeypatch.setattr(kb_mod, "download_document", _cn)
@@ -270,7 +270,7 @@ async def test_manual_dataset_skips_ingest_and_warns(client, publisher_user, fak
     """
     import app.api.kb as kb_mod
 
-    async def _manual(page=1, page_size=50):
+    async def _manual(page=1, page_size=50, **kw):
         return [{"id": "ds-1", "name": "协议文档", "chunk_method": "manual"}]
 
     monkeypatch.setattr(kb_mod, "list_datasets", _manual)

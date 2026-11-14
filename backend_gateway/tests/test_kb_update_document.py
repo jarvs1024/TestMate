@@ -61,15 +61,15 @@ class FakeRagflow:
     def _name_in_use(self, kb_id: str, name: str) -> bool:
         return any(d.get("_ds") == kb_id and d.get("name") == name for d in self.docs)
 
-    async def list_datasets(self, page=1, page_size=50):
+    async def list_datasets(self, page=1, page_size=50, space_id=None):
         return list(self.datasets.values())
 
     async def list_documents(self, dataset_id, page=1, page_size=30,
-                             orderby="create_time", desc=True, keywords="", run=""):
+                             orderby="create_time", desc=True, keywords="", run="", space_id=None):
         docs = [d for d in self.docs if d.get("_ds") == dataset_id]
         return {"docs": docs, "total": len(docs)}
 
-    async def upload_documents(self, dataset_id, files):
+    async def upload_documents(self, dataset_id, files, space_id=None):
         out = []
         for name, data, _ctype in files:
             # ⚠️ RAGFlow 的 duplicate_name: 同名自动加 "(1)" 后缀 (插在扩展名**前**)
@@ -89,7 +89,7 @@ class FakeRagflow:
             out.append(doc)
         return out
 
-    async def delete_documents(self, dataset_id, doc_ids=None, delete_all=False):
+    async def delete_documents(self, dataset_id, doc_ids=None, delete_all=False, space_id=None):
         ids = set(doc_ids or [])
         if ids & self.fail_delete_ids:
             raise RuntimeError("ragflow 炸了")
@@ -100,7 +100,7 @@ class FakeRagflow:
         return True
 
     async def update_document(self, dataset_id, document_id, name=None,
-                               parser_config=None, chunk_method=None, enabled=None):
+                               parser_config=None, chunk_method=None, enabled=None, space_id=None):
         if self.fail_update:
             raise RuntimeError("ragflow 炸了")
         self.patched.append({
@@ -116,11 +116,11 @@ class FakeRagflow:
                 return d
         return {}
 
-    async def ingest_documents(self, doc_ids, run="1", delete=False):
+    async def ingest_documents(self, doc_ids, run="1", delete=False, space_id=None):
         self.ingested.append(list(doc_ids))
         return True
 
-    async def parse_documents(self, dataset_id, document_ids):
+    async def parse_documents(self, dataset_id, document_ids, space_id=None):
         if self.fail_parse:
             raise RuntimeError("ragflow 炸了")
         self.parsed.append(list(document_ids))
