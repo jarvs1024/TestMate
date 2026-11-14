@@ -504,6 +504,76 @@ async def test_property_schema_falls_back_to_global_on_404(bound_user, fake_api)
     assert "project_id" not in (fake_api.calls[1][2] or {})
 
 
+async def test_issue_schema_rejects_invalid_work_item_type_id(bound_user, fake_api):
+    fake_api.routes["/api/agile/projects/p1/work-item-types"] = lambda **_: {
+        "value": [{"_id": "t1", "type_id": "t1", "name": "缺陷"}]
+    }
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.get_issue_schema(ctx, project_id="p1", work_item_type_id="bad")
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert "bad" in excinfo.value.message
+    assert "缺陷(t1)" in excinfo.value.message
+    assert "pingcode_issue_list_types" in excinfo.value.message
+
+
+async def test_issue_schema_accepts_listed_work_item_type(bound_user, fake_api):
+    fake_api.routes["/api/agile/projects/p1/work-item-types"] = lambda **_: {
+        "value": [{"_id": "t1", "type_id": "t1", "name": "缺陷"}]
+    }
+    fake_api.routes["/api/agile/work-item/creation-template/properties"] = lambda **_: {
+        "value": {
+            "properties": [
+                {
+                    "key": "title",
+                    "name": "标题",
+                    "type": 1,
+                    "validators": {"is_required": True},
+                }
+            ]
+        }
+    }
+    async with _context(bound_user) as ctx:
+        data = await adapter.get_issue_schema(ctx, project_id="p1", work_item_type_id="t1")
+
+    assert data["fields"][0]["key"] == "title"
+    assert data["fields"][0]["required"] is True
+
+
+async def test_case_search_localizes_missing_library(bound_user, fake_api):
+    def missing(**kwargs):
+        raise adapter.client.PingCodeBusinessError(
+            "test library not found.", status=404, code=404
+        )
+
+    fake_api.routes["/api/testhub/test-libraries/bad/test-cases"] = missing
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.search_test_cases(ctx, library_id="bad")
+
+    assert excinfo.value.code == "not_found"
+    assert "未找到用例库" in excinfo.value.message
+    assert "bad" in excinfo.value.message
+    assert "pingcode_case_list_libraries" in excinfo.value.message
+
+
+async def test_business_error_localizes_internal_service_message(bound_user, fake_api):
+    def failing(**kwargs):
+        raise adapter.client.PingCodeBusinessError(
+            "内部服务异常", status=200, code=500
+        )
+
+    fake_api.routes["/api/testhub/test-case/view/properties"] = failing
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.get_test_case_properties(ctx, library_id="lib1")
+
+    assert excinfo.value.code == "pingcode_error"
+    assert "PingCode 内部服务异常" in excinfo.value.message
+    assert "稍后重试" in excinfo.value.message
+
+
 async def test_search_resolves_identifier_and_names(bound_user, fake_api):
     fake_api.routes["/api/agile/projects/select-options"] = lambda **_: {
         "value": [{"_id": "p1", "identifier": "TF2", "name": "TIANFU"}]
@@ -585,6 +655,40 @@ async def test_get_work_item_requires_id_or_identifier(bound_user):
             await adapter.get_work_item(ctx)
 
 
+async def test_get_work_item_explains_unknown_id(bound_user, fake_api):
+    def missing(**kwargs):
+        raise adapter.client.PingCodeBusinessError(
+            "not found work item by id", status=404, code=404
+        )
+
+    fake_api.routes["/api/agile/work-items/w-missing"] = missing
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.get_work_item(ctx, id="w-missing")
+
+    assert excinfo.value.code == "not_found"
+    assert "未找到工单" in excinfo.value.message
+    assert "w-missing" in excinfo.value.message
+    assert "pingcode_issue_search" in excinfo.value.message
+
+
+async def test_list_work_item_types_explains_unknown_project(bound_user, fake_api):
+    def missing(**kwargs):
+        raise adapter.client.PingCodeBusinessError(
+            "not found project by id", status=404, code=404
+        )
+
+    fake_api.routes["/api/agile/projects/bad/work-item-types"] = missing
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.list_work_item_types(ctx, project_id="bad")
+
+    assert excinfo.value.code == "not_found"
+    assert "未找到项目" in excinfo.value.message
+    assert "bad" in excinfo.value.message
+    assert "pingcode_common_list_projects" in excinfo.value.message
+
+
 async def test_list_comments_maps_authors(bound_user, fake_api):
     fake_api.routes["/api/agile/work-items/w1/comments"] = lambda **_: {
         "value": [
@@ -645,6 +749,49 @@ async def test_download_attachment_returns_link_for_non_image(bound_user, monkey
     assert data["token"] == "t"
     assert data["bytes"] == 8
     assert "base64" not in data
+
+
+async def test_download_attachment_file_id_failure_explains_attachment_url(
+    bound_user, monkeypatch
+):
+    async def fake_download(url, token, max_bytes):
+        raise McpRuntimeError("download_failed", "附件下载失败 (HTTP 404)")
+
+    monkeypatch.setattr(adapter, "_download_bytes", fake_download)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.download_attachment(ctx, file_id="f2")
+
+    assert excinfo.value.code == "download_failed"
+    assert "HTTP 404" in excinfo.value.message
+    assert "pingcode_issue_list_attachments" in excinfo.value.message
+    assert "url" in excinfo.value.message
+    assert "内联截图" in excinfo.value.message
+
+
+async def test_download_attachment_localizes_raw_file_id_error(bound_user, monkeypatch):
+    async def fake_download(url, token, max_bytes):
+        raise McpRuntimeError("download_failed", "missing fileId from request")
+
+    monkeypatch.setattr(adapter, "_download_bytes", fake_download)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.download_attachment(ctx, file_id="f2")
+
+    assert "missing fileId from request" not in excinfo.value.message
+    assert "缺少文件标识 fileId" in excinfo.value.message
+    assert "pingcode_issue_list_attachments" in excinfo.value.message
+
+
+async def test_download_attachment_file_id_result_has_usable_name(bound_user, monkeypatch):
+    async def fake_download(url, token, max_bytes):
+        return "application/pdf", b"%PDF-1.4"
+
+    monkeypatch.setattr(adapter, "_download_bytes", fake_download)
+    async with _context(bound_user) as ctx:
+        data = await adapter.download_attachment(ctx, file_id="f2")
+
+    assert data["name"] == "attachment-f2"
 
 
 async def test_download_bytes_never_forwards_authorization_header():

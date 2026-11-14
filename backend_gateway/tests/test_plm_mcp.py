@@ -543,6 +543,99 @@ async def test_get_question_requires_id_or_code(bound_user):
             await adapter.get_question(ctx)
 
 
+async def test_get_question_fields_use_chinese_labels_and_option_display(
+    bound_user, fake_api
+):
+    _install_common_routes(fake_api)
+    fake_api.routes["/mdf-node/meta"] = lambda **_: {
+        "viewmeta": {
+            "view": {
+                "containers": [
+                    {
+                        "controls": [
+                            {
+                                "cControlType": "optionwidget",
+                                "cFieldName": "QuesmoduleSel",
+                                "enumArray": [{"key": 49, "value": "其它"}],
+                            },
+                            {
+                                "cControlType": "optionwidget",
+                                "cFieldName": "questionCgrId",
+                                "enumArray": [
+                                    {"key": "2554902768189440001", "value": "功能问题"}
+                                ],
+                            },
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+    _install_question_routes(
+        fake_api,
+        existing={
+            "id": "q1",
+            "code": "WSD202511130001",
+            "name": "偶现掉盘",
+            "quesBelongArea": "3",
+            "QuesmoduleSel": 49,
+            "projectJD": "4",
+            "questionTdArea": "1",
+            "questionPriority": "3",
+            "quesSever": "3",
+            "questionCgrId": "2554902768189440001",
+            "ques_status": "13",
+            "creator": "u9",
+            "owner": {"id": "u9", "name": "贾克江"},
+        },
+    )
+    async with _context(bound_user) as ctx:
+        data = await adapter.get_question(ctx, code="WSD202511130001")
+
+    fields = {item["key"]: item for item in data["fields"]}
+    assert fields["quesBelongArea"]["name"] == "问题归属领域"
+    assert fields["quesBelongArea"]["display"] == "固件"
+    assert fields["QuesmoduleSel"]["name"] == "问题模块"
+    assert fields["QuesmoduleSel"]["display"] == "其它"
+    assert fields["projectJD"]["name"] == "项目阶段"
+    assert fields["projectJD"]["display"] == "TR4"
+    assert fields["questionTdArea"]["name"] == "提单领域"
+    assert fields["questionTdArea"]["display"] == "固件开发"
+    assert fields["questionPriority"]["display"] == "P3"
+    assert fields["quesSever"]["display"] == "一般"
+    assert fields["questionCgrId"]["name"] == "问题类型"
+    assert fields["questionCgrId"]["display"] == "功能问题"
+    assert fields["ques_status"]["name"] == "流程状态"
+    assert fields["ques_status"]["display"] == "提交审核"
+    assert fields["creator"]["display"] == "贾克江"
+
+
+async def test_get_question_fields_fall_back_to_static_labels(bound_user, fake_api):
+    _install_common_routes(fake_api)
+
+    def failing_meta(**_):
+        raise adapter.McpRuntimeError("integration_unavailable", "PLM 暂不可达")
+
+    fake_api.routes["/mdf-node/meta"] = failing_meta
+    _install_question_routes(
+        fake_api,
+        existing={
+            "id": "q1",
+            "code": "WSD202511130001",
+            "name": "偶现掉盘",
+            "quesBelongArea": "3",
+            "questionPriority": "3",
+        },
+    )
+    async with _context(bound_user) as ctx:
+        data = await adapter.get_question(ctx, code="WSD202511130001")
+
+    fields = {item["key"]: item for item in data["fields"]}
+    assert fields["quesBelongArea"]["name"] == "问题归属领域"
+    assert fields["quesBelongArea"]["display"] == "固件"
+    assert fields["questionPriority"]["display"] == "P3"
+
+
 async def test_list_comments_normalizes(bound_user, fake_api):
     _install_common_routes(fake_api)
     fake_api.routes[
@@ -636,6 +729,33 @@ async def test_download_attachment_resolves_file_id_from_infos_list(bound_user, 
     assert data["bytes"] == 9
 
 
+async def test_download_attachment_file_id_failure_hints_inline_url(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    fake_api.routes["/iuap-apcom-file/rest/v1/file/infos"] = lambda **_: {"list": []}
+
+    def failing(url):
+        raise plm_client.PlmBusinessError("not found", status=404)
+
+    fake_api.routes["__download__"] = failing
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.download_attachment(ctx, file_id="f-missing")
+
+    assert excinfo.value.code == "download_failed"
+    assert "内联截图" in excinfo.value.message
+    assert "url" in excinfo.value.message
+
+
+async def test_download_attachment_names_download_endpoint(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    expected = adapter._base_url() + "/iuap-apcom-file/rest/v1/file/download?fileId=f1"
+    fake_api.routes["__download__"] = lambda url: (b"%PDF-1.4", "application/pdf", "")
+    async with _context(bound_user) as ctx:
+        data = await adapter.download_attachment(ctx, url=expected)
+
+    assert data["name"] == "attachment-f1"
+
+
 async def test_search_test_cases_filters_newest_flag(bound_user, fake_api):
     _install_common_routes(fake_api)
 
@@ -700,6 +820,89 @@ async def test_get_test_case_not_found(bound_user, fake_api):
         with pytest.raises(adapter.McpRuntimeError) as excinfo:
             await adapter.get_test_case(ctx, identifier="9999")
     assert excinfo.value.code == "not_found"
+
+
+def _install_numeric_case_route(api: FakeAPI, records: list[dict]) -> None:
+    def list_route(json=None, **_):
+        if (json or {}).get("billnum") != adapter.TEST_CASE_BILL:
+            return {"recordList": [], "recordCount": 0}
+        code_vos = [
+            item
+            for item in (json.get("condition") or {}).get("simpleVOs") or []
+            if item.get("field") == "code"
+        ]
+        if not code_vos:
+            return {"recordList": records, "recordCount": len(records)}
+        if code_vos[0].get("op") == "eq":
+            return {"recordList": [], "recordCount": 0}
+        assert code_vos[0] == {"field": "code", "op": "like", "value1": "-307"}
+        return {"recordList": records, "recordCount": len(records)}
+
+    api.routes["/yonbip-mm-plmrd/bill/list"] = list_route
+
+
+async def test_search_test_cases_accepts_numeric_identifier(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_numeric_case_route(
+        fake_api,
+        [
+            {"id": "c1", "code": "JZ-307", "name": "掉盘后恢复"},
+            {"id": "c2", "code": "UFS-3077", "name": "其它用例"},
+            {"id": "c3", "code": "HIMA3361-307", "name": "掉盘复测"},
+        ],
+    )
+    async with _context(bound_user) as ctx:
+        data = await adapter.search_test_cases(ctx, identifier="307")
+
+    assert data["total"] == 2
+    assert [item["identifier"] for item in data["items"]] == ["JZ-307", "HIMA3361-307"]
+
+
+async def test_get_test_case_accepts_unique_numeric_identifier(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_question_routes(fake_api)
+
+    def list_route(json=None, **_):
+        if (json or {}).get("billnum") != adapter.TEST_CASE_BILL:
+            return {"recordList": [], "recordCount": 0}
+        code_vos = [
+            item
+            for item in (json.get("condition") or {}).get("simpleVOs") or []
+            if item.get("field") == "code"
+        ]
+        if not code_vos or code_vos[0].get("op") == "eq":
+            return {"recordList": [], "recordCount": 0}
+        assert code_vos[0]["value1"] == "-8077"
+        return {
+            "recordList": [{"id": "c1", "code": "HIMA3361-8077", "name": "掉盘后恢复"}],
+            "recordCount": 1,
+        }
+
+    fake_api.routes["/yonbip-mm-plmrd/bill/list"] = list_route
+    async with _context(bound_user) as ctx:
+        data = await adapter.get_test_case(ctx, identifier="8077")
+
+    assert data["identifier"] == "HIMA3361-8077"
+    assert data["title"] == "掉盘后恢复"
+
+
+async def test_get_test_case_reports_ambiguous_numeric_identifier(bound_user, fake_api):
+    _install_common_routes(fake_api)
+    _install_numeric_case_route(
+        fake_api,
+        [
+            {"id": "c1", "code": "JZ-307", "name": "掉盘后恢复"},
+            {"id": "c2", "code": "SATA-307", "name": "链路异常"},
+        ],
+    )
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.get_test_case(ctx, identifier="307")
+
+    assert excinfo.value.code == "ambiguous_identifier"
+    assert "JZ-307" in excinfo.value.message
+    assert "SATA-307" in excinfo.value.message
+    assert "完整编号" in excinfo.value.message
 
 
 # ── 用例目录树与按目录检索 ──────────────────────────────────

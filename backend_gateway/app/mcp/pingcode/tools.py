@@ -107,7 +107,8 @@ READ_SPECS = (
         name="pingcode_issue_get_schema",
         description=(
             "返回工单字段定义（中文名、类型、是否必填、选项），必填项按项目自身的字段模板解析。"
-            "返回 template_type 与 used_global_fallback（全局兜底时为 true）。"
+            "work_item_type_id 必须是该项目可创建的类型，否则直接拒绝并列出可选类型；"
+            "可先调用 pingcode_issue_list_types 获取。返回 template_type 与 used_global_fallback（全局兜底时为 true）。"
         ),
         input_schema=_object(
             {
@@ -122,7 +123,7 @@ READ_SPECS = (
         ),
         scope="pingcode:read",
         read_only=True,
-        handler=adapter.get_property_schema,
+        handler=adapter.get_issue_schema,
     ),
     ToolSpec(
         name="pingcode_common_list_members",
@@ -289,12 +290,14 @@ READ_SPECS = (
         name="pingcode_issue_download_attachment",
         description=(
             "下载附件或截图（自动跟随 302 到对象存储）。图片内联返回 base64，其它返回同源下载链接。"
-            "list_attachments 返回的 url 已带 token，直接传入即可；描述里的截图可用 file_id（自动补 public token）。"
+            "附件请传 pingcode_issue_list_attachments 返回的 url（已带 token）；"
+            "file_id 仅适用于描述中 /atlas/files/public/ 引用的内联截图，"
+            "传 file_id 下载附件会失败并提示改用 url。"
         ),
         input_schema=_object(
             {
                 "url": {"type": "string", "description": "附件 URL，必须与 PingCode 同源"},
-                "file_id": {"type": "string", "description": "atlas 文件 id"},
+                "file_id": {"type": "string", "description": "atlas 文件 id；仅用于描述中的内联截图，附件请改用 url"},
                 "name": {"type": "string", "description": "文件名"},
                 "max_bytes": {
                     "type": "integer",

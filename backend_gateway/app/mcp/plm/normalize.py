@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from app.mcp.plm import schema
+
 DEFAULT_BASE = "https://plm.twsc.com.cn"
 
 EXT_MIME = {
@@ -67,6 +69,60 @@ FIELD_KEYS = (
     "confirmPerson",
     "quesClosetime",
 )
+
+PERSON_KEYS = {"raisePerson", "owner", "creator", "confirmPerson"}
+
+FIELD_LABELS: dict[str, str] = {
+    field["key"]: field["name"] for field in schema.STATIC_FIELDS
+}
+FIELD_LABELS.update(
+    {
+        "code": "问题单号",
+        "name": "问题标题",
+        "ques_status": "流程状态",
+        "owner": "当前处理人",
+        "creator": "创建人",
+        "discoveryTime": "发现时间",
+        "resolutionTime": "计划解决时间",
+        "creationtime": "创建时间",
+        "modifyTime": "修改时间",
+        "stateId": "流程状态",
+        "priority": "优先级",
+        "severity": "严重程度",
+        "projectId": "关联项目",
+        "dept_id": "部门",
+        "kaifamokuai": "开发模块",
+        "xiangmujieduan": "项目阶段",
+        "shifouyonglifaxian": "是否用例发现",
+        "ceshitexing": "测试特性",
+        "wentileibie": "问题类别",
+        "shifoukaifaziti": "是否开发者自提",
+        "replay_step1": "复现步骤",
+        "huiguiceshishuoming1": "回归测试说明",
+        "Quetestabilit": "问题可测试性",
+        "associatedObjectCode": "关联对象编号",
+        "associatedObjectName": "关联对象名称",
+        "confirmPerson": "确认人",
+        "quesClosetime": "关闭时间",
+    }
+)
+
+FIELD_OPTIONS: dict[str, dict[str, str]] = {
+    field["key"]: {
+        str(option["id"]): str(option.get("name") or "")
+        for option in field.get("options") or []
+    }
+    for field in schema.STATIC_FIELDS
+    if field.get("options")
+}
+
+TIME_KEYS = {
+    "discoveryTime",
+    "resolutionTime",
+    "creationtime",
+    "modifyTime",
+    "quesClosetime",
+}
 
 _GROUP_RE = re.compile(r"mdf_[0-9a-fA-F-]{36}")
 _IMG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
@@ -228,11 +284,37 @@ def normalize_search_item(record: dict[str, Any], ctx: dict[str, Any] | None = N
     }
 
 
-def field_display(record: dict[str, Any], key: str) -> str:
+def option_display(key: str, value: Any, options: dict[str, list[dict[str, str]]] | None) -> str:
+    raw = "" if value is None else str(value)
+    if not raw:
+        return ""
+    for item in (options or {}).get(key) or []:
+        if str(item.get("id") or "") == raw:
+            return str(item.get("name") or "")
+    return FIELD_OPTIONS.get(key, {}).get(raw, "")
+
+
+def _time_display(value: Any) -> str:
+    moment = to_ms(value)
+    if not moment:
+        return "" if value is None else str(value)
+    return datetime.fromtimestamp(moment / 1000).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def field_display(
+    record: dict[str, Any],
+    key: str,
+    options: dict[str, list[dict[str, str]]] | None = None,
+) -> str:
     label = record.get(f"{key}_name")
     value = record.get(key)
     if label is not None and label != "":
         return str(label)
+    if key in TIME_KEYS:
+        return _time_display(value)
+    resolved = option_display(key, value, options)
+    if resolved:
+        return resolved
     if isinstance(value, str) and re.search(r"<[a-z][\s\S]*>", value, re.IGNORECASE):
         return html_to_text(value)
     if isinstance(value, dict):
@@ -240,20 +322,32 @@ def field_display(record: dict[str, Any], key: str) -> str:
     return "" if value is None else str(value)
 
 
-def fields_of(record: dict[str, Any]) -> list[dict[str, Any]]:
+def fields_of(
+    record: dict[str, Any],
+    options: dict[str, list[dict[str, str]]] | None = None,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for key in FIELD_KEYS:
         value = record.get(key)
         if value is None or value == "":
             continue
-        display = field_display(record, key)
+        display = field_display(record, key, options)
         if key == "ques_status":
             display = status_of(record)
         elif key == "questionPriority":
-            display = priority_of(record)
+            display = display or priority_of(record)
         elif key == "quesSever":
-            display = severity_of(record)
-        out.append({"key": key, "name": key, "value": value, "display": display})
+            display = display or severity_of(record)
+        elif key in PERSON_KEYS:
+            display = person_named(record, key)["name"] or display
+        out.append(
+            {
+                "key": key,
+                "name": FIELD_LABELS.get(key, key),
+                "value": value,
+                "display": display,
+            }
+        )
     return out
 
 
@@ -364,6 +458,7 @@ def normalize_question(
     ctx: dict[str, Any] | None = None,
     *,
     include_raw: bool = False,
+    options: dict[str, list[dict[str, str]]] | None = None,
 ) -> dict[str, Any]:
     html = record.get("qusDescribe") or record.get("description") or ""
     base = base_of(ctx)
@@ -380,7 +475,7 @@ def normalize_question(
         "priority": priority_of(record),
         "severity": severity_of(record),
         "description": {"html": html, "text": html_to_text(html)},
-        "fields": fields_of(record),
+        "fields": fields_of(record, options),
         "attachments": attachments_of(record, base),
         "comment_count": int(record.get("commentCount") or record.get("comment_count") or 0),
         "created_at": to_ms(record.get("creationtime") or record.get("createTime")),

@@ -235,13 +235,14 @@ READ_SPECS = (
     ToolSpec(
         name="plm_issue_download_attachment",
         description=(
-            "下载 PLM 附件或截图。url 必须与 PLM 同源; 也可传 file_id 由服务端解析下载地址。"
+            "下载 PLM 附件或截图。优先传 plm_issue_list_attachments 返回的 url (必须与 PLM 同源); "
+            "file_id 仅对能解析出下载地址的附件生效, 内联截图通常需改用 url。"
             "图片内联返回 base64, 其它类型返回同源下载地址。"
         ),
         input_schema=_object(
             {
                 "url": {"type": "string", "description": "附件地址, 必须与 PLM 同源"},
-                "file_id": {"type": "string", "description": "文件 id"},
+                "file_id": {"type": "string", "description": "文件 id; 无法解析下载地址时请改用 url"},
                 "name": {"type": "string", "description": "文件名"},
                 "max_bytes": {
                     "type": "integer",
@@ -288,8 +289,8 @@ READ_SPECS = (
         name="plm_case_search",
         description=(
             "搜索 PLM 用例库, 按编号/标题/目录过滤, 返回用例编号、标题与所属模块。"
-            "identifier 传完整编号或纯数字; 按目录检索时优先传 catalog_id "
-            "(由 plm_case_catalog_tree 获取), 也支持 catalog_name 精确名称。"
+            "identifier 可传完整编号或纯数字 (纯数字按 -编号 后缀匹配, 多个项目同号时全部返回); "
+            "按目录检索时优先传 catalog_id (由 plm_case_catalog_tree 获取), 也支持 catalog_name 精确名称。"
         ),
         input_schema=_object(
             {
@@ -319,7 +320,8 @@ READ_SPECS = (
         name="plm_case_get",
         description=(
             "按编号获取 PLM 用例详情 (预置条件、步骤与预期结果、所属模块与状态)。"
-            "identifier 支持完整编号 HIMA3361-8077 或纯数字 8077。"
+            "identifier 支持完整编号 HIMA3361-8077 或纯数字 8077; "
+            "纯数字命中多个项目同号用例时会返回候选编号, 请改传完整编号。"
         ),
         input_schema=_object(
             {

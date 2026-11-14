@@ -19,7 +19,7 @@ import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -832,10 +832,15 @@ async def get_question(
     question_code = str(record.get("code") or code or "")
     files = await _attachment_group_files(ctx, question_id=question_id, code=question_code)
     record = _with_files(record, files)
+    try:
+        template_meta = await _template_options(ctx)
+    except McpRuntimeError:
+        template_meta = {}
     out = normalize.normalize_question(
         record,
         {"base": _base_url(), "url": _question_url(question_id)},
         include_raw=include_raw,
+        options=schema.build_options(template_meta),
     )
     if detail_fallback:
         out["detail_fallback"] = True
@@ -948,6 +953,27 @@ async def _download_candidates(ctx: McpContext, file_id: str) -> list[str]:
     return [url for url in urls if url and not (url in seen or seen.add(url))]
 
 
+def _download_name(target: str, file_id: str | None, name: str | None) -> str:
+    if name:
+        return name
+    parsed = urlparse(target)
+    query = parse_qs(parsed.query)
+    for key in ("name", "filename", "fileName"):
+        values = query.get(key) or []
+        if values and values[0]:
+            return unquote(values[0])
+    base = parsed.path.rsplit("/", 1)[-1] if parsed.path else ""
+    if base and "." in base:
+        return unquote(base)
+    ident = file_id or base
+    for key in ("fileId", "file_id", "id"):
+        values = query.get(key) or []
+        if values and values[0]:
+            ident = file_id or values[0]
+            break
+    return f"attachment-{ident or 'file'}"
+
+
 async def download_attachment(
     ctx: McpContext,
     *,
@@ -980,7 +1006,7 @@ async def download_attachment(
             tried.append(f"{urlparse(target).path} -> {exc.message}")
             last_error = exc
             continue
-        actual = name or detected or (urlparse(target).path.rsplit("/", 1)[-1] if target else "")
+        actual = name or detected or _download_name(target, file_id, None)
         result: dict[str, Any] = {
             "content_type": mime,
             "bytes": len(content),
@@ -991,10 +1017,14 @@ async def download_attachment(
             return result
         result["url"] = target
         return result
-    raise McpRuntimeError(
-        "download_failed",
-        "PLM 文件下载失败: " + ("; ".join(tried[-4:]) if tried else (last_error.message if last_error else "无可用地址")),
-    )
+    detail = "; ".join(tried[-4:]) if tried else (last_error.message if last_error else "无可用地址")
+    message = f"PLM 文件下载失败: {detail}"
+    if file_id and not url:
+        message += (
+            "; file_id 仅适用于附件列表中可解析出下载地址的文件，"
+            "内联截图请改用 plm_issue_list_attachments 返回的 url 直接下载"
+        )
+    raise McpRuntimeError("download_failed", message)
 
 
 async def _fetch_for(ctx: McpContext, url: str, max_bytes: int) -> tuple[bytes, str, str]:
@@ -1275,6 +1305,74 @@ async def _resolve_case_catalog(
     )
 
 
+def _case_item(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": record.get("id") or record.get("_id") or "",
+        "identifier": record.get("code") or "",
+        "title": record.get("name") or "",
+        "catalog": str(record.get("doc_classfiy_id_name") or ""),
+    }
+
+
+def _case_search_result(payload: dict[str, Any], page: int, size: int) -> dict[str, Any]:
+    items = [_case_item(record) for record in payload["records"]]
+    total = payload["total"]
+    return {
+        "total": total,
+        "count": len(items),
+        "page": page,
+        "page_size": size,
+        "has_more": page * size < total,
+        "items": items,
+    }
+
+
+def _numeric_case_identifier(value: str) -> bool:
+    return bool(re.fullmatch(r"\d+", value))
+
+
+async def _numeric_case_matches(
+    ctx: McpContext,
+    short: str,
+    *,
+    keyword: str = "",
+    catalog_ids: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """纯数字编号按 -编号 后缀扫描; PLM 的 code like 是子串匹配, 需再按后缀精确过滤."""
+    simple: list[dict[str, Any]] = [
+        {"field": "newest_flag", "op": "eq", "value1": 1},
+        {"field": "code", "op": "like", "value1": f"-{short}"},
+    ]
+    if keyword:
+        simple.append({"field": "name", "op": "like", "value1": str(keyword)})
+    suffix = f"-{short.upper()}"
+    matches: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    truncated = False
+    for page in range(1, 6):
+        payload = await _test_case_list(
+            ctx,
+            simple_vos=simple,
+            page=page,
+            page_size=MAX_PAGE_SIZE,
+            catalog_ids=catalog_ids,
+        )
+        for record in payload["records"]:
+            code = str(record.get("code") or "")
+            if not code.upper().endswith(suffix):
+                continue
+            key = str(record.get("id") or record.get("_id") or code)
+            if key in seen:
+                continue
+            seen.add(key)
+            matches.append(record)
+        if page * MAX_PAGE_SIZE >= payload["total"]:
+            break
+        if page == 5:
+            truncated = True
+    return matches, truncated
+
+
 async def search_test_cases(
     ctx: McpContext,
     *,
@@ -1297,31 +1395,26 @@ async def search_test_cases(
         else None
     )
     simple: list[dict[str, Any]] = [{"field": "newest_flag", "op": "eq", "value1": 1}]
-    if identifier:
-        simple.append({"field": "code", "op": "eq", "value1": str(identifier)})
+    wanted = str(identifier or "").strip()
+    if wanted:
+        simple.append({"field": "code", "op": "eq", "value1": wanted})
     if keyword:
         simple.append({"field": "name", "op": "like", "value1": str(keyword)})
     payload = await _test_case_list(
         ctx, simple_vos=simple, page=page, page_size=size, catalog_ids=catalog_ids
     )
-    items = [
-        {
-            "id": record.get("id") or record.get("_id") or "",
-            "identifier": record.get("code") or "",
-            "title": record.get("name") or "",
-            "catalog": str(record.get("doc_classfiy_id_name") or ""),
-        }
-        for record in payload["records"]
-    ]
-    total = payload["total"]
-    return {
-        "total": total,
-        "count": len(items),
-        "page": page,
-        "page_size": size,
-        "has_more": page * size < total,
-        "items": items,
-    }
+    if wanted and payload["total"] == 0 and _numeric_case_identifier(wanted):
+        matches, truncated = await _numeric_case_matches(
+            ctx, wanted, keyword=keyword, catalog_ids=catalog_ids
+        )
+        start = (page - 1) * size
+        result = _case_search_result(
+            {"records": matches[start : start + size], "total": len(matches)}, page, size
+        )
+        if truncated:
+            result["truncated"] = True
+        return result
+    return _case_search_result(payload, page, size)
 
 
 def _test_case_attributes(record: dict[str, Any]) -> dict[str, Any]:
@@ -1380,18 +1473,17 @@ async def get_test_case(
         page_size=3,
     )
     record = payload["records"][0] if payload["records"] else None
-    if record is None and "-" not in wanted:
-        short = wanted.upper()
-        listing = await _test_case_list(
-            ctx,
-            simple_vos=base_vos + [{"field": "code", "op": "like", "value1": short}],
-            page=1,
-            page_size=20,
-        )
-        for item in listing["records"]:
-            if str(item.get("code") or "").upper().endswith("-" + short):
-                record = item
-                break
+    if record is None and _numeric_case_identifier(wanted):
+        matches, _truncated = await _numeric_case_matches(ctx, wanted)
+        if len(matches) == 1:
+            record = matches[0]
+        elif matches:
+            listing = ", ".join(str(item.get("code") or "") for item in matches[:10])
+            raise McpRuntimeError(
+                "ambiguous_identifier",
+                f"编号 {wanted} 匹配到 {len(matches)} 个用例: {listing}; "
+                f"请改传完整编号 (如 {matches[0].get('code') or ''})",
+            )
     if record is None:
         raise McpRuntimeError("not_found", f"未找到用例 {wanted}")
     detail = await _test_case_detail(ctx, str(record.get("id") or record.get("_id") or ""))

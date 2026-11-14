@@ -94,9 +94,40 @@ async def _raw(ctx: McpContext, method: str, path: str, **kwargs: Any) -> Any:
             "integration_reauth_required", "PingCode 登录态已失效，请稍后重试或重新绑定"
         ) from exc
     except client.PingCodeUnavailable as exc:
+        message = str(exc)
+        if re.search(r"HTTP 5\d{2}", message):
+            raise McpRuntimeError(
+                "integration_unavailable",
+                f"PingCode 内部服务异常 ({message})，请稍后重试",
+            ) from exc
         raise McpRuntimeError(
-            "integration_unavailable", f"PingCode 暂不可达: {exc}"
+            "integration_unavailable", f"PingCode 暂不可达: {message}"
         ) from exc
+
+
+def _localize_error_message(message: str) -> str:
+    text = str(message or "").strip()
+    lower = text.lower()
+    if "内部服务异常" in text or "internal server error" in lower:
+        return "PingCode 内部服务异常，请稍后重试"
+    if "test library not found" in lower:
+        return "未找到用例库: 请确认 library_id（可调用 pingcode_case_list_libraries 获取）"
+    if "not found project" in lower:
+        return "未找到项目: 请确认 project_id（可调用 pingcode_common_list_projects 获取）"
+    if "missing fileid" in lower:
+        return "缺少文件标识 fileId"
+    if re.search(r"[\u4e00-\u9fff]", text):
+        return text
+    return f"PingCode 返回错误: {text}" if text else "PingCode 返回业务错误"
+
+
+def _business_failure(exc: client.PingCodeBusinessError, *, what: str, hint: str) -> McpRuntimeError:
+    status = getattr(exc, "status", None)
+    code = getattr(exc, "code", None)
+    message = str(exc)
+    if status == 404 or code == 404 or "not found" in message.lower():
+        return McpRuntimeError("not_found", f"未找到{what}; {hint}")
+    return McpRuntimeError("pingcode_error", _localize_error_message(message))
 
 
 async def _request(ctx: McpContext, method: str, path: str, **kwargs: Any) -> Any:
@@ -104,7 +135,7 @@ async def _request(ctx: McpContext, method: str, path: str, **kwargs: Any) -> An
         return await _raw(ctx, method, path, **kwargs)
     except client.PingCodeBusinessError as exc:
         raise McpRuntimeError(
-            "pingcode_error", str(exc) or "PingCode 返回业务错误"
+            "pingcode_error", _localize_error_message(str(exc))
         ) from exc
 
 
@@ -195,9 +226,16 @@ async def _project_id_by_identifier(ctx: McpContext, identifier: str) -> str:
 
 
 async def list_work_item_types(ctx: McpContext, project_id: str) -> dict[str, Any]:
-    payload = await _get_json(
-        ctx, f"/api/agile/projects/{project_id}/work-item-types", {"is_addable": 1}
-    )
+    try:
+        payload = await _raw(
+            ctx, "GET", f"/api/agile/projects/{project_id}/work-item-types", params={"is_addable": 1}
+        )
+    except client.PingCodeBusinessError as exc:
+        raise _business_failure(
+            exc,
+            what=f"项目 {project_id}",
+            hint="请调用 pingcode_common_list_projects 获取项目 _id",
+        ) from exc
     items = []
     for item in _list_of(payload):
         required = []
@@ -252,6 +290,26 @@ async def _resolve_project(ctx: McpContext, project_id: str) -> dict[str, Any]:
     )
 
 
+async def _ensure_work_item_type(
+    ctx: McpContext, project_id: str, work_item_type_id: str
+) -> None:
+    types = (await list_work_item_types(ctx, project_id))["items"]
+    wanted = str(work_item_type_id)
+    for item in types:
+        if wanted in {str(item.get("id") or ""), str(item.get("type_id") or "")}:
+            return
+    listing = ", ".join(
+        f"{item.get('name')}({item.get('id') or item.get('type_id')})"
+        for item in types[:10]
+        if item.get("name")
+    )
+    raise McpRuntimeError(
+        "invalid_arguments",
+        f"工单类型 {work_item_type_id} 不在项目 {project_id} 的可选类型中; "
+        f"可选: {listing or '无'}; 可调用 pingcode_issue_list_types 查询",
+    )
+
+
 async def get_property_schema(
     ctx: McpContext,
     project_id: str,
@@ -259,7 +317,10 @@ async def get_property_schema(
     project_template_type: str | None = None,
     *,
     allow_global_fallback: bool = True,
+    validate_type: bool = False,
 ) -> dict[str, Any]:
+    if validate_type:
+        await _ensure_work_item_type(ctx, project_id, work_item_type_id)
     project = None
     if project_template_type:
         template_type = project_template_type
@@ -304,6 +365,21 @@ async def get_property_schema(
         "is_local_configure": None if project is None else project["is_local_configure"],
         "fields": _schema_fields(properties),
     }
+
+
+async def get_issue_schema(
+    ctx: McpContext,
+    project_id: str,
+    work_item_type_id: str,
+    project_template_type: str | None = None,
+) -> dict[str, Any]:
+    return await get_property_schema(
+        ctx,
+        project_id,
+        work_item_type_id,
+        project_template_type,
+        validate_type=True,
+    )
 
 
 async def list_members(ctx: McpContext, project_id: str) -> dict[str, Any]:
@@ -508,7 +584,14 @@ async def get_work_item(
         if not work_item_id:
             raise McpRuntimeError("not_found", f"未找到工单 {identifier}")
 
-    payload = await _get_json(ctx, f"/api/agile/work-items/{work_item_id}")
+    try:
+        payload = await _raw(ctx, "GET", f"/api/agile/work-items/{work_item_id}")
+    except client.PingCodeBusinessError as exc:
+        raise _business_failure(
+            exc,
+            what=f"工单 id={work_item_id}",
+            hint="请改用 identifier（如 TF2-114），或先调用 pingcode_issue_search 获取 id",
+        ) from exc
     raw = _record_of(payload)
     references = _references_of(payload)
     resolved_project = (
@@ -866,12 +949,19 @@ async def _fetch_case_page(
         "scope": {"include_sub_suite": 1, "suite_id": "", "link_library_id": ""},
         "ps": page_size,
     }
-    payload = await _request(
-        ctx,
-        "POST",
-        f"/api/testhub/test-libraries/{quote(str(library_id), safe='')}/test-cases",
-        json=body,
-    )
+    try:
+        payload = await _raw(
+            ctx,
+            "POST",
+            f"/api/testhub/test-libraries/{quote(str(library_id), safe='')}/test-cases",
+            json=body,
+        )
+    except client.PingCodeBusinessError as exc:
+        raise _business_failure(
+            exc,
+            what=f"用例库 {library_id}",
+            hint="请调用 pingcode_case_list_libraries 获取 library_id",
+        ) from exc
     raw_items, meta = _paged_of(payload)
     return raw_items, _total_of(meta, len(raw_items))
 
@@ -1053,9 +1143,19 @@ async def get_test_case_properties(ctx: McpContext, *, library_id: str) -> dict[
             "invalid_arguments",
             "library_id 必填: 先用 pingcode_case_list_libraries 查询用例库 _id",
         )
-    payload = await _get_json(
-        ctx, "/api/testhub/test-case/view/properties", {"library_id": library_id}
-    )
+    try:
+        payload = await _raw(
+            ctx,
+            "GET",
+            "/api/testhub/test-case/view/properties",
+            params={"library_id": library_id},
+        )
+    except client.PingCodeBusinessError as exc:
+        raise _business_failure(
+            exc,
+            what=f"用例库 {library_id}",
+            hint="请调用 pingcode_case_list_libraries 获取 library_id",
+        ) from exc
     raw_fields = _list_of(payload)
     fields: list[dict[str, Any]] = []
     for prop in raw_fields:
@@ -1099,6 +1199,21 @@ def _with_token(url: str, token: str) -> str:
         return url
     separator = "&" if parsed.query else "?"
     return f"{url}{separator}{urlencode({'token': token})}"
+
+
+def _download_name(target: str, file_id: str | None, name: str | None) -> str:
+    if name:
+        return name
+    parsed = urlparse(target)
+    query = parse_qs(parsed.query)
+    for key in ("name", "filename", "fileName"):
+        if query.get(key):
+            return query[key][0]
+    base = parsed.path.rsplit("/", 1)[-1]
+    if base and "." in base:
+        return base
+    ident = file_id or (query.get("fileId") or query.get("file_id") or [""])[0]
+    return f"attachment-{ident}" if ident else (base or "attachment")
 
 
 async def _download_bytes(
@@ -1177,11 +1292,21 @@ async def download_attachment(
         access_token = await _public_file_token(ctx)
 
     limit = min(int(max_bytes or DEFAULT_DOWNLOAD_BYTES), MAX_DOWNLOAD_BYTES)
-    content_type, data = await _download_bytes(target, access_token, limit)
+    try:
+        content_type, data = await _download_bytes(target, access_token, limit)
+    except McpRuntimeError as exc:
+        if file_id and not url and exc.code == "download_failed":
+            raise McpRuntimeError(
+                "download_failed",
+                f"{_localize_error_message(exc.message)}; "
+                "附件请先调用 pingcode_issue_list_attachments 获取带 token 的 url 后传 url; "
+                "file_id 仅适用于描述里以 /atlas/files/public/ 引用的内联截图",
+            ) from exc
+        raise
     result: dict[str, Any] = {
         "content_type": content_type,
         "bytes": len(data),
-        "name": name or (urlparse(target).path.rsplit("/", 1)[-1] if target else ""),
+        "name": _download_name(target, file_id, name),
     }
     if content_type.startswith("image/"):
         result["base64"] = base64.b64encode(data).decode("ascii")
