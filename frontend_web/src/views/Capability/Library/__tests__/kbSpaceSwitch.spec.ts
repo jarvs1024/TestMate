@@ -56,8 +56,8 @@ const stubs = {
 
 const SPACES = {
   items: [
-    { id: 'sp_a', name: '空间A', is_default: true, configured: true },
-    { id: 'sp_b', name: '空间B', is_default: false, configured: true },
+    { id: 'sp_a', name: '空间A', configured: true },
+    { id: 'sp_b', name: '空间B', configured: true },
   ],
   default_id: 'sp_a',
 };

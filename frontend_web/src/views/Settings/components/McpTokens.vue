@@ -3,7 +3,8 @@
     <h2 id="mcp-tokens-title">访问令牌</h2>
     <p class="intro">
       令牌以你当前账号的身份访问 TestMate 的集成服务（如内置 MCP），权限不会超过账号现有能力。
-      权限按系统区分：TestMate 平台能力、PingCode 平台账号；PLM 接入后再开放。令牌可在下方随时查看、复制或删除。
+      权限按系统区分：TestMate 平台能力、PingCode、PLM；勾上哪些权限，令牌就只能做哪些事。
+      令牌可在下方随时查看、复制或删除。
     </p>
 
     <div class="sub-grp">

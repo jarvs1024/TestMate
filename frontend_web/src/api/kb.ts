@@ -479,12 +479,12 @@ export interface KbAuditItem {
 export interface KbSpace {
   id: string;
   name: string;
-  is_default: boolean;
   configured: boolean;
   /** 仅 admin 可见: 首 4 位 + 掩码 + 末 4 位 */
   key_masked?: string;
 }
 
+/** `default_id`: 未传 X-KB-Space 时用的空间（最早创建的那个）. */
 export async function listKbSpaces(): Promise<{ items: KbSpace[]; default_id: string }> {
   return (await request.get('/kb/spaces')) as { items: KbSpace[]; default_id: string };
 }
@@ -492,14 +492,13 @@ export async function listKbSpaces(): Promise<{ items: KbSpace[]; default_id: st
 export async function createKbSpace(payload: {
   name: string;
   api_key: string;
-  is_default?: boolean;
 }): Promise<{ ok: boolean; space: KbSpace }> {
   return (await request.post('/kb/spaces', payload)) as { ok: boolean; space: KbSpace };
 }
 
 export async function updateKbSpace(
   id: string,
-  payload: { name?: string; api_key?: string; is_default?: boolean },
+  payload: { name?: string; api_key?: string },
 ): Promise<{ ok: boolean; space: KbSpace }> {
   return (await request.put(`/kb/spaces/${encodeURIComponent(id)}`, payload)) as {
     ok: boolean;

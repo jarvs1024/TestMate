@@ -10,8 +10,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 
 const mocks = vi.hoisted(() => ({
-  createKbSpace: vi.fn(async () => ({ ok: true, space: { id: 'sp_new', name: '新空间', is_default: false, configured: true } })),
-  updateKbSpace: vi.fn(async () => ({ ok: true, space: { id: 'sp_a', name: '空间A', is_default: true, configured: true } })),
+  createKbSpace: vi.fn(async () => ({ ok: true, space: { id: 'sp_new', name: '新空间', configured: true } })),
+  updateKbSpace: vi.fn(async () => ({ ok: true, space: { id: 'sp_a', name: '空间A', configured: true } })),
   deleteKbSpace: vi.fn(async () => ({ ok: true })),
   testKbSpace: vi.fn(async () => ({ ok: true, status: 'ok', message: '连接正常' })),
 }));
@@ -26,8 +26,8 @@ vi.mock('element-plus', () => ({
 vi.mock('@/api/kb', () => ({
   listKbSpaces: vi.fn(async () => ({
     items: [
-      { id: 'sp_a', name: '空间A', is_default: true, configured: true, key_masked: 'ragf••••1111' },
-      { id: 'sp_b', name: '空间B', is_default: false, configured: true, key_masked: 'ragf••••2222' },
+      { id: 'sp_a', name: '空间A', configured: true, key_masked: 'ragf••••1111' },
+      { id: 'sp_b', name: '空间B', configured: true, key_masked: 'ragf••••2222' },
     ],
     default_id: 'sp_a',
   })),
@@ -86,30 +86,21 @@ describe('设置页 用户空间管理', () => {
     expect('api_key' in payload).toBe(false);
   });
 
-  it('⚠️ 默认空间不能删除', async () => {
+  it('没有「默认空间」设置: 每一行都可删除', async () => {
     const w = await mountKbs();
+    expect(w.find('[data-test="make-default"]').exists()).toBe(false);
+    expect(w.text()).not.toContain('设为默认');
     const del = w.findAll('[data-test="delete-space"]');
-    expect(del[0].attributes('disabled')).toBeDefined();
-    expect(del[1].attributes('disabled')).toBeUndefined();
+    expect(del).toHaveLength(2);
+    expect(del.every((b) => b.attributes('disabled') === undefined)).toBe(true);
   });
 
-  it('删除非默认空间 → 二次确认后调删除接口', async () => {
+  it('删除空间 → 二次确认后调删除接口', async () => {
     const w = await mountKbs();
     const del = w.findAll('[data-test="delete-space"]');
     await del[1].trigger('click');
     await flushPromises();
     expect(deleteKbSpace).toHaveBeenCalledWith('sp_b');
-  });
-
-  it('设为默认 → 调 update 且 is_default=true', async () => {
-    const w = await mountKbs();
-    const mk = w.findAll('[data-test="make-default"]');
-    await mk[1].trigger('click');
-    await flushPromises();
-
-    const [id, payload] = updateKbSpace.mock.calls[0] as unknown as [string, Record<string, unknown>];
-    expect(id).toBe('sp_b');
-    expect(payload.is_default).toBe(true);
   });
 
   it('测试连接 → 显示结果', async () => {

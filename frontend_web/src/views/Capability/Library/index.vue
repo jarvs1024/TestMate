@@ -28,7 +28,7 @@
               @change="onSpaceChange(($event.target as HTMLSelectElement).value)">
               <option v-if="!kbSpaceStore.spaces.length" value="">未配置空间</option>
               <option v-for="s in kbSpaceStore.spaces" :key="s.id" :value="s.id">
-                {{ s.name }}{{ s.is_default ? '（默认）' : '' }}
+                {{ s.name }}
               </option>
             </select>
           </span>

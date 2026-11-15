@@ -20,7 +20,8 @@ export const useKbSpaceStore = defineStore('kbSpace', () => {
   const currentName = computed(
     () => spaces.value.find((s) => s.id === currentId.value)?.name || '未配置空间',
   );
-  const defaultId = computed(() => spaces.value.find((s) => s.is_default)?.id || '');
+  //: 未指定空间的请求用最早建的空间 —— 后端 default_id 也是它
+  const defaultId = computed(() => spaces.value[0]?.id || '');
 
   async function load() {
     const r = await listKbSpaces();

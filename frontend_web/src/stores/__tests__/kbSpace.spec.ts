@@ -17,8 +17,8 @@ import { KB_SPACE_STORAGE_KEY, useKbSpaceStore } from '../kbSpace';
 
 const SPACES = {
   items: [
-    { id: 'sp_a', name: 'A', is_default: true, configured: true },
-    { id: 'sp_b', name: 'B', is_default: false, configured: true },
+    { id: 'sp_a', name: 'A', configured: true },
+    { id: 'sp_b', name: 'B', configured: true },
   ],
   default_id: 'sp_a',
 };

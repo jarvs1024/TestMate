@@ -7,7 +7,8 @@
     </h5>
     <div class="hint">
       💡 一把 RAGFlow API Key = 一个用户空间。所有空间共用一个 RAGFlow 地址；
-      知识库页可切换查看，MCP 工具可用 <code>space_id</code> 指定操作哪个空间。
+      知识库页可切换查看，MCP 工具可用 <code>space_id</code> 指定操作哪个空间，
+      不指定时用最早创建的空间。
     </div>
 
     <div v-if="loadError" class="empty err">
@@ -19,7 +20,7 @@
 
     <table v-else class="kbs-tbl">
       <thead>
-        <tr><th>名称</th><th>API Key</th><th>默认</th><th>操作</th></tr>
+        <tr><th>名称</th><th>API Key</th><th>操作</th></tr>
       </thead>
       <tbody>
         <tr v-for="s in spaces" :key="s.id">
@@ -28,23 +29,13 @@
             <code class="sid">{{ s.id }}</code>
           </td>
           <td class="mono">{{ maskLabel(s) }}</td>
-          <td>
-            <span v-if="s.is_default" class="badge def">默认</span>
-            <span v-else class="muted">—</span>
-          </td>
           <td class="ops">
             <button class="mini-link" data-test="edit-space" :disabled="busy" @click="openEdit(s)">编辑</button>
-            <button
-              class="mini-link"
-              data-test="make-default"
-              :disabled="busy || s.is_default"
-              @click="makeDefault(s)">设为默认</button>
             <button class="mini-link" data-test="test-space" :disabled="busy" @click="onTest(s)">测试</button>
             <button
               class="mini-link danger"
               data-test="delete-space"
-              :disabled="busy || s.is_default"
-              :title="s.is_default ? '默认空间不能删除，请先把另一个空间设为默认' : ''"
+              :disabled="busy"
               @click="remove(s)">删除</button>
           </td>
         </tr>
@@ -69,11 +60,6 @@
           type="password"
           autocomplete="new-password"
           placeholder="ragflow-..." />
-      </label>
-      <label class="chk">
-        <input v-model="form.is_default" type="checkbox" :disabled="editingDefault" />
-        设为默认空间
-        <span v-if="editingDefault" class="muted">（当前就是默认空间）</span>
       </label>
       <div class="form-ops">
         <button class="mini-btn primary" data-test="save-space" :disabled="busy || !canSave" @click="save">
@@ -113,12 +99,7 @@ const formError = ref('');
 const editing = ref('');
 const testResult = ref<{ name: string; status: string; message: string } | null>(null);
 
-const form = reactive({ name: '', api_key: '', is_default: false });
-
-const editingDefault = computed(() => {
-  const current = spaces.value.find((s) => s.id === editing.value);
-  return !!current?.is_default;
-});
+const form = reactive({ name: '', api_key: '' });
 
 const canSave = computed(() => {
   if (!form.name.trim()) return false;
@@ -154,7 +135,6 @@ function openAdd() {
   formError.value = '';
   form.name = '';
   form.api_key = '';
-  form.is_default = !spaces.value.length;
 }
 
 function openEdit(s: KbSpace) {
@@ -162,7 +142,6 @@ function openEdit(s: KbSpace) {
   formError.value = '';
   form.name = s.name;
   form.api_key = '';
-  form.is_default = s.is_default;
 }
 
 async function save() {
@@ -174,15 +153,13 @@ async function save() {
       await createKbSpace({
         name: form.name.trim(),
         api_key: form.api_key.trim(),
-        is_default: form.is_default,
       });
       ElMessage.success(`已新增用户空间「${form.name.trim()}」`);
     } else {
-      const payload: { name: string; api_key?: string; is_default?: boolean } = {
+      const payload: { name: string; api_key?: string } = {
         name: form.name.trim(),
       };
       if (form.api_key.trim()) payload.api_key = form.api_key.trim();
-      if (form.is_default && !editingDefault.value) payload.is_default = true;
       await updateKbSpace(editing.value, payload);
       ElMessage.success('用户空间已更新');
     }
@@ -190,19 +167,6 @@ async function save() {
     await load();
   } catch (error) {
     formError.value = errorText(error, '保存失败');
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function makeDefault(s: KbSpace) {
-  busy.value = true;
-  try {
-    await updateKbSpace(s.id, { is_default: true });
-    ElMessage.success(`已把「${s.name}」设为默认空间`);
-    await load();
-  } catch (error) {
-    ElMessage.error(errorText(error, '设置默认空间失败'));
   } finally {
     busy.value = false;
   }
@@ -222,7 +186,7 @@ async function onTest(s: KbSpace) {
 }
 
 async function remove(s: KbSpace) {
-  if (s.is_default || busy.value) return;
+  if (busy.value) return;
   try {
     await ElMessageBox.confirm(
       `删除后，知识库页将无法再切换到「${s.name}」。确定删除吗？`,
@@ -272,24 +236,22 @@ h5 {
   border: 1px dashed var(--border); border-radius: 8px;
 }
 .empty.err { color: var(--err); border-color: rgba(239, 68, 68, .35); }
-.kbs-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+/* table-layout: fixed + 固定操作列 —— 不然按钮撑出去, 卡片右侧被截断 */
+.kbs-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12.5px; }
 .kbs-tbl th {
   text-align: left; padding: 8px 10px; color: var(--ink-500); font-weight: 500;
   font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
   border-bottom: 1px solid var(--border);
 }
-.kbs-tbl td { padding: 8px 10px; color: var(--ink-700); border-bottom: 1px solid var(--border); vertical-align: middle; }
+.kbs-tbl th:nth-child(2), .kbs-tbl td:nth-child(2) { width: 120px; }
+.kbs-tbl th:nth-child(3), .kbs-tbl td:nth-child(3) { width: 172px; }
+.kbs-tbl td { padding: 8px 10px; color: var(--ink-700); border-bottom: 1px solid var(--border); vertical-align: middle; overflow-wrap: anywhere; }
 .kbs-tbl .mono { font-family: var(--font-mono); font-size: 11.5px; }
 .sid { margin-left: 6px; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-500); }
-.badge.def {
-  font-size: 10.5px; padding: 1px 7px; border-radius: var(--radius-pill);
-  background: var(--primary-soft); color: var(--primary);
-}
-.muted { color: var(--ink-500); font-size: 11.5px; }
-.ops { white-space: nowrap; }
+.ops { display: flex; gap: 6px; flex-wrap: wrap; }
 .mini-link {
   background: transparent; border: 1px solid var(--border); border-radius: 6px;
-  color: var(--ink-700); font-size: 11px; padding: 3px 8px; margin-right: 6px;
+  color: var(--ink-700); font-size: 11px; padding: 3px 8px;
   cursor: pointer; font-family: inherit;
 }
 .mini-link:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
@@ -317,7 +279,6 @@ h5 {
 .field input:focus { outline: none; border-color: var(--primary); }
 .field b { color: var(--err); }
 .field i { font-style: normal; font-size: 11px; color: var(--ink-500); }
-.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-700); }
 .form-ops { display: flex; gap: 8px; }
 .ghost {
   border: 1px solid var(--border); background: transparent; border-radius: 6px;
