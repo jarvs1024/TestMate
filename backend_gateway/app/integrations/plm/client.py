@@ -462,3 +462,32 @@ class PlmClient:
         if isinstance(body, dict) and "data" in body:
             return body["data"]
         return body
+
+
+async def probe(
+    base_url: str | None = None,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    verify: bool | None = None,
+    timeout: float = 3.0,
+) -> tuple[str, str]:
+    """探 PLM 此刻是否可达 (侧栏服务状态用), 不需要登录态.
+
+    站点证书链无法通过标准校验, 这里默认沿用 settings.PLM_VERIFY_TLS.
+    任何 HTTP 响应都算可达 —— 302 跳登录页说明服务活着.
+    """
+    base = (base_url or settings.PLM_BASE_URL).rstrip("/")
+    try:
+        async with httpx.AsyncClient(
+            base_url=base,
+            timeout=timeout,
+            transport=transport,
+            verify=_verify(verify),
+            trust_env=False,
+        ) as client:
+            response = await client.get("/")
+    except httpx.HTTPError as exc:
+        return ("off", f"不可达: {type(exc).__name__}")
+    if response.status_code >= 500:
+        return ("warn", f"HTTP {response.status_code}")
+    return ("ok", "正常")

@@ -22,8 +22,10 @@
  *
  * ⚠️ 2026-10-25: Dify 已整个下线 (平台不再接入), 面板里不再有它那一行.
  *
- * ⚠️ PingCode / PLM 行按「平台认证」里的绑定态显示 —— 没绑就不占位, 绑了才出现,
- *    登录态正常显示「正常」, 需要重登显示告警. 侧栏面板本身走匿名健康检查,
+ * ⚠️ PingCode / PLM 行按「平台认证」里的绑定态显示 —— 没绑就不占位, 绑了才出现.
+ *    但状态点与文案必须用健康检查的**实时探测**: 网络断了要显示「不可达」,
+ *    不能因为 DB 里存着上次登录成功就显示「正常」(2026-11-15 修).
+ *    登录态 (正常 / 需重登) 只在探测可达时才参考. 侧栏面板本身走匿名健康检查,
  *    认证状态这条要带用户 token (listIntegrationProviders), 两条请求各自兜底,
  *    互不掩盖.
  */
@@ -50,7 +52,13 @@ const services = ref<ServiceHealth[]>([
 ]);
 const visibleServices = computed(() => services.value.filter((s) => s.visible !== false));
 const lastCheck = ref('—');
+// 平台认证的实时可达性 (来自 /health/services), 与登录态分开
+const integrationHealth = ref<Record<string, 'ok' | 'warn' | 'off' | undefined>>({});
 let pollTimer: number | null = null;
+
+function pickStatus(value: unknown): 'ok' | 'warn' | 'off' | undefined {
+  return value === 'ok' || value === 'warn' || value === 'off' ? value : undefined;
+}
 
 function setSvc(key: string, st: 'ok' | 'warn' | 'off', txt?: string) {
   const i = services.value.findIndex((s) => s.key === key);
@@ -69,6 +77,18 @@ async function pollIntegrations() {
       // 没绑账号 → 整行不出现 (侧栏只提示"正在用"的系统)
       row.visible = !!provider?.bound;
       if (!row.visible) continue;
+      const health = integrationHealth.value[row.key];
+      if (health === 'off') {
+        row.status = 'off';
+        row.statusText = '不可达';
+        continue;
+      }
+      if (health === 'warn') {
+        row.status = 'warn';
+        row.statusText = '异常';
+        continue;
+      }
+      // 可达 (或探测没给结果) 时才看登录态, 避免网络故障被误报成「需重登」
       const ok = provider?.status === 'ok';
       row.status = ok ? 'ok' : 'warn';
       row.statusText = ok ? '正常' : '需重登';
@@ -93,8 +113,14 @@ async function poll() {
       // 配过 (状态非 'off') 才显示, 未配时隐藏避免误导
       services.value[i].visible = ra !== 'off';
     }
+    integrationHealth.value = {
+      pingcode: pickStatus(data.pingcode),
+      plm: pickStatus(data.plm),
+    };
   } catch {
     setSvc('ragflow', 'off');
+    // 健康检查整体失败 → 清掉实时状态, 回退到登录态 (不把「没测到」当「不可达」)
+    integrationHealth.value = {};
   }
   await pollIntegrations();
   const d = new Date();

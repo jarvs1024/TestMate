@@ -276,21 +276,42 @@ async def _check_extensions() -> dict:
 
 @router.get("/health/services")
 async def health_services() -> dict:
-    """聚合 RAGFlow / ReviewAgent 的可达性,前端顶栏 30s 轮询一次。
+    """聚合 RAGFlow / ReviewAgent / 平台认证的可达性,前端侧栏 30s 轮询一次。
 
     RAGFlow 探针走 30s 缓存(见 _probe),不会真打外网 30 次/秒。
 
+    ⚠️ 平台认证 (pingcode / plm) 必须报"此刻能不能连上", 不能拿 DB 里的
+    上次登录结果充数 —— 网络断了侧栏还显示「正常」会误导排障.
+
     ⚠️ 2026-10-25: Dify 已整个下线 (平台不再接入), 这里不再返回 dify 字段.
     """
-    from app.core.ragflow_client import probe as rf_probe
-    rf_status, _ = await rf_probe()
-
-    # 代码检视侧栏心跳: pr-agent 版已下线, 改探 ReviewAgent (代码检视唯一后端).
-    # 只在配过 base_url 时探, 没配就 off.
     from app.core import review_agent_client
-    if await review_agent_client.is_configured():
-        ra_status, _ = await review_agent_client.probe()
-    else:
-        ra_status = "off"
+    from app.core.ragflow_client import probe as rf_probe
+    from app.integrations.pingcode import client as pingcode_client
+    from app.integrations.plm import client as plm_client
 
-    return {"ragflow": rf_status, "review_agent": ra_status}
+    async def review_agent_status() -> str:
+        # 代码检视侧栏心跳: pr-agent 版已下线, 改探 ReviewAgent (代码检视唯一后端).
+        # 只在配过 base_url 时探, 没配就 off.
+        if await review_agent_client.is_configured():
+            status, _ = await review_agent_client.probe()
+            return status
+        return "off"
+
+    async def status_of(probe) -> str:
+        status, _ = await probe()
+        return status
+
+    rf_status, ra_status, pingcode_status, plm_status = await asyncio.gather(
+        status_of(rf_probe),
+        review_agent_status(),
+        status_of(pingcode_client.probe),
+        status_of(plm_client.probe),
+    )
+
+    return {
+        "ragflow": rf_status,
+        "review_agent": ra_status,
+        "pingcode": pingcode_status,
+        "plm": plm_status,
+    }

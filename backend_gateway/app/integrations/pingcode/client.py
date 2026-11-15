@@ -379,3 +379,30 @@ class PingCodeClient:
             # 列表/详情响应会把 references/count 与 value 并列; 适配层要能读到它们.
             return data if len(data) > 1 else data["value"]
         return data if data is not None else body
+
+
+async def probe(
+    base_url: str | None = None,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    timeout: float = 3.0,
+) -> tuple[str, str]:
+    """探 PingCode 此刻是否可达 (侧栏服务状态用), 不需要登录态.
+
+    任何 HTTP 响应都算可达 —— 401/403 只是没带登录态, 服务本身活着;
+    只有连接/超时失败才判不可达, 5xx 判异常.
+    """
+    base = (base_url or settings.PINGCODE_BASE_URL).rstrip("/")
+    try:
+        async with httpx.AsyncClient(
+            base_url=base,
+            timeout=timeout,
+            transport=transport,
+            trust_env=False,
+        ) as client:
+            response = await client.get("/")
+    except httpx.HTTPError as exc:
+        return ("off", f"不可达: {type(exc).__name__}")
+    if response.status_code >= 500:
+        return ("warn", f"HTTP {response.status_code}")
+    return ("ok", "正常")

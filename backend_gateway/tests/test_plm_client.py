@@ -190,3 +190,43 @@ async def test_download_rejects_foreign_host():
         await _client(lambda request: httpx.Response(200)).download(
             "https://evil.example.com/file"
         )
+
+
+# ---------- 可达性探针 (侧栏服务状态用) ----------
+
+async def test_probe_reports_ok_on_any_http_response():
+    """PLM 站点证书链不可校验, 探针也必须带 verify=False, 否则会误报不可达."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "/cas/login"})
+
+    status, message = await client.probe(
+        base_url="https://plm.test", transport=httpx.MockTransport(handler), verify=False
+    )
+
+    assert status == "ok"
+    assert message == "正常"
+
+
+async def test_probe_reports_warn_when_server_errors():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, text="bad gateway")
+
+    status, message = await client.probe(
+        base_url="https://plm.test", transport=httpx.MockTransport(handler), verify=False
+    )
+
+    assert status == "warn"
+    assert "502" in message
+
+
+async def test_probe_reports_unavailable_on_network_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timeout", request=request)
+
+    status, message = await client.probe(
+        base_url="https://plm.test", transport=httpx.MockTransport(handler), verify=False
+    )
+
+    assert status == "off"
+    assert "不可达" in message

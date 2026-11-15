@@ -191,3 +191,43 @@ async def test_signin_bypasses_environment_proxy(monkeypatch):
         await server.wait_closed()
 
     assert session.access_token == "t"
+
+
+# ---------- 可达性探针 (侧栏服务状态用) ----------
+
+async def test_probe_reports_ok_on_any_http_response():
+    """只要 TCP/TLS 能握手并拿到 HTTP 响应, 就算可达 —— 401 也是可达."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"message": "auth required"})
+
+    status, message = await client.probe(
+        base_url="http://pingcode.test", transport=httpx.MockTransport(handler)
+    )
+
+    assert status == "ok"
+    assert message == "正常"
+
+
+async def test_probe_reports_warn_when_server_errors():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="maintenance")
+
+    status, message = await client.probe(
+        base_url="http://pingcode.test", transport=httpx.MockTransport(handler)
+    )
+
+    assert status == "warn"
+    assert "503" in message
+
+
+async def test_probe_reports_unavailable_on_network_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    status, message = await client.probe(
+        base_url="http://pingcode.test", transport=httpx.MockTransport(handler)
+    )
+
+    assert status == "off"
+    assert "不可达" in message

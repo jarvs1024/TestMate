@@ -94,4 +94,55 @@ describe('侧栏 · 数据 / 工具', () => {
     expect(serviceRow(w, 'PLM')).toBeUndefined();
     w.unmount();
   });
+
+  it('PLM 探测不可达时显示「不可达」，不能拿上次登录成功充数', async () => {
+    vi.mocked(axios.get).mockResolvedValue({
+      data: { ragflow: 'ok', review_agent: 'off', pingcode: 'ok', plm: 'off' },
+    } as never);
+    const w = await mountPanel({ code: 'plm', bound: true, status: 'ok' });
+
+    const row = serviceRow(w, 'PLM');
+    expect(row?.find('.dot').classes()).toContain('s-off');
+    expect(row?.text()).toContain('不可达');
+    expect(row?.text()).not.toContain('正常');
+    w.unmount();
+  });
+
+  it('PingCode 探测异常（5xx）时显示「异常」', async () => {
+    vi.mocked(axios.get).mockResolvedValue({
+      data: { ragflow: 'ok', review_agent: 'off', pingcode: 'warn', plm: 'ok' },
+    } as never);
+    const w = await mountPanel({ code: 'pingcode', bound: true, status: 'ok' });
+
+    const row = pingcodeRow(w);
+    expect(row?.find('.dot').classes()).toContain('s-warn');
+    expect(row?.text()).toContain('异常');
+    w.unmount();
+  });
+
+  it('探测可达但登录态过期时仍显示「需重登」', async () => {
+    vi.mocked(axios.get).mockResolvedValue({
+      data: { ragflow: 'ok', review_agent: 'off', pingcode: 'ok', plm: 'ok' },
+    } as never);
+    const w = await mountPanel({
+      code: 'pingcode',
+      bound: true,
+      status: 'reauth_required',
+    });
+
+    const row = pingcodeRow(w);
+    expect(row?.find('.dot').classes()).toContain('s-warn');
+    expect(row?.text()).toContain('需重登');
+    w.unmount();
+  });
+
+  it('健康检查拿不到时回退到登录态，不误报不可达', async () => {
+    vi.mocked(axios.get).mockRejectedValue(new Error('down'));
+    const w = await mountPanel({ code: 'pingcode', bound: true, status: 'ok' });
+
+    const row = pingcodeRow(w);
+    expect(row?.find('.dot').classes()).toContain('s-ok');
+    expect(row?.text()).toContain('正常');
+    w.unmount();
+  });
 });
