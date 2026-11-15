@@ -13,23 +13,25 @@
     <div class="card card-overview">
       <h2>
         <span>概览</span>
-        <span class="rf-status" :class="`s-${rfStatus}`" v-if="rfStatus">
-          <span class="dot"></span>{{ rfMsg }}
-        </span>
-        <!-- 用户空间切换: 概览/数据集/文档/操作全部跟随 -->
-        <span class="kb-space">
-          <span class="kb-space-lbl">用户空间</span>
-          <select
-            data-test="kb-space-select"
-            class="kb-sel"
-            :value="kbSpaceStore.currentId"
-            :disabled="!kbSpaceStore.spaces.length"
-            @change="onSpaceChange(($event.target as HTMLSelectElement).value)">
-            <option v-if="!kbSpaceStore.spaces.length" value="">未配置空间</option>
-            <option v-for="s in kbSpaceStore.spaces" :key="s.id" :value="s.id">
-              {{ s.name }}{{ s.is_default ? '（默认）' : '' }}
-            </option>
-          </select>
+        <!-- 右侧: 状态徽标 + 用户空间切换 (概览/数据集/文档/操作全部跟随空间) -->
+        <span class="kb-hd-right">
+          <span class="rf-status" :class="`s-${rfStatus}`" v-if="rfStatus">
+            <span class="dot"></span>{{ rfMsg }}
+          </span>
+          <span class="kb-space">
+            <span class="kb-space-lbl">用户空间</span>
+            <select
+              data-test="kb-space-select"
+              class="kb-sel"
+              :value="kbSpaceStore.currentId"
+              :disabled="!kbSpaceStore.spaces.length"
+              @change="onSpaceChange(($event.target as HTMLSelectElement).value)">
+              <option v-if="!kbSpaceStore.spaces.length" value="">未配置空间</option>
+              <option v-for="s in kbSpaceStore.spaces" :key="s.id" :value="s.id">
+                {{ s.name }}{{ s.is_default ? '（默认）' : '' }}
+              </option>
+            </select>
+          </span>
         </span>
       </h2>
       <div class="stats">
@@ -1956,8 +1958,9 @@ onMounted(async () => {
 .kb { display: flex; flex-direction: column; gap: 10px; }
 .card-overview { padding: 14px 18px; }
 .card-overview h2 { margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-/* 空间切换器贴标题行右侧; 状态徽标在它左边 */
-.kb-space { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+/* 右侧一组: 状态徽标紧挨空间切换器, 都贴标题行右端 */
+.kb-hd-right { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
+.kb-space { display: inline-flex; align-items: center; gap: 6px; }
 .kb-space-lbl { font-size: 11px; color: var(--ink-500); }
 .card-overview .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .card-overview .stat { text-align: center; padding: 8px 6px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 8px; }
@@ -1986,7 +1989,7 @@ onMounted(async () => {
 
 h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--ink-900); display: flex; align-items: center; gap: 8px; }
 
-.rf-status { margin-left: auto; font-size: 11px; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: var(--radius-pill); }
+.rf-status { font-size: 11px; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: var(--radius-pill); }
 .rf-status .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .s-ok { background: rgba(16, 185, 129, 0.1); color: var(--ok); }
 .s-warn { background: rgba(245, 158, 11, 0.1); color: var(--warn); }
