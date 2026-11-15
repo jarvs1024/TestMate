@@ -123,6 +123,80 @@ describe('个人中心 · 访问令牌', () => {
     w.unmount();
   });
 
+  it('全选一次勾上当前账号可用的全部权限并随令牌提交', async () => {
+    const w = await mountTokens();
+    const all = w.get('[data-test="scope-all"]').element as HTMLInputElement;
+
+    // 默认只勾了 extensions:read → 全选为半选
+    expect(all.checked).toBe(false);
+    expect(all.indeterminate).toBe(true);
+
+    await w.get('input[data-test="scope-all"]').setValue(true);
+    await flushPromises();
+    const boxes = w.findAll('.scope-options input[type="checkbox"]');
+    // PLM 未接入 → 两个 checkbox 置灰不参与全选
+    const enabled = boxes
+      .map((box) => box.element as HTMLInputElement)
+      .filter((box) => !box.disabled);
+    expect(enabled).toHaveLength(6);
+    expect(enabled.every((box) => box.checked)).toBe(true);
+    expect(boxes
+      .map((box) => box.element as HTMLInputElement)
+      .filter((box) => box.disabled)
+      .every((box) => !box.checked)).toBe(true);
+    expect((all as HTMLInputElement).indeterminate).toBe(false);
+
+    await w.get('input[aria-label="令牌名称"]').setValue('all scopes');
+    await button(w, '创建令牌').trigger('click');
+    await flushPromises();
+
+    expect(api.createMcpToken).toHaveBeenCalledWith({
+      name: 'all scopes',
+      scopes: [
+        'extensions:read',
+        'extensions:write',
+        'kb:read',
+        'kb:write',
+        'pingcode:read',
+        'pingcode:write',
+      ],
+    });
+    w.unmount();
+  });
+
+  it('全部勾选后再点全选则清空，创建按钮不可用', async () => {
+    const w = await mountTokens();
+
+    await w.get('input[data-test="scope-all"]').setValue(true);
+    await flushPromises();
+    await w.get('input[data-test="scope-all"]').setValue(false);
+    await flushPromises();
+
+    const boxes = w.findAll('.scope-options input[type="checkbox"]');
+    expect(boxes.every((box) => !(box.element as HTMLInputElement).checked)).toBe(true);
+    expect((w.get('[data-test="scope-all"]').element as HTMLInputElement).indeterminate).toBe(false);
+
+    await w.get('input[aria-label="令牌名称"]').setValue('empty scopes');
+    expect(button(w, '创建令牌').attributes('disabled')).toBeDefined();
+    w.unmount();
+  });
+
+  it('只读账号全选也不会带上无权权限', async () => {
+    api.listMcpTokenScopes.mockResolvedValue({ scopes: ['extensions:read', 'kb:read'] });
+    const w = await mountTokens();
+
+    await w.get('input[data-test="scope-all"]').setValue(true);
+    await w.get('input[aria-label="令牌名称"]').setValue('readonly all');
+    await button(w, '创建令牌').trigger('click');
+    await flushPromises();
+
+    expect(api.createMcpToken).toHaveBeenCalledWith({
+      name: 'readonly all',
+      scopes: ['extensions:read', 'kb:read'],
+    });
+    w.unmount();
+  });
+
   it('只读账号不能勾选管理资产，也不会提交越权 scope', async () => {
     api.listMcpTokenScopes.mockResolvedValue({ scopes: ['extensions:read'] });
     const w = await mountTokens();

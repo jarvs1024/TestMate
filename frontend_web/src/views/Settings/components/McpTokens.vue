@@ -25,7 +25,19 @@
           <input v-model="form.expiresAt" aria-label="过期时间（可选）" type="datetime-local" :disabled="creating" />
         </label>
         <fieldset class="scope-field" :disabled="creating">
-          <legend>权限 <b>*</b></legend>
+          <legend>
+            <span>权限 <b>*</b></span>
+            <!-- 全选: 只勾当前账号可用的权限, 无权项仍置灰 -->
+            <label v-if="allowedScopes.length > 1" class="scope-all">
+              <input
+                type="checkbox"
+                data-test="scope-all"
+                :checked="allScopesSelected"
+                :indeterminate.prop="partiallySelected"
+                @change="toggleAll"
+              /> 全选
+            </label>
+          </legend>
           <div v-for="system in SCOPE_SYSTEMS" :key="system.code" class="scope-group">
             <div class="scope-system-head">
               <b>{{ system.label }}</b>
@@ -157,6 +169,22 @@ const form = reactive<{ name: string; scopes: McpScope[]; expiresAt: string }>({
   scopes: ['extensions:read'],
   expiresAt: '',
 });
+
+const allScopesSelected = computed(() => (
+  allowedScopes.value.length > 0
+  && allowedScopes.value.every((scope) => form.scopes.includes(scope))
+));
+
+const partiallySelected = computed(() => (
+  !allScopesSelected.value
+  && form.scopes.some((scope) => allowedScopes.value.includes(scope))
+));
+
+function toggleAll() {
+  form.scopes = allScopesSelected.value
+    ? form.scopes.filter((scope) => !allowedScopes.value.includes(scope))
+    : Array.from(new Set([...form.scopes, ...allowedScopes.value]));
+}
 
 const canCreate = computed(() => (
   !creating.value
@@ -329,7 +357,9 @@ onBeforeUnmount(() => window.clearTimeout(copiedTimer));
 .field input { width: 100%; min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink-900); font: inherit; }
 .field input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
 .scope-field { display: flex; flex-direction: column; grid-column: 1 / -1; gap: 10px; margin: 0; padding: 0; border: 0; color: var(--ink-700); font-size: 12px; }
-.scope-field legend { margin-bottom: 6px; }
+.scope-field legend { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 6px; }
+.scope-all { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--ink-500); font-size: 11.5px; cursor: pointer; }
+.scope-all input { accent-color: var(--primary); }
 .scope-group { display: flex; flex-direction: column; gap: 6px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); }
 .scope-system-head { display: flex; align-items: baseline; gap: 8px; }
 .scope-system-head b { color: var(--ink-900); font-size: 12px; }
