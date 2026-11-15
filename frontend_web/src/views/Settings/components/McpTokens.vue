@@ -73,7 +73,16 @@
               <span class="status" :class="statusOf(token).tone">{{ statusOf(token).label }}</span>
             </div>
             <div v-if="token.token" class="token-value-row">
-              <code class="token-value">{{ token.token }}</code>
+              <div class="token-field">
+                <code class="token-value">{{ visibleToken(token) }}</code>
+                <button
+                  type="button"
+                  class="eye"
+                  :aria-label="isRevealed(token.id) ? '隐藏令牌' : '显示完整令牌'"
+                  :title="isRevealed(token.id) ? '隐藏令牌' : '显示完整令牌'"
+                  @click="toggleReveal(token.id)"
+                >{{ isRevealed(token.id) ? '🙈' : '👁' }}</button>
+              </div>
               <button type="button" class="mini-btn" @click="copyToken(token)">
                 {{ copiedId === token.id ? '已复制' : '复制' }}
               </button>
@@ -140,6 +149,7 @@ const actionError = ref('');
 const creating = ref(false);
 const busyId = ref<number | null>(null);
 const copiedId = ref<number | null>(null);
+const revealedIds = ref<number[]>([]);
 let copiedTimer: number | undefined;
 
 const form = reactive<{ name: string; scopes: McpScope[]; expiresAt: string }>({
@@ -182,6 +192,27 @@ function statusOf(token: McpToken): { label: string; tone: string } {
   const expiry = token.expires_at ? parseApiTime(token.expires_at) : null;
   if (expiry && expiry.getTime() <= Date.now()) return { label: '已过期', tone: 'off' };
   return { label: '生效中', tone: 'on' };
+}
+
+// 与设置页 secret 的 _mask 规则一致: 前 4 位 + 圆点 + 后 4 位
+function maskToken(value: string): string {
+  if (value.length <= 8) return '••••';
+  return value.slice(0, 4) + '•'.repeat(Math.max(4, value.length - 8)) + value.slice(-4);
+}
+
+function isRevealed(id: number): boolean {
+  return revealedIds.value.includes(id);
+}
+
+function toggleReveal(id: number) {
+  revealedIds.value = isRevealed(id)
+    ? revealedIds.value.filter((item) => item !== id)
+    : [...revealedIds.value, id];
+}
+
+function visibleToken(token: McpToken): string {
+  const value = token.token ?? '';
+  return isRevealed(token.id) ? value : maskToken(value);
 }
 
 async function loadScopes() {
@@ -326,7 +357,14 @@ onBeforeUnmount(() => window.clearTimeout(copiedTimer));
 .status.on { background: rgba(16, 185, 129, .12); color: var(--ok); }
 .status.off { background: var(--surface-sunken); color: var(--ink-500); }
 .token-value-row { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
-.token-value { min-width: 0; flex: 1; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink-900); font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; word-break: break-all; user-select: all; }
+.token-field { position: relative; min-width: 0; flex: 1; }
+.token-value { display: block; padding: 7px 36px 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink-900); font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; word-break: break-all; user-select: all; }
+.eye {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  padding: 2px 6px; border: 0; background: transparent; color: var(--ink-500);
+  font-size: 13px; line-height: 1; cursor: pointer;
+}
+.eye:hover { color: var(--ink-900); }
 .legacy-note { margin: 9px 0 0; color: var(--ink-500); font-size: 11.5px; }
 .token-scopes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .token-scopes span { padding: 2px 7px; border-radius: 5px; background: var(--primary-soft); color: var(--ink-700); font-size: 10.5px; }

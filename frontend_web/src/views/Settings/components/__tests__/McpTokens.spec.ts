@@ -81,7 +81,7 @@ afterAll(() => {
 });
 
 describe('个人中心 · 访问令牌', () => {
-  it('以本人身份创建令牌，列表直接显示明文并可复制', async () => {
+  it('以本人身份创建令牌，列表默认脱敏并可复制完整令牌', async () => {
     api.listMcpTokens
       .mockResolvedValueOnce({ items: [] })
       .mockResolvedValueOnce({ items: [TOKEN] });
@@ -99,12 +99,27 @@ describe('个人中心 · 访问令牌', () => {
       expires_at: new Date('2099-01-02T03:04').toISOString(),
     });
     expect(api.listMcpTokens).toHaveBeenCalledTimes(2);
-    expect(w.text()).toContain('tm_visible_token');
+    expect(w.get('.token-value').text()).toBe('tm_v••••••••oken');
+    expect(w.text()).not.toContain('tm_visible_token');
 
     await button(w, '复制').trigger('click');
     await flushPromises();
     expect(writeTextMock).toHaveBeenCalledWith('tm_visible_token');
     expect(button(w, '已复制').exists()).toBe(true);
+    w.unmount();
+  });
+
+  it('点眼睛显示完整令牌，再点恢复脱敏', async () => {
+    api.listMcpTokens.mockResolvedValueOnce({ items: [TOKEN] });
+    const w = await mountTokens();
+
+    expect(w.get('.token-value').text()).toBe('tm_v••••••••oken');
+    await w.get('button[aria-label="显示完整令牌"]').trigger('click');
+    expect(w.get('.token-value').text()).toBe('tm_visible_token');
+
+    await w.get('button[aria-label="隐藏令牌"]').trigger('click');
+    expect(w.get('.token-value').text()).toBe('tm_v••••••••oken');
+    expect(w.find('button[aria-label="显示完整令牌"]').exists()).toBe(true);
     w.unmount();
   });
 
