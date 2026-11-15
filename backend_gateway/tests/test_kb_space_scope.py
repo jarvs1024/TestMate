@@ -20,9 +20,8 @@ async def _client(token: str) -> AsyncClient:
 
 
 async def test_dataset_list_uses_space_header(monkeypatch, admin_user):
-    a = await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    a = await rs.create_space("空间A", "ragflow-aaaa-1111")
     b = await rs.create_space("空间B", "ragflow-bbbb-2222")
-    assert a.is_default and not b.is_default
     seen: list[str | None] = []
 
     async def fake_items(page=1, page_size=50, keyword="", space_id=None):
@@ -37,7 +36,7 @@ async def test_dataset_list_uses_space_header(monkeypatch, admin_user):
 
 
 async def test_unknown_space_returns_chinese_error(admin_user):
-    await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    await rs.create_space("空间A", "ragflow-aaaa-1111")
     async with await _client(admin_user["token"]) as c:
         r = await c.get("/api/v1/kb/datasets", headers={"X-KB-Space": "sp_nope"})
     assert r.status_code == 404, r.text
@@ -47,7 +46,7 @@ async def test_unknown_space_returns_chinese_error(admin_user):
 
 
 async def test_audit_records_space(admin_user):
-    sp = await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    sp = await rs.create_space("空间A", "ragflow-aaaa-1111")
     async with AsyncSessionLocal() as s:
         from app.models.user import User
 
@@ -62,7 +61,7 @@ async def test_audit_records_space(admin_user):
 
 
 async def test_audit_filter_by_space(admin_user):
-    a = await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    a = await rs.create_space("空间A", "ragflow-aaaa-1111")
     b = await rs.create_space("空间B", "ragflow-bbbb-2222")
     async with AsyncSessionLocal() as s:
         from app.models.user import User
@@ -101,7 +100,7 @@ async def test_upload_ticket_without_space_stays_compatible(admin_user):
 
 
 async def test_health_probes_current_space(monkeypatch, admin_user):
-    b = await rs.create_space("空间B", "ragflow-bbbb-2222", is_default=True)
+    b = await rs.create_space("空间B", "ragflow-bbbb-2222")
     seen: list[str | None] = []
 
     async def fake_probe(space_id=None):
@@ -117,7 +116,7 @@ async def test_health_probes_current_space(monkeypatch, admin_user):
 
 @pytest.mark.parametrize("path", ["/api/v1/kb/health", "/api/v1/kb/datasets"])
 async def test_non_admin_can_switch_space(path, monkeypatch, stranger_user):
-    sp = await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    sp = await rs.create_space("空间A", "ragflow-aaaa-1111")
     seen: list[str | None] = []
 
     async def fake_probe(space_id=None):

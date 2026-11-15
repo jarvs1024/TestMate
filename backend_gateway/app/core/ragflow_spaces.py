@@ -64,7 +64,9 @@ def _validate_name(name: str) -> str:
 
 async def list_spaces() -> list[RagflowSpace]:
     async with AsyncSessionLocal() as s:
-        rows = await s.execute(select(RagflowSpace).order_by(RagflowSpace.created_at))
+        rows = await s.execute(
+            select(RagflowSpace).order_by(RagflowSpace.created_at, RagflowSpace.id)
+        )
         return list(rows.scalars().all())
 
 
@@ -75,11 +77,18 @@ async def get_space(space_id: str) -> RagflowSpace | None:
         return await s.get(RagflowSpace, space_id)
 
 
-async def default_space() -> RagflowSpace | None:
+async def fallback_space() -> RagflowSpace | None:
+    """未指定 space_id 时用的空间: 最早创建的那个.
+
+    ⚠️ 不再提供「设为默认」—— 默认只能有一个, 又不能随便换, 不如固定成
+       最早建的空间, 页面/MCP 想用别的就显式传 space_id.
+    """
     async with AsyncSessionLocal() as s:
         return (
             await s.execute(
-                select(RagflowSpace).where(RagflowSpace.is_default.is_(True)).limit(1)
+                select(RagflowSpace)
+                .order_by(RagflowSpace.created_at, RagflowSpace.id)
+                .limit(1)
             )
         ).scalar_one_or_none()
 
@@ -90,9 +99,9 @@ async def _hint() -> str:
 
 
 async def resolve(space_id: str | None) -> RagflowSpace | None:
-    """解析空间; 空 = 默认空间, 未知 id 报中文错误并列出可用空间."""
+    """解析空间; 空 = 最早创建的空间, 未知 id 报中文错误并列出可用空间."""
     if not space_id:
-        return await default_space()
+        return await fallback_space()
     sp = await get_space(space_id)
     if sp is None:
         raise RagflowSpaceError(
@@ -128,15 +137,10 @@ async def credential_for(space_id: str | None) -> tuple[str, str, RagflowSpace |
     return base, key, space
 
 
-async def _clear_default(s) -> None:
-    await s.execute(update(RagflowSpace).values(is_default=False))
-
-
 async def create_space(
     name: str,
     api_key: str,
     *,
-    is_default: bool = False,
     actor_id: int | None = None,
 ) -> RagflowSpace:
     name = _validate_name(name)
@@ -147,14 +151,10 @@ async def create_space(
         ).scalar_one_or_none()
         if exists is not None:
             raise RagflowSpaceError(f"空间「{name}」已经存在，请换一个名称")
-        make_default = is_default or (await default_space()) is None
-        if make_default:
-            await _clear_default(s)
         row = RagflowSpace(
             id=new_space_id(),
             name=name,
             api_key_cipher=encrypt_key(api_key),
-            is_default=make_default,
             created_by=actor_id,
         )
         s.add(row)
@@ -168,7 +168,6 @@ async def update_space(
     *,
     name: str | None = None,
     api_key: str | None = None,
-    is_default: bool | None = None,
 ) -> RagflowSpace:
     async with AsyncSessionLocal() as s:
         row = await s.get(RagflowSpace, space_id)
@@ -190,9 +189,6 @@ async def update_space(
             row.name = name
         if api_key:
             row.api_key_cipher = encrypt_key(_validate_key(api_key))
-        if is_default is True:
-            await _clear_default(s)
-            row.is_default = True
         await s.commit()
         await s.refresh(row)
         return row
@@ -203,14 +199,12 @@ async def delete_space(space_id: str) -> None:
         row = await s.get(RagflowSpace, space_id)
         if row is None:
             raise RagflowSpaceError(f"用户空间不存在：{space_id}", status_code=404)
-        if row.is_default:
-            raise RagflowSpaceError("默认空间不能删除，请先把另一个空间设为默认")
         await s.delete(row)
         await s.commit()
 
 
 async def ensure_legacy_space() -> None:
-    """启动迁移: 没有任何空间时把旧 key 落成默认空间，并回填历史审计."""
+    """启动迁移: 没有任何空间时把旧 key 落成一个空间，并回填历史审计."""
     async with AsyncSessionLocal() as s:
         existing = (await s.execute(select(RagflowSpace).limit(1))).scalar_one_or_none()
         if existing is not None:
@@ -219,7 +213,7 @@ async def ensure_legacy_space() -> None:
     if not legacy.startswith(_KEY_PREFIX) or "xxxxx" in legacy or "mock" in legacy:
         return
     try:
-        sp = await create_space("默认空间", legacy, is_default=True)
+        sp = await create_space("默认空间", legacy)
     except RagflowSpaceError:
         logger.exception("旧 RAGFlow key 迁移失败")
         return
@@ -233,4 +227,4 @@ async def ensure_legacy_space() -> None:
             .values(space_id=sp.id, space_name=sp.name)
         )
         await s.commit()
-    logger.info("已把旧 RAGFlow key 迁移为默认空间 %s", sp.id)
+    logger.info("已把旧 RAGFlow key 迁移为用户空间 %s", sp.id)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, String, Text
+from sqlalchemy import BigInteger, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -25,8 +25,6 @@ class RagflowSpace(Base):
     name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     #: AES-256-GCM 密文
     api_key_cipher: Mapped[str] = mapped_column(Text, nullable=False)
-    #: 全局唯一 —— 新建第一个空间时自动成为默认
-    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow

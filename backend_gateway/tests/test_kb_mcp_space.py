@@ -20,7 +20,7 @@ def test_all_kb_tools_accept_space_id():
 
 @pytest.mark.asyncio
 async def test_space_list_returns_spaces():
-    await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    await rs.create_space("空间A", "ragflow-aaaa-1111")
     result = await adapter.space_list(None)
     assert result["items"][0]["name"] == "空间A"
     assert result["default_id"].startswith("sp_")
@@ -28,7 +28,7 @@ async def test_space_list_returns_spaces():
 
 @pytest.mark.asyncio
 async def test_dataset_list_passes_space(monkeypatch):
-    sp = await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    sp = await rs.create_space("空间A", "ragflow-aaaa-1111")
     seen: dict[str, str | None] = {}
 
     async def fake_items(page=1, page_size=50, keyword="", space_id=None):
@@ -44,7 +44,7 @@ async def test_dataset_list_passes_space(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_empty_space_means_default(monkeypatch):
-    await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    await rs.create_space("空间A", "ragflow-aaaa-1111")
     seen: dict[str, str | None] = {"space_id": "unset"}
 
     async def fake_items(page=1, page_size=50, keyword="", space_id=None):
@@ -59,7 +59,7 @@ async def test_empty_space_means_default(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unknown_space_is_invalid_arguments(monkeypatch):
-    await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    await rs.create_space("空间A", "ragflow-aaaa-1111")
 
     async def fake_items(page=1, page_size=50, keyword="", space_id=None):
         return []
@@ -80,7 +80,7 @@ async def test_unknown_space_fails_before_touching_ragflow(monkeypatch):
        「知识库服务暂时不可用」—— 用户看不出是自己传错了 space_id.
        所以 adapter 先 resolve 再动手, 这条用例守住顺序.
     """
-    await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    await rs.create_space("空间A", "ragflow-aaaa-1111")
     called = {"n": 0}
 
     async def fake_items(page=1, page_size=50, keyword="", space_id=None):
@@ -97,7 +97,7 @@ async def test_unknown_space_fails_before_touching_ragflow(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_write_tool_carries_space(monkeypatch):
-    sp = await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    sp = await rs.create_space("空间A", "ragflow-aaaa-1111")
 
     async def fake_items(page=1, page_size=50, keyword="", space_id=None):
         return [{"id": "ds-1", "name": "库", "chunk_method": "naive"}]

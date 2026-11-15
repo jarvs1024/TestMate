@@ -4,13 +4,13 @@ from app.core import ragflow_spaces as rs
 
 
 async def test_config_uses_given_space():
-    sp = await rs.create_space("空间A", "ragflow-aaaa-1111", is_default=True)
+    sp = await rs.create_space("空间A", "ragflow-aaaa-1111")
     _base, key = await rc._config(sp.id)
     assert key == "ragflow-aaaa-1111"
 
 
 async def test_config_defaults_when_no_space():
-    await rs.create_space("默认", "ragflow-default-2222", is_default=True)
+    await rs.create_space("默认", "ragflow-default-2222")
     _base, key = await rc._config(None)
     assert key == "ragflow-default-2222"
 

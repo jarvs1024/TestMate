@@ -1,4 +1,4 @@
-"""空间管理 API: 权限、掩码、默认空间."""
+"""空间管理 API: 权限、掩码."""
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -43,13 +43,14 @@ async def test_admin_create_list_and_mask(admin):
         sid = r.json()["space"]["id"]
         r = await c.get("/api/v1/kb/spaces")
         item = r.json()["items"][0]
-        assert item["id"] == sid and item["is_default"] is True
+        assert item["id"] == sid
+        assert "is_default" not in item, "默认空间设置已去掉, 不再暴露默认标记"
         assert item["key_masked"].startswith("ragf")
         assert "aaaa" not in item["key_masked"]
 
 
 async def test_non_admin_cannot_write(admin):
-    await rs.create_space("已存在", "ragflow-aaaa-1111", is_default=True)
+    await rs.create_space("已存在", "ragflow-aaaa-1111")
     async with AsyncSessionLocal() as s:
         u = User(
             username="viewer_sp",
@@ -69,13 +70,13 @@ async def test_non_admin_cannot_write(admin):
         assert "key_masked" not in r.json()["items"][0]
 
 
-async def test_delete_default_rejected(admin):
+async def test_delete_any_space(admin):
     async with await _client(admin) as c:
         sid = (
             await c.post(
-                "/api/v1/kb/spaces", json={"name": "默认", "api_key": "ragflow-dddd-1111"}
+                "/api/v1/kb/spaces", json={"name": "临时", "api_key": "ragflow-dddd-1111"}
             )
         ).json()["space"]["id"]
         r = await c.delete(f"/api/v1/kb/spaces/{sid}")
-        assert r.status_code == 422
-        assert "默认空间" in r.json()["detail"]
+        assert r.status_code == 200, r.text
+        assert (await c.get("/api/v1/kb/spaces")).json()["items"] == []

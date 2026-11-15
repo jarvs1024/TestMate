@@ -135,7 +135,7 @@ READ_SPECS = (
     ),
     ToolSpec(
         name="kb_space_list",
-        description="列出可用的 RAGFlow 用户空间，default_id 为默认空间。",
+        description="列出可用的 RAGFlow 用户空间，default_id 为不传 space_id 时使用的空间（最早创建）。",
         input_schema=_object(),
         scope="kb:read",
         read_only=True,

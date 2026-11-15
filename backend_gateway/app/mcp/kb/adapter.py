@@ -99,10 +99,9 @@ async def _require_dataset(dataset_id: str, space_id: str | None = None) -> dict
 async def space_list(ctx: McpContext, **_kwargs):
     rows = await _call(ragflow_spaces.list_spaces())
     return {
-        "items": [
-            {"id": s.id, "name": s.name, "is_default": s.is_default} for s in rows
-        ],
-        "default_id": next((s.id for s in rows if s.is_default), ""),
+        "items": [{"id": s.id, "name": s.name} for s in rows],
+        #: 不传 space_id 时用的空间 = 最早创建的那个
+        "default_id": rows[0].id if rows else "",
     }
 
 
