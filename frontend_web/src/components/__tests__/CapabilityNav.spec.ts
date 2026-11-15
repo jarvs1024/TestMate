@@ -58,23 +58,25 @@ beforeEach(async () => {
 });
 
 describe('侧栏能力导航器', () => {
-  it('顶部是「全部能力」入口', () => {
+  it('顶部是「能力墙」入口', () => {
     const { w } = mountNav();
-    expect(w.find('.all-link').text()).toContain('全部能力');
+    expect(w.find('.all-link').text()).toContain('能力墙');
     expect(w.find('.all-link').attributes('href')).toBe('/');
     w.unmount();
   });
 
   /**
    * 排版层次 (2026-10-25 第三轮: 用户反馈"无层次感"):
-   *   总览入口「全部能力」→ 角色组 → 能力条目.
+   *   总览入口「能力墙」→ 角色组 → 能力条目.
    *   顺序错了层次就塌了 —— 所以这里钉死 DOM 顺序.
    *
    * ⚠️ 2026-11-04 (第二十三轮): 顶部的「能力」区块标题**去掉**了 ——
-   *   ① 它跟紧接着的「全部能力」语义重复 (同一句话说两遍);
-   *   ② 侧栏下半的「📡 数据 / 工具」本来就有自己的标题, 不靠它分段;
-   *   ③ 改成「能力墙」不对 —— 侧栏是目录 (列能力名), 首页才是墙 (列能力卡).
+   *   ① 它跟紧接着的总览入口语义重复 (同一句话说两遍);
+   *   ② 侧栏下半的「📡 数据 / 工具」本来就有自己的标题, 不靠它分段.
    *   所以现在是**三层**, 这里同步钉死.
+   *
+   * ⚠️ 2026-11-15: 总览入口从「全部能力」改叫「能力墙」(用户要求) ——
+   *   「全部能力」像一个筛选项, 而这个入口本来就是回首页那张卡片墙的总览.
    */
   it('三层结构: 总览入口 → 角色组 → 条目 (顶部不再有「能力」区块标题)', () => {
     const { w } = mountNav();
@@ -87,15 +89,15 @@ describe('侧栏能力导航器', () => {
     w.unmount();
   });
 
-  it('侧栏里不再出现单独的「能力」二字 (「全部能力」不算)', () => {
+  it('侧栏里不再出现单独的「能力」二字 (「能力墙」不算)', () => {
     const { w } = mountNav();
     const texts = w.findAll('.lb, .g-lb, .nc-lb').map((e) => e.text().trim());
     expect(texts).not.toContain('能力');
-    expect(texts).toContain('全部能力');
+    expect(texts).toContain('能力墙');
     w.unmount();
   });
 
-  it('「全部能力」是总览入口, 带上能力总数', () => {
+  it('「能力墙」是总览入口, 带上能力总数', () => {
     const { w } = mountNav();
     expect(w.find('.all-link .count').text()).toBe(String(CAPS.length));
     w.unmount();

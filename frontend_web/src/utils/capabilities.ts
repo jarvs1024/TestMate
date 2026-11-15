@@ -12,17 +12,23 @@ import { parseApiTime } from '@/utils/format';
 /**
  * 能力卡片的排序规则.
  *
- * 规则 (2026-10-25):
+ * 规则 (2026-10-25, 2026-11-15 加角色分组):
  *   ① **规划中的沉底** —— 不可用的东西不该占首屏黄金位;
- *      以前 draft 卡和 stable 卡混排, 用户第一眼看到的是"建设中".
- *   ② 精选优先 —— is_featured 的排前面.
- *   ③ 同组内按注册顺序 (id) —— 稳定, 不会每次刷新乱跳.
+ *   ② **按角色分组** —— 资产 → 工具 → 看板 (同侧栏分组顺序).
+ *      ⚠️ 2026-11-15: 以前精选优先, 精选的代码检视 (看板) 压在所有资产卡前面;
+ *         用户要求「代码检视放软件库后面」—— 角色是首页的**大结构**,
+ *         精选只该在同一角色内起作用, 不能跨角色插队.
+ *   ③ 同角色内精选优先;
+ *   ④ 再按注册顺序 (id) —— 稳定, 不会每次刷新乱跳.
  */
 export function sortCapabilities(list: Capability[]): Capability[] {
   return [...list].sort((a, b) => {
     const pa = isPlanned(a.status) ? 1 : 0;
     const pb = isPlanned(b.status) ? 1 : 0;
     if (pa !== pb) return pa - pb;
+    const ka = kindMeta(a.kind).order;
+    const kb = kindMeta(b.kind).order;
+    if (ka !== kb) return ka - kb;
     if (a.is_featured !== b.is_featured) return a.is_featured ? -1 : 1;
     return a.id - b.id;
   });

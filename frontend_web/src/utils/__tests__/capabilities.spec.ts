@@ -52,6 +52,20 @@ describe('能力工具函数', () => {
     expect(sortCapabilities(list).map((c) => c.code)).toEqual(['ready', 'planned']);
   });
 
+  it('先按角色排序 (资产 → 工具 → 看板), 精选的看板也压不过资产', () => {
+    // 用户要求 (2026-11-15): 代码检视放到软件库后面
+    const list = [
+      cap({ id: 6, code: 'code-review', kind: 'board', is_featured: true }),
+      cap({ id: 7, code: 'ext-library', kind: 'platform' }),
+      cap({ id: 8, code: 'kb-inventory', kind: 'platform' }),
+      cap({ id: 9, code: 'software-library', kind: 'platform' }),
+      cap({ id: 2, code: 'env-ops', kind: 'tool' }),
+    ];
+    expect(sortCapabilities(list).map((c) => c.code)).toEqual([
+      'ext-library', 'kb-inventory', 'software-library', 'env-ops', 'code-review',
+    ]);
+  });
+
   it('同组内精选优先, 再按注册顺序', () => {
     const list = [
       cap({ id: 3, code: 'c' }),

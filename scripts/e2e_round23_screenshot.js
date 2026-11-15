@@ -81,12 +81,13 @@ async function shot(page, name, desc) {
   const nav = await page.evaluate(() => {
     const items = [...document.querySelectorAll('.cap-nav .item .i-lb')].map((e) => e.textContent.trim());
     const capTitle = document.querySelector('.cap-nav .nc-lb');
-    // 侧栏里有没有一个**单独**的「能力」二字 (「全部能力」不算)
+    // 侧栏里有没有一个**单独**的「能力」二字 (总览入口「能力墙」不算)
     const loose = [...document.querySelectorAll('.cap-nav *')]
       .filter((e) => e.children.length === 0 && e.textContent.trim() === '能力')
       .map((e) => e.className);
     return {
       items,
+      allLabel: (document.querySelector('.cap-nav .all-link .lb')?.textContent || '').trim(),
       hasCapTitle: !!capTitle,
       loose,
       navCapEls: document.querySelectorAll('.cap-nav .nav-cap').length,
@@ -103,8 +104,8 @@ async function shot(page, name, desc) {
     nav.navCapEls === 0 && !nav.hasCapTitle, `nav-cap=${nav.navCapEls}`);
   check('③ 侧栏里也没有孤立的「能力」二字',
     nav.loose.length === 0, nav.loose.join(','));
-  check('侧栏结构完整: 全部能力 + 资产/工具/看板 三组',
-    nav.items.includes('全部能力') || nav.items.length >= 4, nav.items.join(' | '));
+  check('侧栏结构完整: 能力墙 + 资产/工具/看板 三组',
+    nav.allLabel === '能力墙' && nav.items.length >= 3, `${nav.allLabel} | ${nav.items.join(' | ')}`);
 
   await shot(page, 'nav', `侧栏 (无「能力」标题) + 页头标题「${nav.headerTitle}」`);
 

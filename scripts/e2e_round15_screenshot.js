@@ -142,13 +142,13 @@ async function cardInfo(page, sel = '.asset-card') {
     check(`${pg.name}: lede 还在第二行 (页面级说明没丢)`, !!h.ledeText, h.ledeText);
   }
 
-  // 侧边栏「全部能力」就是回工作台的入口 (替代被去掉的按钮)
+  // 侧边栏「能力墙」就是回工作台的入口 (替代被去掉的按钮)
   const homeEntry = await page.evaluate(() => {
     const el = [...document.querySelectorAll('.cap-nav *, nav *')]
-      .find((x) => (x.textContent || '').includes('全部能力'));
+      .find((x) => (x.textContent || '').includes('能力墙'));
     return !!el;
   });
-  check('侧边栏有「全部能力」入口 (回工作台的替代路径)', homeEntry, '');
+  check('侧边栏有「能力墙」入口 (回工作台的替代路径)', homeEntry, '');
 
   // 工具页 (身份是**动态**的 —— 接口取回来才显示)
   await page.goto(BASE + '/tool-runner', { waitUntil: 'domcontentloaded' });
