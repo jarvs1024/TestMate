@@ -1,6 +1,6 @@
 # TestMate Backend Gateway
 
-FastAPI 中台,完全包裹 RAGFlow / ReviewAgent / 钉钉 / GitLab / 机台。
+FastAPI 中台，包住 RAGFlow / ReviewAgent / 钉钉 / GitLab / 机台 / PingCode / PLM，并向 Agent 提供 MCP 域。
 
 ## 本地起
 

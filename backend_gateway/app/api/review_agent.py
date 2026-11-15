@@ -21,7 +21,7 @@ router = APIRouter()
 def _unconfigured() -> None:
     raise HTTPException(
         status_code=503,
-        detail="review-agent 未配置 (env REVIEW_AGENT_BASE_URL 或 settings_store \"review_agent.base_url\")",
+        detail="代码检视后端（ReviewAgent）未配置：请管理员在设置页填写地址，或配置环境变量 REVIEW_AGENT_BASE_URL",
     )
 
 
@@ -86,7 +86,7 @@ async def metrics_severity(
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         logger.exception("metrics_severity unexpected error")
-        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+        raise HTTPException(status_code=502, detail=f"代码检视后端调用失败（{type(e).__name__}）：{e}")
 
 
 @router.get("/mrs")
@@ -129,7 +129,7 @@ async def mr_timeline(
     user: User = Depends(get_optional_user),
 ) -> dict:
     if not await review_agent_client.is_configured():
-        raise HTTPException(status_code=503, detail="review-agent 未配置")
+        raise HTTPException(status_code=503, detail="代码检视后端（ReviewAgent）未配置")
     try:
         return await review_agent_client.mr_timeline(project_id, mr_id)
     except RuntimeError as e:
@@ -143,7 +143,7 @@ async def mr_stats(
     user: User = Depends(get_optional_user),
 ) -> dict:
     if not await review_agent_client.is_configured():
-        raise HTTPException(status_code=503, detail="review-agent 未配置")
+        raise HTTPException(status_code=503, detail="代码检视后端（ReviewAgent）未配置")
     try:
         return await review_agent_client.mr_stats(project_id, mr_id)
     except RuntimeError as e:
@@ -186,7 +186,7 @@ async def get_weekly_report(
 ) -> dict:
     """单份周报全文 (含 sections.telemetry / merged_mrs / repo_scan + LLM 综述)."""
     if not await review_agent_client.is_configured():
-        raise HTTPException(status_code=503, detail="review-agent 未配置")
+        raise HTTPException(status_code=503, detail="代码检视后端（ReviewAgent）未配置")
     try:
         data = await review_agent_client.get_weekly_report(name)
         if not data:

@@ -505,7 +505,7 @@ async def test_duplicate_token_name_is_rejected_for_same_user(client, publisher_
     )
 
     assert response.status_code == 409, response.text
-    assert response.json()["detail"] == "令牌名称「CI static token」已存在，请换一个名称"
+    assert response.json()["detail"] == "访问令牌名称「CI static token」已存在，请换一个名称"
 
 
 async def test_duplicate_token_name_check_ignores_surrounding_spaces(

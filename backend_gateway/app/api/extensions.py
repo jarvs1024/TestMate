@@ -766,7 +766,7 @@ async def get_job(job_id: int, user: User = Depends(get_current_user)) -> AssetJ
     async with AsyncSessionLocal() as session:
         job = await session.get(AssetJob, job_id)
         if job is None:
-            raise HTTPException(status_code=404, detail="job 不存在")
+            raise HTTPException(status_code=404, detail="上传任务不存在")
         if not ext_policy.is_admin(user) and job.created_by != user.id:
             raise HTTPException(status_code=403, detail="只能查看自己的任务")
         return AssetJobOut.model_validate(job)
@@ -784,12 +784,12 @@ async def retry_failed_job(
     async with AsyncSessionLocal() as session:
         job = await session.get(AssetJob, job_id)
         if job is None:
-            raise HTTPException(status_code=404, detail="job 不存在")
+            raise HTTPException(status_code=404, detail="上传任务不存在")
         if not ext_policy.is_admin(user) and job.created_by != user.id:
             raise HTTPException(status_code=403, detail="只能重试自己的任务")
     ok = await retry_job(job_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="job 不存在")
+        raise HTTPException(status_code=404, detail="上传任务不存在")
     async with AsyncSessionLocal() as session:
         job = await session.get(AssetJob, job_id)
         return AssetJobOut.model_validate(job)
@@ -2042,7 +2042,7 @@ async def review_asset(
     审核结果同样会 commit + push 到 GitLab —— 别的实例要立刻看到"这件通过了".
     """
     if decision not in ("approve", "reject"):
-        raise HTTPException(status_code=400, detail="decision 只能是 approve 或 reject")
+        raise HTTPException(status_code=400, detail="审核决定只能是「通过」或「驳回」")
 
     if decision == "approve":
         out = await _set_publish_state(
@@ -3146,7 +3146,7 @@ async def upload_asset(
         )
 
     if package is not None and files:
-        raise HTTPException(status_code=422, detail="package 与 files 只能二选一")
+        raise HTTPException(status_code=422, detail="「安装包」与「包内文件」只能提交其中一种")
 
     file_map: dict[str, str] = {}
     pkg_bytes: bytes | None = None
@@ -3246,7 +3246,7 @@ async def update_asset(
         )
 
     if package is not None and files:
-        raise HTTPException(status_code=422, detail="package 与 files 只能二选一")
+        raise HTTPException(status_code=422, detail="「安装包」与「包内文件」只能提交其中一种")
 
     file_map: dict[str, str] = {}
     pkg_bytes: bytes | None = None

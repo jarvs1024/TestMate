@@ -1,5 +1,10 @@
 # TestMate MCP 设计（技能市场先行 · v12）
 
+> ⚠️ 2026-11-04 起，本文 §1「取消平台内置连接器」已被后续决策推翻：
+> 平台已内置扩展库 / 知识库 / PingCode / PLM 四个 MCP 连接器
+> （见 `backend_gateway/app/core/builtin_assets.py` 与 `docs/specs/2026-11-06-kb-mcp-design.md`）。
+> 工具数量以各域 `tools/list` 为准，不再固定为 14。
+
 > 2026-11-01 · 在现有 FastAPI 后端提供 `/mcp/skill`，让 agent 能发现、读取、下载、上架和更新技能/插件。
 >
 > v12 根据当前代码与 `mcp==1.29.1` 源码复核修订：

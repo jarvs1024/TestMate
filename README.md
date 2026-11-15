@@ -9,17 +9,19 @@
 
 ## 一句话
 
-前店后厂：**能力墙**前端（一张卡 = 一项能力，分资产 / 工具 / 看板三种角色）+ FastAPI 中台 + 内置 AI 引擎 + RAGFlow 知识库，服务 SSD 测试组日常工作。
+前店后厂：**能力墙**前端（一张卡 = 一项能力，分资产 / 工具 / 看板三种角色）+ FastAPI 中台 + RAGFlow 知识库，服务内网测试团队日常工作。
 
 > 2026-10-25 起首页不再是「智能体广场」——卡片不全是智能体（代码检视是看板、插件·技能·连接与知识库是资产），统一叫「能力」；角色只回答「供料 / 干活 / 看数」，细分信息由业务域标签承担。
 >
 > 2026-10-27 又调整一轮：角色名「底座」→「**资产**」（“底座”说的是架构位置，用户看不懂），**资产组排最上面**；工具组只留「环境运维」；「AI 资产市场」改名「**插件·技能·连接**」；新增「**软件库**」。详见 [能力墙重构设计](docs/specs/2026-10-25-capability-wall-design.md) 与 [本轮变更](docs/specs/2026-10-27-capability-wall-rearrange.md)。
 >
+> 2026-11-04 最终定名：「插件·技能·连接」统一叫「**扩展库**」，与「知识库」「软件库」对齐；现行口径见 [术语与文案规范](docs/GLOSSARY.md)。
+>
 > 2026-10-28「软件库」功能落地：独立页面 `/software`，上传走**原始字节流**（不走 multipart，5G 的包不会被临时目录再存一份），下载走**短时票据 + 浏览器原生下载器**（不返回 blob）。详见 [软件库设计](docs/specs/2026-10-28-software-library.md)。
 
 ## 项目状态
 
-- **生产在跑**：Docker 模式，内网 SSD 测试组日常使用
+- **部署互斥**：Docker / 裸机 systemd / 裸机 local 三种模式，同一台机器只能跑一种；现场用哪种以实际部署为准
 - **能力墙重构完成**：首页与设置页口径统一为「能力」，Dify 已整个下线
 - **账号体系**：账号须管理员先建过才能登录；普通用户用公司邮箱免密登录，管理员一律要密码
 - **三种部署模式并存**：Docker / 裸机 systemd / 裸机 local(macOS)，互不干扰
@@ -31,14 +33,15 @@
 | **工作台（能力墙）** | 首页 `/` | 按资产 / 工具 / 看板三种角色陈列能力，点卡片直接进 |
 | **代码检视看板** | `/code-review` | MR 生命周期、建议采纳率、规则命中、作者分布、周报 |
 | **能力详情（工具运行）** | `/c/:code` | 填参数 → 出结果，附 run 全量日志与时间线 |
-| **插件·技能·连接** | `/extensions` | 能力目录、打包发布、审核下架、版本、任务队列、审计 |
+| **扩展库** | `/extensions` | 扩展资产目录 —— 插件 / 技能 / 连接器；打包发布、审核下架、版本、任务队列、审计 |
 | **软件库** | `/software` | 内部软件的分发入口 —— 任意格式软件包（≤5G）传上来，卡片式浏览，下载 / 发新版本；每个软件可写功能 / 详情 / 适用场景 / 发布与更新说明 |
 | **知识库** | `/kb-manage` | RAGFlow 数据集 / 文档 / 分段，检索即用 |
+| **个人中心** | `/profile` | 授权管理 / 访问令牌 / 平台认证（PingCode、PLM 账号） |
 | **账号管理** | 设置页「👥 用户管理」 | 管理员建号、改角色、停用 |
 | **平台配置** | 设置页 | RAGFlow / ReviewAgent / GitLab / 钉钉，改完立刻生效，不需重启 |
 | **机台管理** | `/api/v1/machines` | 机台字典（SSD 测试机台接入） |
 
-> 协议检索、log 诊断、用例生成这些**不是平台内置功能**——它们是市场上架的能力卡，装了才有。
+> 协议检索、log 诊断、用例生成这些**不是平台内置功能**——它们是扩展库里上架的能力卡，装了才有。
 
 ## 技术栈
 
@@ -53,7 +56,7 @@
 **数据**：MySQL 8.0（主数据）+ Redis 7-alpine（缓存 / 互斥锁）
 **可观测性**：structlog JSON 日志
 **部署**：三种模式并存，互不干扰
-  · **Docker**（`deploy/deploy.sh`，生产在跑）—— 4 容器：mysql / redis / backend / frontend
+  · **Docker**（`deploy/deploy.sh`）—— 4 容器：mysql / redis / backend / frontend
   · **裸机 systemd**（`deploy/native/tmctl.sh`，Linux）—— 零容器：本机 MySQL/Redis + 本机进程
   · **裸机 local**（`deploy/native/tmctl.sh`，macOS，launchd 管开机自启与崩溃自愈）—— 零容器：本机 MySQL/Redis + 本机进程
 
@@ -63,33 +66,39 @@
 TestMate/
 ├── backend_gateway/                # FastAPI 后端
 │   ├── app/
-│   │   ├── api/                    # 路由模块: health / auth / machines / kb / notify
-│   │   │                           #   / agents(能力) / settings / review_agent / extensions
-│   │   ├── core/                   # 配置 / 安全 / 日志 / 外部服务客户端 / 资产市场策略
+│   │   ├── api/                    # 路由: health / auth / machines / kb / kb_spaces / notify
+│   │   │                           #   / agents(能力) / settings / platform / review_agent
+│   │   │                           #   / extensions / software / mcp
+│   │   ├── core/                   # 配置 / 安全 / 日志 / 外部服务客户端 / 扩展库与软件库业务
 │   │   ├── db/                     # SQLAlchemy async session
+│   │   ├── integrations/           # 外部系统: PingCode / PLM 客户端与凭据
+│   │   ├── mcp/                    # MCP 域: common / skill / kb / pingcode / plm
 │   │   ├── models/                 # ORM 模型(表名见各文件的 __tablename__)
-│   │   ├── schemas/                # Pydantic 请求/响应(agent / asset / auth / system_setting)
+│   │   ├── schemas/                # Pydantic 请求/响应
+│   │   ├── workers/                # 后台任务
 │   │   └── main.py                 # FastAPI 入口 + lifespan + structlog
-│   ├── alembic/versions/           # 数据库迁移(0001_initial ~ 0022_user_token_version)
+│   ├── alembic/versions/           # 数据库迁移(0001_initial ~ 0039_drop_space_is_default)
 │   ├── tests/                      # pytest 用例
 │   ├── Dockerfile                  # multi-stage build
 │   └── requirements.txt / .lock
 ├── frontend_web/                   # Vue 3 前端
 │   ├── src/
-│   │   ├── api/                    # axios 客户端(assets / capabilities / kb / reviewagent
-│   │   │                           #   / settings / users)
+│   │   ├── api/                    # axios 客户端(assets / capabilities / kb / mcp / software
+│   │   │                           #   / integrations / reviewagent / settings / users)
 │   │   ├── components/             # 通用组件
-│   │   ├── constants/              # 能力种类常量
+│   │   ├── constants/              # 能力角色 / 状态常量
 │   │   ├── layouts/                # MainLayout
 │   │   ├── router/                 # 路由表
-│   │   ├── stores/                 # pinia stores(capabilities / theme / user)
+│   │   ├── stores/                 # pinia stores(capabilities / kbSpace / platform / theme / user)
 │   │   ├── styles/                 # 全局 CSS + design tokens
 │   │   ├── types/                  # TS 类型
 │   │   ├── utils/                  # request.ts(axios 拦截器)+ 通用工具
 │   │   └── views/
 │   │       ├── Home/               # 工作台 · 能力墙
-│   │       ├── Capability/         # 能力详情: ToolRunner / BoardView / Catalog / Library
+│   │       ├── Capability/         # 能力详情: ToolRunner / BoardView / Catalog(扩展库) / Library(知识库)
 │   │       ├── Software/           # 软件库: 卡片 / 详情抽屉 / 上传抽屉
+│   │       ├── Connect/            # MCP 授权同意 / 授权管理
+│   │       ├── Profile/            # 个人中心: 授权管理 / 访问令牌 / 平台认证
 │   │       ├── Login/
 │   │       └── Settings/
 │   ├── e2e.mjs                     # playwright 冒烟脚本
@@ -114,35 +123,50 @@ TestMate/
 │   ├── create_admin.py             # 手动建 admin(显式 --mysql-* + --password-file)
 │   ├── deploy.sh                   # 部署前端 / 后端
 │   ├── dev.sh / start.sh / stop.sh # 本地开发与一键起停
-│   ├── seed_market.py              # 资产市场种子数据
+│   ├── seed_extensions.py          # 扩展库种子数据
+│   ├── migrate_categories.py       # 扩展分类迁移
+│   ├── notify_preview.py           # 钉钉通知预览
 │   ├── make_real_packages.py       # 生成真实安装包(联调用)
 │   └── e2e_*.js                    # playwright 端到端脚本
-└── docs/specs/                     # 设计 / 方案文档
+└── docs/                           # 术语 / 设计 / 计划
+    ├── GLOSSARY.md                 # 术语与文案规范(命名口径以此为准)
+    ├── specs/                      # 设计 / 方案(按日期命名)
+    ├── superpowers/specs|plans/    # 后续设计 / 实施计划
+    └── HANDOFF-2026-10-27.md       # 历史交接快照(仅留档)
 ```
 
 ## 文档索引
 
 | 文档 | 用途 |
 |---|---|
-| [能力墙重构设计](docs/specs/2026-10-25-capability-wall-design.md) | **当前主设计** —— 信息架构 / 角色模型 / 文案对照 / Dify 下线 / 发布权限 |
-| [TestMate MCP 设计](docs/specs/2026-10-31-testmate-mcp-design.md) | 让 agent 操作 TestMate —— MCP 端点 / OAuth 2.1 鉴权 / 按域拆分的 MCP server / 技能市场 14 个工具 |
-| [TestMate MCP 实施计划](docs/superpowers/plans/2026-10-31-testmate-mcp-implementation.md) | S0~S6 共 23 个任务的完整拆解 —— OAuth 骨架 / 同意页 / 内置连接器 / 14 个工具 / 一致性三层防线 / 部署 |
+| [术语与文案规范](docs/GLOSSARY.md) | **命名 / 报错 / 文档口径** —— 用户可见文字以此为准 |
+| [能力墙重构设计](docs/specs/2026-10-25-capability-wall-design.md) | 信息架构 / 角色模型 / 文案对照（历史推理，含部分过期口径） |
+| [能力墙本轮变更](docs/specs/2026-10-27-capability-wall-rearrange.md) | 角色改名 / 排序 / 扩展库前身 |
+| [TestMate MCP 设计](docs/specs/2026-10-31-testmate-mcp-design.md) | MCP / OAuth 2.1 / 按域拆分（内置连接器结论已被后续决策取代） |
+| [TestMate MCP 实施计划](docs/superpowers/plans/2026-10-31-testmate-mcp-implementation.md) | S0~S6 实施拆解（历史计划） |
+| [知识库 MCP 设计](docs/specs/2026-11-06-kb-mcp-design.md) | `/mcp/kb` 工具 / 上传票 / 审计 |
+| [知识库 MCP 实施计划](docs/superpowers/plans/2026-11-06-kb-mcp.md) | 知识库 MCP 落地拆解 |
+| [PingCode 集成设计](docs/superpowers/specs/2026-11-12-pingcode-integration-design.md) | `/mcp/pingcode` / 缺陷与需求 / 凭据托管 |
+| [PLM 集成设计](docs/superpowers/specs/2026-11-14-plm-integration-design.md) | `/mcp/plm` / 问题单与用例库 / 严格校验 |
+| [RAGFlow 多用户空间设计](docs/superpowers/specs/2026-11-14-ragflow-multi-space-design.md) | 用户空间 / 凭据解析 / REST 与 MCP |
+| [RAGFlow 多用户空间计划](docs/superpowers/plans/2026-11-14-ragflow-multi-space.md) | 实施拆解 |
 | [软件库设计](docs/specs/2026-10-28-software-library.md) | 内部软件的上传（流式 · ≤5G）/ 存储路径 / 下载票据 / 版本与权限 |
-| [插件·技能·连接总览](docs/specs/2026-10-22-ai-asset-market-overview.md) | 资产市场的能力模型与上架流程（文档写于「AI 资产市场」时期） |
-| [资产市场验证记录](docs/specs/2026-10-23-asset-market-verification.md) | 验证用例与结论 |
-| [智能体市场设计](docs/specs/2026-10-14-agent-marketplace-design.md) | 执行注册表模型(资产市场的前身) |
-| [辅助提单系统方案](docs/specs/2026-08-18-issue-helper-design.md) | 提单方向设计稿 |
+| [扩展库总览](docs/specs/2026-10-22-ai-asset-market-overview.md) | 原「AI 资产市场」时期的能力模型与上架流程（历史） |
+| [扩展库验证记录](docs/specs/2026-10-23-asset-market-verification.md) | 原资产市场验证用例与结论（历史） |
+| [智能体市场设计](docs/specs/2026-10-14-agent-marketplace-design.md) | 执行注册表模型（扩展库前身，历史） |
+| [辅助提单系统方案](docs/specs/2026-08-18-issue-helper-design.md) | 提单方向设计稿（历史） |
+| [交接文档 2026-10-27](docs/HANDOFF-2026-10-27.md) | 历史交接快照，现状以本文件与 GLOSSARY 为准 |
 | [deploy/README.md](deploy/README.md) | Docker 模式部署实操(在线 / 离线 / 备份 / 排错) |
 | [deploy/native/README.md](deploy/native/README.md) | 裸机模式部署实操(systemd / macOS local，含环境体检 / 开机自启 / 升级 / 备份) |
 
-> 2026-07 的立项与 P0 进度笔记（`2026-07-04-*` / `2026-07-07-*`）已归档在 `docs/specs/`，只作历史留档，现状以本文件与上面几份为准。
+> 2026-07 的立项与 P0 进度笔记（`2026-07-04-*` / `2026-07-07-*`）已归档在 `docs/specs/`，只作历史留档，现状以本文件、[术语与文案规范](docs/GLOSSARY.md) 与上面几份现役文档为准。
 
 ## 快速部署
 
 三种模式，都一键，互不干扰：
 
 ```bash
-# ===== 模式 A: Docker (默认, 生产在跑) =====
+# ===== 模式 A: Docker =====
 cd deploy && cp .env.template .env && $EDITOR .env
 sudo ./deploy.sh              # 在线;离线见 deploy/README.md §3
 

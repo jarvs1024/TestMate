@@ -546,7 +546,7 @@
             </div>
           </div>
           <div v-if="weeklyReport.sections.telemetry.data.top_mrs?.length" class="wr-top-mrs">
-            <div class="wr-sub-h">Top MRs (按运行数)</div>
+            <div class="wr-sub-h">MR 排行（按运行数）</div>
             <div v-for="m in weeklyReport.sections.telemetry.data.top_mrs.slice(0, 5)" :key="`${m.project_id}-${m.mr_iid}`" class="wr-top-mr">
               <span class="mono">!{{ m.mr_iid }}</span>
               <span class="wr-top-mr-title">{{ m.title }}</span>

@@ -256,9 +256,15 @@ def _validate_enum(enum_cls, value: str, field: str) -> None:
         enum_cls(value)
     except ValueError:
         valid = ", ".join(e.value for e in enum_cls)
+        label = {
+            "engine": "引擎",
+            "category": "业务域",
+            "kind": "角色",
+            "status": "状态",
+        }.get(field, field)
         raise HTTPException(
             status_code=422,
-            detail=f"unknown {field} '{value}' (可用: {valid})",
+            detail=f"未知的{label}「{value}」；可用值：{valid}",
         )
 
 
@@ -304,7 +310,7 @@ async def get_agent(
         result = await session.execute(select(Agent).where(Agent.code == code))
         agent = result.scalar_one_or_none()
         if not agent:
-            raise HTTPException(status_code=404, detail=f"capability '{code}' not found")
+            raise HTTPException(status_code=404, detail=f"能力「{code}」不存在")
         return AgentOut.model_validate(agent)
 
 
@@ -315,7 +321,7 @@ async def create_agent(
 ) -> AgentOut:
     """新建能力。admin only。"""
     if _user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以新建能力")
     # 枚举值先校验: 直接丢给 DB 的话, 传个已下线的值 (如 dify) 会变成 500 的
     # LookupError, 调用方看不出是自己参数不对.
     #
@@ -330,7 +336,7 @@ async def create_agent(
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Agent).where(Agent.code == payload.code))
         if result.scalar_one_or_none():
-            raise HTTPException(status_code=409, detail=f"code '{payload.code}' exists")
+            raise HTTPException(status_code=409, detail=f"能力编码「{payload.code}」已存在")
         agent = Agent(**payload.model_dump(), created_by=_user.id)
         session.add(agent)
         await session.commit()

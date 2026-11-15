@@ -150,10 +150,10 @@ async def update_setting(
 ) -> SettingOut:
     """改一个 setting. admin only."""
     if user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以修改平台设置")
     schema = next((s for s in SETTING_SCHEMA if s["key"] == key), None)
     if not schema:
-        raise HTTPException(status_code=404, detail=f"unknown setting '{key}'")
+        raise HTTPException(status_code=404, detail=f"设置项「{key}」不存在")
     if schema["is_secret"] and (payload.value == "" or payload.value is None):
         # ⚠️ secret 项**空值一律当"不改"** —— 跟前端"留空 = 不改"的契约一致.
         #    原来只在 update_secret=false 时才保护, 而 update_secret 默认是 true,
@@ -303,7 +303,7 @@ def _empty_out(key: str, schema: dict) -> SettingOut:
 async def test_ragflow(user: User = Depends(get_current_user)) -> SettingTestOut:
     """用当前 DB (或 fallback env) 的 ragflow 配置打 datasets 端点."""
     if user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以测试 RAGFlow 连接")
     from app.core.settings_store import _rewrite_loopback
     raw_url = (await get("ragflow.base_url", "")) or ""
     base_url = _rewrite_loopback(raw_url).rstrip("/")
@@ -344,7 +344,7 @@ class EmbedOut(BaseModel):
 async def test_gitlab(_user: User = Depends(get_current_user)) -> SettingTestOut:
     """探当前配置的 GitLab 仓库能不能连上 (SSH 鉴权 + 分支是否存在)."""
     if _user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以测试 GitLab 连接")
     from app.core import git_sync
 
     ok, message = git_sync.probe_remote()
@@ -368,7 +368,7 @@ async def test_dingtalk(
     ⚠️ 三个频道各配各的 (扩展群 / 审核群 / 代码检视群), 所以要分别自检 —— channel 参数选群.
     """
     if _user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以测试钉钉通知")
     from app.core.dingtalk import send_test_extensions_message
 
     ok, message, detail = await send_test_extensions_message(channel)
@@ -381,7 +381,7 @@ async def test_dingtalk(
 async def test_review_agent(user: User = Depends(get_current_user)) -> SettingTestOut:
     """用当前 DB 的 review_agent.base_url 测 ReviewAgent HTTP /api/v1/telemetry/health (调 review_agent_client.probe)."""
     if user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以测试代码检视后端（ReviewAgent）连接")
     from app.core import review_agent_client
     if not await review_agent_client.is_configured():
         return SettingTestOut(ok=False, status="off", message="未配置 db_path 或文件不存在", detail=None)
@@ -403,7 +403,7 @@ async def test_software_storage(user: User = Depends(get_current_user)) -> Setti
     ⚠️ admin only —— 存储根目录是**服务端路径**, 泄露等于告诉别人目录结构.
     """
     if user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以查看软件库存储路径")
 
     from app.core import software_store
     from app.core.settings_store import get

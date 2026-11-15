@@ -2,7 +2,7 @@
   <section class="card grants-card" aria-labelledby="grants-title">
     <header class="page-header">
       <div>
-        <p class="eyebrow">MCP CONNECTIONS</p>
+        <p class="eyebrow">MCP 连接授权</p>
         <h1 id="grants-title">授权管理</h1>
         <p>查看客户端获得的权限。撤销后，该客户端的新请求会立即失去授权。</p>
       </div>

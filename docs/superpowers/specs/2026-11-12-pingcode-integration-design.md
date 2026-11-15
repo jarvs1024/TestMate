@@ -1,6 +1,6 @@
 # PingCode 集成（凭据配置 + 内置 MCP）设计
 
-> 状态：待评审
+> 状态：已实现（工具数量后续扩展，现以 `/mcp/pingcode` 的 `tools/list` 为准）
 > 日期：2026-11-12
 > 参考实现：`/Users/jarvs/AiTestX`（浏览器扩展桥接版 MCP）
 > 目标读者：实现者、评审者、运维

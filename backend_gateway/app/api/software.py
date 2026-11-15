@@ -522,7 +522,7 @@ async def check_path(user: User = Depends(require_publisher)) -> dict:
        以前只报一种, 用户看着像"软件凭空消失", 实际只是换了根目录.
     """
     if not _is_admin(user):
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以查看软件库存储路径")
     root = await _root()
     roots = await _roots()
     info = software_store.usage_info(root)

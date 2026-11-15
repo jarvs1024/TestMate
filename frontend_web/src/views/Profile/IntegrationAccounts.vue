@@ -79,7 +79,7 @@
         </p>
 
         <p v-if="!provider.enabled" class="pc-offline">
-          PLM 尚未接入。开放后沿用这里的账号/凭据与令牌框架，无需再配一套。
+          {{ provider.name }} 尚未开放平台认证。开放后会沿用这里的账号与凭据框架，无需另配。
         </p>
 
         <form class="pc-form" @submit.prevent="save(provider)">

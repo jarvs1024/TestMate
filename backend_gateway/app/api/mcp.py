@@ -263,7 +263,7 @@ async def create_token(
     if denied:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"当前账号无权授予 {', '.join(denied)}",
+            detail=f"当前账号无权授予以下权限：{', '.join(denied)}",
         )
     existing = await session.scalar(
         select(McpApiToken.id).where(
@@ -274,7 +274,7 @@ async def create_token(
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"令牌名称「{payload.name}」已存在，请换一个名称",
+            detail=f"访问令牌名称「{payload.name}」已存在，请换一个名称",
         )
     plaintext = await issue_static_token(user)
 
@@ -308,7 +308,7 @@ async def delete_static_token(
         )
     ).scalar_one_or_none()
     if record is None:
-        raise HTTPException(status_code=404, detail="Token 不存在")
+        raise HTTPException(status_code=404, detail="访问令牌不存在")
     await session.delete(record)
     await session.commit()
     return {}

@@ -199,7 +199,7 @@ async def create_kb_dataset(
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:  # noqa: BLE001
         logger.exception("create_dataset failed")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
     ds = ds or {}
 
@@ -265,7 +265,7 @@ async def delete_kb_dataset(
        别以为没删掉就再点一次 (那会真删第二遍).
     """
     if user.role != UserRole.admin:
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以删除数据集")
 
     # 先把库名和内容规模捞出来 —— 审计要用, 前端确认文案也要
     ds_name, doc_count, chunk_count = "", 0, 0
@@ -281,7 +281,7 @@ async def delete_kb_dataset(
         # ⚠️ 这里不能当成"数据集不存在"(404) —— 那是**误导**:
         #    实际是 RAGFlow 挂了, 说的是"找不到"但真实原因是"连不上".
         logger.warning("删库前取数据集信息失败: %s", e)
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
     if not ds_name:
         # 库里根本没有这个 id —— 别去调 RAGFlow 删一个不存在的东西
@@ -295,7 +295,7 @@ async def delete_kb_dataset(
             action="delete", user=user, dataset_id=dataset_id,
             dataset_name=ds_name, error=str(e)[:500], space_id=space_id,
         )
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
     # 本地的归属记录也清掉 —— 库都没了, 归属也就没了
     await _drop_dataset_ownership(dataset_id)
@@ -380,7 +380,7 @@ async def _dataset_items(
         return matches[start:start + page_size]
     except Exception as e:
         logger.exception("list_datasets failed")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
 
 @router.get("/datasets")
@@ -459,7 +459,7 @@ async def get_documents(
         return {"docs": cleaned, "total": max(total, len(cleaned))}
     except Exception as e:
         logger.exception("list_documents failed")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
 
 @router.get("/documents/search")
@@ -491,7 +491,7 @@ async def search_documents(
         datasets = await list_datasets(page=1, page_size=100, space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("search_documents: 取数据集列表失败")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
     targets = [
         d for d in datasets
@@ -624,7 +624,7 @@ async def get_doc_chunks(
         }
     except Exception as e:
         logger.exception("list_doc_chunks failed")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
 
 
@@ -857,7 +857,7 @@ async def upload_prepared_documents(
             size=sum(len(d) for _, d, _ in prepared),
             error=str(e)[:500], space_id=space_id,
         )
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
     ids = [str(d.get("id")) for d in created if d.get("id")]
     ingest_ok = False
@@ -1164,7 +1164,7 @@ async def replace_document(
         old = await _find_document(dataset_id, document_id, space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("更新文档: 查旧文档失败")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
     if not old:
         raise HTTPException(status_code=404, detail="文档不存在")
 
@@ -1196,7 +1196,7 @@ async def replace_document(
             document_id=document_id, doc_name=old_name, error=str(e)[:500],
             space_id=space_id,
         )
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
     new_doc = (created or [{}])[0] or {}
     new_id = str(new_doc.get("id") or "")
@@ -1206,7 +1206,7 @@ async def replace_document(
             document_id=document_id, doc_name=old_name, error="ragflow 没返回新文档 id",
             space_id=space_id,
         )
-        raise HTTPException(status_code=502, detail="ragflow 没有返回新文档 id")
+        raise HTTPException(status_code=502, detail="RAGFlow 没有返回新文档 ID")
 
     try:
         await delete_documents(dataset_id, doc_ids=[document_id], space_id=space_id)
@@ -1336,7 +1336,7 @@ async def reparse_kb_document(
         doc = await _find_document(dataset_id, document_id, space_id=space_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("重新解析: 查文档失败")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
@@ -1352,7 +1352,7 @@ async def reparse_kb_document(
             document_id=document_id, doc_name=doc_name, error=str(e)[:500],
             space_id=space_id,
         )
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
     await _audit(
         action="reparse", user=user, dataset_id=dataset_id, dataset_name=ds_name,
@@ -1413,7 +1413,7 @@ async def download_doc(
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("download_document failed")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
     # 文件名兜底 —— RAGFlow 的 content-disposition 偶尔没有文件名
     safe = _sanitize_kb_filename(filename, f"document-{document_id[:8]}")
@@ -1477,7 +1477,7 @@ async def get_audits(
         #    用户/脚本传 0 的意思是"我要 0 条"? 不, 是"我手滑了" —— 兜到 1 更合理
         page_size = max(1, min(int(page_size), 200))
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="page / page_size 必须是整数")
+        raise HTTPException(status_code=400, detail="page 与 page_size 必须是整数")
 
     space_filter = (space_id or "").strip()
 
@@ -1549,7 +1549,7 @@ async def ingest(
 ) -> dict:
     """启动/取消文档解析. admin only."""
     if user.role != UserRole.admin:
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以启动或取消文档解析")
     try:
         ok = await ingest_documents(
             payload.doc_ids, run=payload.run, delete=payload.delete, space_id=space_id
@@ -1557,7 +1557,7 @@ async def ingest(
         return {"ok": ok}
     except Exception as e:
         logger.exception("ingest failed")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
 
 class DeleteDocsIn(BaseModel):
@@ -1581,7 +1581,7 @@ async def delete_docs(
        admin 事后根本查不出"这篇文档是谁删的".
     """
     if user.role != UserRole.admin:
-        raise HTTPException(status_code=403, detail="admin only")
+        raise HTTPException(status_code=403, detail="仅管理员可以删除文档")
 
     # ⚠️ 删之前先把**要删的那些文档的名字**捞出来 ——
     #    审计里要写清楚删的是哪几篇 (删完就查不到了).
@@ -1625,7 +1625,7 @@ async def delete_docs(
             dataset_name=ds_name, doc_name=doc_label, error=str(e)[:500],
             space_id=space_id,
         )
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
     # ⚠️ action 用 **delete_doc**, 不是 delete ——
     #    delete 已经被「删除数据集」占着了 (历史上那条记录也是删库).
@@ -1697,7 +1697,7 @@ async def search(
         }
     except Exception as e:
         logger.exception("search failed")
-        raise HTTPException(status_code=502, detail=f"ragflow error: {e}")
+        raise HTTPException(status_code=502, detail=f"RAGFlow 调用失败：{e}")
 
 
 @router.get("/health")
