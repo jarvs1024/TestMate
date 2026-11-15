@@ -9,6 +9,7 @@ from app.models.system_setting import SystemSetting  # noqa: F401
 from app.models.asset import (  # noqa: F401
     Asset,
     AssetAudit,
+    AssetComment,
     AssetJob,
     AssetNotification,
 )

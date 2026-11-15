@@ -14,7 +14,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import String, Text, JSON, BigInteger, Integer, DateTime
+from sqlalchemy import String, Text, JSON, BigInteger, Integer, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -161,6 +161,32 @@ class AssetAudit(Base):
     comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
     detail: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AssetComment(Base):
+    """资产用户评论 —— 一级回复 (回复挂在主评论下, 不能套娃).
+
+    软删 (`deleted_at`) —— 本人或管理员删除后保留行, 列表不再返回;
+    删除主评论时其下回复一并软删.
+    `username` 存快照: 列表展示不用 join, 账号改名/停用也不影响历史评论.
+    """
+
+    __tablename__ = "asset_comments"
+    __table_args__ = (Index("ix_asset_comments_code_created", "code", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    asset_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # 回复的目标主评论; NULL = 主评论本身. 不加外键 (与 asset_id 同理, 软删自管理)
+    parent_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
 
 class AssetNotification(Base):

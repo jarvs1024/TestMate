@@ -194,18 +194,13 @@ describe('上传抽屉: 类型头与换类型', () => {
 });
 
 describe('上传抽屉: 表单内容', () => {
-  it('⚠️ 上架时也能填 详细说明 / 适用场景 / 不适合的场景 / 安装步骤 (2026-11-03 加回来)', async () => {
-    // ⚠️ 2026-11-03 (第二十二轮) 翻转了 2026-10-25 的决定:
-    //    以前上架表单里**没有**这几项 → 新上架的资产这些字段恒为空 →
-    //    以后进「编辑」看到 4 个空框, 而详情页明明有一大段说明 →
-    //    用户看到的"编辑页和上架内容对不上".
-    //    现在上架就能填 → 编辑有值 → 详情页显示, 闭环.
+  it('上架时能填 详细说明 / 推荐问法; 安装步骤与「不适合的场景」都不再有', async () => {
     const w = await open({ initialKind: 'skill' });
     const form = w.find('.up-form').text();
     expect(form).toContain('详细说明');
-    expect(form).toContain('适用场景');
-    expect(form).toContain('不适合的场景');
-    expect(form).toContain('安装步骤');
+    expect(form).toContain('推荐问法');
+    expect(form).not.toContain('安装步骤');
+    expect(form).not.toContain('不适合的场景');
 
     // 进阶信息块里仍然只留标签 / 关键词 —— 这几项不在"进阶"里, 在基础信息里
     const adv = w.find('.adv-body').text();

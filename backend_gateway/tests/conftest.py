@@ -49,6 +49,7 @@ _TABLES = (
     "asset_audits",
     "asset_notifications",
     "asset_jobs",
+    "asset_comments",
     "assets",
     # 计数冷却窗口去重标记 (2026-11-05)
     "count_marks",

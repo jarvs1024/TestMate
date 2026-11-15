@@ -98,9 +98,6 @@ def _package_files(a: dict) -> dict[tuple[str, str], str]:
         "## 不适用",
         a["not_for"],
         "",
-        "## 安装步骤",
-        *[f"{i + 1}. {s}" for i, s in enumerate(a["install_steps"])],
-        "",
     ])
     out: dict[str, str] = {}
     if kind == "skill":

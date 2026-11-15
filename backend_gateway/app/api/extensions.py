@@ -27,7 +27,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import ValidationError
 from fastapi import Response
-from sqlalchemy import Text, cast, select, or_, update, func
+from sqlalchemy import Text, cast, delete, select, or_, update, func
 
 from app.api.auth import get_current_user, get_optional_user
 from app.core import git_sync, pkg
@@ -63,11 +63,15 @@ from app.core.ext_catalog import (
     validate_files,
 )
 from app.db.session import AsyncSessionLocal
-from app.models.asset import Asset, AssetAudit, AssetJob
+from app.models.asset import Asset, AssetAudit, AssetComment, AssetJob
 from app.models.user import User
 from app.schemas.asset import (
     AssetAuditListOut,
     AssetAuditOut,
+    AssetCommentIn,
+    AssetCommentListOut,
+    AssetCommentOut,
+    AssetCommentUpdateIn,
     AssetCopyOut,
     AssetDeleteOut,
     AssetDocOut,
@@ -1151,6 +1155,192 @@ async def record_connector_copy(
             )
         ).scalar_one()
     return AssetCopyOut(code=code, copy_count=new_count or 0)
+
+
+def _comment_out(
+    c: AssetComment, user: User, is_admin: bool, can_reply: bool,
+    replies: list[AssetComment] | None = None,
+) -> AssetCommentOut:
+    return AssetCommentOut(
+        id=c.id, code=c.code, user_id=c.user_id, username=c.username or "",
+        content=c.content or "", parent_id=c.parent_id,
+        # 删除只给管理员; 编辑只给评论作者本人 (管理员也不能改别人的话)
+        can_delete=is_admin,
+        can_edit=c.user_id is not None and c.user_id == user.id,
+        can_reply=can_reply,
+        replies=[_comment_out(r, user, is_admin, can_reply) for r in (replies or [])],
+        created_at=c.created_at,
+    )
+
+
+def _can_reply(a: Asset, user: User, is_admin: bool) -> bool:
+    """回复权限: 资产作者 + 管理员."""
+    return is_admin or (bool(a.author) and a.author == (user.username or ""))
+
+
+@router.get("/{code}/comments", response_model=AssetCommentListOut)
+async def list_asset_comments(
+    code: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+) -> AssetCommentListOut:
+    """资产用户评论 (主评论最新在前, 回复挂在父评论下按时间正序).
+
+    看不到的资产 → 404, 不泄露存在性.
+    """
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        is_admin = ext_policy.is_admin(user)
+        assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
+                       is_admin=is_admin)
+        can_reply = _can_reply(a, user, is_admin)
+        # total 只数主评论 —— 分页也按主评论, 回复随父评论一起返回
+        total = (
+            await session.execute(
+                select(func.count()).select_from(AssetComment).where(
+                    AssetComment.code == code,
+                    AssetComment.parent_id.is_(None),
+                    AssetComment.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one()
+        rows = (
+            await session.execute(
+                select(AssetComment)
+                .where(
+                    AssetComment.code == code,
+                    AssetComment.parent_id.is_(None),
+                    AssetComment.deleted_at.is_(None),
+                )
+                .order_by(AssetComment.created_at.desc(), AssetComment.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        ).scalars().all()
+        reply_map: dict[int, list[AssetComment]] = {}
+        if rows:
+            replies = (
+                await session.execute(
+                    select(AssetComment)
+                    .where(
+                        AssetComment.parent_id.in_([c.id for c in rows]),
+                        AssetComment.deleted_at.is_(None),
+                    )
+                    .order_by(AssetComment.created_at.asc(), AssetComment.id.asc())
+                )
+            ).scalars().all()
+            for r in replies:
+                reply_map.setdefault(r.parent_id, []).append(r)
+    return AssetCommentListOut(
+        items=[
+            _comment_out(c, user, is_admin, can_reply, reply_map.get(c.id)) for c in rows
+        ],
+        total=total or 0,
+    )
+
+
+@router.post("/{code}/comments", response_model=AssetCommentOut, status_code=201)
+async def create_asset_comment(
+    code: str,
+    body: AssetCommentIn,
+    user: User = Depends(get_current_user),
+) -> AssetCommentOut:
+    """发表评论 / 回复 (需登录). 正文 1~1000 字, 纯空白视为空.
+
+    回复只允许资产作者 / 管理员, 且只能回复主评论 (一级).
+    """
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        is_admin = ext_policy.is_admin(user)
+        assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
+                       is_admin=is_admin)
+        can_reply = _can_reply(a, user, is_admin)
+        if body.parent_id is not None:
+            if not can_reply:
+                raise HTTPException(
+                    status_code=403, detail="只有资产作者或管理员可以回复评论",
+                )
+            parent = await session.get(AssetComment, body.parent_id)
+            if parent is None or parent.code != code or parent.deleted_at is not None:
+                raise HTTPException(status_code=404, detail="回复的评论不存在")
+            if parent.parent_id is not None:
+                raise HTTPException(
+                    status_code=422, detail="只支持一级回复, 只能回复主评论",
+                )
+        c = AssetComment(
+            asset_id=a.id, code=code, user_id=user.id,
+            username=user.username or "", content=body.content,
+            parent_id=body.parent_id,
+        )
+        session.add(c)
+        await session.commit()
+        await session.refresh(c)
+    return _comment_out(c, user, is_admin, can_reply)
+
+
+@router.put("/{code}/comments/{comment_id}", response_model=AssetCommentOut)
+async def update_asset_comment(
+    code: str,
+    comment_id: int,
+    body: AssetCommentUpdateIn,
+    user: User = Depends(get_current_user),
+) -> AssetCommentOut:
+    """编辑评论 / 回复正文 —— 只有评论作者本人可改 (管理员也不例外)."""
+    async with AsyncSessionLocal() as session:
+        a = (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"资产 {code} 不存在")
+        is_admin = ext_policy.is_admin(user)
+        assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
+                       is_admin=is_admin)
+        c = await session.get(AssetComment, comment_id)
+        if c is None or c.code != code or c.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="评论不存在")
+        if c.user_id is None or c.user_id != user.id:
+            raise HTTPException(status_code=403, detail="只能编辑自己的评论")
+        c.content = body.content
+        await session.commit()
+        await session.refresh(c)
+    return _comment_out(c, user, is_admin, _can_reply(a, user, is_admin))
+
+
+@router.delete("/{code}/comments/{comment_id}")
+async def delete_asset_comment(
+    code: str,
+    comment_id: int,
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """删除评论 —— 仅管理员; 软删 (deleted_at).
+
+    删除主评论时, 其下回复一并软删 (整段对话消失).
+    """
+    async with AsyncSessionLocal() as session:
+        c = await session.get(AssetComment, comment_id)
+        if c is None or c.code != code or c.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="评论不存在")
+        if not ext_policy.is_admin(user):
+            raise HTTPException(status_code=403, detail="只有管理员可以删除评论")
+        now = datetime.utcnow()
+        c.deleted_at = now
+        if c.parent_id is None:
+            await session.execute(
+                update(AssetComment)
+                .where(AssetComment.parent_id == c.id, AssetComment.deleted_at.is_(None))
+                .values(deleted_at=now)
+            )
+        await session.commit()
+    return {"ok": True, "id": comment_id}
 
 
 @router.get("/{code}/doc", response_model=AssetDocOut)
@@ -2272,6 +2462,8 @@ async def _hard_delete_asset(
 
         # 3) 推送成功 → 动 DB
         async with AsyncSessionLocal() as session:
+            # ⚠️ 评论随资产一起走 —— 留着就是永远够不着的孤儿行
+            await session.execute(delete(AssetComment).where(AssetComment.code == code))
             a = await session.get(Asset, asset_id)
             if a is not None:
                 await session.delete(a)

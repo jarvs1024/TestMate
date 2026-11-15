@@ -122,7 +122,7 @@ describe('③ 侧栏顶部「能力」区块标题去掉 (2026-11-04)', () => {
   });
 
   it('结构变成三层: 总览入口 → 角色组 → 条目', () => {
-    // 「全部能力」卡片是第一个子元素
+    // 「能力墙」卡片是第一个子元素
     expect(capNav).toMatch(/<router-link to="\/" class="all-link"/);
     const body = capNav.slice(capNav.indexOf('<div class="cap-nav">'));
     // 跳过 cap-nav 自己的 class, 看它里面的第一个元素

@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.base import UTCModel
 
@@ -259,6 +259,67 @@ class AssetAuditOut(UTCModel):
 
 class AssetAuditListOut(BaseModel):
     items: list[AssetAuditOut]
+    total: int
+
+
+class AssetCommentIn(BaseModel):
+    """发表评论 / 回复 —— 1~1000 字, 首尾空白由后端裁掉."""
+
+    content: str = Field(..., min_length=1, max_length=1000)
+    # 回复主评论时传主评论 id; 为空 = 发表主评论
+    parent_id: int | None = None
+
+    # ⚠️ 纯空白 ("   ") 通过 min_length 但等于没写 —— 先裁空白再判断
+    @field_validator("content")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("评论内容不能为空")
+        return v
+
+
+class AssetCommentUpdateIn(BaseModel):
+    """编辑评论正文 —— 只改内容, 不碰作者与层级."""
+
+    content: str = Field(..., min_length=1, max_length=1000)
+
+    @field_validator("content")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("评论内容不能为空")
+        return v
+
+
+class AssetCommentOut(UTCModel):
+    id: int
+    code: str
+    user_id: int | None = None
+    username: str = ""
+    content: str = ""
+    # 为空 = 主评论; 非空 = 回复某条主评论
+    parent_id: int | None = None
+    # 当前用户能不能删这条 (仅管理员)
+    can_delete: bool = False
+    # 当前用户能不能编辑这条 (仅评论作者本人, 管理员也不例外)
+    can_edit: bool = False
+    # 当前用户能不能回复 (资产作者或管理员)
+    can_reply: bool = False
+    # 回复列表 —— 只挂在主评论上, 按时间正序
+    replies: list["AssetCommentOut"] = []
+    created_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+AssetCommentOut.model_rebuild()
+
+
+class AssetCommentListOut(BaseModel):
+    items: list[AssetCommentOut]
     total: int
 
 

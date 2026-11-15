@@ -108,24 +108,31 @@ describe('① 暗色主题: 抽屉底色必须近乎不透明 (否则背景字�
 // ═══════════════ ② 编辑页 ↔ 上架内容对齐 ═══════════════
 
 describe('② 上架表单和详情页要对得上 (2026-11-03)', () => {
-  it('扩展上架表单: 详细说明 / 适用场景 / 不适合的场景 / 安装步骤 都有输入框', () => {
-    expect(uploadDialog).toContain('v-model="form.description"');
-    expect(uploadDialog).toContain('v-model="form.use_when"');
-    expect(uploadDialog).toContain('v-model="form.not_for"');
-    expect(uploadDialog).toContain('v-model="form.installStepsText"');
+  it('扩展上架表单: 详细说明 / 推荐问法 有输入框; 安装步骤与「不适合的场景」都不再有', () => {
+    const tpl = uploadDialog.split('<script setup')[0];
+    expect(tpl).toContain('v-model="form.description"');
+    expect(tpl).toContain('v-model="form.use_when"');
+    expect(tpl).not.toContain('installStepsText');
+    expect(tpl).not.toContain('label="安装步骤"');
+    expect(tpl).not.toContain('v-model="form.not_for"');
+    expect(tpl).not.toContain('label="不适合的场景"');
   });
 
-  it('扩展上架表单: 这几项在 create / edit 都有, update (发新版本) 保留原值', () => {
+  it('扩展上架表单: create / edit 都能填推荐问法; update 保留原值', () => {
     // ⚠️ 发新版本那一路**不显示**这几项 → 提交时必须带原值, 别把老字段清空
     expect(uploadDialog).toContain('v-if="mode !== \'update\'"');
-    expect(uploadDialog).toMatch(/description:\s*props\.mode === 'update'\s*\?\s*\(props\.asset\?\.description \|\| ''\)\s*:\s*form\.description/);
-    expect(uploadDialog).toMatch(/not_for:\s*props\.mode === 'update'\s*\?\s*\(props\.asset\?\.not_for \|\| ''\)\s*:\s*form\.not_for/);
+    expect(uploadDialog).toMatch(/use_when:\s*props\.mode === 'update'\s*\?\s*\(props\.asset\?\.use_when \|\| ''\)\s*:\s*form\.use_when/);
+    // 「不适合的场景」已下线 —— 编辑信息不再提交 not_for (PATCH 不传 = 保留原值)
+    const editBlock = uploadDialog.split("if (props.mode === 'edit')")[1]?.split('const payload')[0] || '';
+    expect(editBlock).not.toContain('not_for');
   });
 
-  it('扩展详情页: 适用场景 / 不适合的场景 / 安装步骤 又显示出来了', () => {
-    expect(detailDrawer).toContain('item.use_when');
-    expect(detailDrawer).toContain('item.not_for');
-    expect(detailDrawer).toContain('installStepList');
+  it('扩展详情页: 推荐问法显示, 不再显示安装步骤与不适合', () => {
+    const tpl = detailDrawer.split('<script setup')[0];
+    expect(tpl).toContain('promptList');
+    expect(tpl).toContain('推荐问法');
+    expect(tpl).not.toContain('item.not_for');
+    expect(detailDrawer).not.toContain('installStepList');
   });
 
   it('软件上架表单: 「详细说明」「不适合的场景」也补上了 (跟扩展一致)', () => {

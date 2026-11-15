@@ -9,10 +9,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
-import ElementPlus from 'element-plus';
+import ElementPlus, { ElMessageBox } from 'element-plus';
 import AssetDetailDrawer from '../AssetDetailDrawer.vue';
 import { useUserStore } from '@/stores/user';
-import type { AssetItem } from '@/api/assets';
+import type { AssetComment, AssetItem } from '@/api/assets';
 
 const api = vi.hoisted(() => ({
   unpublishAsset: vi.fn(async () => ({ ok: true, code: 'demo', publish_status: 'unpublish_pending', changed: true })),
@@ -24,6 +24,17 @@ const api = vi.hoisted(() => ({
   getAssetDoc: vi.fn(async () => ({ kind: 'skill', filename: 'SKILL.md', frontmatter: {}, content: '# x' })),
   downloadAssetPackage: vi.fn(async () => new Blob(['x'])),
   recordMcpCopy: vi.fn(async () => ({ code: 'demo', copy_count: 3 })),
+  listAssetComments: vi.fn(async (): Promise<{ items: AssetComment[]; total: number }> => ({ items: [], total: 0 })),
+  createAssetComment: vi.fn(async (_code: string, content: string) => ({
+    id: 101, code: 'demo', user_id: 1, username: 'jarvs', content,
+    parent_id: null as number | null, can_delete: false, can_edit: true,
+    created_at: '2026-11-15T10:00:00',
+  })),
+  updateAssetComment: vi.fn(async (_code: string, id: number, content: string) => ({
+    id, code: 'demo', user_id: 1, username: 'jarvs', content,
+    can_delete: false, can_edit: true, created_at: '2026-11-15T10:00:00',
+  })),
+  deleteAssetComment: vi.fn(async () => ({ ok: true, id: 7 })),
 }));
 
 vi.mock('@/api/assets', () => api);
@@ -173,7 +184,7 @@ describe('资产详情抽屉 · 删除未上架的资产', () => {
   });
 });
 
-describe('资产详情抽屉 · 适用项目与适用场景', () => {
+describe('资产详情抽屉 · 适用项目与推荐问法', () => {
   it('项目归属显示成「适用项目」', async () => {
     const w = await mountDrawer({ it: item({ project: '6100' }) });
     expect(w.find('.ad-scope').text()).toContain('6100');
@@ -188,28 +199,70 @@ describe('资产详情抽屉 · 适用项目与适用场景', () => {
     expect(w.find('.ad-meta').text()).not.toContain('plugin');
   });
 
-  it('⚠️ 「适用场景」显示出来 (2026-11-03 第二十二轮加回来)', async () => {
-    // ⚠️ 2026-11-03 (第二十二轮) 翻转了 2026-10-25 的决定:
-    //    以前整块删掉, 理由是"上传表单已经不让人填" —— 但后来发现上架表单里
-    //    **压根没有**这几个输入框 → 新资产的字段恒为空 → 编辑页 4 个空框,
-    //    详情页又只有包里的 SKILL.md → "编辑页和上架内容对不上".
-    //    现在上架也能填 → 这里把它显示出来, 编辑完立刻可见.
-    const w = await mountDrawer({ it: item({ use_when: '拿到 dmesg 时用它' }) });
-    expect(w.text()).toContain('适用场景');
-    expect(w.text()).toContain('拿到 dmesg 时用它');
+  it('通用资产块是单行紧凑条 (副说明并进同一行)', async () => {
+    const w = await mountDrawer({ it: item({ project: '' }) });
+    expect(w.find('.ad-scope .sc-sub').text()).toContain('所有项目通用');
+
+    const w2 = await mountDrawer({ it: item({ project: '6100' }) });
+    expect(w2.find('.ad-scope .sc-sub').text()).toContain('仅 6100 项目可用');
   });
 
-  it('「不适合的场景」「安装步骤」有值才显示 (没填就不占位)', async () => {
+  it('「推荐问法」按行拆成多条, 每条带复制按钮', async () => {
     const w = await mountDrawer({
-      it: item({ use_when: '该用它时', not_for: '别用它时', install_steps: ['第一步', '第二步'] }),
+      it: item({ use_when: '帮我看下 6100 本周的测试结果\n分析这段 dmesg 日志' }),
     });
-    expect(w.text()).toContain('别用它时');
-    expect(w.text()).toContain('安装步骤');
-    expect(w.text()).toContain('第一步');
+    expect(w.text()).toContain('推荐问法');
+    const prompts = w.findAll('.ad-prompt');
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0].text()).toContain('帮我看下 6100 本周的测试结果');
+    expect(prompts[0].find('button').text()).toContain('复制');
+  });
+
+  it('点推荐问法旁的「复制」→ 复制那句原文', async () => {
+    clipboard.copyToClipboard.mockClear();
+    const w = await mountDrawer({ it: item({ use_when: '分析这段 dmesg 日志' }) });
+    await w.find('.ad-prompt button').trigger('click');
+    await flushPromises();
+    expect(clipboard.copyToClipboard).toHaveBeenCalledWith('分析这段 dmesg 日志');
+  });
+
+  it('不再显示「适合 / 不适合」', async () => {
+    const w = await mountDrawer({ it: item({ use_when: '该用它时', not_for: '别用它时' }) });
+    expect(w.text()).not.toContain('适合');
+    expect(w.text()).not.toContain('别用它时');
+  });
+
+  it('「推荐问法」有值才显示; 安装步骤不再展示', async () => {
+    const w = await mountDrawer({
+      it: item({ use_when: '该用它时', install_steps: ['第一步', '第二步'] }),
+    });
+    expect(w.text()).toContain('推荐问法');
+    expect(w.text()).not.toContain('安装步骤');
+    expect(w.text()).not.toContain('第一步');
 
     const w2 = await mountDrawer({ it: item({ use_when: '', not_for: '', install_steps: [] }) });
-    expect(w2.text()).not.toContain('不适合的场景');
+    expect(w2.text()).not.toContain('推荐问法');
     expect(w2.text()).not.toContain('安装步骤');
+  });
+
+  it('文档正文里的「## 安装步骤」段也一并隐藏, 其他小节照旧', async () => {
+    api.getAssetDoc.mockResolvedValue({
+      kind: 'skill', filename: 'SKILL.md', frontmatter: {},
+      content: '# 用例模板生成\n\n## 适用场景\n\n展开用例\n\n## 安装步骤\n\n1. 复制目录\n2. 重启会话\n\n## 注意\n\n仅限本地',
+    });
+    try {
+      const w = await mountDrawer();
+      await flushPromises();
+      const doc = w.find('.ad-doc');
+      expect(doc.text()).toContain('适用场景');
+      expect(doc.text()).toContain('展开用例');
+      expect(doc.text()).not.toContain('安装步骤');
+      expect(doc.text()).not.toContain('复制目录');
+      expect(doc.text()).toContain('注意');
+      expect(doc.text()).toContain('仅限本地');
+    } finally {
+      api.getAssetDoc.mockResolvedValue({ kind: 'skill', filename: 'SKILL.md', frontmatter: {}, content: '# x' });
+    }
   });
 
   it('安装提示是通用话术, 不写死某个 Agent 的目录', async () => {
@@ -262,6 +315,29 @@ describe('详情抽屉 · 下载次数', () => {
 });
 
 /**
+ * 「技术信息」折叠头 (2026-11-15 用户反馈: 展开符号太弱, 像个普通文字).
+ * 锁住: 默认收起 + 有动作提示 + aria-expanded 跟状态同步.
+ */
+describe('详情抽屉 · 技术信息折叠头', () => {
+  it('默认收起, 折叠头上有「展开」提示', async () => {
+    const w = await mountDrawer();
+    const btn = w.find('.tech-toggle');
+    expect(btn.text()).toContain('展开');
+    expect(btn.attributes('aria-expanded')).toBe('false');
+    expect(w.find('.tech-body').isVisible()).toBe(false);
+  });
+
+  it('点开后提示变「收起」, aria-expanded=true, 内容可见', async () => {
+    const w = await mountDrawer();
+    await w.find('.tech-toggle').trigger('click');
+    const btn = w.find('.tech-toggle');
+    expect(btn.text()).toContain('收起');
+    expect(btn.attributes('aria-expanded')).toBe('true');
+    expect(w.find('.tech-body').isVisible()).toBe(true);
+  });
+});
+
+/**
  * 连接器复制计数 (2026-11-04 第二十四轮).
  *
  * ⚠️ 用户原话: 「连接器加回下载图标, 计算方式是复制 json 配置
@@ -295,7 +371,8 @@ describe('详情抽屉 · 连接器复制计数', () => {
     const w = await mountDrawer({
       it: item({ kind: 'mcp', mcp_config: { mcpServers: { demo: { url: 'http://x' } } } }),
     });
-    const btns = w.findAll('button').filter((b) => b.text().includes('复制'));
+    const btns = w.findAll('button')
+      .filter((b) => b.text().includes('复制') && !b.classes().includes('pr-copy'));
     expect(btns.length).toBe(2);
     await btns[0].trigger('click');
     await flushPromises();
@@ -343,5 +420,252 @@ describe('详情抽屉 · 内置资产', () => {
     const w = await mountDrawer({ it: item({ builtin: true, kind: 'mcp' }) });
     const btn = w.findAll('button').find((b) => b.text().replace(/\s+/g, '').includes('复制JSON'));
     expect(btn).toBeTruthy();
+  });
+});
+
+/**
+ * 用户评论 (2026-11-15).
+ *
+ * 平铺展示, 最新在前; 发表后立刻出现在列表顶部; 删除入口只给本人/管理员
+ * (后端按 can_delete 算, 前端照它显示).
+ */
+describe('资产详情抽屉 · 用户评论', () => {
+  beforeEach(() => {
+    api.listAssetComments.mockReset().mockResolvedValue({ items: [], total: 0 });
+    api.createAssetComment.mockClear();
+    api.updateAssetComment.mockClear();
+    api.deleteAssetComment.mockClear();
+  });
+
+  it('空态: 没有评论时说「还没有评论」', async () => {
+    const w = await mountDrawer();
+    expect(w.find('.ad-comments').text()).toContain('还没有评论');
+    expect(api.listAssetComments).toHaveBeenCalledWith('demo', { limit: 10, offset: 0 });
+  });
+
+  it('输入框提示引导写感受 / 建议 / 吐槽', async () => {
+    const w = await mountDrawer();
+    const ph = w.find('textarea').attributes('placeholder') || '';
+    expect(ph).toContain('感受');
+    expect(ph).toContain('建议');
+    expect(ph).toContain('吐槽');
+  });
+
+  it('有评论 → 显示用户名 / 内容 / 时间; 编辑/删除按后端权限显示', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [
+        { id: 2, code: 'demo', user_id: 3, username: '别人', content: '挺好用',
+          can_delete: false, can_edit: false, created_at: '2026-11-15T10:00:00' },
+        { id: 1, code: 'demo', user_id: 1, username: 'jarvs', content: '第一条',
+          can_delete: false, can_edit: true, created_at: '2026-11-14T09:00:00' },
+      ],
+      total: 2,
+    });
+    const w = await mountDrawer();
+    const items = w.findAll('.cm-item');
+    expect(items).toHaveLength(2);
+    expect(items[0].text()).toContain('别人');
+    expect(items[0].text()).toContain('挺好用');
+    expect(items[0].find('.cm-del').exists()).toBe(false);
+    expect(items[0].find('.cm-edit').exists()).toBe(false);
+    // 自己的评论: 能编辑, 不能删 (删除只给管理员)
+    expect(items[1].find('.cm-del').exists()).toBe(false);
+    expect(items[1].find('.cm-edit').exists()).toBe(true);
+    expect(w.find('.cm-count').text()).toBe('2');
+  });
+
+  it('发表评论 → 调接口, 新评论出现在最上面, 输入框清空', async () => {
+    const w = await mountDrawer();
+    await w.find('textarea').setValue('这个技能好用');
+    const btn = w.findAll('button').find((b) => b.text().includes('发表评论'))!;
+    expect(btn.attributes('disabled')).toBeUndefined();
+    await btn.trigger('click');
+    await flushPromises();
+    expect(api.createAssetComment).toHaveBeenCalledWith('demo', '这个技能好用');
+    expect(w.find('.cm-item').text()).toContain('这个技能好用');
+    expect((w.find('textarea').element as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('空白内容 → 发表按钮禁用 (不请求接口)', async () => {
+    const w = await mountDrawer();
+    await w.find('textarea').setValue('   ');
+    const btn = w.findAll('button').find((b) => b.text().includes('发表评论'))!;
+    expect(btn.attributes('disabled')).toBeDefined();
+  });
+
+  it('管理员点删除 → 确认后调接口, 列表移除', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [{ id: 7, code: 'demo', user_id: 1, username: 'jarvs', content: '旧评论',
+                can_delete: true, created_at: '2026-11-14T09:00:00' }],
+      total: 1,
+    });
+    const spy = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as any);
+    const w = await mountDrawer();
+    await w.find('.cm-del').trigger('click');
+    await flushPromises();
+    expect(api.deleteAssetComment).toHaveBeenCalledWith('demo', 7);
+    expect(w.findAll('.cm-item')).toHaveLength(0);
+    expect(w.find('.cm-count').exists()).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('编辑自己的评论 → 预填原文, 保存后原地更新', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [{ id: 7, code: 'demo', user_id: 1, username: 'jarvs', content: '旧正文',
+                can_delete: false, can_edit: true, created_at: '2026-11-14T09:00:00' }],
+      total: 1,
+    });
+    const w = await mountDrawer();
+    await w.find('.cm-edit').trigger('click');
+
+    const form = w.find('.cm-edit-form');
+    expect(form.exists()).toBe(true);
+    const input = form.find('textarea');
+    expect((input.element as HTMLTextAreaElement).value).toBe('旧正文');
+
+    await input.setValue('新正文');
+    await form.findAll('button').find((b) => b.text() === '保存')!.trigger('click');
+    await flushPromises();
+
+    expect(api.updateAssetComment).toHaveBeenCalledWith('demo', 7, '新正文');
+    expect(w.find('.cm-edit-form').exists()).toBe(false);
+    expect(w.find('.cm-item .cm-text').text()).toBe('新正文');
+  });
+
+  it('取消编辑 → 正文不变, 不调接口', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [{ id: 7, code: 'demo', user_id: 1, username: 'jarvs', content: '旧正文',
+                can_delete: false, can_edit: true, created_at: '2026-11-14T09:00:00' }],
+      total: 1,
+    });
+    const w = await mountDrawer();
+    await w.find('.cm-edit').trigger('click');
+    await w.find('.cm-edit-form').findAll('button').find((b) => b.text() === '取消')!.trigger('click');
+
+    expect(w.find('.cm-edit-form').exists()).toBe(false);
+    expect(w.find('.cm-item .cm-text').text()).toBe('旧正文');
+    expect(api.updateAssetComment).not.toHaveBeenCalled();
+  });
+
+  it('回复也能编辑 (权限按回复作者算)', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [{ id: 5, code: 'demo', user_id: 3, username: '别人', content: '主评论',
+                can_delete: false, can_reply: true,
+                replies: [{ id: 9, code: 'demo', user_id: 1, username: 'jarvs', content: '旧回复',
+                            parent_id: 5, can_delete: false, can_edit: true,
+                            created_at: '2026-11-15T11:00:00' }],
+                created_at: '2026-11-15T10:00:00' }],
+      total: 1,
+    });
+    const w = await mountDrawer();
+    await w.find('.cm-reply .cm-edit').trigger('click');
+    const form = w.find('.cm-reply .cm-edit-form');
+    expect(form.exists()).toBe(true);
+
+    await form.find('textarea').setValue('新回复');
+    await form.findAll('button').find((b) => b.text() === '保存')!.trigger('click');
+    await flushPromises();
+
+    expect(api.updateAssetComment).toHaveBeenCalledWith('demo', 9, '新回复');
+    expect(w.find('.cm-reply .cm-text').text()).toBe('新回复');
+  });
+
+  it('还有更多 → 显示「加载更多」, 点击按已加载条数做 offset', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [{ id: 1, code: 'demo', user_id: 1, username: 'jarvs', content: '一',
+                can_delete: false, created_at: '2026-11-14T09:00:00' }],
+      total: 12,
+    });
+    const w = await mountDrawer();
+    const more = w.findAll('button').find((b) => b.text().includes('加载更多'))!;
+    expect(more.text()).toContain('还有 11 条');
+    await more.trigger('click');
+    await flushPromises();
+    expect(api.listAssetComments).toHaveBeenLastCalledWith('demo', { limit: 10, offset: 1 });
+  });
+
+  it('评论区在「技术信息」下方', async () => {
+    const w = await mountDrawer();
+    const html = w.html();
+    expect(html.indexOf('ad-tech')).toBeGreaterThan(-1);
+    expect(html.indexOf('ad-comments')).toBeGreaterThan(html.indexOf('ad-tech'));
+  });
+
+  it('can_reply 才显示「回复」按钮 (普通用户看不到)', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [
+        { id: 2, code: 'demo', user_id: 3, username: '别人', content: '问一下',
+          can_delete: false, can_reply: false, created_at: '2026-11-15T10:00:00' },
+        { id: 1, code: 'demo', user_id: 1, username: 'jarvs', content: '作者视角',
+          can_delete: false, can_reply: true, created_at: '2026-11-14T09:00:00' },
+      ],
+      total: 2,
+    });
+    const w = await mountDrawer();
+    const items = w.findAll('.cm-item');
+    expect(items[0].findAll('button').some((b) => b.text() === '回复')).toBe(false);
+    expect(items[1].findAll('button').some((b) => b.text() === '回复')).toBe(true);
+  });
+
+  it('回复: 点回复 → 发表 → 带 parent_id 调接口, 回复挂在主评论下', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [{ id: 5, code: 'demo', user_id: 3, username: '别人', content: '主评论',
+                can_delete: false, can_reply: true, replies: [],
+                created_at: '2026-11-15T10:00:00' }],
+      total: 1,
+    });
+    api.createAssetComment.mockResolvedValueOnce({
+      id: 102, code: 'demo', user_id: 1, username: 'jarvs', content: '作者回复',
+      parent_id: 5, can_delete: false, can_edit: true, created_at: '2026-11-15T11:00:00',
+    });
+    const w = await mountDrawer();
+    const replyBtn = w.findAll('button').find((b) => b.text() === '回复')!;
+    await replyBtn.trigger('click');
+
+    const form = w.find('.cm-reply-form');
+    expect(form.exists()).toBe(true);
+    await form.find('textarea').setValue('作者回复');
+    await form.findAll('button').find((b) => b.text() === '发表回复')!.trigger('click');
+    await flushPromises();
+
+    expect(api.createAssetComment).toHaveBeenCalledWith('demo', '作者回复', 5);
+    expect(w.find('.cm-replies').text()).toContain('作者回复');
+    expect(w.find('.cm-reply-form').exists()).toBe(false);
+    expect(w.find('.cm-count').text()).toBe('1');
+  });
+
+  it('取消回复 → 收起输入框, 不调接口', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [{ id: 5, code: 'demo', user_id: 3, username: '别人', content: '主评论',
+                can_delete: false, can_reply: true, replies: [],
+                created_at: '2026-11-15T10:00:00' }],
+      total: 1,
+    });
+    const w = await mountDrawer();
+    await w.findAll('button').find((b) => b.text() === '回复')!.trigger('click');
+    await w.find('.cm-reply-form').findAll('button').find((b) => b.text() === '取消')!.trigger('click');
+    expect(w.find('.cm-reply-form').exists()).toBe(false);
+    expect(api.createAssetComment).not.toHaveBeenCalled();
+  });
+
+  it('删除回复 → 确认后调接口, 回复从列表移除', async () => {
+    api.listAssetComments.mockResolvedValue({
+      items: [{ id: 5, code: 'demo', user_id: 3, username: '别人', content: '主评论',
+                can_delete: false, can_reply: true,
+                replies: [{ id: 9, code: 'demo', user_id: 1, username: 'jarvs', content: '旧回复',
+                            parent_id: 5, can_delete: true, created_at: '2026-11-15T11:00:00' }],
+                created_at: '2026-11-15T10:00:00' }],
+      total: 1,
+    });
+    const spy = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as any);
+    const w = await mountDrawer();
+    expect(w.find('.cm-replies').text()).toContain('旧回复');
+    await w.find('.cm-reply .cm-del').trigger('click');
+    await flushPromises();
+    expect(api.deleteAssetComment).toHaveBeenCalledWith('demo', 9);
+    expect(w.find('.cm-replies').exists()).toBe(false);
+    // 主评论还在
+    expect(w.find('.cm-item').text()).toContain('主评论');
+    spy.mockRestore();
   });
 });

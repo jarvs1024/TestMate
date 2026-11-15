@@ -69,8 +69,8 @@
           </div>
           <p v-if="item.builtin" class="ins-tip">
             复制下面的 JSON, 把 server 条目加到 Agent 的连接器配置里 (Qoder: 设置 → 连接器 → 添加连接器 → 自定义).
-            内网 HTTP 下客户端拒绝明文 OAuth —— 按下方「安装步骤」新建访问令牌,
-            把配置里的 <code>&lt;你的API Token&gt;</code> 替换成真实访问令牌即可.
+            内网 HTTP 下客户端拒绝明文 OAuth —— 去「个人中心 → 访问令牌」新建一个令牌
+            (勾选该连接器需要的读写权限), 把配置里的 <code>&lt;你的API Token&gt;</code> 替换成它即可.
           </p>
           <p v-else class="ins-tip">
             连接器是配置型资产 —— 它就是一段 MCP 配置.
@@ -86,26 +86,20 @@
         <span class="sc-ic">{{ kindInfo.icon }}</span>
         <span class="sc-txt">
           <b>{{ item.project ? `${item.project} 项目专属` : '通用资产' }} · {{ kindInfo.label }}</b>
-          <span v-if="item.project">只对 {{ item.project }} 项目有意义 —— 其他项目用不上</span>
-          <span v-else>所有项目都能用</span>
+          <span class="sc-sub">{{ item.project ? `仅 ${item.project} 项目可用` : '所有项目通用' }}</span>
         </span>
       </div>
 
-      <!-- ⚠️ 2026-11-03 (第二十二轮) 把「适用场景 / 不适合的场景 / 安装步骤」加回来了.
-           ⚠️ 以前 (2026-10-25) 整块删掉, 理由是"上传表单已经不让人填, 页面再列一遍是重复".
-              但 2026-10-30 只在「只改元信息」模式补了输入框, **上架时还是没有** →
-              新资产的这些字段恒为空 → 用户在编辑页看到 4 个空框, 详情页又只有包里的
-              SKILL.md → "编辑页和上架内容对不上".
-           ✅ 现在上架表单**也能填**这几项 → 填了什么这里就显示什么, 编辑页改完立刻可见. -->
-      <div v-if="item.use_when || item.not_for" class="ad-block">
-        <div class="ad-block-h">🎯 适用场景</div>
-        <div v-if="item.use_when" class="ad-when ok">
-          <span class="wb-tag">适合</span>
-          <span class="wb-text">{{ item.use_when }}</span>
-        </div>
-        <div v-if="item.not_for" class="ad-when no">
-          <span class="wb-tag">不适合</span>
-          <span class="wb-text">{{ item.not_for }}</span>
+      <!-- 推荐问法: 把 use_when 按行拆成示例问句, 用户可以直接复制去问 Agent.
+           ⚠️ 2026-11-15: 原「适用场景 / 不适合的场景」下线 —— 不再区分适合/不适合,
+           统一成「推荐问法」; 存量资产里的一整句也按一条问法显示. -->
+      <div v-if="promptList.length" class="ad-block">
+        <div class="ad-block-h">💡 推荐问法</div>
+        <p class="ad-prompt-tip">把下面的话直接发给 Agent</p>
+        <div v-for="(p, i) in promptList" :key="i" class="ad-prompt">
+          <span class="pr-ic">💬</span>
+          <span class="pr-text">{{ p }}</span>
+          <button type="button" class="mini-btn pr-copy" @click="copyPrompt(p)">复制</button>
         </div>
       </div>
 
@@ -131,14 +125,8 @@
 
       <!-- ⚠️ 权限声明的独立区块仍然没有 (2026-10-24): 上传表单里已经不让填了,
            留着只会显示"没填"却像是"确认不需要".
-           ⚠️ 安装步骤 2026-11-03 加回来了 —— 上架表单里现在能填, 不填就不显示. -->
-      <div v-if="installStepList.length" class="ad-block">
-        <div class="ad-block-h">🧩 安装步骤</div>
-        <ol class="ad-steps">
-          <li v-for="(s, i) in installStepList" :key="i">{{ s }}</li>
-        </ol>
-      </div>
-
+           ⚠️ 安装步骤区块 2026-11-15 下线 —— 顶部安装引导已覆盖 (导入压缩包 / 手动解压),
+              下方再列一遍是重复信息; 表单也不再采集. -->
 
       <div class="ad-tags">
         <span v-for="t in item.tags" :key="t" class="tag">#{{ t }}</span>
@@ -151,9 +139,25 @@
 
       <!-- 技术信息: GitLab 路径 / commit / 同步状态 —— 普通用户用不上, 默认收起 -->
       <div class="ad-tech">
-        <button type="button" class="tech-toggle" @click="techOpen = !techOpen">
+        <button
+          type="button"
+          class="tech-toggle"
+          :class="{ open: techOpen }"
+          :aria-expanded="techOpen"
+          @click="techOpen = !techOpen"
+        >
           <span>🔧 技术信息</span>
-          <span class="tech-caret">{{ techOpen ? '▾' : '▸' }}</span>
+          <span class="tech-hint">{{ techOpen ? '收起' : '展开' }}</span>
+          <svg class="tech-chevron" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M6 4l4 4-4 4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
         </button>
         <div v-show="techOpen" class="tech-body">
           <div class="tech-line mono">
@@ -178,6 +182,101 @@
         <div class="ad-err-h">同步到 GitLab 失败</div>
         <pre>{{ item.last_error }}</pre>
         <p class="ad-err-hint">资产仍在本机工作区, 修复后可重试同步。</p>
+      </div>
+
+      <!-- 用户评论 (2026-11-15): 主评论最新在前; 回复挂在父评论下, 作者/管理员可回复 -->
+      <div class="ad-block ad-comments">
+        <div class="ad-block-h">
+          💬 用户评论
+          <span v-if="commentTotal" class="cm-count">{{ commentTotal }}</span>
+          <span v-if="commentsLoading && !comments.length" class="ad-loading">加载中…</span>
+        </div>
+        <div class="cm-compose">
+          <el-input v-model="commentText" type="textarea" :rows="2" maxlength="1000"
+                    show-word-limit placeholder="聊聊实际用下来的感受、建议或吐槽… (1~1000 字)" />
+          <div class="cm-actions">
+            <button type="button" class="mini-btn primary"
+                    :disabled="commentSubmitting || !commentText.trim()"
+                    @click="submitComment">
+              {{ commentSubmitting ? '发表中…' : '发表评论' }}
+            </button>
+          </div>
+        </div>
+        <p v-if="commentsError" class="cm-empty err">{{ commentsError }}</p>
+        <p v-else-if="!comments.length && !commentsLoading" class="cm-empty">还没有评论，来说说你的真实体验吧</p>
+        <div v-for="c in comments" :key="c.id" class="cm-item">
+          <div class="cm-hd">
+            <span class="cm-user">{{ c.username || '匿名' }}</span>
+            <span class="cm-time mono">{{ fmtDate(c.created_at) }}</span>
+            <span class="cm-btns">
+              <button v-if="c.can_edit" type="button" class="mini-btn cm-edit"
+                      @click="startEdit(c)">编辑</button>
+              <button v-if="c.can_reply" type="button" class="mini-btn"
+                      @click="startReply(c)">回复</button>
+              <button v-if="c.can_delete" type="button" class="mini-btn cm-del"
+                      @click="removeComment(c)">删除</button>
+            </span>
+          </div>
+          <div v-if="editingId === c.id" class="cm-edit-form">
+            <el-input v-model="editText" type="textarea" :rows="2" maxlength="1000"
+                      show-word-limit />
+            <div class="cm-actions">
+              <button type="button" class="mini-btn" @click="cancelEdit">取消</button>
+              <button type="button" class="mini-btn primary"
+                      :disabled="editSubmitting || !editText.trim()"
+                      @click="submitEdit(c)">
+                {{ editSubmitting ? '保存中…' : '保存' }}
+              </button>
+            </div>
+          </div>
+          <p v-else class="cm-text">{{ c.content }}</p>
+
+          <div v-if="c.replies?.length" class="cm-replies">
+            <div v-for="r in c.replies" :key="r.id" class="cm-reply">
+              <div class="cm-hd">
+                <span class="cm-user">{{ r.username || '匿名' }}</span>
+                <span class="cm-time mono">{{ fmtDate(r.created_at) }}</span>
+                <span class="cm-btns">
+                  <button v-if="r.can_edit" type="button" class="mini-btn cm-edit"
+                          @click="startEdit(r)">编辑</button>
+                  <button v-if="r.can_delete" type="button" class="mini-btn cm-del"
+                          @click="removeReply(c, r)">删除</button>
+                </span>
+              </div>
+              <div v-if="editingId === r.id" class="cm-edit-form">
+                <el-input v-model="editText" type="textarea" :rows="2" maxlength="1000"
+                          show-word-limit />
+                <div class="cm-actions">
+                  <button type="button" class="mini-btn" @click="cancelEdit">取消</button>
+                  <button type="button" class="mini-btn primary"
+                          :disabled="editSubmitting || !editText.trim()"
+                          @click="submitEdit(r)">
+                    {{ editSubmitting ? '保存中…' : '保存' }}
+                  </button>
+                </div>
+              </div>
+              <p v-else class="cm-text">{{ r.content }}</p>
+            </div>
+          </div>
+
+          <div v-if="replyingTo === c.id" class="cm-reply-form">
+            <el-input v-model="replyText" type="textarea" :rows="2" maxlength="1000" show-word-limit
+                      :placeholder="`回复 ${c.username || '这条评论'}…`" />
+            <div class="cm-actions">
+              <button type="button" class="mini-btn" @click="cancelReply">取消</button>
+              <button type="button" class="mini-btn primary"
+                      :disabled="replySubmitting || !replyText.trim()"
+                      @click="submitReply(c)">
+                {{ replySubmitting ? '发表中…' : '发表回复' }}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div v-if="comments.length < commentTotal" class="cm-more">
+          <button type="button" class="mini-btn" :disabled="commentsLoading" @click="loadComments(true)">
+            {{ commentsLoading ? '加载中…' : `加载更多 (还有 ${commentTotal - comments.length} 条)` }}
+          </button>
+        </div>
       </div>
 
       <!-- 说明: 动作按钮放在抽屉的**固定底栏** (见文末 #footer) —— 文档再长也点得到 -->
@@ -264,10 +363,11 @@
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  cancelUnpublish, deleteAsset, downloadAssetPackage, getAssetDoc, publishAsset,
+  cancelUnpublish, createAssetComment, deleteAssetComment, deleteAsset,
+  downloadAssetPackage, getAssetDoc, listAssetComments, publishAsset,
   recordMcpCopy, revertAsset, reviewAsset, reviewUnpublish, submitForReview,
-  unpublishAsset,
-  type AssetDoc, type AssetItem,
+  unpublishAsset, updateAssetComment,
+  type AssetComment, type AssetDoc, type AssetItem,
 } from '@/api/assets';
 import { useUserStore } from '@/stores/user';
 import { renderMarkdown } from '@/utils/markdown';
@@ -449,15 +549,237 @@ async function doRevert() {
   }
 }
 
-const docHtml = computed(() => renderMarkdown(doc.value?.content || ''));
+/**
+ * 文档正文里的「安装步骤」小节不展示 (2026-11-15) ——
+ * 顶部已有统一安装引导, 种子资产的 SKILL.md / README 里这段是重复信息.
+ * 只去掉标题及它到下一个同级/更高级标题之间的内容, 其余原样保留.
+ */
+function stripInstallSection(md: string): string {
+  const out: string[] = [];
+  let skipLevel = 0;
+  for (const line of md.split('\n')) {
+    const m = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (m) {
+      const level = m[1].length;
+      if (skipLevel && level <= skipLevel) skipLevel = 0;
+      if (!skipLevel && m[2].trim() === '安装步骤') {
+        skipLevel = level;
+        continue;
+      }
+    }
+    if (!skipLevel) out.push(line);
+  }
+  return out.join('\n');
+}
+
+const docHtml = computed(() => renderMarkdown(stripInstallSection(doc.value?.content || '')));
 
 /**
- * 安装步骤 —— 后端存的是**列表** (install_steps: list[str]), 一条一步.
+ * 推荐问法 —— use_when 按行拆成多条示例问句.
  *
- * ⚠️ 2026-11-03 (第二十二轮) 加回来的 —— 上架表单里现在能填这一项,
- *    填了这里就显示 (不填就不占位).
+ * ⚠️ 2026-11-15: 原「适用场景 / 不适合的场景」合并成「推荐问法」,
+ *    不再区分适合与不适合; 存量资产里的一整句也按一条问法展示.
  */
-const installStepList = computed(() => (props.item?.install_steps || []).filter(Boolean));
+const promptList = computed(() =>
+  (props.item?.use_when || '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+
+async function copyPrompt(text: string) {
+  const ok = await copyToClipboard(text);
+  if (ok) {
+    ElMessage.success('已复制');
+  } else {
+    ElMessage.error('复制失败, 请手动选中复制');
+  }
+}
+
+// ---------- 用户评论 (2026-11-15) ----------
+const COMMENTS_PAGE = 10;
+const comments = ref<AssetComment[]>([]);
+const commentTotal = ref(0);
+const commentsLoading = ref(false);
+const commentsError = ref('');
+const commentText = ref('');
+const commentSubmitting = ref(false);
+/** 正在回复哪条主评论 (null = 没打开回复框) */
+const replyingTo = ref<number | null>(null);
+const replyText = ref('');
+const replySubmitting = ref(false);
+/** 正在编辑哪条评论/回复 (null = 没在编辑); 同一时间只开一个 */
+const editingId = ref<number | null>(null);
+const editText = ref('');
+const editSubmitting = ref(false);
+/** 请求序号 —— 快速切资产时, 慢的旧响应不能覆盖新资产的评论 */
+let commentSeq = 0;
+
+async function loadComments(more = false) {
+  const it = props.item;
+  if (!it) return;
+  if (!more) {
+    commentSeq += 1;
+    comments.value = [];
+    commentTotal.value = 0;
+    commentsError.value = '';
+    commentText.value = '';
+    replyingTo.value = null;
+    replyText.value = '';
+    editingId.value = null;
+    editText.value = '';
+  }
+  const seq = commentSeq;
+  commentsLoading.value = true;
+  try {
+    const r = await listAssetComments(it.code, {
+      limit: COMMENTS_PAGE,
+      offset: more ? comments.value.length : 0,
+    });
+    if (seq !== commentSeq) return;
+    comments.value = more ? [...comments.value, ...r.items] : r.items;
+    commentTotal.value = r.total;
+  } catch (e: any) {
+    if (seq !== commentSeq) return;
+    commentsError.value = '评论加载失败: '
+      + httpErrorText(errorStatus(e), errorDetail(e), '请稍后重试');
+  } finally {
+    if (seq === commentSeq) commentsLoading.value = false;
+  }
+}
+
+async function submitComment() {
+  const it = props.item;
+  const text = commentText.value.trim();
+  if (!it) return;
+  if (!text) {
+    ElMessage.warning('先写点什么再发表');
+    return;
+  }
+  commentSubmitting.value = true;
+  try {
+    const c = await createAssetComment(it.code, text);
+    comments.value = [c, ...comments.value];
+    commentTotal.value += 1;
+    commentText.value = '';
+    ElMessage.success('已发表');
+  } catch (e: any) {
+    ElMessage.error('发表失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  } finally {
+    commentSubmitting.value = false;
+  }
+}
+
+async function removeComment(c: AssetComment) {
+  const it = props.item;
+  if (!it) return;
+  try {
+    await ElMessageBox.confirm('删除这条评论？删除后无法恢复。', '删除评论', {
+      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
+    });
+  } catch {
+    return;   // 用户取消了
+  }
+  try {
+    await deleteAssetComment(it.code, c.id);
+    comments.value = comments.value.filter((x) => x.id !== c.id);
+    commentTotal.value = Math.max(0, commentTotal.value - 1);
+    ElMessage.success('已删除');
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  }
+}
+
+function startEdit(c: AssetComment) {
+  editingId.value = c.id;
+  editText.value = c.content;
+  // 编辑和回复互斥, 免得两个输入框同时占着
+  replyingTo.value = null;
+  replyText.value = '';
+}
+
+function cancelEdit() {
+  editingId.value = null;
+  editText.value = '';
+}
+
+async function submitEdit(c: AssetComment) {
+  const it = props.item;
+  const text = editText.value.trim();
+  if (!it) return;
+  if (!text) {
+    ElMessage.warning('先写点什么再保存');
+    return;
+  }
+  if (text === c.content) {
+    cancelEdit();
+    return;
+  }
+  editSubmitting.value = true;
+  try {
+    const r = await updateAssetComment(it.code, c.id, text);
+    c.content = r.content;
+    cancelEdit();
+    ElMessage.success('已保存');
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  } finally {
+    editSubmitting.value = false;
+  }
+}
+
+function startReply(c: AssetComment) {
+  replyingTo.value = c.id;
+  replyText.value = '';
+  // 回复和编辑互斥
+  editingId.value = null;
+  editText.value = '';
+}
+
+function cancelReply() {
+  replyingTo.value = null;
+  replyText.value = '';
+}
+
+async function submitReply(c: AssetComment) {
+  const it = props.item;
+  const text = replyText.value.trim();
+  if (!it) return;
+  if (!text) {
+    ElMessage.warning('先写点什么再回复');
+    return;
+  }
+  replySubmitting.value = true;
+  try {
+    const r = await createAssetComment(it.code, text, c.id);
+    c.replies = [...(c.replies || []), r];
+    cancelReply();
+    ElMessage.success('已回复');
+  } catch (e: any) {
+    ElMessage.error('回复失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  } finally {
+    replySubmitting.value = false;
+  }
+}
+
+async function removeReply(root: AssetComment, r: AssetComment) {
+  const it = props.item;
+  if (!it) return;
+  try {
+    await ElMessageBox.confirm('删除这条回复？删除后无法恢复。', '删除回复', {
+      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
+    });
+  } catch {
+    return;
+  }
+  try {
+    await deleteAssetComment(it.code, r.id);
+    root.replies = (root.replies || []).filter((x) => x.id !== r.id);
+    ElMessage.success('已删除');
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + httpErrorText(errorStatus(e), errorDetail(e)));
+  }
+}
 
 /** 待下架审核时的提示 —— 管理员看到的是"等你拍板", 作者看到的是"等管理员确认" */
 const unpublishPendingText = computed(() => {
@@ -508,11 +830,17 @@ async function loadDoc(code: string) {
 }
 
 watch(() => props.item?.code, (c) => {
-  if (c && props.modelValue) loadDoc(c);
+  if (c && props.modelValue) {
+    loadDoc(c);
+    loadComments();
+  }
 }, { immediate: true });
 
 watch(() => props.modelValue, (open) => {
-  if (open && props.item?.code) loadDoc(props.item.code);
+  if (open && props.item?.code) {
+    loadDoc(props.item.code);
+    loadComments();
+  }
 });
 
 /**
@@ -781,18 +1109,18 @@ async function doSubmit() {
   margin: 0 0 14px; font-size: 13px; color: var(--ink-700); line-height: 1.65; white-space: pre-wrap;
 }
 
-/* 适用项目 (通用 / 项目专属) */
+/* 适用项目 (通用 / 项目专属) —— 单行紧凑条, 不再占一大块 */
 .ad-scope {
-  display: flex; align-items: flex-start; gap: 9px;
-  padding: 9px 12px; margin-bottom: 14px;
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 10px; margin-bottom: 10px;
   background: var(--surface-sunken); border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 .ad-scope.proj { border-color: rgba(20, 184, 166, 0.35); }
-.ad-scope .sc-ic { font-size: 15px; line-height: 1.3; }
-.ad-scope .sc-txt { display: flex; flex-direction: column; gap: 2px; }
-.ad-scope .sc-txt b { font-size: 12.5px; color: var(--ink-900); }
-.ad-scope .sc-txt span { font-size: 11.5px; color: var(--ink-500); }
+.ad-scope .sc-ic { font-size: 13px; line-height: 1; }
+.ad-scope .sc-txt { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.ad-scope .sc-txt b { font-size: 12px; color: var(--ink-900); }
+.ad-scope .sc-txt .sc-sub { font-size: 11px; color: var(--ink-500); }
 .ad-scope.proj .sc-txt b { color: var(--primary-2); }
 
 .ad-block { margin-bottom: 14px; }
@@ -807,27 +1135,19 @@ async function doSubmit() {
 .ad-block-b { font-size: 12.5px; color: var(--ink-700); line-height: 1.6; }
 .ad-block-b.muted { color: var(--ink-500); font-style: italic; }
 
-/* ⚠️ 2026-11-03 (第二十二轮): 适用场景 / 安装步骤 —— 跟软件的详情抽屉同款样式 */
-.ad-when {
-  display: flex; gap: 8px; align-items: flex-start;
-  padding: 7px 10px; border-radius: var(--radius-sm);
-  font-size: 12.5px; line-height: 1.6; color: var(--ink-700);
+/* 推荐问法 —— 每条一行, 可一键复制 */
+.ad-prompt-tip { margin: 0 0 6px; font-size: 11px; color: var(--ink-500); }
+.ad-prompt {
+  display: flex; gap: 8px; align-items: center;
+  padding: 6px 8px 6px 10px; border-radius: var(--radius-sm);
   background: var(--surface-sunken); border: 1px solid var(--border);
+  font-size: 12.5px; line-height: 1.55; color: var(--ink-700);
 }
-.ad-when + .ad-when { margin-top: 6px; }
-.ad-when .wb-tag {
-  flex-shrink: 0; font-size: 11px; font-weight: 700;
-  padding: 1px 7px; border-radius: 999px;
-}
-.ad-when.ok .wb-tag { color: var(--ok); background: rgba(52, 211, 153, 0.14); }
-.ad-when.no .wb-tag { color: var(--warn); background: rgba(251, 191, 36, 0.14); }
-.ad-when .wb-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.ad-prompt + .ad-prompt { margin-top: 5px; }
+.ad-prompt .pr-ic { flex-shrink: 0; font-size: 12px; }
+.ad-prompt .pr-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.ad-prompt button { flex-shrink: 0; }
 
-.ad-steps {
-  margin: 0; padding-left: 20px;
-  font-size: 12.5px; line-height: 1.7; color: var(--ink-700);
-}
-.ad-steps li { margin-bottom: 3px; }
 .ad-loading { font-size: 11px; color: var(--ink-500); font-weight: 400; }
 
 /* 文档正文 — 内容已由 DOMPurify 消毒 */
@@ -907,6 +1227,38 @@ async function doSubmit() {
   padding-top: 10px; border-top: 1px dashed var(--border);
 }
 
+/* ---------- 用户评论 ---------- */
+.ad-comments { margin-top: 14px; }
+.cm-count {
+  font-size: 10.5px; font-weight: 600; color: var(--ink-500);
+  background: var(--surface-sunken); padding: 1px 7px; border-radius: var(--radius-pill);
+}
+.cm-compose { margin-bottom: 10px; }
+.cm-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+.cm-empty { margin: 8px 0; font-size: 12px; color: var(--ink-500); }
+.cm-empty.err { color: var(--err); }
+.cm-item {
+  padding: 8px 0; border-top: 1px dashed var(--border);
+}
+.cm-hd { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.cm-user { font-size: 12px; font-weight: 600; color: var(--ink-700); }
+.cm-time { font-size: 10.5px; color: var(--ink-500); }
+.cm-btns { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.cm-text {
+  margin: 0; font-size: 12.5px; color: var(--ink-700); line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word;
+}
+/* 回复: 缩进 + 左竖线, 与主评论区分层级 */
+.cm-replies {
+  margin-top: 6px; padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+.cm-reply { padding: 6px 0; }
+.cm-reply + .cm-reply { border-top: 1px dashed var(--border); }
+.cm-reply-form,
+.cm-edit-form { margin-top: 8px; padding: 8px 10px; background: var(--surface-sunken); border-radius: var(--radius-sm); }
+.cm-more { display: flex; justify-content: center; margin-top: 8px; }
+
 .ad-git {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-top: 12px; font-size: 11px;
@@ -982,14 +1334,23 @@ async function doSubmit() {
 
 /* ===== 技术信息 (折叠) ===== */
 .ad-tech { margin: 4px 0 8px; }
+/* 整行都是点击区 —— 只有一个小箭头时用户看不出这里能展开 */
 .tech-toggle {
   display: flex; align-items: center; gap: 8px; width: 100%;
-  background: none; border: 0; padding: 7px 0; cursor: pointer;
+  background: none; border: 0; padding: 8px 10px; cursor: pointer;
   font-family: inherit; font-size: 12px; color: var(--ink-600);
+  border-radius: var(--radius-sm); text-align: left;
 }
-.tech-toggle:hover { color: var(--ink-900); }
-.tech-caret { margin-left: auto; color: var(--ink-500); font-size: 11px; }
-.tech-body { padding: 2px 0 8px; }
+.tech-toggle:hover { color: var(--ink-900); background: var(--surface-sunken); }
+.tech-toggle:focus-visible { outline: 2px solid var(--brand, #2f6fed); outline-offset: 1px; }
+.tech-hint { margin-left: auto; font-size: 11px; color: var(--ink-500); }
+.tech-chevron {
+  width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-500);
+  transition: transform .15s ease;
+}
+.tech-toggle:hover .tech-chevron { color: var(--ink-700); }
+.tech-toggle.open .tech-chevron { transform: rotate(90deg); }
+.tech-body { padding: 2px 10px 8px; }
 .tech-line {
   display: flex; gap: 14px; font-size: 11.5px; color: var(--ink-600); margin-bottom: 7px;
 }

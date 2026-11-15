@@ -74,6 +74,50 @@ async def test_ensure_builtin_creates_rows(builtin_seeded):
             assert a.git_path == ""
 
 
+async def test_builtin_use_when_lists_typical_prompts(builtin_seeded):
+    """内置连接器的「推荐问法」要按典型场景拆成多条 (抽屉按行显示, 每条可复制).
+
+    用户反馈 (2026-11-15): 内置连接器还是老的一句文案, 要改成多个典型场景的问法.
+    """
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(select(Asset).where(Asset.code.in_(BUILTIN_CODES)))).scalars().all()
+    by_code = {a.code: a for a in rows}
+
+    for code in BUILTIN_CODES:
+        lines = [ln.strip() for ln in (by_code[code].use_when or "").splitlines() if ln.strip()]
+        assert len(lines) >= 3, f"{code} 的推荐问法只有 {len(lines)} 条, 至少要 3 个典型场景"
+        assert len(set(lines)) == len(lines), f"{code} 的推荐问法有重复"
+        assert all(len(ln) >= 8 for ln in lines), f"{code} 的推荐问法有太短的条目"
+
+
+async def test_pingcode_builtin_covers_case_library(builtin_seeded):
+    """PingCode 连接器要说明**用例库**能力 (简介 + 推荐问法).
+
+    用户反馈 (2026-11-15): 卡片/抽屉里只写了缺陷与需求, 漏了用例库 ——
+    MCP 实际提供 pingcode_case_* (列库 / 查字段 / 搜索 / 读详情).
+    """
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        pc = (
+            await s.execute(select(Asset).where(Asset.code == "testmate-pingcode"))
+        ).scalar_one()
+
+    assert "用例库" in pc.summary
+    assert "用例库" in pc.description
+    lines = [ln.strip() for ln in (pc.use_when or "").splitlines() if ln.strip()]
+    assert sum("用例" in ln for ln in lines) >= 2, "推荐问法里要有读用例库的场景"
+    assert "用例" in (pc.keywords or [])
+
+
 async def test_ensure_builtin_idempotent_preserves_download_count(builtin_seeded):
     """第二次种子不重复建行, 且**保留**运行时指标 (download_count)."""
     from sqlalchemy import func, select

@@ -263,20 +263,10 @@
               <el-input v-model="form.description" type="textarea" :rows="4"
                         placeholder="这个资产到底是什么、怎么用 —— 详情页会整段显示" />
             </el-form-item>
-            <div class="row-2">
-              <el-form-item label="适用场景">
-                <el-input v-model="form.use_when" type="textarea" :rows="2"
-                          placeholder="什么情况下该用它" />
-              </el-form-item>
-              <el-form-item label="不适合的场景">
-                <el-input v-model="form.not_for" type="textarea" :rows="2"
-                          placeholder="什么情况下别用它" />
-              </el-form-item>
-            </div>
-            <el-form-item label="安装步骤">
-              <el-input v-model="form.installStepsText" type="textarea" :rows="3"
-                        placeholder="一行一条, 如&#10;解压到 ~/.qoder-cn/skills&#10;在 MCP 配置里加上这段" />
-              <p class="hint">一行一条 —— 详情页会列成步骤.</p>
+            <el-form-item label="推荐问法">
+              <el-input v-model="form.use_when" type="textarea" :rows="3"
+                        placeholder="一行一条, 写成你会直接对 Agent 说的话&#10;如: 帮我看下 6100 项目本周的 SSD 测试结果" />
+              <p class="hint">一行一条 —— 详情页逐条展示, 可一键复制.</p>
             </el-form-item>
           </template>
         </section>
@@ -490,11 +480,6 @@ function splitList(s: string): string[] {
   ));
 }
 
-/** 安装步骤: 一行一条 */
-function splitLines(s: string): string[] {
-  return (s || '').split('\n').map((x) => x.trim()).filter(Boolean);
-}
-
 /**
  * MCP 配置文本 → 对象 (解析不了就返回 null = "不改这一项").
  *
@@ -552,13 +537,11 @@ async function submit() {
         summary: form.summary.trim(),
         description: form.description,
         use_when: form.use_when,
-        not_for: form.not_for,
         category: form.category,
         project: form.project || '',
         icon: form.icon || '🧩',
         tags: splitList(tagsText.value),
         keywords: splitList(keywordsText.value),
-        install_steps: splitLines(form.installStepsText),
         // 连接器: 只传 MCP 配置 (非连接器传 null = 不改)
         mcp_config: isMcp.value ? parseMcpOrNull(mcpConfigText.value) : null,
       });
@@ -580,8 +563,9 @@ async function submit() {
     //    发新版本 (update) 那一路**不显示**这几项 → 一律保留原值 (从 asset 取),
     //    别让"没填"把老资产的字段清空。
     description: props.mode === 'update' ? (props.asset?.description || '') : form.description,
-    use_when: form.use_when,
-    not_for: props.mode === 'update' ? (props.asset?.not_for || '') : form.not_for,
+    use_when: props.mode === 'update' ? (props.asset?.use_when || '') : form.use_when,
+    // 「不适合的场景」已下线 —— 发新版本保留老值, 新建一律为空
+    not_for: props.mode === 'update' ? (props.asset?.not_for || '') : '',
     category: form.category,
     // 适用项目: 空 = 通用; 不在项目列表里的后端会归一成通用
     project: form.project || '',
@@ -590,7 +574,7 @@ async function submit() {
     keywords: splitList(keywordsText.value),
     install_steps: props.mode === 'update'
       ? [...(props.asset?.install_steps || [])]
-      : splitLines(form.installStepsText),
+      : [],
     // ⚠️ 权限声明不再由表单填 (2026-10-24) —— 固定空, 审核直接看包里的内容
     permissions: {},
     featured: props.mode === 'update' ? !!props.asset?.featured : false,

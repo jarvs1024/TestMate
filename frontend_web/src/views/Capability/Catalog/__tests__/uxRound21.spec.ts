@@ -37,6 +37,10 @@ const api = vi.hoisted(() => ({
   getAssetDoc: vi.fn(async () => ({ kind: 'skill', filename: 'SKILL.md', frontmatter: {}, content: '# x' })),
   deleteAsset: vi.fn(async () => ({ ok: true })),
   downloadAssetPackage: vi.fn(async () => new Blob(['x'])),
+  listAssetComments: vi.fn(async () => ({ items: [], total: 0 })),
+  createAssetComment: vi.fn(async () => ({})),
+  updateAssetComment: vi.fn(async () => ({})),
+  deleteAssetComment: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock('@/api/assets', () => api);

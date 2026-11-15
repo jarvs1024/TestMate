@@ -236,7 +236,8 @@ export interface UploadForm {
   summary: string;
   description: string;
   use_when: string;
-  not_for: string;
+  /** 已下线 (2026-11-15) —— 仅发新版本时保留老值, 表单不再填写 */
+  not_for?: string;
   category: string;
   /** 适用项目: 空 = 通用; "6100" = 6100 项目特有 */
   project?: string;
@@ -515,7 +516,7 @@ function toFormData(f: UploadForm, includeCode: boolean): FormData {
   fd.append('summary', f.summary);
   fd.append('description', f.description);
   fd.append('use_when', f.use_when);
-  fd.append('not_for', f.not_for);
+  fd.append('not_for', f.not_for || '');
   fd.append('category', f.category);
   fd.append('project', f.project || '');
   fd.append('icon', f.icon);
@@ -608,4 +609,54 @@ export async function syncFromGit(): Promise<{ ok: boolean; added: number; updat
 
 export async function probeGitLab(): Promise<{ ok: boolean; status: string; message: string }> {
   return apiGet('/extensions/probe/gitlab');
+}
+
+// ---------- 用户评论 (2026-11-15) ----------
+
+export interface AssetComment {
+  id: number;
+  code: string;
+  user_id: number | null;
+  username: string;
+  content: string;
+  /** 为空 = 主评论; 非空 = 回复某条主评论 (一级, 不能套娃) */
+  parent_id?: number | null;
+  /** 当前用户能不能删这条 (仅管理员) —— 后端按登录人算好 */
+  can_delete: boolean;
+  /** 当前用户能不能编辑这条 (仅评论作者本人) */
+  can_edit?: boolean;
+  /** 当前用户能不能回复 (资产作者或管理员) */
+  can_reply?: boolean;
+  /** 回复列表 —— 只挂在主评论上, 按时间正序 */
+  replies?: AssetComment[];
+  created_at: string | null;
+}
+
+export interface AssetCommentList {
+  items: AssetComment[];
+  total: number;
+}
+
+export async function listAssetComments(
+  code: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<AssetCommentList> {
+  return apiGet(`/extensions/${encodeURIComponent(code)}/comments`, params);
+}
+
+export async function createAssetComment(
+  code: string, content: string, parentId?: number | null,
+): Promise<AssetComment> {
+  return apiPost(`/extensions/${encodeURIComponent(code)}/comments`,
+    parentId ? { content, parent_id: parentId } : { content });
+}
+
+export async function updateAssetComment(
+  code: string, id: number, content: string,
+): Promise<AssetComment> {
+  return apiPut(`/extensions/${encodeURIComponent(code)}/comments/${id}`, { content });
+}
+
+export async function deleteAssetComment(code: string, id: number): Promise<{ ok: boolean; id: number }> {
+  return apiDelete(`/extensions/${encodeURIComponent(code)}/comments/${id}`);
 }

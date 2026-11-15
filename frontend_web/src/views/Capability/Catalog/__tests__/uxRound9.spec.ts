@@ -44,6 +44,10 @@ const api = vi.hoisted(() => ({
   previewPackage: vi.fn(),
   uploadAsset: vi.fn(),
   updateAsset: vi.fn(),
+  listAssetComments: vi.fn(async () => ({ items: [], total: 0 })),
+  createAssetComment: vi.fn(),
+  updateAssetComment: vi.fn(),
+  deleteAssetComment: vi.fn(),
 }));
 
 vi.mock('@/api/assets', () => api);
