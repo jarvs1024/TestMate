@@ -136,6 +136,112 @@
           </div>
         </div>
       </div>
+
+      <div class="panel user-panel">
+        <div class="panel-head user-head">
+          <div>
+            <h3>用户明细</h3>
+            <p class="user-sub">按人汇总所选周期内的活跃天数和两库下载次数；点一行看具体资产。</p>
+          </div>
+          <div class="lib-tabs" aria-label="用户排序">
+            <button
+              data-testid="sort-active"
+              :class="{ on: sortBy === 'active' }"
+              @click="sortBy = 'active'">
+              按活跃
+            </button>
+            <button
+              data-testid="sort-downloads"
+              :class="{ on: sortBy === 'downloads' }"
+              @click="sortBy = 'downloads'">
+              按下载
+            </button>
+          </div>
+        </div>
+
+        <div v-if="userError" class="state err" data-testid="users-error">
+          用户明细加载失败：{{ userError }}
+          <button class="mini-link" data-testid="users-retry" @click="reloadUsers()">重试</button>
+        </div>
+
+        <template v-else-if="userStats">
+          <div class="user-table" data-testid="user-table">
+            <div class="user-grid user-head-row">
+              <span>用户</span>
+              <span>活跃度</span>
+              <span>最近活跃</span>
+              <span class="num">软件</span>
+              <span class="num">扩展</span>
+              <span class="num">合计</span>
+              <span></span>
+            </div>
+
+            <div v-for="u in sortedUsers" :key="u.id" class="user-item">
+              <button
+                type="button"
+                class="user-grid user-row"
+                :class="{ open: expandedId === u.id }"
+                :data-testid="`user-row-${u.id}`"
+                @click="toggleUser(u.id)">
+                <span class="u-who">
+                  <i class="dot" :class="{ off: !u.is_online }" />
+                  <span class="u-name" :title="u.username">{{ u.username }}</span>
+                  <span v-if="!u.is_active" class="kind">已停用</span>
+                </span>
+                <span class="u-active">
+                  <i class="u-track"><i class="u-fill" :style="{ width: activeWidth(u.active_days) }" /></i>
+                  <span :data-testid="`user-active-${u.id}`">{{ u.active_days }} 天</span>
+                </span>
+                <span class="u-last">{{ u.last_seen_at ? fmtIso(u.last_seen_at) : '—' }}</span>
+                <span class="num" :data-testid="`user-software-${u.id}`">{{ u.software_downloads }}</span>
+                <span class="num" :data-testid="`user-extension-${u.id}`">{{ u.extension_downloads }}</span>
+                <span class="num strong" :data-testid="`user-total-${u.id}`">{{ u.total_downloads }}</span>
+                <span class="u-chev">{{ expandedId === u.id ? '▾' : '▸' }}</span>
+              </button>
+
+              <div
+                v-if="expandedId === u.id"
+                class="user-detail"
+                :data-testid="`user-detail-${u.id}`">
+                <div v-if="detailLoading" class="muted">下载明细加载中…</div>
+                <div v-else-if="detailError" class="err detail-err">
+                  下载明细加载失败：{{ detailError }}
+                  <button class="mini-link" @click="loadDetail(u.id, true)">重试</button>
+                </div>
+                <div v-else-if="!detail?.items.length" class="muted">
+                  该用户在这个周期内没有下载记录
+                </div>
+                <div v-else class="detail-list">
+                  <div
+                    v-for="item in detail.items"
+                    :key="`${item.kind}:${item.action}:${item.code}`"
+                    class="detail-row">
+                    <span class="kind">
+                      {{ item.kind === 'software' ? '软件库' : item.action === 'copy' ? '配置复制' : '扩展库' }}
+                    </span>
+                    <span class="detail-name" :title="item.name">{{ item.name || item.code }}</span>
+                    <span class="detail-count">{{ item.count }} 次</span>
+                    <span class="detail-time">{{ fmtIso(item.last_at) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="!sortedUsers.length" class="muted">还没有用户</div>
+          </div>
+
+          <div class="user-notes">
+            <span data-testid="stats-since">
+              用户维度从 {{ userStats.since }} 开始记录，之前的下载无法回溯。
+            </span>
+            <span data-testid="anonymous-note">
+              另有 {{ userStats.anonymous_downloads }} 次匿名下载（未登录）未计入个人。
+            </span>
+          </div>
+        </template>
+
+        <div v-else class="muted">用户明细加载中…</div>
+      </div>
     </template>
   </section>
 </template>
@@ -144,11 +250,16 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
   getOnlineUsers,
+  getStatsUsers,
   getUsageSummary,
-  type StatsLibrary,
+  getUserDownloads,
   type StatsOnline,
+  type StatsLibrary,
+  type StatsUserDownloads,
+  type StatsUsers,
   type UsageSummary,
 } from '@/api/stats';
+import { fmtIso } from '@/utils/format';
 
 const emit = defineEmits<{ online: [count: number] }>();
 
@@ -168,9 +279,20 @@ const loading = ref(true);
 const onlineOpen = ref(false);
 const activeLibrary = ref<StatsLibrary>('software');
 
+const userStats = ref<StatsUsers | null>(null);
+const userError = ref('');
+const sortBy = ref<'active' | 'downloads'>('active');
+const expandedId = ref<number | null>(null);
+const detail = ref<StatsUserDownloads | null>(null);
+const detailLoading = ref(false);
+const detailError = ref('');
+const detailCache = new Map<string, StatsUserDownloads>();
+
 let timer: ReturnType<typeof setInterval> | null = null;
 let disposed = false;
 let seq = 0;
+let userSeq = 0;
+let detailSeq = 0;
 
 const totalDownloads = computed(() => {
   const d = summary.value?.downloads;
@@ -180,6 +302,15 @@ const totalDownloads = computed(() => {
 const library = computed(
   () => summary.value?.downloads[activeLibrary.value] ?? { total: 0, items: [] },
 );
+
+const sortedUsers = computed(() => {
+  const list = [...(userStats.value?.users ?? [])];
+  return list.sort((a, b) =>
+    sortBy.value === 'downloads'
+      ? b.total_downloads - a.total_downloads || b.active_days - a.active_days || a.id - b.id
+      : b.active_days - a.active_days || b.total_downloads - a.total_downloads || a.id - b.id,
+  );
+});
 
 const series = computed(() => summary.value?.active.series ?? []);
 
@@ -236,43 +367,122 @@ function barWidth(count: number) {
   return count > 0 ? `${Math.max(4, Math.round((count / max) * 100))}%` : '0%';
 }
 
+function activeWidth(activeDays: number) {
+  if (!activeDays) return '0%';
+  return `${Math.max(6, Math.round((activeDays / days.value) * 100))}%`;
+}
+
 function errText(e: any) {
   const detail = e?.response?.data?.detail;
   if (typeof detail === 'string' && detail) return detail;
   return e?.message || '请稍后重试';
 }
 
+function applyOnline(data: StatsOnline) {
+  online.value = data;
+  if (summary.value) summary.value = { ...summary.value, online: data };
+  if (userStats.value) {
+    const ids = new Set(data.users.map((u) => u.id));
+    userStats.value = {
+      ...userStats.value,
+      users: userStats.value.users.map((u) => ({ ...u, is_online: ids.has(u.id) })),
+    };
+  }
+  emit('online', data.count);
+}
+
 async function load(target: Range = days.value) {
   const my = ++seq;
+  const mu = ++userSeq;
   error.value = '';
+  userError.value = '';
   if (!summary.value) loading.value = true;
+  const [summaryRes, usersRes] = await Promise.allSettled([
+    getUsageSummary(target),
+    getStatsUsers(target),
+  ]);
+  if (disposed || my !== seq) return;
+
+  if (summaryRes.status === 'fulfilled') {
+    summary.value = summaryRes.value;
+  } else {
+    error.value = errText(summaryRes.reason);
+  }
+  if (mu === userSeq) {
+    if (usersRes.status === 'fulfilled') {
+      userStats.value = usersRes.value;
+    } else {
+      userError.value = errText(usersRes.reason);
+    }
+  }
+  if (summaryRes.status === 'fulfilled') applyOnline(summaryRes.value.online);
+  loading.value = false;
+}
+
+async function reloadUsers() {
+  const my = ++userSeq;
+  userError.value = '';
   try {
-    const data = await getUsageSummary(target);
-    if (disposed || my !== seq) return;
-    summary.value = data;
-    online.value = data.online;
-    emit('online', data.online.count);
+    const data = await getStatsUsers(days.value);
+    if (disposed || my !== userSeq) return;
+    userStats.value = data;
   } catch (e: any) {
-    if (disposed || my !== seq) return;
-    error.value = errText(e);
-  } finally {
-    if (!disposed && my === seq) loading.value = false;
+    if (disposed || my !== userSeq) return;
+    userError.value = errText(e);
   }
 }
 
 async function pickRange(d: Range) {
   if (d === days.value) return;
   days.value = d;
+  expandedId.value = null;
+  detail.value = null;
+  detailError.value = '';
+  detailCache.clear();
   await load(d);
+}
+
+async function toggleUser(id: number) {
+  if (expandedId.value === id) {
+    expandedId.value = null;
+    detail.value = null;
+    detailError.value = '';
+    return;
+  }
+  expandedId.value = id;
+  detail.value = null;
+  detailError.value = '';
+  await loadDetail(id);
+}
+
+async function loadDetail(id: number, force = false) {
+  const key = `${id}:${days.value}`;
+  const cached = detailCache.get(key);
+  if (cached && !force) {
+    detail.value = cached;
+    return;
+  }
+  const my = ++detailSeq;
+  detailLoading.value = true;
+  detailError.value = '';
+  try {
+    const data = await getUserDownloads(id, days.value);
+    if (disposed || my !== detailSeq || expandedId.value !== id) return;
+    detailCache.set(key, data);
+    detail.value = data;
+  } catch (e: any) {
+    if (disposed || my !== detailSeq || expandedId.value !== id) return;
+    detailError.value = errText(e);
+  } finally {
+    if (!disposed && my === detailSeq) detailLoading.value = false;
+  }
 }
 
 async function refreshOnline() {
   try {
     const data = await getOnlineUsers();
     if (disposed) return;
-    online.value = data;
-    if (summary.value) summary.value = { ...summary.value, online: data };
-    emit('online', data.count);
+    applyOnline(data);
   } catch {
     // 轮询失败保留上一次在线数 —— 不把页面打成错误态
   }
@@ -447,6 +657,178 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: 18px;
   margin-top: 18px;
+}
+
+.user-panel {
+  margin-top: 18px;
+}
+
+.user-head {
+  align-items: flex-start;
+}
+
+.user-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink-500, #6b7280);
+}
+
+.user-table {
+  overflow-x: auto;
+}
+
+.user-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.5fr) minmax(104px, 1fr) 104px 40px 40px 44px 12px;
+  align-items: center;
+  gap: 7px;
+  min-width: 560px;
+}
+
+.user-head-row {
+  padding: 0 4px 6px;
+  font-size: 11px;
+  color: var(--ink-400, #9ca3af);
+  border-bottom: 1px solid var(--line, #e5e9f0);
+}
+
+.user-item + .user-item {
+  border-top: 1px solid var(--line, #eef1f6);
+}
+
+.user-row {
+  width: 100%;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-700, #374151);
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-row:hover,
+.user-row.open {
+  background: var(--surface-2, #f8fafc);
+}
+
+.u-who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.u-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot.off {
+  background: var(--ink-300, #cbd5e1);
+}
+
+.u-active {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--ink-600, #4b5563);
+  font-variant-numeric: tabular-nums;
+}
+
+.u-track {
+  flex: 0 1 52px;
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2, #eef2f7);
+  overflow: hidden;
+}
+
+.u-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #86efac, #10b981);
+}
+
+.u-last {
+  font-size: 11.5px;
+  color: var(--ink-500, #6b7280);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.num.strong {
+  color: var(--ink-900, #111827);
+  font-weight: 600;
+}
+
+.u-chev {
+  color: var(--ink-400, #9ca3af);
+  font-size: 11px;
+  text-align: right;
+}
+
+.user-detail {
+  margin: 0 4px 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--surface-2, #f8fafc);
+}
+
+.detail-err {
+  font-size: 12px;
+}
+
+.detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.detail-row {
+  display: grid;
+  grid-template-columns: 68px minmax(120px, 1fr) 52px 118px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.detail-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-700, #374151);
+}
+
+.detail-count {
+  text-align: right;
+  color: var(--ink-800, #1f2937);
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-time {
+  text-align: right;
+  color: var(--ink-500, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+
+.user-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--ink-400, #9ca3af);
 }
 
 .panel {

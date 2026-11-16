@@ -59,6 +59,44 @@ export interface UsageSummary {
 
 export type StatsLibrary = keyof StatsDownloads;
 
+export interface StatsUserRow {
+  id: number;
+  username: string;
+  role: UserRole;
+  is_active: boolean;
+  is_online: boolean;
+  active_days: number;
+  active_dates: string[];
+  last_seen_at: string | null;
+  software_downloads: number;
+  extension_downloads: number;
+  total_downloads: number;
+}
+
+export interface StatsUsers {
+  days: number;
+  /** 用户维度数据从哪天开始记 (只记统计上线之后的下载) */
+  since: string;
+  anonymous_downloads: number;
+  users: StatsUserRow[];
+}
+
+export interface StatsUserDownloadItem {
+  kind: string;
+  /** download / copy; MCP 扩展的「下载」实际是配置复制 */
+  action: string;
+  code: string;
+  name: string;
+  count: number;
+  last_at: string;
+}
+
+export interface StatsUserDownloads {
+  user_id: number;
+  days: number;
+  items: StatsUserDownloadItem[];
+}
+
 /** 在线 + 日活曲线 + 两库下载排行 (days 只能是 7/30/90). */
 export async function getUsageSummary(days: number): Promise<UsageSummary> {
   return (await request.get('/auth/stats/summary', {
@@ -70,4 +108,23 @@ export async function getUsageSummary(days: number): Promise<UsageSummary> {
 /** 轻量轮询: 只取在线名单, 不动图表. */
 export async function getOnlineUsers(): Promise<StatsOnline> {
   return (await request.get('/auth/stats/online', { silent: true })) as StatsOnline;
+}
+
+/** 用户明细: 周期内活跃天数 + 两库下载次数. */
+export async function getStatsUsers(days: number): Promise<StatsUsers> {
+  return (await request.get('/auth/stats/users', {
+    params: { days },
+    silent: true,
+  })) as StatsUsers;
+}
+
+/** 某个用户下载过的资产 —— 展开用户行时按需加载. */
+export async function getUserDownloads(
+  userId: number,
+  days: number,
+): Promise<StatsUserDownloads> {
+  return (await request.get(`/auth/stats/users/${userId}/downloads`, {
+    params: { days },
+    silent: true,
+  })) as StatsUserDownloads;
 }

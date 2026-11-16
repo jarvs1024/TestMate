@@ -55,3 +55,40 @@ class StatsSummary(BaseModel):
     online: StatsOnline
     active: StatsActive
     downloads: StatsDownloads
+
+
+class StatsUserRow(UTCModel):
+    id: int
+    username: str
+    role: UserRole
+    is_active: bool
+    is_online: bool
+    active_days: int
+    active_dates: list[str]
+    last_seen_at: datetime | None = None
+    software_downloads: int = 0
+    extension_downloads: int = 0
+    total_downloads: int = 0
+
+
+class StatsUsers(BaseModel):
+    days: int
+    # 用户维度数据从哪天开始记 —— 用户明细是事件表上线后才有的
+    since: str
+    anonymous_downloads: int = 0
+    users: list[StatsUserRow]
+
+
+class StatsUserDownloadItem(UTCModel):
+    kind: str
+    action: str = "download"
+    code: str
+    name: str
+    count: int
+    last_at: datetime
+
+
+class StatsUserDownloads(BaseModel):
+    user_id: int
+    days: int
+    items: list[StatsUserDownloadItem]

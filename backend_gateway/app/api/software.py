@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import cast, func, or_, select, update, Text
 
 from app.api.auth import get_current_user, get_optional_user
-from app.core import count_dedup, ext_policy, software_store
+from app.core import count_dedup, download_events, ext_policy, software_store
 from app.core.asset_locks import code_lock
 from app.core.dingtalk import notify_extensions
 from app.core.identity import author_forms
@@ -608,6 +608,7 @@ async def download_by_ticket(
         raise HTTPException(status_code=403, detail="下载票据与版本不匹配")
 
     # 票据签发之后账号被停用/删除 → 一律拒绝 (票只有 10 分钟, 但这 10 分钟也得算数)
+    username = ""
     if uid:
         async with AsyncSessionLocal() as session:
             user = await session.get(User, uid)
@@ -615,6 +616,7 @@ async def download_by_ticket(
                 raise HTTPException(status_code=401, detail="账号不存在, 请重新登录")
             if not user.is_active:
                 raise HTTPException(status_code=401, detail="账号已停用")
+            username = user.username or ""
     else:
         # 匿名票 —— 只在管理员明确开了公开下载时有效
         if not await _setting_bool("software.public_download", False):
@@ -661,6 +663,14 @@ async def download_by_ticket(
                     download_count=SoftwareItem.download_count + 1,
                     updated_at=SoftwareItem.updated_at,
                 )
+            )
+            await download_events.record_download_event(
+                session,
+                user_id=uid,
+                username=username,
+                kind="software",
+                code=code,
+                name=item.name,
             )
         if await count_dedup.bump_count(
             session, count_dedup.version_scope(code, version), key
@@ -775,6 +785,14 @@ async def _serve_recommended(
                 download_count=SoftwareItem.download_count + 1,
                 updated_at=SoftwareItem.updated_at,
             )
+        )
+        await download_events.record_download_event(
+            session,
+            user_id=None,
+            username="",
+            kind="software",
+            code=item.code,
+            name=item.name,
         )
     if await count_dedup.bump_count(
         session, count_dedup.version_scope(item.code, ver.version), key

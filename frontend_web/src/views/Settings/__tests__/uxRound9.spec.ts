@@ -75,6 +75,29 @@ vi.mock('@/api/capabilities', () => ({
   listCapabilities: (...a: any[]) => h.listCapabilities(...a),
 }));
 
+// 设置页里的使用统计区块会自己拉数据 —— 别落到通用的 request 桩上
+vi.mock('@/api/stats', () => {
+  const online = { count: 0, window_minutes: 5, users: [] };
+  return {
+    getUsageSummary: vi.fn(async () => ({
+      online,
+      active: { today: 0, series: [] },
+      downloads: {
+        software: { total: 0, items: [] },
+        extensions: { total: 0, items: [] },
+      },
+    })),
+    getOnlineUsers: vi.fn(async () => online),
+    getStatsUsers: vi.fn(async (days: number) => ({
+      days,
+      since: '2026-11-10',
+      anonymous_downloads: 0,
+      users: [],
+    })),
+    getUserDownloads: vi.fn(async () => ({ user_id: 0, days: 30, items: [] })),
+  };
+});
+
 vi.mock('@/api/reviewagent', () => ({
   getHealth: (...a: any[]) => h.getHealth(...a),
   getOverview: (...a: any[]) => h.getOverview(...a),

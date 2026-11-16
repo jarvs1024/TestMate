@@ -25,6 +25,7 @@ from sqlalchemy import select, update
 from app.core.config import settings
 from app.core.count_dedup import DEDUP_WINDOW_SECONDS, bump_count, user_key
 from app.db.session import AsyncSessionLocal
+from app.models.download_event import DownloadEvent
 from tests.conftest import set_setting
 
 API = "/api/v1/extensions"
@@ -42,6 +43,17 @@ async def _backdate_mark(code: str, dedup_key: str, seconds: int) -> None:
             .values(last_counted_at=datetime.utcnow() - timedelta(seconds=seconds))
         )
         await s.commit()
+
+
+async def _events(code: str) -> list[DownloadEvent]:
+    async with AsyncSessionLocal() as s:
+        return list(
+            (
+                await s.execute(
+                    select(DownloadEvent).where(DownloadEvent.code == code)
+                )
+            ).scalars().all()
+        )
 
 
 # ---------- bump_count 核心 ----------
@@ -118,6 +130,12 @@ async def test_copy_same_user_repeat_within_window_counts_once(client, auth, mcp
     assert r2.status_code == 200, r2.text
     assert r2.json()["copy_count"] == 1
 
+    events = await _events("conn-x")
+    assert len(events) == 1
+    assert events[0].user_id is not None
+    assert events[0].kind == "extension"
+    assert events[0].action == "copy"
+
 
 async def test_copy_counts_again_after_window(client, auth, mcp_conn, admin_user):  # noqa: ARG001
     """窗口过了再复制 → 照常 +1."""
@@ -168,6 +186,12 @@ async def test_ext_download_same_user_repeat_counts_once_and_still_serves(
         a = (await s.execute(select(Asset).where(Asset.code == "dl-demo"))).scalar_one()
         assert a.download_count == 1, a.download_count
 
+    events = await _events("dl-demo")
+    assert len(events) == 1
+    assert events[0].user_id is not None
+    assert events[0].kind == "extension"
+    assert events[0].action == "download"
+
 
 async def test_ext_anon_download_dedup_by_ip(client, auth, ws, restore_git_config):  # noqa: ARG001
     """匿名下载按 IP 去重: 同 IP 窗口内只 +1, 换 IP 照计."""
@@ -193,6 +217,10 @@ async def test_ext_anon_download_dedup_by_ip(client, auth, ws, restore_git_confi
 
         a = (await s.execute(select(Asset).where(Asset.code == "dl-anon"))).scalar_one()
         assert a.download_count == 2, a.download_count
+
+    events = await _events("dl-anon")
+    assert len(events) == 2
+    assert all(e.user_id is None for e in events)
 
 
 def _asset_ticket(*, uid: int, code: str, version: str, ttl_seconds: int = 600) -> str:
@@ -227,6 +255,11 @@ async def test_ext_ticket_download_dedup_by_uid(
 
         a = (await s.execute(select(Asset).where(Asset.code == "dl-ticket"))).scalar_one()
         assert a.download_count == 1, a.download_count
+
+    events = await _events("dl-ticket")
+    assert len(events) == 1
+    assert events[0].user_id == admin_user["id"]
+    assert events[0].kind == "extension"
 
 
 # ---------- 软件库: 下载 ----------
@@ -295,6 +328,12 @@ async def test_sw_ticket_download_same_user_repeat_counts_once(client, sw_auth, 
     assert d["download_count"] == 1, d["download_count"]
     assert d["versions"][0]["download_count"] == 1, d["versions"]
 
+    events = await _events("demo-sw")
+    assert len(events) == 1
+    assert events[0].user_id is not None
+    assert events[0].kind == "software"
+    assert events[0].name == "演示软件"
+
 
 async def test_sw_two_versions_same_user_item_once_versions_each(client, sw_auth, sw_root):  # noqa: ARG001
     """同一人窗口内下两个版本 → 条目只 +1, 两个版本各 +1."""
@@ -343,6 +382,10 @@ async def test_sw_fixed_links_dedup_by_ip(client, sw_auth, sw_root):  # noqa: AR
     assert d["download_count"] == 2, d["download_count"]
     assert d["versions"][0]["download_count"] == 2, d["versions"]
 
+    events = await _events("demo-sw")
+    assert len(events) == 2
+    assert all(e.user_id is None for e in events)
+
 
 async def test_sw_anon_ticket_download_dedup_by_ip(client, sw_auth, sw_root):  # noqa: ARG001
     """匿名票下载 (software.public_download) 按 IP 去重."""
@@ -362,6 +405,10 @@ async def test_sw_anon_ticket_download_dedup_by_ip(client, sw_auth, sw_root):  #
 
     d = await _sw_detail(client, sw_auth, "demo-sw")
     assert d["download_count"] == 2, d["download_count"]
+
+    events = await _events("demo-sw")
+    assert len(events) == 2
+    assert all(e.user_id is None for e in events)
 
 
 # ---------- 计数不能刷新 updated_at ----------

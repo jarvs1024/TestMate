@@ -41,6 +41,7 @@ from app.core.dingtalk import (
 from app.core import (
     builtin_assets,
     count_dedup,
+    download_events,
     ext_notify,
     ext_naming,
     ext_policy,
@@ -1148,6 +1149,15 @@ async def record_connector_copy(
                     updated_at=Asset.updated_at,
                 )
             )
+            await download_events.record_download_event(
+                session,
+                user_id=user.id,
+                username=user.username or "",
+                kind="extension",
+                code=code,
+                name=a.name,
+                action="copy",
+            )
         await session.commit()
         new_count = (
             await session.execute(
@@ -1540,6 +1550,14 @@ async def download_package(
                     updated_at=Asset.updated_at,
                 )
             )
+            await download_events.record_download_event(
+                session,
+                user_id=None if is_anon else user.id,
+                username="" if is_anon else (user.username or ""),
+                kind="extension",
+                code=code,
+                name=a.name,
+            )
         await session.commit()
 
     return Response(
@@ -1642,6 +1660,14 @@ async def download_package_by_asset_ticket(
                     download_count=Asset.download_count + 1,
                     updated_at=Asset.updated_at,
                 )
+            )
+            await download_events.record_download_event(
+                session,
+                user_id=uid,
+                username=user.username or "",
+                kind="extension",
+                code=code,
+                name=asset.name,
             )
         await session.commit()
 

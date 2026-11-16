@@ -42,6 +42,8 @@ vi.mock('@/api/users', () => api);
 const statsApi = vi.hoisted(() => ({
   getUsageSummary: vi.fn(),
   getOnlineUsers: vi.fn(),
+  getStatsUsers: vi.fn(),
+  getUserDownloads: vi.fn(),
 }));
 vi.mock('@/api/stats', () => statsApi);
 
@@ -113,8 +115,16 @@ beforeEach(() => {
   api.deleteUser.mockClear();
   statsApi.getUsageSummary.mockReset();
   statsApi.getOnlineUsers.mockReset();
+  statsApi.getStatsUsers.mockReset();
+  statsApi.getUserDownloads.mockReset();
   statsApi.getUsageSummary.mockImplementation(async () => statsSummary());
   statsApi.getOnlineUsers.mockImplementation(async () => statsSummary().online);
+  statsApi.getStatsUsers.mockImplementation(async (days: number) => ({
+    days,
+    since: '2026-11-10',
+    anonymous_downloads: 0,
+    users: [],
+  }));
   // ⚠️ user store 的初始状态是从 localStorage 读的 —— 别让上一条用例的残留影响下一条
   localStorage.clear();
 });

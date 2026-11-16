@@ -53,6 +53,8 @@ _TABLES = (
     "assets",
     # 计数冷却窗口去重标记 (2026-11-05)
     "count_marks",
+    # 下载事件明细 (按用户统计)
+    "download_events",
     # 软件库 (条目与版本) —— 先删版本再删条目 (虽然没建外键, 顺序还是按依赖来)
     "software_versions",
     "software_items",

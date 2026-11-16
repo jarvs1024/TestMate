@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import update
@@ -48,6 +48,20 @@ _daily_seen: set[tuple[int, date]] = set()
 
 def local_today() -> date:
     return datetime.now(_LOCAL_TZ).date()
+
+
+def local_day_start_utc(day: date) -> datetime:
+    """本地自然日 00:00 对应的 naive UTC —— 下载事件按时间过滤用."""
+    return (
+        datetime.combine(day, dt_time.min, tzinfo=_LOCAL_TZ)
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+
+
+def to_local_date(value: datetime) -> date:
+    """库里存的 naive UTC → 本地自然日."""
+    return value.replace(tzinfo=timezone.utc).astimezone(_LOCAL_TZ).date()
 
 
 def online_cutoff() -> datetime:
