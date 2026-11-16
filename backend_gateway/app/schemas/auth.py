@@ -67,10 +67,13 @@ class UserOut(UTCModel):
 
 
 class UserManageOut(UserOut):
-    """账号管理列表用的行 —— 多两个字段: 能不能用 / 要不要密码."""
+    """账号管理列表用的行 —— 能不能用 / 要不要密码 / 在不在线."""
 
     is_active: bool = True
     password_required: bool = False
+    last_seen_at: datetime | None = None
+    # 由后端按 5 分钟窗口算好, 避免前端用自己的时钟判断造成边界不一致
+    is_online: bool = False
 
 
 class UserCreate(BaseModel):

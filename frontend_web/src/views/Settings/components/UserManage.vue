@@ -2,8 +2,13 @@
   <section :id="'sec-users'" class="card grp">
     <h2>
       <span>👥 用户管理</span>
-      <span class="grp-cnt">{{ users.length }} 个账号</span>
+      <span class="grp-cnt">
+        {{ users.length }} 个账号<span v-if="onlineCount !== null"> · {{ onlineCount }} 在线</span>
+      </span>
     </h2>
+
+    <!-- 使用统计 (仅 admin 页面可见) —— 在线 / 活跃曲线 / 两库下载排行 -->
+    <UsageStats @online="onlineCount = $event" />
 
     <div class="hint">
       💡 账号必须<strong>管理员先建好</strong>才能登录 —— 登录页只认这里建出来的号,
@@ -92,6 +97,7 @@
                 {{ u.password_required ? '需密码' : '免密' }}
               </span>
               <span v-if="!u.is_active" class="badge off">已停用</span>
+              <span v-else-if="u.is_online" class="badge online">在线</span>
             </div>
             <div class="u-meta">创建于 {{ fmtTime(u.created_at) }}</div>
           </div>
@@ -151,6 +157,7 @@ import { createUser, updateUser, deleteUser, getAuthConfig, type ManagedUser, ty
 import { parseApiTime } from '@/utils/format';
 import { isAuthor } from '@/utils/author';
 import { useUserStore } from '@/stores/user';
+import UsageStats from './UsageStats.vue';
 
 defineProps<{ users: ManagedUser[]; error?: string }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
@@ -237,6 +244,8 @@ const form = reactive<{ username: string; password: string; role: UserRole }>({
   role: 'tester',
 });
 const busy = ref(false);
+/** 当前在线人数 —— 由 UsageStats 首次取数和每 60 秒轮询时回传 */
+const onlineCount = ref<number | null>(null);
 /**
  * 表单级错误 —— 只装**通用**错误 (说不清是哪个字段的那些).
  *
@@ -579,6 +588,7 @@ async function onResetPwd(u: ManagedUser) {
 .badge.pwd { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
 .badge.nopwd { background: rgba(16, 185, 129, 0.13); color: var(--ok); }
 .badge.off { background: rgba(100, 116, 139, 0.18); color: var(--ink-600); }
+.badge.online { background: rgba(16, 185, 129, 0.13); color: var(--ok); }
 
 .u-ops { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .role-sel {

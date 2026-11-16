@@ -1,6 +1,8 @@
-"""User + RBAC。"""
-from datetime import datetime
-from sqlalchemy import String, DateTime, Enum, BigInteger, Boolean, Integer
+"""User + RBAC + 使用统计。"""
+from datetime import date, datetime
+from sqlalchemy import (
+    String, DateTime, Date, Enum, BigInteger, Boolean, Integer, UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 import enum
 
@@ -41,7 +43,34 @@ class User(Base):
     # ⚠️ 老 token (签发时还没有这一版号的) 没有 tv 字段 → 当成 0 处理,
     #    而存量用户的 token_version 也是 0 → 升级后不用全员重新登录.
     token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 最近一次已登录请求时间 (UTC) —— 「在线用户」只看最近 5 分钟有没有访问.
+    # ⚠️ 只由 usage_stats.touch_user 更新; 更新时必须钉住 updated_at,
+    #    否则在线心跳会把账号的「更新时间」每分钟顶到现在.
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class UserActivityDaily(Base):
+    """用户日活 —— 每人每天最多一行 (去重后的 DAU 明细).
+
+    只记「这天来过」, 不记访问了哪个页面/IP. 不做外键: 账号删除后
+    历史活跃仍应保留, 否则曲线会凭空少一截.
+    """
+
+    __tablename__ = "user_activity_daily"
+    __table_args__ = (
+        UniqueConstraint("stat_date", "user_id", name="uq_user_activity_daily_date_user"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # 按 Asia/Shanghai 切的自然日 —— 用户看到的「今天」必须和服务器一致
+    stat_date: Mapped[date] = mapped_column(Date, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
     )

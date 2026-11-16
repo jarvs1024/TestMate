@@ -492,17 +492,6 @@
         <!-- 👥 用户管理 (仅 admin) —— 账号必须在这里建出来才能登录 -->
         <!-- ⚠️ 取不到账号列表 ≠ 一个账号都没有 —— 错误由 UserManage 自己显示 (带重试) -->
         <UserManage v-if="activeTop === 'sec-users'" :users="users" :error="usersError" @changed="loadUsers" />
-
-        <div class="card info-card">
-          <h2>📌 说明</h2>
-          <ul class="tips">
-            <li><strong>配置优先级</strong> · 显式环境变量 &gt; DB &gt; .env &gt; 代码默认</li>
-            <li><strong>改了立即生效</strong> · 不需要重启 backend, 下次调用就拿新值</li>
-            <li><strong>已定制</strong> 标记 = 当前值跟你 .env 默认不一样, 是 UI 改过的</li>
-            <li><strong>生产部署</strong> · DB 是单一真源, 不要再改 .env (重启会被 seed 覆盖)</li>
-            <li><strong>测试连接</strong> · 用当前值去 ping 一下, 验证 key 没过期</li>
-          </ul>
-        </div>
       </main>
     </div>
     </template>

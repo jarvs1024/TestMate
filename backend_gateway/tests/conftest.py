@@ -59,6 +59,8 @@ _TABLES = (
     "system_settings",
     # 外部系统集成凭据
     "integration_credentials",
+    # 用户日活 —— 清库后 user_id 会复用, 进程内节流缓存也要一起清 (见 usage_stats)
+    "user_activity_daily",
     "users",
     # agents 也清 —— 能力用例会 seed_agents() 写库, 不清会漏到别的用例里
     "agents",
@@ -121,10 +123,15 @@ async def _clean_tables():
     async with engine.begin() as conn:
         for t in _TABLES:
             await conn.execute(text(f"DELETE FROM {t}"))
+    # 清库后自增 id 会复用; 不清进程内缓存的话, 新用户会被当成"刚刚已记录"跳过
+    from app.core.usage_stats import reset_tracking_state
+
+    reset_tracking_state()
     yield
     async with engine.begin() as conn:
         for t in _TABLES:
             await conn.execute(text(f"DELETE FROM {t}"))
+    reset_tracking_state()
 
 
 @pytest.fixture

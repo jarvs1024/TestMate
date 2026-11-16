@@ -13,6 +13,7 @@ from app.core.logging import setup_logging
 from app.core.security import decode_token
 from app.api import auth, kb, kb_spaces, machines, notify, health, agents, settings as settings_api, review_agent, extensions, software, platform
 from app.api import mcp as mcp_api
+from app.api import stats as usage_stats_api
 from app.integrations import api as integrations_api
 from app.api.agents import seed_agents
 from app.core.settings_store import seed_defaults
@@ -273,6 +274,9 @@ async def _request_logging(request: Request, call_next):
 # 路由
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(
+    usage_stats_api.router, prefix="/api/v1/auth/stats", tags=["usage-stats"],
+)
 app.include_router(machines.router, prefix="/api/v1/machines", tags=["machines"])
 app.include_router(kb_spaces.router, prefix="/api/v1/kb/spaces", tags=["kb-spaces"])
 app.include_router(kb.router, prefix="/api/v1/kb", tags=["kb"])

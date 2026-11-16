@@ -38,6 +38,30 @@ const api = vi.hoisted(() => ({
 
 vi.mock('@/api/users', () => api);
 
+// 使用统计区块会自己拉数据 —— 账号管理用例里给个稳定返回, 别让它去打真网络.
+const statsApi = vi.hoisted(() => ({
+  getUsageSummary: vi.fn(),
+  getOnlineUsers: vi.fn(),
+}));
+vi.mock('@/api/stats', () => statsApi);
+
+function statsSummary() {
+  return {
+    online: {
+      count: 3,
+      window_minutes: 5,
+      users: [
+        { id: 1, username: 'admin_t', role: 'admin', last_seen_at: '2026-11-16T10:00:00' },
+      ],
+    },
+    active: { today: 2, series: [{ date: '2026-11-16', count: 2 }] },
+    downloads: {
+      software: { total: 1, items: [] },
+      extensions: { total: 2, items: [] },
+    },
+  };
+}
+
 function user(over: Partial<ManagedUser> = {}): ManagedUser {
   return {
     id: 1,
@@ -87,6 +111,10 @@ beforeEach(() => {
   api.updateUser.mockClear();
   api.listUsers.mockClear();
   api.deleteUser.mockClear();
+  statsApi.getUsageSummary.mockReset();
+  statsApi.getOnlineUsers.mockReset();
+  statsApi.getUsageSummary.mockImplementation(async () => statsSummary());
+  statsApi.getOnlineUsers.mockImplementation(async () => statsSummary().online);
   // ⚠️ user store 的初始状态是从 localStorage 读的 —— 别让上一条用例的残留影响下一条
   localStorage.clear();
 });
@@ -363,6 +391,20 @@ describe('账号管理 · 删除账号', () => {
     expect(warnSpy).toHaveBeenCalled();
     spy.mockRestore();
     warnSpy.mockRestore();
+    w.unmount();
+  });
+});
+
+describe('账号管理 · 在线状态', () => {
+  it('页头显示统计里的在线人数, 在线账号带「在线」标记', async () => {
+    const w = await mountComp([
+      user({ id: 1, username: 'zhangsan@twsc.com.cn', is_online: true }),
+      user({ id: 2, username: 'lisi@twsc.com.cn', is_online: false }),
+    ]);
+
+    expect(w.find('.grp-cnt').text()).toContain('2 个账号');
+    expect(w.find('.grp-cnt').text()).toContain('3 在线');
+    expect(w.findAll('.badge.online')).toHaveLength(1);
     w.unmount();
   });
 });

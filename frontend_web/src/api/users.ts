@@ -18,6 +18,10 @@ export interface ManagedUser {
   is_active: boolean;
   password_required: boolean;
   created_at: string;
+  /** 最近一次已登录请求时间 (naive UTC) —— 在线判定由后端给 is_online */
+  last_seen_at?: string | null;
+  /** 最近 5 分钟内有已登录操作 */
+  is_online?: boolean;
 }
 
 export interface CreateUserPayload {

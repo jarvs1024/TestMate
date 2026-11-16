@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     DB_ECHO: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    # 业务展示时区 —— 「今天」的口径 (日活/统计切日) 跟部署环境保持一致.
+    TIMEZONE: str = "Asia/Shanghai"
     CORS_ORIGINS: List[str] = Field(default_factory=lambda: ["http://localhost:5173", "http://localhost:8080"])
 
     # JWT

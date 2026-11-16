@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.identity import local_part, lookup_candidates, to_email
 from app.core.logging import current_request_id, log_rate_limited
 from app.core.security import MCP_TOKEN_TYPES, create_access_token, decode_token, hash_password, verify_password
+from app.core.usage_stats import is_online, touch_user
 from app.db.session import get_session
 from app.models.asset import AssetAudit
 from app.models.user import User, UserRole
@@ -123,6 +124,7 @@ async def _hint_record(key: str) -> None:
 
 
 async def get_current_user(
+    request: Request,
     token: str | None = Depends(oauth2_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> User:
@@ -159,6 +161,8 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="登录状态已失效 (账号信息或密码已变更), 请重新登录",
         )
+    # 在线/日活心跳 —— 进程内节流, 通常一次请求就是 0 次额外写库
+    await touch_user(user, path=request.url.path)
     return user
 
 
@@ -397,6 +401,8 @@ async def login(
         detail={"role": user.role.value, "ip": client_ip, "user_agent": user_agent},
         comment="登录成功",
     )
+    # 登录本身就是一次实际操作 —— 不用等前端下一次 /me 才计入活跃
+    await touch_user(user, path="/api/v1/auth/login")
 
     # ⚠️ token 里带 tv (token_version) —— 之后改密码/改角色/停用会让旧 token 立即作废
     token, expires_in = create_access_token(
@@ -610,7 +616,12 @@ async def list_users(
 ):
     """账号列表 —— 设置页「用户管理」区块的数据源."""
     result = await session.execute(select(User).order_by(User.id))
-    return list(result.scalars().all())
+    return [
+        UserManageOut.model_validate(u).model_copy(
+            update={"is_online": is_online(u.last_seen_at)}
+        )
+        for u in result.scalars().all()
+    ]
 
 
 async def _audit_user_action(
