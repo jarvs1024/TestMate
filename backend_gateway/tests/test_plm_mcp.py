@@ -587,6 +587,7 @@ async def test_get_question_returns_description_and_inline_image(bound_user, fak
     assert data["description"]["text"] == "现象描述"
     assert data["attachments"][0]["name"] == "shot.png"
     assert data["url"].startswith(adapter._base_url() + "/mdf-node/meta/voucher/baseQuestion")
+    assert f"tenantId={adapter.TENANT_ID}" in data["url"]
 
 
 async def test_get_question_requires_id_or_code(bound_user):
@@ -1529,6 +1530,7 @@ async def test_create_reports_server_assigned_id(bound_user, fake_api):
 
     assert result["id"] == "q-saved"
     assert "id=q-saved" in result["url"]
+    assert f"tenantId={adapter.TENANT_ID}" in result["url"]
 
 
 async def test_create_aborts_on_duplicate_code(bound_user, fake_api):

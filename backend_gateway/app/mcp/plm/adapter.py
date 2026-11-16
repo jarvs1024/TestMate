@@ -201,6 +201,7 @@ def _question_url(question_id: str) -> str:
         f"{_base_url()}/mdf-node/meta/voucher/{QUESTION_BILL}"
         "?domainKey=IMP-BASE"
         f"&serviceCode={QUESTION_SERVICE}"
+        f"&tenantId={TENANT_ID}"
         f"&id={quote(question_id, safe='')}"
         "&locale=zh_CN"
     )
