@@ -9,7 +9,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
-import ElementPlus, { ElMessageBox } from 'element-plus';
+import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus';
 import AssetDetailDrawer from '../AssetDetailDrawer.vue';
 import { useUserStore } from '@/stores/user';
 import type { AssetComment, AssetItem } from '@/api/assets';
@@ -22,6 +22,15 @@ const api = vi.hoisted(() => ({
   reviewAsset: vi.fn(async () => ({ ok: true })),
   submitForReview: vi.fn(async () => ({ ok: true })),
   getAssetDoc: vi.fn(async () => ({ kind: 'skill', filename: 'SKILL.md', frontmatter: {}, content: '# x' })),
+  getAssetFiles: vi.fn(async () => ({
+    code: 'demo',
+    git_path: 'assets/skills/misc/demo',
+    files: [
+      { name: 'SKILL.md', path: 'SKILL.md', type: 'blob', size: 1234 },
+      { name: 'scripts', path: 'scripts', type: 'tree', size: null },
+      { name: 'run.py', path: 'scripts/run.py', type: 'blob', size: 2048 },
+    ],
+  })),
   downloadAssetPackage: vi.fn(async () => new Blob(['x'])),
   recordMcpCopy: vi.fn(async () => ({ code: 'demo', copy_count: 3 })),
   listAssetComments: vi.fn(async (): Promise<{ items: AssetComment[]; total: number }> => ({ items: [], total: 0 })),
@@ -667,5 +676,101 @@ describe('资产详情抽屉 · 用户评论', () => {
     // 主评论还在
     expect(w.find('.cm-item').text()).toContain('主评论');
     spy.mockRestore();
+  });
+});
+
+describe('资产详情抽屉 · 驳回文案', () => {
+  it('驳回不发钉钉群 —— 弹窗和成功提示只能说理由显示在资产详情里', async () => {
+    const promptSpy = vi.spyOn(ElMessageBox, 'prompt')
+      .mockResolvedValue({ value: '权限声明与实际行为不符' } as any);
+    const successSpy = vi.spyOn(ElMessage, 'success').mockImplementation(() => undefined as any);
+    const w = await mountDrawer({
+      it: item({ publish_status: 'pending', name: '演示资产' }),
+      role: 'admin',
+    });
+
+    await w.findAll('button')
+      .find((b) => b.text().replace(/\s+/g, '') === '驳回')!
+      .trigger('click');
+    await flushPromises();
+
+    const message = String(promptSpy.mock.calls[0][0]);
+    expect(message).toContain('驳回「演示资产」');
+    expect(message).toContain('资产详情');
+    expect(message).not.toContain('钉钉');
+
+    expect(api.reviewAsset).toHaveBeenCalledWith('demo', 'reject', '权限声明与实际行为不符');
+    const toast = String(successSpy.mock.calls[0][0]);
+    expect(toast).toContain('资产详情');
+    expect(toast).not.toContain('通知发布者');
+
+    promptSpy.mockRestore();
+    successSpy.mockRestore();
+  });
+});
+
+describe('资产详情抽屉 · 审核端待审文件清单', () => {
+  it('审核人看待审技能 → 展示本次提交的文件与大小', async () => {
+    const w = await mountDrawer({
+      it: item({ publish_status: 'pending', pending_action: 'new' }),
+      role: 'admin',
+    });
+    const text = w.text();
+    expect(text).toContain('待审文件清单');
+    expect(text).toContain('SKILL.md');
+    expect(text).toContain('scripts/run.py');
+    expect(text).toContain('1.2 KB');
+    expect(text).toContain('2.0 KB');
+    // 文件夹不单独占一行, 只列文件
+    expect(w.findAll('.rf-row')).toHaveLength(2);
+    expect(api.getAssetFiles).toHaveBeenCalledWith('demo');
+  });
+
+  it('作者本人（无审核权）看待审资产 → 不展示文件清单', async () => {
+    const w = await mountDrawer({
+      it: item({ publish_status: 'pending', pending_action: 'new', can_review: false }),
+      role: 'tester',
+    });
+    expect(w.text()).not.toContain('待审文件清单');
+    expect(api.getAssetFiles).not.toHaveBeenCalled();
+  });
+
+  it('已上架资产 → 详情保持原样, 不展示待审文件清单', async () => {
+    const w = await mountDrawer({
+      it: item({ publish_status: 'published' }),
+      role: 'admin',
+    });
+    expect(w.text()).not.toContain('待审文件清单');
+    expect(api.getAssetFiles).not.toHaveBeenCalled();
+  });
+
+  it('连接器没有文件清单', async () => {
+    const w = await mountDrawer({
+      it: item({ kind: 'mcp', publish_status: 'pending', pending_action: 'new' }),
+      role: 'admin',
+    });
+    expect(w.text()).not.toContain('待审文件清单');
+    expect(api.getAssetFiles).not.toHaveBeenCalled();
+  });
+
+  it('存量「只改信息」待审不展示 —— 文件仍是老包, 不是本次提交内容', async () => {
+    const w = await mountDrawer({
+      it: item({ publish_status: 'pending', pending_action: 'meta' }),
+      role: 'admin',
+    });
+    expect(w.text()).not.toContain('待审文件清单');
+    expect(api.getAssetFiles).not.toHaveBeenCalled();
+  });
+
+  it('读取失败 → 内联提示, 不打断审核', async () => {
+    api.getAssetFiles.mockRejectedValueOnce({
+      response: { status: 500, data: { detail: '工作区不可读' } },
+    });
+    const w = await mountDrawer({
+      it: item({ publish_status: 'pending', pending_action: 'new' }),
+      role: 'admin',
+    });
+    expect(w.text()).toContain('文件清单读取失败');
+    expect(w.text()).toContain('工作区不可读');
   });
 });

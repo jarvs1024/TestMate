@@ -27,6 +27,24 @@
                 :closable="false" show-icon class="ad-alert"
                 :title="'审核未通过: ' + (item.review_note || '未说明原因, 请修改后重新提交')" />
 
+      <!-- 审核端: 本次提交的文件清单 (读暂存区, 审核通过前不进扩展库) -->
+      <div v-if="showReviewFiles" class="ad-block ad-rf">
+        <div class="ad-block-h">
+          📁 待审文件清单
+          <span v-if="reviewFileRows.length" class="rf-count">{{ reviewFileRows.length }} 个文件</span>
+          <span v-if="reviewFilesLoading" class="ad-loading">加载中…</span>
+        </div>
+        <p class="rf-tip">本次提交到暂存区的文件; 审核通过后才会进入扩展库, 通过前不影响在架版本。</p>
+        <div v-if="reviewFilesError" class="ad-doc-empty">{{ reviewFilesError }}</div>
+        <div v-else-if="reviewFileRows.length" class="rf-list">
+          <div v-for="f in reviewFileRows" :key="f.path" class="rf-row">
+            <span class="rf-path mono">📄 {{ f.path }}</span>
+            <span v-if="f.size != null" class="rf-size mono">{{ fmtBytes(f.size) }}</span>
+          </div>
+        </div>
+        <div v-else-if="!reviewFilesLoading" class="ad-doc-empty">暂无文件</div>
+      </div>
+
       <!-- 下架申请: 等管理员确认, 确认后资产会被彻底删除 -->
       <el-alert v-if="item.publish_status === 'unpublish_pending'" type="warning"
                 :closable="false" show-icon class="ad-alert"
@@ -43,7 +61,7 @@
                以前下载按钮独占一行 (还 width:100% 的实心大蓝条), 整个安装卡的重心全被它抢走;
                现在跟「＋ 上传资产」同一个 .mini-btn.primary, 挤在文件名右边, 一屏看完. -->
           <div class="ins-h">
-            <span class="ins-t">⬇ 下载安装包</span>
+            <span class="ins-t">📦 安装包</span>
             <code class="ins-file">{{ item.code }}.zip</code>
             <!-- ⚠️ 文案必须还是纯「下载」: e2e / 单测按文本精确匹配这个按钮,
                  下载箭头走 CSS ::before (不进 textContent). -->
@@ -370,10 +388,10 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   cancelUnpublish, createAssetComment, deleteAssetComment, deleteAsset,
-  downloadAssetPackage, getAssetDoc, listAssetComments, publishAsset,
+  downloadAssetPackage, getAssetDoc, getAssetFiles, listAssetComments, publishAsset,
   recordMcpCopy, revertAsset, reviewAsset, reviewUnpublish, submitForReview,
   unpublishAsset, updateAssetComment,
-  type AssetComment, type AssetDoc, type AssetItem,
+  type AssetComment, type AssetDoc, type AssetFileNode, type AssetItem,
 } from '@/api/assets';
 import { useUserStore } from '@/stores/user';
 import { renderMarkdown } from '@/utils/markdown';
@@ -416,6 +434,10 @@ const emit = defineEmits<{
 const doc = ref<AssetDoc | null>(null);
 const docLoading = ref(false);
 const docError = ref('');
+/** 审核端待审文件清单 (技能/插件) —— 数据来自暂存区, 不是工作区老包 */
+const reviewFiles = ref<AssetFileNode[]>([]);
+const reviewFilesLoading = ref(false);
+const reviewFilesError = ref('');
 /**
  * 审核总开关是否开着 —— 关 = 免审核 (上架直接生效, 下架也自助完成).
  *
@@ -468,6 +490,27 @@ const isAdmin = computed(() => userStore.user?.role === 'admin');
 /** 能不能审 —— 管理员, 或被授权的审核人 (item.can_review 由后端算).
  *  ⚠️ 之前只看 isAdmin, 团队里被授权的审核人点不了审核按钮. */
 const canReview = computed(() => isAdmin.value || !!props.item?.can_review);
+/**
+ * 审核端文件清单 —— 只在**待审 + 当前人可审核 + 技能/插件**时展示.
+ *
+ * ⚠️ 存量「只改信息」待审 (pending_action=meta) 不展示: 暂存区里只有 manifest,
+ *    文件仍是工作区里的老包, 当成"本次提交内容"会误导审核人.
+ * ⚠️ 审核通过后 publish_status 变 published, 这块自动消失, 不影响在架详情.
+ */
+const showReviewFiles = computed(() => {
+  const it = props.item;
+  return !!it && it.publish_status === 'pending' && canReview.value
+    && it.kind !== 'mcp' && it.pending_action !== 'meta';
+});
+/** 只列文件; 目录从路径里自然体现, 不单独占一行 */
+const reviewFileRows = computed(() =>
+  reviewFiles.value.filter((f) => f.type !== 'tree'));
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 /** 能不能重新提交审核 —— 资产作者本人 (或管理员) */
 const canSubmit = computed(() => {
   const a = props.item;
@@ -862,6 +905,45 @@ watch(() => props.modelValue, (open) => {
   }
 });
 
+// 请求序号: 切资产 / 审核状态变化时, 慢的旧响应不能覆盖当前清单
+let reviewFilesSeq = 0;
+function clearReviewFiles() {
+  reviewFilesSeq += 1;
+  reviewFiles.value = [];
+  reviewFilesError.value = '';
+  reviewFilesLoading.value = false;
+}
+
+async function loadReviewFiles(code: string) {
+  const seq = ++reviewFilesSeq;
+  reviewFilesLoading.value = true;
+  reviewFilesError.value = '';
+  reviewFiles.value = [];
+  try {
+    const r = await getAssetFiles(code);
+    if (seq !== reviewFilesSeq) return;
+    reviewFiles.value = r.files || [];
+  } catch (e: any) {
+    if (seq !== reviewFilesSeq) return;
+    reviewFilesError.value = '文件清单读取失败: '
+      + httpErrorText(errorStatus(e), errorDetail(e), '请刷新后重试');
+  } finally {
+    if (seq === reviewFilesSeq) reviewFilesLoading.value = false;
+  }
+}
+
+watch(
+  () => [props.modelValue, props.item?.code, showReviewFiles.value] as const,
+  ([open, code, show]) => {
+    if (open && code && show) {
+      loadReviewFiles(code);
+    } else {
+      clearReviewFiles();
+    }
+  },
+  { immediate: true },
+);
+
 /**
  * 手动安装的**参考目录** (2026-10-25: 降级成次要信息).
  *
@@ -1049,7 +1131,7 @@ async function doReview(decision: 'approve' | 'reject') {
   if (decision === 'reject') {
     try {
       const r = await ElMessageBox.prompt(
-        `驳回「${name}」需要给发布者一个理由 (会显示在资产详情里, 并通知钉钉群)`,
+        `驳回「${name}」需要给发布者一个理由 (理由会显示在资产详情里)`,
         '驳回上架',
         {
           type: 'warning', confirmButtonText: '驳回', cancelButtonText: '取消',
@@ -1075,7 +1157,7 @@ async function doReview(decision: 'approve' | 'reject') {
   busy.value = true;
   try {
     await reviewAsset(code, decision, comment);
-    ElMessage.success(decision === 'approve' ? '已通过审核, 资产已上架' : '已驳回, 理由已通知发布者');
+    ElMessage.success(decision === 'approve' ? '已通过审核, 资产已上架' : '已驳回, 理由可在资产详情里查看');
     emit('changed');
   } catch (e: any) {
     ElMessage.error('审核失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
@@ -1153,6 +1235,22 @@ async function doSubmit() {
 .ad-block-h.perm { color: var(--ink-900); }
 .ad-block-b { font-size: 12.5px; color: var(--ink-700); line-height: 1.6; }
 .ad-block-b.muted { color: var(--ink-500); font-style: italic; }
+
+/* 审核端待审文件清单 —— 读暂存区, 审核通过后即消失 */
+.ad-rf {
+  padding: 9px 11px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface-sunken);
+}
+.ad-rf .rf-count { font-weight: 400; font-size: 11px; color: var(--ink-500); }
+.rf-tip { margin: 0 0 7px; font-size: 11.5px; color: var(--ink-500); line-height: 1.55; }
+.rf-list { max-height: 220px; overflow: auto; }
+.rf-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 0; border-top: 1px dashed var(--border);
+}
+.rf-row:first-child { border-top: none; }
+.rf-path { flex: 1; min-width: 0; font-size: 11.5px; color: var(--ink-700); word-break: break-all; }
+.rf-size { flex-shrink: 0; font-size: 11px; color: var(--ink-500); }
 
 /* 推荐问法 —— 每条一行, 可一键复制 */
 .ad-prompt-tip { margin: 0 0 6px; font-size: 11px; color: var(--ink-500); }
@@ -1328,8 +1426,9 @@ async function doSubmit() {
 .ins-t { font-size: 12.5px; font-weight: 700; color: var(--ink-900); flex-shrink: 0; }
 .ins-file {
   font-family: var(--font-mono); font-size: 11px; color: var(--ink-500);
-  /* ⚠️ 2026-11-04: 文件名现在跟按钮同行 —— 必须能省略, 否则长 code 把按钮挤出卡片 */
-  margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* ⚠️ 2026-11-04: 文件名紧跟标题、占满中间 —— 长 code 省略, 按钮不被挤出卡片.
+     2026-11-17: 试过浅底 chip, 用户嫌不好看 —— 回到纯文本. */
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* ⚠️ 2026-11-04 (第二十三轮): 跟着「＋ 上传资产」同一套 .mini-btn.primary 走,
    **不再撑满整行** (以前 width:100% 的 el-button 是一整块实心大蓝条).

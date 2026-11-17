@@ -41,7 +41,7 @@ describe('① 下载按钮 —— 跟「＋ 上传资产」同一套样式 (2026
   it('按钮文案必须还是纯「下载」 —— e2e/单测按文本精确匹配', () => {
     // 下载箭头走 CSS ::before, 不进 textContent
     expect(detailDrawer).toMatch(/\.ins-btn::before/);
-    // 只看按钮这一行的内容 —— 标题「⬇ 下载安装包」里也有 ⬇, 不能一刀切
+    // 只看按钮这一行的内容 —— 标题里也有图标, 不能一刀切
     const btnTag = detailDrawer.match(/<button[^>]*ins-btn[^>]*>[^<]*/)?.[0] || '';
     expect(btnTag).toBeTruthy();
     expect(btnTag).not.toContain('⬇');
@@ -66,6 +66,21 @@ describe('① 下载按钮 —— 跟「＋ 上传资产」同一套样式 (2026
   it('文件名太长时被省略, 按钮不被挤出卡片', () => {
     expect(detailDrawer).toMatch(/\.ins-file\s*\{[^}]*text-overflow:\s*ellipsis/);
     expect(detailDrawer).toMatch(/\.ins-btn\s*\{[^}]*flex-shrink:\s*0/);
+  });
+
+  it('标题只留一个下载符号 —— 不再和按钮重复, 文件名紧跟标题占满中间', () => {
+    // 左边「⬇ 下载安装包」+ 按钮「⬇ 下载」两个箭头重复, 中间还被 margin-left:auto 撑空
+    expect(detailDrawer).toMatch(/<span class="ins-t">📦 安装包<\/span>/);
+    expect(detailDrawer).toMatch(/\.ins-file\s*\{[^}]*flex:\s*1/);
+    expect(detailDrawer).not.toMatch(/\.ins-file\s*\{[^}]*margin-left:\s*auto/);
+  });
+
+  it('文件名是纯文本 —— 不要 chip 底色/边框', () => {
+    // 2026-11-17: 加过一轮浅底 chip, 用户嫌不好看 —— 回到纯文本, 只保留占位与省略
+    const block = detailDrawer.match(/\.ins-file\s*\{[^}]*\}/)?.[0] || '';
+    expect(block).toBeTruthy();
+    expect(block).not.toMatch(/background:/);
+    expect(block).not.toMatch(/border:/);
   });
 });
 
@@ -134,5 +149,19 @@ describe('③ 侧栏顶部「能力」区块标题去掉 (2026-11-04)', () => {
   it('侧栏下半的「📡 数据 / 工具」标题还在 —— 不靠「能力」分段', () => {
     const serviceStatus = read('src/components/ServiceStatus.vue');
     expect(serviceStatus).toMatch(/数据 \/ 工具/);
+  });
+});
+
+// ═══════════════ ④ 搜索框宽度 ═══════════════
+
+describe('④ 搜索框装得下完整占位文案 (2026-11-17)', () => {
+  it('全局 .mk-actions .search input 宽度 ≥ 220px —— 不再截成「搜索名称、说明、标签或」', () => {
+    const mainCss = read('src/styles/main.css');
+    const block = mainCss.match(/\.mk-actions \.search input\s*\{[^}]*\}/)?.[0] || '';
+    expect(block).toBeTruthy();
+    const widths = [...block.matchAll(/(?:^|[\s;{])(?:min-)?width:\s*(\d+)px/g)]
+      .map((m) => Number(m[1]));
+    expect(widths.length).toBeGreaterThan(0);
+    expect(Math.max(...widths)).toBeGreaterThanOrEqual(220);
   });
 });

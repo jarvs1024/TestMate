@@ -206,12 +206,16 @@ html, html[data-theme] {
   display: flex; align-items: center; gap: 6px;
   background: var(--surface); border: 1px solid var(--border);
   padding: 6px 10px; border-radius: 8px; color: var(--ink-500);
+  /* ⚠️ 2026-11-17: 允许整体收缩 (窄屏时换行/压缩), 不撑破工具条 */
+  flex: 0 1 auto; min-width: 0; max-width: 100%;
 }
 .mk-actions .search input {
   border: 0; outline: none; background: transparent;
   font-size: 13px; color: var(--ink-900); font-family: inherit;
-  /* 固定 190px 窄屏会撑破工具条 → 改成可伸缩 */
-  flex: 1; min-width: 120px; width: auto;
+  /* ⚠️ 2026-11-17: 以前靠内容撑, 只有 ~146px —— 占位文案被截成
+     「搜索名称、说明、标签或」. 固定 220px 装下完整提示;
+     窄屏可收缩到 120px, 不至于撑破工具条. */
+  flex: 1 1 auto; min-width: 120px; width: 220px;
 }
 
 /* ------------------------------------------------------------
