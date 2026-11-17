@@ -284,20 +284,15 @@ async def test_meta_edit_rejects_empty_name(client, auth, ws, restore_git_config
     assert r.status_code == 422, r.text
 
 
-# ---------- 钉钉通知: 编辑信息 → **审核群**, 通过后**不通知扩展群** ----------
-# (2026-10-30 · 第十二轮 · 问题2)
+# ---------- 编辑信息: **不再送审**, 直接生效 ----------
 
 
-async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_git_config,  # noqa: ARG001
-                                                     publisher_user, monkeypatch):
-    """⚠️ 用户原话「编辑信息 → 管理员审核, 通知到管理审核群; 审核通过**不通知扩展群**」.
-
-    三步各盯一条:
-      ① 提交编辑 → 通知发的是 **review** 事件 (→审核群), 不是 publish/update;
-      ② 审核通过 → **一条都不发** (包没变, 扩展群那条是假消息);
-      ③ 对照: 新资产上架 → 审核通过 → **要发** publish (包真的变了).
-    """
+async def test_meta_edit_stays_published_without_review(client, auth, ws, restore_git_config,  # noqa: ARG001
+                                                        publisher_user, monkeypatch):
+    """审核开着时, 作者改信息也应直接生效 —— 不 pending / 不发审核群通知."""
     from app.api import extensions as mk_api
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import AssetJob
 
     sent: list[tuple[str, dict]] = []
 
@@ -308,50 +303,106 @@ async def test_meta_edit_notifies_review_channel_only(client, auth, ws, restore_
 
     monkeypatch.setattr(mk_api.ext_notify, "notify_asset", fake_notify)
 
-    # ⚠️ 审核要**开着**, 否则压根不进审核流程 (也就没有审核通知)
     await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
-    # ⚠️ 2026-11-05: 前置改成「**已经在架**的资产」——
-    #    「只改了信息 → 审核通过不通知扩展群」说的是**包没变**的那种改动.
-    #    原来这里拿「刚上传待审」当前置, 等于把**新资产**也当成"只改信息"了 ——
-    #    新资产通过审核是要通知扩展群的 (那是真的上新).
-    #    用户当天明确报过「驳回后重新提交 → 审核通过 → 没有上架通知」是**问题**.
-    await _upload(client, pauth, code="meta-notify")
+    await _upload(client, pauth, code="meta-direct")
     await set_setting("extensions.review.enabled", "true")
-
-    # 上架本身要发 review 通知 (新资产) —— 先记下, 后面用差值断言
     sent.clear()
 
-    # ---- ① 提交「只改信息」→ 通知审核群 ----
     r = await client.patch(
-        f"{API}/meta-notify",
-        json={"summary": "改过的简介"},
+        f"{API}/meta-direct",
+        json={"summary": "直接生效的简介"},
         headers=pauth,
     )
     assert r.status_code == 202, r.text
-    assert [e for e, _ in sent] == ["review"], sent
-    # 标题要能看出是"改信息", 不是"上新东西"
-    _, kw = sent[0]
-    assert "信息" in (kw.get("title_override") or ""), kw.get("title_override")
+    assert sent == [], f"编辑信息不该再发审核群通知: {sent}"
 
-    # ---- ② 审核通过 → **不通知扩展群** ----
-    sent.clear()
-    r = await client.post(
-        f"{API}/meta-notify/review",
-        data={"decision": "approve", "comment": "改得对"},
-        headers=auth,
-    )
-    assert r.status_code == 200, r.text
-    assert sent == [], f"只改了信息, 审核通过**不该**通知扩展群 (包没变): {sent}"
-    # job 上也不该挂公告 —— 挂上去的话 git 一同步完扩展群照样收到假消息
+    st = await client.get(f"{API}/meta-direct", headers=pauth)
+    body = st.json()
+    assert body["publish_status"] == "published"
+    assert body["pending_action"] == ""
+    assert body["summary"] == "直接生效的简介"
+
+    # 直接进 git 同步 job; 不是只落暂存区的 stage_only
+    async with AsyncSessionLocal() as s:
+        job = await s.get(AssetJob, r.json()["id"])
+        assert job is not None
+        assert job.action == "update_meta"
+        assert not (job.payload or {}).get("stage_only"), job.payload
+        assert "notify" not in (job.payload or {}), job.payload
+
+    mpath = _manifest_path(ws, "meta-direct")
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    assert manifest["summary"] == "直接生效的简介"
+    assert manifest["publish_status"] == "published"
+
+
+async def test_meta_edit_keeps_unpublished_state(client, auth, ws, restore_git_config,  # noqa: ARG001
+                                                  publisher_user):
+    """已下架资产改信息 → 状态保持「已下架」, 不能顺手替作者重新上架."""
     from app.db.session import AsyncSessionLocal
     from app.models.asset import AssetJob
 
+    await set_setting("extensions.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="meta-unpub")
+    r0 = await client.post(
+        f"{API}/meta-unpub/unpublish",
+        data={"confirm_code": "meta-unpub", "comment": "先下架"},
+        headers=pauth,
+    )
+    assert r0.status_code == 200, r0.text
+    assert r0.json()["publish_status"] == "unpublished"
+
+    await set_setting("extensions.review.enabled", "true")
+    r = await client.patch(
+        f"{API}/meta-unpub", json={"summary": "下架后改的简介"}, headers=pauth,
+    )
+    assert r.status_code == 202, r.text
+
+    st = await client.get(f"{API}/meta-unpub", headers=pauth)
+    body = st.json()
+    assert body["publish_status"] == "unpublished"
+    assert body["pending_action"] == ""
+    assert body["summary"] == "下架后改的简介"
+
+    # 内容在 git 工作区 (已下架 ≠ 待审), 走正常同步 job
+    manifest = json.loads(_manifest_path(ws, "meta-unpub").read_text(encoding="utf-8"))
+    assert manifest["summary"] == "下架后改的简介"
+    assert manifest["publish_status"] == "unpublished"
     async with AsyncSessionLocal() as s:
-        job = await s.get(AssetJob, r.json()["job_id"])
+        job = await s.get(AssetJob, r.json()["id"])
         assert job is not None
-        assert "notify" not in (job.payload or {}), job.payload
+        assert not (job.payload or {}).get("stage_only"), job.payload
+
+
+async def test_meta_edit_keeps_unpublish_pending_state(client, auth, ws, restore_git_config,  # noqa: ARG001
+                                                        publisher_user):
+    """申请下架待确认期间改信息 → 仍是「待下架审核」, 不打断/不撤销下架流程."""
+    await set_setting("extensions.review.enabled", "false")
+    await _enable_publisher(publisher_user)
+    pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    await _upload(client, pauth, code="meta-unpubpend")
+    await set_setting("extensions.review.enabled", "true")
+    r0 = await client.post(
+        f"{API}/meta-unpubpend/unpublish",
+        data={"confirm_code": "meta-unpubpend", "comment": "申请下架"},
+        headers=pauth,
+    )
+    assert r0.status_code == 200, r0.text
+    assert r0.json()["publish_status"] == "unpublish_pending"
+
+    r = await client.patch(
+        f"{API}/meta-unpubpend", json={"summary": "等确认时改的"}, headers=pauth,
+    )
+    assert r.status_code == 202, r.text
+    st = await client.get(f"{API}/meta-unpubpend", headers=pauth)
+    body = st.json()
+    assert body["publish_status"] == "unpublish_pending"
+    assert body["pending_action"] == ""
+    assert body["summary"] == "等确认时改的"
 
 
 async def test_new_asset_approve_still_notifies_ext(client, auth, ws, restore_git_config,  # noqa: ARG001

@@ -154,6 +154,11 @@ async def test_pending_upload_stays_out_of_git(client, auth, ws,  # noqa: ARG001
     assert r2.status_code == 200, r2.text
     assert any(f["path"] == "SKILL.md" for f in r2.json()["files"])
 
+    # 审核端也要能看 (审核抽屉的「待审文件清单」依赖这里)
+    r2r = await client.get(f"{API}/pend-fresh/files", headers=auth)
+    assert r2r.status_code == 200, r2r.text
+    assert any(f["path"] == "SKILL.md" for f in r2r.json()["files"])
+
 
 # ---------- 审核通过: 暂存区 → 工作区 ----------
 
@@ -409,101 +414,91 @@ async def test_delete_of_new_pending_asset(client, auth, ws,  # noqa: ARG001
     assert not _staging_dir("del-fresh").exists(), "删除后暂存区应清干净"
 
 
-# ---------- 待审改信息的读侧兜底 ----------
+# ---------- 在架改信息: 直接生效, 不进暂存区 ----------
 
 
-async def test_meta_edit_pending_reads_fall_back_to_workspace(client, auth, ws,  # noqa: ARG001
-                                                              restore_git_config,
-                                                              publisher_user):
-    """改信息待审: 暂存区只有 manifest → files/package 回落到工作区老内容;
-    通过后 manifest 带新元信息, README 重生成, 公告不发 (包没变)."""
+async def test_meta_edit_on_published_asset_updates_workspace_directly(
+    client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
+):
+    """审核开着时, 在架资产改信息也走工作区直改 —— 不 pending、不落暂存区."""
     await set_setting("extensions.review.enabled", "false")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
-    await _upload(client, pauth, code="meta-pend")
+    await _upload(client, pauth, code="meta-direct")
 
     await set_setting("extensions.review.enabled", "true")
-    r = await client.patch(f"{API}/meta-pend",
-                           json={"summary": "待审的新简介"},
+    r = await client.patch(f"{API}/meta-direct",
+                           json={"summary": "直接生效的新简介"},
                            headers=pauth)
     assert r.status_code == 202, r.text
-    st = await client.get(f"{API}/meta-pend", headers=pauth)
-    assert st.json()["publish_status"] == "pending"
-    assert st.json()["pending_action"] == "meta"
 
-    # 暂存区只有 manifest (没有 files/) —— 安装包/文件树从工作区老内容读
-    staging = _staging_dir("meta-pend")
-    assert (staging / "manifest.json").is_file()
-    assert not (staging / "files").exists(), "改信息不重传安装包, 暂存区不该有 files"
-    r2 = await client.get(f"{API}/meta-pend/files", headers=pauth)
-    assert r2.status_code == 200, r2.text
-    assert any(f["path"] == "SKILL.md" for f in r2.json()["files"]), (
-        "待审改信息的文件树应回落到工作区老内容"
-    )
+    st = await client.get(f"{API}/meta-direct", headers=pauth)
+    assert st.json()["publish_status"] == "published"
+    assert st.json()["pending_action"] == ""
+    assert st.json()["summary"] == "直接生效的新简介"
 
-    # 通过: manifest 带新简介, publish_status 回到 published, 暂存区清掉
-    r3 = await client.post(f"{API}/meta-pend/review",
-                           data={"decision": "approve", "comment": "行"},
-                           headers=auth)
-    assert r3.status_code == 200, r3.text
-    wm = json.loads(
-        (_ws_dir(ws, "meta-pend") / "manifest.json").read_text(encoding="utf-8")
-    )
-    assert wm["summary"] == "待审的新简介"
+    # 内容直接落在工作区; 仓库外暂存区没有这单
+    wsdir = _ws_dir(ws, "meta-direct")
+    assert (wsdir / "manifest.json").is_file()
+    assert (wsdir / "files" / "SKILL.md").is_file()
+    wm = json.loads((wsdir / "manifest.json").read_text(encoding="utf-8"))
+    assert wm["summary"] == "直接生效的新简介"
     assert wm["publish_status"] == "published"
-    assert not staging.exists(), "通过后暂存区应清掉"
-    # 只改了信息的通过, 公告挂在 job 上但被跳过 (包没变, 发了是假消息)
-    async with AsyncSessionLocal() as s:
-        row = await s.get(AssetJob, r3.json()["job_id"])
-        assert row is not None
-        assert row.action == "approve"
-        assert not row.payload.get("notify"), "只改信息的通过不发上架公告"
+    assert not _staging_dir("meta-direct").exists(), "直改不该在暂存区留副本"
 
 
-# ---------- 驳回后编辑信息: 包不能丢, 公告不能吞 ----------
+# ---------- 驳回后编辑信息: 包不能丢, 也不自动重新送审 ----------
 
 
-async def test_edit_meta_after_reject_keeps_package_and_publishes_notice(
-    client, auth, ws, restore_git_config, publisher_user,  # noqa: ARG001
+async def test_edit_meta_after_reject_keeps_package_and_does_not_resubmit(
+    client, auth, ws, restore_git_config, publisher_user, monkeypatch,  # noqa: ARG001
 ):
-    """驳回 → 编辑信息 → 审核通过: 待审的包必须完整进工作区, 上架公告必须发.
-
-    ⚠️ 2026-11-05 实测踩过的坑:
-       驳回后「编辑信息」把 pending_action 覆盖成了 "meta", 于是 approve 误判成
-       「只改了信息、包没变」——
-         ① 只叠 manifest.json, files/ package/ **从没进工作区** → 资产残缺
-            (详情页报「资产包内没有 SKILL.md」, 文件列表只剩 manifest.json);
-         ② 命中「只改信息不发公告」的跳过判断 → **上架公告被吞**;
-         ③ meta 分支还把暂存区里的包删了 → 内容丢失.
-
-       修法: 「这个资产本来就在待审/被驳回状态」→ 它的包还在暂存区,
-       这次编辑信息**没碰那个包** → 「有待审的包」这个事实没变, 不能标成 meta.
-    """
+    """驳回后改信息: 修改保存进暂存区, 状态仍是驳回; 重新提交后再走审核."""
     await set_setting("extensions.review.enabled", "true")
     await _enable_publisher(publisher_user)
     pauth = {"Authorization": f"Bearer {publisher_user['token']}"}
+    captured = _capture_notify(monkeypatch)
     await _upload(client, pauth, code="meta-after-reject")
 
-    # 驳回 —— 待审内容还在暂存区
+    # 驳回 —— 待审内容还在暂存区; 驳回本身零通知
+    captured.clear()
     r = await client.post(f"{API}/meta-after-reject/review",
                           data={"decision": "reject", "comment": "改改再交"},
                           headers=auth)
     assert r.status_code == 200, r.text
     assert r.json()["publish_status"] == "rejected"
+    assert captured == [], captured
     assert (_staging_dir("meta-after-reject") / "files" / "SKILL.md").is_file(), \
         "驳回后待审的包还在暂存区"
 
-    # 编辑信息 —— 包没重传, 但**待审的包还在** → 不能当成「只改了信息」
+    # 编辑信息 —— 只保存资料, 不自动重新提交审核
     r2 = await client.patch(f"{API}/meta-after-reject",
                             json={"summary": "改了简介"},
                             headers=pauth)
     assert r2.status_code == 202, r2.text
+    assert captured == [], f"编辑信息不该发审核通知: {captured}"
     st = await client.get(f"{API}/meta-after-reject", headers=pauth)
-    assert st.json()["publish_status"] == "pending"
-    assert st.json()["pending_action"] != "meta", \
-        "待审资产上编辑信息, 不能把 pending_action 覆盖成 meta (包还在暂存区)"
+    assert st.json()["publish_status"] == "rejected"
+    assert st.json()["pending_action"] == "new"
+    assert st.json()["review_note"] == "改改再交", "编辑信息不能抹掉驳回理由"
+    staging_manifest = json.loads(
+        (_staging_dir("meta-after-reject") / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert staging_manifest["summary"] == "改了简介"
+    assert not _ws_dir(ws, "meta-after-reject").exists(), "驳回内容仍不该进工作区"
+
+    # 作者显式重新提交 → 才回到待审 (审核群提醒照发)
+    r_submit = await client.post(
+        f"{API}/meta-after-reject/submit",
+        data={"comment": "改完再交"},
+        headers=pauth,
+    )
+    assert r_submit.status_code == 200, r_submit.text
+    assert r_submit.json()["publish_status"] == "pending"
+    assert [c[0] for c in captured] == ["review"], captured
 
     # 审核通过
+    captured.clear()
     r3 = await client.post(f"{API}/meta-after-reject/review",
                            data={"decision": "approve", "comment": "通过"},
                            headers=auth)
@@ -516,8 +511,7 @@ async def test_edit_meta_after_reject_keeps_package_and_publishes_notice(
         "待审的包必须完整进工作区"
     assert not _staging_dir("meta-after-reject").exists(), "通过后暂存区应清掉"
 
-    # ①b 详情页要能读到展示文档 (用户看到的「资产包内没有 SKILL.md」就是
-    #     GET /{code}/doc 抛的 404 —— files/ 没进工作区时必然读不到)
+    # ①b 详情页要能读到展示文档
     doc = await client.get(f"{API}/meta-after-reject/doc", headers=pauth)
     assert doc.status_code == 200, doc.text
     assert doc.json()["filename"] == "SKILL.md"

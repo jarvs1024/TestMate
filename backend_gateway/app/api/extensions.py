@@ -1008,20 +1008,6 @@ _PREVIEW_SCENES: list[dict[str, Any]] = [
         },
     },
     {
-        # ⚠️ 2026-10-30 (第十二轮): 「只改了信息」的待审通知 ——
-        #    跟「新资产待审核」长得不一样 (标题 + 说的是"改了信息"), 管理员才分得出.
-        #    ⚠️ 这条**只发审核群**, 审核通过后**不通知扩展群** (包没变).
-        "event": "review",
-        "label": "审核群 · 只改了信息, 待审核 (包没变)",
-        "kw": {
-            "name": "代码检视流水线", "version": "1.2.0", "actor": "zhangsan",
-            "kind": "plugin", "category": "流程规范", "code": "dml-code-review",
-            "summary": "一键串联: 取 MR diff → 送检视 → 回写评论 → 汇总结果",
-            "detail": "修改了资产信息, 等管理员审核",
-            "title_override": "📝 资产信息修改, 待审核",
-        },
-    },
-    {
         # ⚠️ 2026-10-31 (第十六轮): **不再 @发布者** ——
         #    钉钉要 userid, 平台只有账号名, 映射表那套整个删掉了 (用户决定暂时不 @ 具体的人).
         #    这条消息仍然**说清这条是驳回谁的** (正文里一行「发布人: lisi」), 只是不 @.
@@ -3646,8 +3632,9 @@ async def update_asset_meta(
        现在多一条"只改说明"的路.
 
     ⚠️ 权限跟"发新版本"一致 —— **作者本人 或 管理员** (_assert_can_modify).
-    ⚠️ 审核口径也一致 —— 内容变了就得重新走审核 (跟"发新版本"一个口径).
-       否则就是审核绕过: 简介/说明就是扩展中卡片上显示的内容.
+    ⚠️ 审核口径 (2026-11-17 起): **改信息不再送审, 直接生效** —— 资料类改动不是
+       绕过审核的口子; **包本身的审核仍归管理员** (待审/驳回的包不会因为这次
+       编辑而变成已上架, 作者仍需显式「重新提交审核」).
     """
     await _assert_can_modify(code, user)
 
@@ -3683,10 +3670,10 @@ async def _stage_asset_meta(
 
     # ⚠️ 2026-11-05: 待审/被驳回资产的内容在**仓库外暂存区** (还没进 git) ——
     #    读旧 manifest 按状态分流, 写也一样 (见下面第 3 步).
+    # ⚠️ 2026-11-17: 编辑信息**不再改变审核状态** —— 在架资产直改工作区;
+    #    待审/驳回资产只改暂存区里的资料, 状态保持不变 (送审仍由作者显式提交).
     now_in_staging = existing.publish_status in (ext_state.PENDING, ext_state.REJECTED)
-    need_review = await _review_required(user)
-    # 最终要不要留在暂存区: 要审核 → 一定在; 已是待审 (免审编辑不改变状态) → 保持.
-    to_staging = need_review or existing.publish_status == ext_state.PENDING
+    to_staging = now_in_staging
     src_root = git_sync.STAGING if now_in_staging else git_sync.WORKSPACE
 
     old_manifest_path = src_root / old_base / "manifest.json"
@@ -3767,13 +3754,6 @@ async def _stage_asset_meta(
             # ⚠️ 挪的是**整个目录**, files/package 一起走.
             _move_asset_dir(old_git_path, base, root=src_root)
             moved_within_root = True
-        elif now_in_staging and not to_staging:
-            # 被驳回的资产 + 免审编辑 → 直接重新上架 —— 内容还在暂存区,
-            # 先整体拷进工作区 (approve 同款逻辑), 否则货架上是个空目录.
-            if old_git_path:
-                _move_asset_dir(old_git_path, base, root=git_sync.STAGING)
-            git_sync.copy_staging_to_workspace(base)
-            git_sync.remove_staging_path(base)
         write_text(
             f"{base}/manifest.json",
             json.dumps(manifest, ensure_ascii=False, indent=2),
@@ -3825,32 +3805,10 @@ async def _stage_asset_meta(
         a.install_steps = list(manifest.get("install_steps") or [])
         a.bindings = dict(manifest.get("bindings") or {})
         a.git_path = base
-        # ⚠️ 审核口径跟"发新版本"一致 —— 内容变了就得重新过审.
-        if need_review:
-            a.publish_status = "pending"
-            a.review_note = ""
-            # ⚠️ 2026-10-30 (第十二轮): 记下这是「**只改了信息**」的审核 ——
-            #    包没变, 审核通过后**不通知扩展群** (见 review_asset 的 approve 分支).
-            #
-            # ⚠️ 2026-11-05: 但**这个资产本来就在待审/被驳回状态**时不能这么标 ——
-            #    它的包内容在**仓库外暂存区**, 这次编辑信息**没碰那个包** →
-            #    「有待审的包」这个事实没变 (now_in_staging=True), 原样保留 new/update.
-            #
-            #    标成 "meta" 的后果 (实测踩过, 用户报的「审核通过后资产包被破坏 +
-            #    没有上架通知」):
-            #      ① approve 走 _promote_staging 的 meta 分支 → 只叠 manifest.json,
-            #         files/ package/ **从没进工作区** → 资产残缺
-            #         (详情页报「资产包内没有 SKILL.md」, 文件列表只剩 manifest.json);
-            #      ② approve 的「只改信息就不发公告」判断命中 → **上架公告被吞**;
-            #      ③ meta 分支还会 remove_staging_path 把暂存区里的包**删掉** → 内容丢失.
-            #
-            #    在架资产编辑信息 (now_in_staging=False) 才是真正的「只改了信息」——
-            #    它的包本来就在工作区, 没动过 → 标 meta, 不发公告 (老行为不变).
-            if not now_in_staging:
-                a.pending_action = "meta"
-        elif a.publish_status in (ext_state.REJECTED, ext_state.UNPUBLISHED):
-            a.publish_status = "published"
-            a.review_note = ""
+        # ⚠️ 2026-11-17: 编辑信息**不改变生命周期状态** ——
+        #    在架资产保持 published / unpublish_pending, 待审/驳回也原样保留
+        #    (review_note 留给作者看驳回原因, 不能因为改了简介就清掉).
+        #    包审核不受影响: 待审/驳回的包仍在暂存区, 作者要重新提交才会送审.
 
         # ⚠️ manifest.json 必须带上 publish_status (同步器会读它)
         manifest["publish_status"] = a.publish_status
@@ -3873,8 +3831,8 @@ async def _stage_asset_meta(
         await session.commit()
         await session.refresh(a)
 
-        if a.publish_status != "pending":
-            # ⚠️ 待审资产**不写索引** —— 还没进 git, 索引也不该出现它.
+        if not to_staging:
+            # ⚠️ 待审/驳回资产**不写索引** —— 还没进 git, 索引也不该出现它.
             try:
                 await stage_index(session, asset_to_index_entry(a))
             except git_sync.SyncError as e:
@@ -3898,8 +3856,8 @@ async def _stage_asset_meta(
             "commit_message": f"docs(ext): 修改资产信息 {a.name} {a.version}",
             "old_git_path": old_git_path,
         }
-        if a.publish_status == "pending":
-            # ⚠️ 待审内容只落暂存区 (仓库外), **不进 git** —— 同步 job 不碰仓库
+        if to_staging:
+            # ⚠️ 待审/驳回内容只落暂存区 (仓库外), **不进 git** —— 同步 job 不碰仓库
             #    (见 asset_jobs._process 的 stage_only 分支).
             job_payload["stage_only"] = True
         job = AssetJob(
@@ -3925,26 +3883,9 @@ async def _stage_asset_meta(
 
     # ---- 5. 入队, 后台 commit + push ----
     enqueue(out.id)
-    # ⚠️ 2026-10-30 (第十二轮): **只改了信息** → 通知**审核群**, 让管理员知道有人改了.
-    #
-    #    ⚠️ 口径变更说明 (跟第十一轮相反, 是用户后来明确要求的):
-    #       第十一轮: 「编辑信息就不需要通知到钉钉」→ 当时把通知整段删了;
-    #       这一轮:   「编辑信息 → 管理员审核, 通知到管理审核群, 但审核通过**不通知扩展群**」.
-    #       所以现在是**两条腿**:
-    #         · 提交时   → 审核群 (review 事件) —— 管理员得知道有活要干;
-    #         · 通过后   → **不发扩展群** (包没变, 发那条是假消息).
-    #
-    #    ⚠️ 事件 key 仍然是 "review" —— 开关 (dingtalk.notify_on_review) 和
-    #       频道 (审核群) 都靠 key 查, 换 key 会关错开关、发错群.
-    #       只用 title_override 改标题文案, 让管理员一眼看出"这是改信息, 不是上新东西".
-    if need_review:
-        await ext_notify.notify_asset(
-            "review", manifest,
-            actor=user.username,
-            detail="修改了资产信息, 等管理员审核",
-            author=manifest.get("author", "") or user.username,
-            title_override="📝 资产信息修改, 待审核",
-        )
+    # ⚠️ 2026-11-17: 编辑信息**不再通知审核群** —— 管理员没有活要干 (直接生效);
+    #    在架资产仍由 git 同步 job 在 push 成功后发扩展群公告 (payload 里没挂
+    #    notify, 所以只出现在架公告那条常规路径, 见 asset_jobs).
     return out
 
 

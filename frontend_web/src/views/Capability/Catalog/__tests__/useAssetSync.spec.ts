@@ -24,7 +24,8 @@ function jobOf(patch: Partial<AssetJob>): AssetJob {
 
 function setup(opts: {
   jobs?: AssetJob[];
-  publishStatus?: 'pending' | 'published';
+  publishStatus?: 'pending' | 'rejected' | 'published';
+  editingMeta?: boolean;
   open?: () => boolean;
   retryJob?: AssetJob;
 } = {}) {
@@ -40,6 +41,7 @@ function setup(opts: {
   const isOpen = opts.open || (() => true);
   const sync = useAssetSync({
     isOpen, fetchJob, fetchAsset, requestRetry, onDone, onTerminalFailure,
+    editingMeta: () => !!opts.editingMeta,
     sleep: async () => {},
     now: () => 0,
   });
@@ -95,6 +97,40 @@ describe('任务阶段', () => {
     await sync.acceptJob(jobOf({ status: 'staged' }));
     expect(sync.syncView.value.stamp).toBe('SUBMITTED');
     expect(sync.syncView.value.title).toContain('等待管理员审核');
+  });
+
+  it('编辑信息: 在架资产与管理员直改一致 (SUCCESS)', async () => {
+    const { sync, onDone } = setup({
+      jobs: [jobOf({ status: 'pushed' })], publishStatus: 'published', editingMeta: true,
+    });
+    sync.beginUpload();
+    await sync.acceptJob(jobOf({ status: 'staged' }));
+    expect(sync.syncView.value.stamp).toBe('SUCCESS');
+    expect(sync.syncView.value.title).toBe('已同步到 GitLab');
+    expect(onDone).toHaveBeenCalledWith(expect.anything(), 'published');
+  });
+
+  it('编辑信息: 待审资产只保存资料, 不说成"重新提交"', async () => {
+    const { sync } = setup({
+      jobs: [jobOf({ status: 'pushed' })], publishStatus: 'pending', editingMeta: true,
+    });
+    sync.beginUpload();
+    await sync.acceptJob(jobOf({ status: 'staged' }));
+    expect(sync.syncView.value.stamp).toBe('SAVED');
+    expect(sync.syncView.value.title).toContain('修改已保存');
+    expect(sync.syncView.value.title).not.toContain('已提交');
+  });
+
+  it('编辑信息: 驳回资产内容只在暂存区, 不能再谎报已同步 GitLab', async () => {
+    const { sync, onDone } = setup({
+      jobs: [jobOf({ status: 'pushed' })], publishStatus: 'rejected', editingMeta: true,
+    });
+    sync.beginUpload();
+    await sync.acceptJob(jobOf({ status: 'staged' }));
+    expect(sync.syncView.value.stamp).toBe('SAVED');
+    expect(sync.syncView.value.title).toContain('驳回');
+    expect(sync.syncView.value.title).not.toContain('GitLab');
+    expect(onDone).toHaveBeenCalledWith(expect.anything(), 'rejected');
   });
 
   it('syncing 随时间缓动, 但封顶 92', () => {

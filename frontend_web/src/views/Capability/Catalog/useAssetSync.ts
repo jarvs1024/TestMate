@@ -13,7 +13,7 @@ import {
   retrySecondsLeft, uploadPercent,
 } from './syncProgress';
 
-export type SyncReview = 'checking' | 'pending' | 'published';
+export type SyncReview = 'checking' | 'pending' | 'rejected' | 'published';
 
 export interface SyncView {
   phase: 'uploading' | 'saving' | 'syncing' | 'auto-retry' | 'done' | 'failed';
@@ -34,6 +34,8 @@ export interface UseAssetSyncOptions {
   fetchJob: (id: number) => Promise<AssetJob>;
   fetchAsset: (code: string) => Promise<Pick<AssetItem, 'publish_status'>>;
   requestRetry: (id: number) => Promise<AssetJob>;
+  /** 这次是不是「只改资料」(edit 模式) —— 待审/驳回时文案不能说成"又提交了一遍" */
+  editingMeta?: () => boolean;
   onDone: (job: AssetJob, review: Exclude<SyncReview, 'checking'>) => void;
   onTerminalFailure: (job: AssetJob) => void;
   intervalMs?: number;
@@ -135,14 +137,21 @@ export function useAssetSync(opts: UseAssetSyncOptions) {
       };
     }
     // pushed
-    const pending = reviewState.value === 'pending';
-    const checking = reviewState.value === 'checking';
+    const review = reviewState.value;
+    const editingMeta = opts.editingMeta?.() ?? false;
+    const title = review === 'checking' ? '同步完成，正在确认上架状态…'
+      : review === 'rejected'
+        ? (editingMeta ? '修改已保存，资产仍处于驳回状态' : '已保存，资产已被驳回')
+        : review === 'pending'
+          ? (editingMeta ? '修改已保存，仍在等待管理员审核' : '已提交，等待管理员审核')
+          : '已同步到 GitLab';
     return {
       phase: 'done', percent: 100,
-      title: checking ? '同步完成，正在确认上架状态…'
-        : pending ? '已提交，等待管理员审核' : '已同步到 GitLab',
+      title,
       // 印章统一用大写英文 (橡胶章风格); 中文说明看上面的标题
-      stamp: checking ? 'SYNCED' : pending ? 'SUBMITTED' : 'SUCCESS',
+      stamp: review === 'checking' ? 'SYNCED'
+        : review === 'rejected' ? 'SAVED'
+          : review === 'pending' ? (editingMeta ? 'SAVED' : 'SUBMITTED') : 'SUCCESS',
     };
   });
 
@@ -203,7 +212,8 @@ export function useAssetSync(opts: UseAssetSyncOptions) {
         reviewState.value = 'checking';
         try {
           const a = await opts.fetchAsset(j.code);
-          reviewState.value = a.publish_status === 'pending' ? 'pending' : 'published';
+          reviewState.value = a.publish_status === 'pending' ? 'pending'
+            : a.publish_status === 'rejected' ? 'rejected' : 'published';
         } catch {
           reviewState.value = 'published';
         }

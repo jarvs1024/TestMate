@@ -304,9 +304,14 @@
         commit {{ job.commit_sha.slice(0, 12) }} · {{ job.git_path }}
       </div>
       <p v-if="job && job.status === 'pushed' && reviewState === 'pending'" class="job-hint">
-        {{ job.commit_sha
-            ? '文件已推送, 管理员审核通过后才会出现在扩展库里'
-            : '内容已提交, 审核通过后会自动发布到扩展库' }}
+        {{ mode === 'edit'
+            ? '资料已保存; 安装包仍在上一次提交的审核队列里'
+            : (job.commit_sha
+                ? '文件已推送, 管理员审核通过后才会出现在扩展库里'
+                : '内容已提交, 审核通过后会自动发布到扩展库') }}
+      </p>
+      <p v-else-if="job && job.status === 'pushed' && reviewState === 'rejected'" class="job-hint">
+        资料已保存到暂存区; 资产仍是驳回状态, 改好安装包后可重新提交审核。
       </p>
       <p v-else-if="job && job.status === 'pushed'" class="job-hint">
         前端列表会在同步完成后自动刷新。
@@ -435,12 +440,25 @@ const {
   fetchJob: getJob,
   fetchAsset: getAsset,
   requestRetry: retryJob,
+  editingMeta: () => props.mode === 'edit',
   onDone: (j, review) => {
-    ElMessage.success(
-      review === 'pending'
-        ? `${j.code} 已提交, 等待管理员审核`
-        : `${j.code} 已同步到 GitLab`,
-    );
+    if (props.mode === 'edit') {
+      // ⚠️ 编辑信息不再送审 —— 在架资产跟管理员直改一样提示"已同步";
+      //    待审/驳回只保存资料, 状态没变, 不能说成"重新提交了一遍".
+      if (review === 'rejected') {
+        ElMessage.warning(`${j.code} 修改已保存, 资产仍处于驳回状态 (改好安装包后可重新提交审核)`);
+      } else if (review === 'pending') {
+        ElMessage.success(`${j.code} 修改已保存, 仍在等待管理员审核`);
+      } else {
+        ElMessage.success(`${j.code} 修改已同步到 GitLab`);
+      }
+    } else {
+      ElMessage.success(
+        review === 'pending'
+          ? `${j.code} 已提交, 等待管理员审核`
+          : `${j.code} 已同步到 GitLab`,
+      );
+    }
     emit('done');
   },
   onTerminalFailure: (j) => {

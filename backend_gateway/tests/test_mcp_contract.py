@@ -461,7 +461,10 @@ def _expected_notifications(scenario: str, username: str) -> list[dict[str, Any]
             }
         ]
 
-    edited = scenario == "edit_meta"
+    # ⚠️ 2026-11-17: 编辑信息不再送审, 也就不再通知审核群 (直接生效)
+    if scenario == "edit_meta":
+        return []
+
     asset = {
         "schema_version": 1,
         "code": "<code>",
@@ -474,19 +477,18 @@ def _expected_notifications(scenario: str, username: str) -> list[dict[str, Any]
         "summary": {
             "publish": "Contract publish summary",
             "update": "Contract update summary",
-            "edit_meta": "Contract edited summary",
         }[scenario],
-        "description": "Edited description" if edited else "Initial description",
+        "description": "Initial description",
         "use_when": "Initial use",
         "not_for": "Initial exclusion",
         "category": "质量保障",
         "project": "",
-        "tags": ["edited", "contract"] if edited else ["initial"],
+        "tags": ["initial"],
         "keywords": ["contract"],
         "author": username,
         "featured": True,
         "homepage": None,
-        "permissions": {"network": edited},
+        "permissions": {"network": False},
         "install_steps": ["copy"],
         "bindings": {"agent": "qa"},
         "git_path": "assets/skills/quality/<code>",
@@ -503,12 +505,9 @@ def _expected_notifications(scenario: str, username: str) -> list[dict[str, Any]
         "detail": {
             "publish": "提交了新资产, 等管理员审核",
             "update": "更新了资产, 等管理员审核",
-            "edit_meta": "修改了资产信息, 等管理员审核",
         }[scenario],
         "author": username,
     }
-    if edited:
-        kwargs["title_override"] = "📝 资产信息修改, 待审核"
     return [{"event": "review", "asset": asset, "kwargs": kwargs}]
 
 
@@ -544,6 +543,18 @@ def test_scenario_anchors_reject_deliberate_semantic_mutations():
             response["publish_status"] = "published"
         with pytest.raises(AssertionError):
             _assert_expected_contract(scenario, response, notifications, username)
+
+        if scenario == "edit_meta":
+            # 编辑信息不再有任何审核群通知 —— 凭空多一条就是违约
+            assert notifications == []
+            with pytest.raises(AssertionError):
+                _assert_expected_contract(
+                    scenario,
+                    _expected_response(scenario, username),
+                    [{"event": "review"}],
+                    username,
+                )
+            continue
 
         response = _expected_response(scenario, username)
         notifications[0]["kwargs"]["actor"] = "wrong-actor"
@@ -653,14 +664,18 @@ async def test_rest_and_mcp_write_scenarios_have_equivalent_contracts(
     expected_event = (
         "unpublish_request" if scenario == "unpublish_request" else "review"
     )
-    assert [item["event"] for item in rest_notifications] == [expected_event]
-    assert [item["event"] for item in mcp_notifications] == [expected_event]
+    if scenario == "edit_meta":
+        assert rest_notifications == []
+        assert mcp_notifications == []
+    else:
+        assert [item["event"] for item in rest_notifications] == [expected_event]
+        assert [item["event"] for item in mcp_notifications] == [expected_event]
     assert rest_state == mcp_state
 
     expected_core = {
         "publish": ("pending", "new", "1.0.0", "Contract publish summary"),
         "update": ("pending", "update", "2.0.0", "Contract update summary"),
-        "edit_meta": ("pending", "meta", "1.0.0", "Contract edited summary"),
+        "edit_meta": ("published", "", "1.0.0", "Contract edited summary"),
         "submit_review": ("pending", "new", "1.0.0", "Initial summary"),
         "unpublish_request": ("unpublish_pending", "", "1.0.0", "Initial summary"),
     }[scenario]

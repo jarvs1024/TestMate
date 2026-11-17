@@ -928,11 +928,11 @@ async def test_edit_meta_changes_only_supplied_fields_and_preserves_package(
     assert asset.description == ""
     assert asset.tags == []
     assert bool(asset.featured) is True
-    assert asset.publish_status == "pending"
-    assert asset.pending_action == "meta"
+    assert asset.publish_status == "published"
+    assert asset.pending_action == ""
     package_path = ws / asset.git_path / "package" / "1.0.0.zip"
     assert package_path.read_bytes() == original_package
-    assert [event for event, _, _ in notifications] == ["review"]
+    assert [event for event, _, _ in notifications] == []
 
 
 async def test_submit_review_uses_existing_state_machine_comment_and_audit(
