@@ -532,7 +532,8 @@ onBeforeUnmount(() => {
 .lib-tabs {
   display: inline-flex;
   padding: 3px;
-  background: var(--surface-2, #f3f5f9);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
   border-radius: 9px;
   gap: 2px;
 }
@@ -541,7 +542,7 @@ onBeforeUnmount(() => {
 .lib-tabs button {
   border: none;
   background: transparent;
-  color: var(--ink-600, #4b5563);
+  color: var(--ink-700);
   font-size: 12.5px;
   padding: 5px 11px;
   border-radius: 7px;
@@ -550,10 +551,10 @@ onBeforeUnmount(() => {
 
 .range-tabs button.on,
 .lib-tabs button.on {
-  background: var(--surface, #fff);
+  background: var(--surface);
   color: var(--primary, #2563eb);
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .state {
@@ -591,9 +592,9 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 3px;
   padding: 13px 15px;
-  border: 1px solid var(--line, #e5e9f0);
+  border: 1px solid var(--border);
   border-radius: 11px;
-  background: linear-gradient(180deg, var(--surface-2, #f8fafc), var(--surface, #fff));
+  background: linear-gradient(180deg, var(--surface-sunken), var(--surface));
 }
 
 .kpi-label {
@@ -610,7 +611,7 @@ onBeforeUnmount(() => {
 
 .kpi-hint {
   font-size: 11.5px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-500);
 }
 
 .kpi-link {
@@ -629,7 +630,7 @@ onBeforeUnmount(() => {
   gap: 7px;
   margin-top: 10px;
   padding: 10px 12px;
-  background: var(--surface-2, #f8fafc);
+  background: var(--surface-sunken);
   border-radius: 9px;
 }
 
@@ -640,7 +641,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--ink-700, #374151);
   background: var(--surface, #fff);
-  border: 1px solid var(--line, #e5e9f0);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 3px 9px;
 }
@@ -688,12 +689,12 @@ onBeforeUnmount(() => {
 .user-head-row {
   padding: 0 4px 6px;
   font-size: 11px;
-  color: var(--ink-400, #9ca3af);
-  border-bottom: 1px solid var(--line, #e5e9f0);
+  color: var(--ink-500);
+  border-bottom: 1px solid var(--border);
 }
 
 .user-item + .user-item {
-  border-top: 1px solid var(--line, #eef1f6);
+  border-top: 1px solid var(--border);
 }
 
 .user-row {
@@ -710,7 +711,7 @@ onBeforeUnmount(() => {
 
 .user-row:hover,
 .user-row.open {
-  background: var(--surface-2, #f8fafc);
+  background: var(--surface-sunken);
 }
 
 .u-who {
@@ -735,7 +736,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 7px;
   font-size: 11.5px;
-  color: var(--ink-600, #4b5563);
+  color: var(--ink-700);
   font-variant-numeric: tabular-nums;
 }
 
@@ -744,7 +745,7 @@ onBeforeUnmount(() => {
   display: block;
   height: 6px;
   border-radius: 999px;
-  background: var(--surface-2, #eef2f7);
+  background: var(--surface-sunken);
   overflow: hidden;
 }
 
@@ -773,7 +774,7 @@ onBeforeUnmount(() => {
 }
 
 .u-chev {
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-500);
   font-size: 11px;
   text-align: right;
 }
@@ -782,7 +783,7 @@ onBeforeUnmount(() => {
   margin: 0 4px 8px;
   padding: 9px 12px;
   border-radius: 8px;
-  background: var(--surface-2, #f8fafc);
+  background: var(--surface-sunken);
 }
 
 .detail-err {
@@ -812,7 +813,7 @@ onBeforeUnmount(() => {
 
 .detail-count {
   text-align: right;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-900);
   font-variant-numeric: tabular-nums;
 }
 
@@ -828,12 +829,12 @@ onBeforeUnmount(() => {
   gap: 6px 16px;
   margin-top: 10px;
   font-size: 11.5px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-500);
 }
 
 .panel {
   min-width: 0;
-  border: 1px solid var(--line, #e5e9f0);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 14px 16px 12px;
 }
@@ -841,7 +842,7 @@ onBeforeUnmount(() => {
 .panel h3 {
   margin: 0 0 10px;
   font-size: 13.5px;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-900);
 }
 
 .panel-head {
@@ -863,14 +864,14 @@ onBeforeUnmount(() => {
 }
 
 .grid {
-  stroke: var(--line, #e5e9f0);
+  stroke: var(--border);
   stroke-width: 1;
   stroke-dasharray: 3 5;
 }
 
 .axis-y {
   font-size: 9px;
-  fill: var(--ink-400, #9ca3af);
+  fill: var(--ink-500);
 }
 
 .area {
@@ -896,7 +897,7 @@ onBeforeUnmount(() => {
   height: 16px;
   margin: 2px 28px 0;
   font-size: 10px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-500);
 }
 
 .axis-x span {
@@ -920,7 +921,7 @@ onBeforeUnmount(() => {
 }
 
 .rank {
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-500);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -956,7 +957,7 @@ onBeforeUnmount(() => {
 .b-track {
   height: 9px;
   border-radius: 999px;
-  background: var(--surface-2, #f1f5f9);
+  background: var(--surface-sunken);
   overflow: hidden;
 }
 
@@ -969,14 +970,14 @@ onBeforeUnmount(() => {
 
 .b-count {
   text-align: right;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-900);
   font-variant-numeric: tabular-nums;
 }
 
 .lib-total {
   margin-top: 4px;
   font-size: 11px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-500);
 }
 
 @media (max-width: 900px) {

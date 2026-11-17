@@ -12,6 +12,8 @@
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import UsageStats from '../UsageStats.vue';
 import type { UsageSummary, StatsUsers } from '@/api/stats';
 
@@ -298,5 +300,22 @@ describe('使用统计 · 在线轮询', () => {
     w.unmount();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(api.getOnlineUsers).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('使用统计 · 深色主题', () => {
+  it('只使用 tokens.css 里已定义的变量, 否则暗色会回退成浅色', () => {
+    /* ⚠️ 2026-11-17 用户报「深色模式不对」: 卡片是银白渐变、边框发白、标题发灰.
+       根因不是暗色 token 没定义, 而是这个组件用了**不存在的变量名** ——
+       `--surface-2` / `--line` / `--ink-400` / `--ink-600` / `--ink-800`.
+       var() 找不到变量时会用兜底值 (浅色), 于是暗色下只有一半样式跟着主题走.
+       这里直接锁源码: 这些名字以后不能再出现. */
+    const src = readFileSync(
+      path.resolve(process.cwd(), 'src/views/Settings/components/UsageStats.vue'),
+      'utf-8',
+    );
+    expect(src).not.toMatch(/--surface-2\b/);
+    expect(src).not.toMatch(/--line\b/);
+    expect(src).not.toMatch(/--ink-(400|600|800)\b/);
   });
 });
