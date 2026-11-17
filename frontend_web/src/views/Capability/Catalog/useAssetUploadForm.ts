@@ -380,7 +380,13 @@ export function useAssetUploadForm(opts: UseAssetUploadFormOptions) {
     previewing.value = true;
     preview.value = null;
     try {
-      preview.value = await previewPackage(pkgFile.value, form.kind);
+      // ⚠️ code 在这儿**现算**, 不能读 form.code —— 派生 code 的 watch 这时
+      //    还没跑 (第一次选包时它是空串), 后端拿不到 code 就没法查重名.
+      // ⚠️ action 必须传: 发新版本时 code 本来就该存在, 不能误报.
+      preview.value = await previewPackage(pkgFile.value, form.kind, {
+        code: codeFromPackageName(pkgFile.value.name, extRules.value),
+        action: mode() === 'create' ? 'create' : 'update',
+      });
     } catch (e: any) {
       preview.value = {
         ok: false, filename: pkgFile.value.name, size_bytes: pkgFile.value.size,

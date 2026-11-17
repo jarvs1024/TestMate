@@ -5,7 +5,7 @@
                      : (mode === 'update' ? `更新资产 · ${asset?.name || ''}` : '上传新资产')"
              :close-on-click-modal="false" :with-header="true"
              class="up-drawer" @update:model-value="emit('update:modelValue', $event)">
-    <template v-if="!job">
+    <template v-if="!job && !uploading && !uploadError">
       <!-- ============ 第 ① 步: 选形态 (没定类型时先问一句) ============ -->
       <div v-if="step === 'pick'" class="kind-pick">
         <div class="kp-lead">
@@ -205,6 +205,7 @@
                 <button type="button" class="cat-retry" @click="loadCategories">重试</button>
               </div>
               <el-select v-model="form.category" class="sel-category" style="width:100%" filterable
+                         placeholder="请选择分类"
                          :loading="categoriesLoading" @change="onCategoryChange">
                 <el-option v-for="c in categories" :key="c.name" :value="c.name" :label="c.name">
                   <span>{{ c.name }}</span>
@@ -292,50 +293,38 @@
       </el-form>
     </template>
 
-    <!-- 任务进度: staged(已存本地) → syncing(推送中) → pushed(已同步) / failed -->
+    <!-- 任务进度: 上传 → staged → syncing(乌龟爬行) → pushed 冲线 / failed 坐下 -->
     <div v-else class="job-box">
-      <div class="job-status">
-        <el-icon v-if="job.status === 'pushed'" color="var(--ok)"><CircleCheck /></el-icon>
-        <el-icon v-else-if="job.status === 'failed'" color="var(--err)"><CircleClose /></el-icon>
-        <el-icon v-else class="is-loading"><Loading /></el-icon>
-        <div>
-          <div class="job-title">
-            {{ job.status === 'pushed'
-               ? (reviewState === 'checking' ? '已提交, 正在确认上架状态…'
-                  : reviewState === 'pending' ? '已提交, 等待管理员审核' : '已同步到 GitLab')
-               : job.status === 'failed' ? '同步失败'
-               : job.status === 'staged' ? '已保存到服务端, 准备处理…'
-               : '正在推送到 GitLab…' }}
-          </div>
-          <div v-if="job.status === 'pushed' && job.commit_sha" class="job-sub mono">
-            commit {{ job.commit_sha.slice(0, 12) }} · {{ job.git_path }}
-          </div>
-          <div v-if="job.status === 'pushed' && reviewState === 'pending'" class="job-sub">
-            {{ job.commit_sha
-                ? '文件已推送, 管理员审核通过后才会出现在扩展库里'
-                : '内容已提交, 审核通过后会自动发布到扩展库' }}
-          </div>
-          <div v-else-if="job.status === 'staged'" class="job-sub">
-            内容已保存到服务端, 后台正在处理…
-          </div>
-        </div>
+      <AssetSyncProgress
+        :phase="syncView.phase" :percent="syncView.percent" :title="syncView.title"
+        :sub="syncView.sub" :stamp="syncView.stamp" :reason="syncView.reason"
+        :hint="syncView.hint" :detail="syncView.detail"
+        :saved-on-server="syncView.savedOnServer" />
+      <div v-if="job && job.status === 'pushed' && job.commit_sha" class="job-meta mono">
+        commit {{ job.commit_sha.slice(0, 12) }} · {{ job.git_path }}
       </div>
-      <pre v-if="job.error" class="job-err">{{ job.error }}</pre>
-      <p v-if="job.status === 'failed'" class="job-hint">
-        资产仍在本机工作区, 只是没推到 GitLab. 修掉上面的问题后可重试。
+      <p v-if="job && job.status === 'pushed' && reviewState === 'pending'" class="job-hint">
+        {{ job.commit_sha
+            ? '文件已推送, 管理员审核通过后才会出现在扩展库里'
+            : '内容已提交, 审核通过后会自动发布到扩展库' }}
       </p>
-      <p v-else class="job-hint">前端列表会在同步完成后自动刷新。</p>
+      <p v-else-if="job && job.status === 'pushed'" class="job-hint">
+        前端列表会在同步完成后自动刷新。
+      </p>
     </div>
 
     <template #footer>
-      <template v-if="!job && step === 'form'">
+      <template v-if="!job && !uploading && !uploadError && step === 'form'">
         <!-- 缺什么一次说清, 不用点一次报一个 -->
         <div class="foot-bar">
           <div class="foot-left">
             <template v-if="missing.length">
               <span class="foot-warn">还缺: {{ missing.join('、') }}</span>
             </template>
-            <span v-else class="foot-ok">✓ 该填的都填了</span>
+            <!-- ⚠️ 字段齐了但体检没过 (重名 / 包装不上) 时要说清为什么按钮点不了,
+                 不能一边挂着「该填的都填了」一边置灰 -->
+            <span v-else-if="canSubmit" class="foot-ok">✓ 该填的都填了</span>
+            <span v-else class="foot-warn">体检未通过，请按上方问题修正后再上架</span>
           </div>
           <div class="foot-right">
             <el-button @click="visible = false">取消</el-button>
@@ -347,7 +336,7 @@
         </div>
       </template>
       <!-- 还在第 ① 步 (选形态) —— 没东西可提交, 只给个「返回」 -->
-      <div v-else-if="!job" class="foot-bar">
+      <div v-else-if="!job && !uploading && !uploadError" class="foot-bar">
         <div class="foot-left">
           <span class="foot-hint">先选一种形态, 就能进对应的配置表单</span>
         </div>
@@ -355,11 +344,20 @@
           <el-button @click="visible = false">取消</el-button>
         </div>
       </div>
-      <template v-else-if="job.status === 'failed'">
-        <el-button @click="visible = false">关闭</el-button>
+      <!-- 上传请求本身失败: 表单内容都还在, 直接可重提 -->
+      <template v-else-if="uploadError">
+        <el-button @click="backToForm">返回表单</el-button>
+        <el-button type="primary" @click="retryUpload">重新提交</el-button>
+      </template>
+      <!-- 上传中 / 自动重试中: 只能关闭 (关掉即停轮询) -->
+      <template v-else-if="uploading || (job && job.status === 'failed' && job.next_retry_at)">
+        <el-button @click="close">关闭</el-button>
+      </template>
+      <template v-else-if="job && job.status === 'failed'">
+        <el-button @click="close">关闭</el-button>
         <el-button type="primary" :loading="submitting" @click="doRetry">重试同步</el-button>
       </template>
-      <el-button v-else type="primary" @click="close">{{ job.status === 'pushed' ? '完成' : '关闭' }}</el-button>
+      <el-button v-else type="primary" @click="close">{{ job && job.status === 'pushed' ? '完成' : '关闭' }}</el-button>
     </template>
   </el-drawer>
 </template>
@@ -367,10 +365,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue';
-import { getAsset, getJob, retryJob, uploadAsset, updateAsset, updateAssetMeta, type AssetItem, type AssetJob, type ExtKind } from '@/api/assets';
+import { getAsset, getJob, retryJob, uploadAsset, updateAsset, updateAssetMeta, type AssetItem, type ExtKind } from '@/api/assets';
 import { KIND_META } from './kindMeta';
 import { useAssetUploadForm } from './useAssetUploadForm';
+import { useAssetSync } from './useAssetSync';
+import { parseSyncError } from './syncProgress';
+import AssetSyncProgress from './AssetSyncProgress.vue';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 
 const props = defineProps<{
@@ -396,27 +396,6 @@ const visible = computed({
   set: (v) => emit('update:modelValue', v),
 });
 
-const submitting = ref(false);
-const job = ref<AssetJob | null>(null);
-/**
- * 轮询取消标志 —— 关掉抽屉 / 组件卸载后立刻停止轮询.
- *
- * ⚠️ 以前关掉抽屉后还在每秒请求, 而且同步完成时会在**别的页面**
- *    弹一句「已同步到 GitLab」—— 用户已经走了, 却被一条无关的提示打断.
- */
-let pollCancelled = false;
-
-/**
- * 上传后的**上架状态**:
- *   'checking'  → 刚推完, 还没确认要不要审核 (这时候**不能**说"已同步到 GitLab")
- *   'pending'   → 要审核, 等管理员
- *   'published' → 直接上架了
- *
- * ⚠️ 为什么要多一个 checking: 推送完才知道要不要审核 (要再查一次资产状态),
- *    那一小段时间里如果直接显示"已同步到 GitLab", 会先闪一句**错的结论**,
- *    再变成"等待管理员审核" —— 用户正好读到错的那句就懵了.
- */
-const reviewState = ref<'checking' | 'pending' | 'published'>('checking');
 /** 进阶信息默认收起 (大部分人只填基础信息) */
 const advOpen = ref(false);
 
@@ -444,6 +423,35 @@ const {
 });
 
 /**
+ * 同步状态机 —— 上传进度 / 阶段映射 / 自动重试 / 终态失败 (2026-11-16).
+ * ⚠️ 关抽屉时 isOpen 变 false → 轮询立即停, 不会在别的页面弹提示.
+ */
+const {
+  job, submitting, reviewState, uploadError, syncView,
+  beginUpload, noteUploadProgress, failUpload, clearUploadFailure,
+  acceptJob, doRetry: retrySync, reset: resetSync,
+} = useAssetSync({
+  isOpen: () => props.modelValue,
+  fetchJob: getJob,
+  fetchAsset: getAsset,
+  requestRetry: retryJob,
+  onDone: (j, review) => {
+    ElMessage.success(
+      review === 'pending'
+        ? `${j.code} 已提交, 等待管理员审核`
+        : `${j.code} 已同步到 GitLab`,
+    );
+    emit('done');
+  },
+  onTerminalFailure: (j) => {
+    ElMessage.error('同步失败：' + parseSyncError(j.error).reason);
+  },
+});
+
+/** 上传请求还在飞 (响应回来前没有 job) —— 这时候显示进度条而不是表单 */
+const uploading = computed(() => submitting.value && !job.value && !uploadError.value);
+
+/**
  * 区块编号 —— 条件渲染的块不占号.
  *
  * ⚠️ 2026-10-30: 编辑模式**没有安装包那一段** → 「基础信息」要顶到 ①,
@@ -465,11 +473,9 @@ const hasMiscCategory = computed(() =>
 watch(() => props.modelValue, (open) => {
   // ⚠️ 抽屉关掉 (点 X / 取消 / 关闭按钮) 都要停掉后台轮询 ——
   //    不然同步完成时会在别的页面弹「已同步到 GitLab」.
-  if (!open) { pollCancelled = true; return; }
+  if (!open) { resetSync(); return; }
   reset();                 // 表单状态/校验/分类/项目/图标 全部重置
-  job.value = null;
-  submitting.value = false;
-  reviewState.value = 'checking';
+  resetSync();             // 任务进度 / 失败态 / 自动重试倒计时 全部重置
   advOpen.value = false;
 });
 
@@ -518,7 +524,6 @@ function onDocClick(e: MouseEvent) {
 }
 onMounted(() => document.addEventListener('click', onDocClick, true));
 onUnmounted(() => {
-  pollCancelled = true;   // 组件没了 → 轮询也停
   document.removeEventListener('click', onDocClick, true);
 });
 
@@ -527,7 +532,7 @@ async function submit() {
     ElMessage.warning('还缺: ' + missing.value.join('、'));
     return;
   }
-  submitting.value = true;
+  beginUpload();
   // ⚠️ 2026-10-30 「只改元信息」: 走**另一条**路 (PATCH) ——
   //    updateAsset 是"发新版本", 必须传包, 版本号也会变.
   if (props.mode === 'edit') {
@@ -545,8 +550,7 @@ async function submit() {
         // 连接器: 只传 MCP 配置 (非连接器传 null = 不改)
         mcp_config: isMcp.value ? parseMcpOrNull(mcpConfigText.value) : null,
       });
-      job.value = created;
-      await poll(created.id);
+      await acceptJob(created);
     } catch (e: any) {
       ElMessage.error('保存失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
       submitting.value = false;
@@ -583,68 +587,35 @@ async function submit() {
     package: isMcp.value ? null : pkgFile.value,
     files: [] as File[],
   };
+  const onProgress = (e: { loaded: number; total?: number }) =>
+    noteUploadProgress(e.loaded, e.total || 0);
   try {
     const created = props.mode === 'update'
-      ? await updateAsset(form.code, payload)
-      : await uploadAsset(payload);
-    job.value = created;
-    await poll(created.id);
+      ? await updateAsset(form.code, payload, { onUploadProgress: onProgress })
+      : await uploadAsset(payload, { onUploadProgress: onProgress });
+    await acceptJob(created);
   } catch (e: any) {
-    ElMessage.error('提交失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
-    submitting.value = false;
+    // 请求本身失败 (还没生成 job) —— 表单内容还在, 进度条停在当前位置
+    failUpload(httpErrorText(errorStatus(e), errorDetail(e)));
   }
 }
 
-async function poll(id: number) {
-  // ⚠️ 提交请求还在飞的时候用户可能已经把抽屉关了 —— 那就别再轮询了
-  //    (不然 poll 一进来就把取消标志清掉, 又在关着的抽屉背后继续轮询).
-  if (!props.modelValue) return;
-  pollCancelled = false;
-  for (let i = 0; i < 90; i++) {
-    await new Promise((r) => setTimeout(r, 1000));
-    if (pollCancelled) return;
-    try {
-      const j = await getJob(id);
-      if (pollCancelled) return;
-      job.value = j;
-      if (j.status === 'pushed' || j.status === 'failed') {
-        submitting.value = false;
-        if (j.status === 'pushed') {
-          // 上架可能要过审核 —— 查一下资产现在的状态再给提示
-          // ⚠️ 查的过程中**不下结论** (reviewState 停在 checking) ——
-          //    先闪一句「已同步到 GitLab」再改成「等待管理员审核」是错的.
-          reviewState.value = 'checking';
-          try {
-            const a = await getAsset(j.code);
-            reviewState.value = a.publish_status === 'pending' ? 'pending' : 'published';
-          } catch {
-            reviewState.value = 'published';
-          }
-          ElMessage.success(
-            reviewState.value === 'pending'
-              ? `${j.code} 已提交, 等待管理员审核`
-              : `${j.code} 已同步到 GitLab`,
-          );
-          emit('done');
-        } else {
-          ElMessage.error('同步到 GitLab 失败');
-        }
-        return;
-      }
-    } catch {
-      /* 轮询失败继续等 */
-    }
-  }
-  if (pollCancelled) return;
-  submitting.value = false;
+/** 上传失败后返回表单 —— 已填内容全部保留 */
+function backToForm() {
+  clearUploadFailure();
+}
+
+/** 上传失败后原地重试 —— 不再让用户重填一遍 */
+function retryUpload() {
+  clearUploadFailure();
+  void submit();
 }
 
 async function doRetry() {
   if (!job.value) return;
   submitting.value = true;
   try {
-    job.value = await retryJob(job.value.id);
-    await poll(job.value.id);
+    await retrySync(job.value);
   } catch (e: any) {
     ElMessage.error('重试失败: ' + (httpErrorText(errorStatus(e), errorDetail(e))));
     submitting.value = false;
@@ -652,7 +623,7 @@ async function doRetry() {
 }
 
 function close() {
-  pollCancelled = true;   // 抽屉关了 → 停掉后台轮询
+  // 轮询靠 isOpen() 判断 —— 抽屉一关立即停
   visible.value = false;
   if (fileInput.value) fileInput.value.value = '';
 }
@@ -924,15 +895,7 @@ function close() {
 .foot-right { display: flex; gap: 8px; }
 
 .job-box { padding: 8px 0; }
-.job-status { display: flex; align-items: center; gap: 12px; }
-.job-status .el-icon { font-size: 26px; }
-.job-title { font-size: 14px; font-weight: 700; color: var(--ink-900); }
-.job-sub { font-size: 11px; color: var(--ink-500); margin-top: 3px; }
-.job-err {
-  margin-top: 12px; padding: 10px; background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.25); border-radius: var(--radius-sm);
-  font-size: 11.5px; color: var(--err); white-space: pre-wrap; word-break: break-all;
-}
+.job-meta { font-size: 11px; color: var(--ink-500); margin-top: 10px; }
 .job-hint { margin-top: 10px; font-size: 11.5px; color: var(--ink-500); }
 
 /* ===== 包体检结果 ===== */

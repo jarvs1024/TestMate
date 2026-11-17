@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.security import decode_token
-from app.api import auth, kb, kb_spaces, machines, notify, health, agents, settings as settings_api, review_agent, extensions, software, platform
+from app.api import auth, kb, kb_spaces, machines, notify, health, agents, settings as settings_api, review_agent, extensions, software, platform, notifications
 from app.api import mcp as mcp_api
 from app.api import stats as usage_stats_api
 from app.integrations import api as integrations_api
@@ -281,6 +281,9 @@ app.include_router(machines.router, prefix="/api/v1/machines", tags=["machines"]
 app.include_router(kb_spaces.router, prefix="/api/v1/kb/spaces", tags=["kb-spaces"])
 app.include_router(kb.router, prefix="/api/v1/kb", tags=["kb"])
 app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])
+app.include_router(
+    notifications.router, prefix="/api/v1/notifications", tags=["notifications"],
+)
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(settings_api.router, prefix="/api/v1/settings", tags=["settings"])
 # ⚠️ 平台信息 (副标题 / 版本号) —— **公开可读**: 页头在匿名状态下也显示, 登录页更是.

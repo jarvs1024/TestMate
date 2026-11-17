@@ -27,7 +27,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import ValidationError
 from fastapi import Response
-from sqlalchemy import Text, cast, delete, select, or_, update, func
+from sqlalchemy import Text, cast, delete, select, and_, or_, update, func
 
 from app.api.auth import get_current_user, get_optional_user
 from app.core import git_sync, pkg
@@ -48,6 +48,7 @@ from app.core import (
     ext_projects,
     ext_rules,
     ext_state,
+    inbox,
 )
 from app.core.identity import author_forms
 from app.core.ext_visibility import assert_visible, apply_visibility
@@ -65,6 +66,7 @@ from app.core.ext_catalog import (
 )
 from app.db.session import AsyncSessionLocal
 from app.models.asset import Asset, AssetAudit, AssetComment, AssetJob
+from app.models.notification import UserNotification
 from app.models.user import User
 from app.schemas.asset import (
     AssetAuditListOut,
@@ -1193,11 +1195,14 @@ async def list_asset_comments(
     code: str,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    focus_comment_id: int | None = Query(None, ge=1, description="深链: 定位到这条评论所在的页"),
     user: User = Depends(get_current_user),
 ) -> AssetCommentListOut:
     """资产用户评论 (主评论最新在前, 回复挂在父评论下按时间正序).
 
     看不到的资产 → 404, 不泄露存在性.
+    `focus_comment_id` 会把 offset 挪到目标评论所在页 —— 通知点进来时,
+    目标可能早就不在第一页了 (回复则按它的主评论定位).
     """
     async with AsyncSessionLocal() as session:
         a = (
@@ -1219,6 +1224,39 @@ async def list_asset_comments(
                 )
             )
         ).scalar_one()
+        if focus_comment_id is not None:
+            focus = await session.get(AssetComment, focus_comment_id)
+            if (
+                focus is not None
+                and focus.code == code
+                and focus.deleted_at is None
+            ):
+                root = focus
+                if focus.parent_id is not None:
+                    root = await session.get(AssetComment, focus.parent_id)
+                if root is not None and root.deleted_at is None:
+                    # 比目标主评论**更新**的主评论条数 → 目标所在的页;
+                    # 再夹到最后一页开头, 免得目标落在页尾只剩半页
+                    newer = (
+                        await session.execute(
+                            select(func.count()).select_from(AssetComment).where(
+                                AssetComment.code == code,
+                                AssetComment.parent_id.is_(None),
+                                AssetComment.deleted_at.is_(None),
+                                or_(
+                                    AssetComment.created_at > root.created_at,
+                                    and_(
+                                        AssetComment.created_at == root.created_at,
+                                        AssetComment.id > root.id,
+                                    ),
+                                ),
+                            )
+                        )
+                    ).scalar_one()
+                    offset = min(
+                        ((newer or 0) // limit) * limit,
+                        max((total or 0) - limit, 0),
+                    )
         rows = (
             await session.execute(
                 select(AssetComment)
@@ -1274,6 +1312,8 @@ async def create_asset_comment(
         assert_visible(a, username=user.username or "", is_reviewer=await _is_reviewer(user),
                        is_admin=is_admin)
         can_reply = _can_reply(a, user, is_admin)
+        parent_user_id = None
+        parent_username = ""
         if body.parent_id is not None:
             if not can_reply:
                 raise HTTPException(
@@ -1286,6 +1326,8 @@ async def create_asset_comment(
                 raise HTTPException(
                     status_code=422, detail="只支持一级回复, 只能回复主评论",
                 )
+            parent_user_id = parent.user_id
+            parent_username = parent.username or ""
         c = AssetComment(
             asset_id=a.id, code=code, user_id=user.id,
             username=user.username or "", content=body.content,
@@ -1294,6 +1336,28 @@ async def create_asset_comment(
         session.add(c)
         await session.commit()
         await session.refresh(c)
+        asset_name = a.name or code
+        asset_author = a.author or ""
+        comment_id = c.id
+    # 通知失败不能影响评论本身 —— 独立会话, 异常只记日志
+    try:
+        await inbox.notify_new_comment(
+            asset_code=code,
+            asset_name=asset_name,
+            asset_author=asset_author,
+            actor_id=user.id,
+            actor_name=user.username or "",
+            comment_id=comment_id,
+            content=body.content,
+            is_reply=body.parent_id is not None,
+            parent_comment_id=body.parent_id,
+            parent_user_id=parent_user_id,
+            parent_username=parent_username,
+        )
+    except Exception:
+        logger.exception(
+            "comment notification failed: code=%s comment=%s", code, comment_id,
+        )
     return _comment_out(c, user, is_admin, can_reply)
 
 
@@ -1342,12 +1406,35 @@ async def delete_asset_comment(
         if not ext_policy.is_admin(user):
             raise HTTPException(status_code=403, detail="只有管理员可以删除评论")
         now = datetime.utcnow()
-        c.deleted_at = now
+        deleted_ids = [c.id]
         if c.parent_id is None:
+            deleted_ids.extend(
+                (
+                    await session.execute(
+                        select(AssetComment.id).where(
+                            AssetComment.parent_id == c.id,
+                            AssetComment.deleted_at.is_(None),
+                        )
+                    )
+                ).scalars().all()
+            )
             await session.execute(
                 update(AssetComment)
                 .where(AssetComment.parent_id == c.id, AssetComment.deleted_at.is_(None))
                 .values(deleted_at=now)
+            )
+        c.deleted_at = now
+        # 通知跟着评论一起走 —— 否则点进去 404, 未读数还挂着.
+        # 聚合通知只留最新一条事件, 指向被删评论就整行删掉 (历史事件无法还原).
+        await session.execute(
+            delete(UserNotification).where(UserNotification.comment_id.in_(deleted_ids))
+        )
+        if c.parent_id is None:
+            # 主评论删了, 整条回复线程都没了
+            await session.execute(
+                delete(UserNotification).where(
+                    UserNotification.dedupe_key == f"comment_reply:{c.id}"
+                )
             )
         await session.commit()
     return {"ok": True, "id": comment_id}
@@ -1688,16 +1775,56 @@ async def download_package_by_asset_ticket(
 
 # ---------- 包预检 (上传前体检) ----------
 
+async def _find_asset_by_code(code: str) -> Asset | None:
+    async with AsyncSessionLocal() as session:
+        return (
+            await session.execute(select(Asset).where(Asset.code == code))
+        ).scalar_one_or_none()
+
+
+def _create_conflict_detail(code: str, existing: Asset | None) -> str:
+    """新建时 code 已被占用 → 中文说明; 没冲突返回空串.
+
+    ⚠️ 体检 (preview_package) 和落盘 (_stage_asset) **共用这一份** ——
+       两边口径不一致就会重演「体检通过, 提交才 409」.
+    """
+    if existing is not None:
+        return (
+            f"资产 {code} 已存在（作者：{existing.author or '未知'}），"
+            "请改用该资产的「发新版本」入口"
+        )
+    # ⚠️ 除了查 DB, 还要查 **git** (2026-10-25 审计):
+    #    本地 DB 只是远端的**镜像**, 而且反向同步器有安全闸 (工作区脏 / 有未推送
+    #    commit 时整轮跳过) → DB 完全可能比远端旧.
+    #    那种情况下, 同 code 的新上传会**静默覆盖** git 里已有的资产文件,
+    #    把别人的资产连同作者一起顶掉 —— 这里直接拒掉, 不给覆盖的机会.
+    git_codes = git_sync.index_codes_at_ref("HEAD") | git_sync.index_codes_at_ref(
+        f"origin/{git_sync.git_branch()}"
+    )
+    if code in git_codes:
+        return (
+            f"资产 {code} 在 GitLab 上已经存在 "
+            "(本地索引还没同步到) —— 请换个 code, 或先点「重新同步」"
+        )
+    return ""
+
+
 @router.post("/preview-package", response_model=PackagePreviewOut)
 async def preview_package(
     package: UploadFile = File(...),
     kind: str = Form(""),
+    code: str = Form(""),
+    action: str = Form("create"),
     _user: User = Depends(get_current_user),
 ) -> PackagePreviewOut:
     """上传前体检: 这个包装不装得上?
 
     走的是**和真正上传完全相同的解包路径** (pkg.extract_package), 所以体检结论
     就是提交后的结论 —— 不会出现"体检说没问题, 提交才被拒".
+
+    ⚠️ 2026-11-16: 新建 (action=create) 时连**重名**也一起查 (DB + git 索引) ——
+       以前只查包本身, 同 code 要等整包传完才 409, 白等一场.
+       发新版本 (action=update) 时 code 本来就该存在, 不做这项检查.
     """
     data = await _read_upload_limited(
         package, await _max_package_bytes(), package.filename or "package.zip",
@@ -1737,6 +1864,16 @@ async def preview_package(
         reason = _install_block_reason(kind or "plugin", files)
         out.installable = not reason
         out.block_reason = reason
+
+        # 新建时同 code 已存在 → 体检当场报, 别等整包传完才 409.
+        # code 由前端派生传下来 (跟真实上传用的那个一模一样); 没传就退回包名.
+        target = (code or "").strip() or ext_naming.package_base_name(filename)
+        if action != "update" and target:
+            conflict = _create_conflict_detail(target, await _find_asset_by_code(target))
+            if conflict:
+                out.installable = False
+                out.block_reason = conflict
+                out.issues.append(conflict)
 
         # 安全提示: 包里带了不该进仓库的东西 (解包阶段已硬拦, 这里只做软提示)
         for f in files:
@@ -2490,6 +2627,10 @@ async def _hard_delete_asset(
         async with AsyncSessionLocal() as session:
             # ⚠️ 评论随资产一起走 —— 留着就是永远够不着的孤儿行
             await session.execute(delete(AssetComment).where(AssetComment.code == code))
+            # 通知同理: 资产没了, 评论通知点进去也是空页
+            await session.execute(
+                delete(UserNotification).where(UserNotification.asset_code == code)
+            )
             a = await session.get(Asset, asset_id)
             if a is not None:
                 await session.delete(a)
@@ -3004,39 +3145,15 @@ async def _stage_asset_locked(
     # 顺序反了会出事: 冲突的创建请求会先把文件写进工作区, 再报 409.
     # 工作区因此变脏 → 拉取同步器的安全闸认为"有未提交的资产改动" → 整轮跳过,
     # 而那份半截文件永远没人提交. 整个反向同步就此卡住.
-    async with AsyncSessionLocal() as session:
-        existing = (
-            await session.execute(select(Asset).where(Asset.code == manifest["code"]))
-        ).scalar_one_or_none()
-    if action == "create" and existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"资产 {manifest['code']} 已存在 (作者: {existing.author or '未知'}), "
-                "请用更新接口"
-            ),
-        )
+    existing = await _find_asset_by_code(manifest["code"])
+    if action == "create":
+        conflict = _create_conflict_detail(manifest["code"], existing)
+        if conflict:
+            raise HTTPException(status_code=409, detail=conflict)
     if action == "update" and existing is None:
         raise HTTPException(
             status_code=404, detail=f"资产 {manifest['code']} 不存在, 无法更新"
         )
-    if action == "create" and existing is None:
-        # ⚠️ 除了查 DB, 还要查 **git** (2026-10-25 审计):
-        #    本地 DB 只是远端的**镜像**, 而且反向同步器有安全闸 (工作区脏 / 有未推送
-        #    commit 时整轮跳过) → DB 完全可能比远端旧.
-        #    那种情况下, 同 code 的新上传会**静默覆盖** git 里已有的资产文件,
-        #    把别人的资产连同作者一起顶掉 —— 这里直接拒掉, 不给覆盖的机会.
-        git_codes = git_sync.index_codes_at_ref("HEAD") | git_sync.index_codes_at_ref(
-            f"origin/{git_sync.git_branch()}"
-        )
-        if manifest["code"] in git_codes:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"资产 {manifest['code']} 在 GitLab 上已经存在 "
-                    "(本地索引还没同步到) —— 请换个 code, 或先点「重新同步」"
-                ),
-            )
 
     # ---- 1. 落盘 ----
     try:

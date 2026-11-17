@@ -204,7 +204,10 @@
         </div>
         <p v-if="commentsError" class="cm-empty err">{{ commentsError }}</p>
         <p v-else-if="!comments.length && !commentsLoading" class="cm-empty">还没有评论，来说说你的真实体验吧</p>
-        <div v-for="c in comments" :key="c.id" class="cm-item">
+        <div
+          v-for="c in comments" :key="c.id" class="cm-item"
+          :class="{ 'cm-focus': focusedId === c.id }" :data-comment-id="c.id"
+        >
           <div class="cm-hd">
             <span class="cm-user">{{ c.username || '匿名' }}</span>
             <span class="cm-time mono">{{ fmtDate(c.created_at) }}</span>
@@ -232,7 +235,10 @@
           <p v-else class="cm-text">{{ c.content }}</p>
 
           <div v-if="c.replies?.length" class="cm-replies">
-            <div v-for="r in c.replies" :key="r.id" class="cm-reply">
+            <div
+              v-for="r in c.replies" :key="r.id" class="cm-reply"
+              :class="{ 'cm-focus': focusedId === r.id }" :data-comment-id="r.id"
+            >
               <div class="cm-hd">
                 <span class="cm-user">{{ r.username || '匿名' }}</span>
                 <span class="cm-time mono">{{ fmtDate(r.created_at) }}</span>
@@ -360,7 +366,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   cancelUnpublish, createAssetComment, deleteAssetComment, deleteAsset,
@@ -393,6 +399,8 @@ const props = withDefaults(defineProps<{
    *    方向正好反了 (拿不准时该多走一次审核, 而不是少走).
    */
   reviewEnabled?: boolean | undefined;
+  /** 深链定位: 从站内通知点进来时要滚到并高亮的评论 id (回复则定位回复本身) */
+  focusCommentId?: number;
 }>(), { reviewEnabled: undefined });
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void;
@@ -614,10 +622,13 @@ const editText = ref('');
 const editSubmitting = ref(false);
 /** 请求序号 —— 快速切资产时, 慢的旧响应不能覆盖新资产的评论 */
 let commentSeq = 0;
+/** 深链目标评论 —— 加载完成后高亮并滚过去 (只影响首次加载) */
+const focusedId = ref<number | null>(null);
 
 async function loadComments(more = false) {
   const it = props.item;
   if (!it) return;
+  const focus = more ? undefined : props.focusCommentId;
   if (!more) {
     commentSeq += 1;
     comments.value = [];
@@ -628,6 +639,7 @@ async function loadComments(more = false) {
     replyText.value = '';
     editingId.value = null;
     editText.value = '';
+    focusedId.value = null;
   }
   const seq = commentSeq;
   commentsLoading.value = true;
@@ -635,10 +647,17 @@ async function loadComments(more = false) {
     const r = await listAssetComments(it.code, {
       limit: COMMENTS_PAGE,
       offset: more ? comments.value.length : 0,
+      ...(focus ? { focus_comment_id: focus } : {}),
     });
     if (seq !== commentSeq) return;
     comments.value = more ? [...comments.value, ...r.items] : r.items;
     commentTotal.value = r.total;
+    if (focus) {
+      focusedId.value = focus;
+      await nextTick();
+      const el = document.querySelector(`[data-comment-id="${focus}"]`) as HTMLElement | null;
+      el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    }
   } catch (e: any) {
     if (seq !== commentSeq) return;
     commentsError.value = '评论加载失败: '
@@ -1239,6 +1258,16 @@ async function doSubmit() {
 .cm-empty.err { color: var(--err); }
 .cm-item {
   padding: 8px 0; border-top: 1px dashed var(--border);
+}
+.cm-item, .cm-reply { border-radius: 6px; }
+/* 从站内通知点进来时闪一下 —— 让人一眼看到是哪条 */
+.cm-focus {
+  animation: cm-focus 2.6s ease;
+  scroll-margin: 60px;
+}
+@keyframes cm-focus {
+  0%, 35% { background: color-mix(in srgb, var(--primary) 16%, transparent); }
+  100% { background: transparent; }
 }
 .cm-hd { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
 .cm-user { font-size: 12px; font-weight: 600; color: var(--ink-700); }

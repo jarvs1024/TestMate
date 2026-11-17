@@ -38,6 +38,7 @@
            也搬到这里 —— 身份条并进页头后, 页面内容区第一行就空出来了,
            操作区跟着身份走更顺 (都在页头这一行). -->
       <component :is="capActs" v-if="capActs" class="cap-actions" />
+      <NotificationBell />
       <ThemeSwitcher />
       <UserMenu />
     </div>
@@ -48,6 +49,7 @@
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BrandLogo from './BrandLogo.vue';
+import NotificationBell from './NotificationBell.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 import UserMenu from './UserMenu.vue';
 import NoticeBar, { type NoticeItem } from './NoticeBar.vue';

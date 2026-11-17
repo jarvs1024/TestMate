@@ -9,7 +9,10 @@ import { nextTick } from 'vue';
 import { useAssetUploadForm } from '../useAssetUploadForm';
 import { extRules, extRulesError, extRulesLoading } from '../assetForm';
 
-const { requestGet } = vi.hoisted(() => ({ requestGet: vi.fn() }));
+const { requestGet, previewPackageMock } = vi.hoisted(() => ({
+  requestGet: vi.fn(),
+  previewPackageMock: vi.fn(async () => ({})),
+}));
 
 vi.mock('@/utils/request', () => ({ default: { get: requestGet } }));
 vi.mock('@/api/assets', () => ({
@@ -21,7 +24,7 @@ vi.mock('@/api/assets', () => ({
       { code: '6100', name: '6100', total: 0 },
     ],
   })),
-  previewPackage: vi.fn(async () => ({})),
+  previewPackage: previewPackageMock,
 }));
 
 const rulesPayload = {
@@ -355,6 +358,56 @@ describe('上传表单: 图标', () => {
     const f = makeForm({ mode: () => 'update' as const, asset: () => asset });
     f.form.name = '改个名';
     expect(f.form.icon).toBe('🔍');
+  });
+});
+
+describe('上传表单: 包体检', () => {
+  it('新建: 体检带上派生的 code, 后端才能当场发现重名', async () => {
+    previewPackageMock.mockClear();
+    previewPackageMock.mockResolvedValueOnce({ ok: true, issues: [] } as any);
+    const f = makeForm({ initialKind: () => 'skill' as const });
+    const file = new File(['x'], 'dml-weekly-report.zip');
+
+    await f.onDropPackage({ dataTransfer: { files: [file] } } as any);
+
+    expect(previewPackageMock).toHaveBeenCalledWith(file, 'skill', {
+      code: 'dml-weekly-report', action: 'create',
+    });
+  });
+
+  it('发新版本: 传 action=update —— code 本来就该存在, 不能误报', async () => {
+    previewPackageMock.mockClear();
+    previewPackageMock.mockResolvedValueOnce({ ok: true, issues: [] } as any);
+    const asset: any = {
+      code: 'dml-x', kind: 'skill', name: '老资产', version: '1.0.0',
+      summary: '摘要', description: '', use_when: '', not_for: '', category: '其他',
+      icon: '🔍', project: '', featured: false, tags: [], keywords: [],
+      install_steps: [], permissions: {},
+    };
+    const f = makeForm({ mode: () => 'update' as const, asset: () => asset });
+
+    await f.onDropPackage({
+      dataTransfer: { files: [new File(['x'], 'dml-x.zip')] },
+    } as any);
+
+    expect(previewPackageMock).toHaveBeenCalledWith(expect.any(File), 'skill', {
+      code: 'dml-x', action: 'update',
+    });
+  });
+
+  it('体检报重名 → 结论变坏, 上架按钮不可用', async () => {
+    previewPackageMock.mockResolvedValueOnce({
+      ok: true, issues: ['资产 dml-weekly-report 已存在 (作者: admin), 请用更新接口'],
+    } as any);
+    const f = makeForm({ initialKind: () => 'skill' as const });
+
+    await f.onDropPackage({
+      dataTransfer: { files: [new File(['x'], 'dml-weekly-report.zip')] },
+    } as any);
+
+    expect(f.previewBad.value).toBe(true);
+    expect(f.previewIssues.value.join()).toContain('已存在');
+    expect(f.canSubmit.value).toBe(false);
   });
 });
 

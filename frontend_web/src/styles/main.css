@@ -564,8 +564,11 @@ select:focus {
    ⚠️ **只管 button / a / [tabindex]** —— input / textarea / select 已经有自己的
       focus 环了 (`.tm-input:focus` 的 primary-soft 光晕、`select:focus` 的光晕),
       再加一层 outline 就变成**双环**.
+   ⚠️ 排除表单控件必须**按元素名**再排一遍 (2026-11-17): `el-select` 内部的
+      `<input class="el-select__input">` 自带 `tabindex="0"` 且永远命中 :focus-visible,
+      只排类名的话它会套上 2px 主色 outline —— 下拉框里就是「选择框里又套了个框」.
    ⚠️ 用 `:where()` 保持 **0 特异度** —— 各组件自定义的 ring 仍然能覆盖它. */
-:where(button, a, [tabindex]):focus-visible {
+:where(button, a, [tabindex]):not(:where(input, textarea, select, [contenteditable])):focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
   border-radius: 4px;

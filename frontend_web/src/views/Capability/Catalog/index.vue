@@ -221,7 +221,7 @@
 
     <AssetDetailDrawer
       v-model="drawerOpen" :item="current" :can-edit="canEdit"
-      :review-enabled="reviewEnabled"
+      :review-enabled="reviewEnabled" :focus-comment-id="focusCommentId"
       @edit="openUpdate" @edit-meta="openEditMeta"
       @deleted="current = null" @changed="onAssetChanged" />
 
@@ -270,11 +270,13 @@ import AssetAuditDrawer from './AssetAuditDrawer.vue';
 import ExtFilterMenu from './ExtFilterMenu.vue';
 import CapabilityShell from '@/components/CapabilityShell.vue';
 import { useUserStore } from '@/stores/user';
+import { useAssetDeepLinkStore } from '@/stores/assetDeepLink';
 import { parseApiTime } from '@/utils/format';
 import { EXT_KINDS, type ExtProjectItem, type ExtSort } from './extCatalog';
 import { KIND_META } from './kindMeta';
 import {
   listAssets, listCategories, listJobs, listProjects, getSyncStatus, getExtConfig, retryJob, syncFromGit,
+  getAsset,
   type AssetItem, type AssetJob, type ExtKind, type SyncStatus,
 } from '@/api/assets';
 import { isAuthor } from './identity';
@@ -955,10 +957,39 @@ async function doSync() {
   }
 }
 
-function openDetail(item: AssetItem) {
+function openDetail(item: AssetItem, focusId?: number) {
+  focusCommentId.value = focusId;
   current.value = item;
   drawerOpen.value = true;
 }
+
+/** 站内通知深链: ?asset=<code>&comment=<id> → 打开该资产并定位评论 */
+const focusCommentId = ref<number | undefined>();
+const deepLink = useAssetDeepLinkStore();
+
+async function openAssetByCode(code: string, cid?: number) {
+  try {
+    const it = await getAsset(code);
+    openDetail(it, cid);
+  } catch {
+    // 资产不存在 / 已下架 / 当前账号看不到 → 留在列表, 不弹错
+  }
+}
+
+async function openFromDeepLink() {
+  const code = route.query.asset;
+  if (typeof code !== 'string' || !code) return;
+  const raw = typeof route.query.comment === 'string' ? Number(route.query.comment) : NaN;
+  const cid = Number.isFinite(raw) && raw > 0 ? raw : undefined;
+  await openAssetByCode(code, cid);
+}
+
+// 停在本页时 query 变了 (换一条通知 / 浏览器前进后退) —— 组件不会重挂, 这里补读
+watch(() => route.query, () => { void openFromDeepLink(); });
+// 同一条通知再点一次 = 同地址导航, 路由不动; 铃铛通过 store 再发一次请求
+watch(() => deepLink.seq, () => {
+  if (deepLink.asset) void openAssetByCode(deepLink.asset, deepLink.comment ?? undefined);
+});
 
 /** 资产状态变了 (审核/上下架/删除) —— 列表和抽屉里那份都要跟着更新 */
 async function onAssetChanged() {
@@ -1070,6 +1101,7 @@ function onVisibilityChange() {
 let timer: number | null = null;
 let autoTimer: number | null = null;
 onMounted(async () => {
+  void openFromDeepLink();
   await Promise.all([
     load(), loadKindCounts(), loadSyncStatus(), loadCategories(), loadProjects(),
     loadExtConfig(), loadExtRules(),

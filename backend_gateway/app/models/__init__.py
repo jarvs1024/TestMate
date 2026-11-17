@@ -40,3 +40,6 @@ from app.models.download_event import DownloadEvent  # noqa: F401
 # 外部系统集成凭据 (PingCode / PLM), 密码与 token 均为 AES-GCM 密文.
 # ⚠️ 同上: 必须在这里导出, 否则建表时漏掉这张表.
 from app.models.integration import IntegrationCredential  # noqa: F401
+# 站内通知 (评论/回复) —— 与钉钉回执的 AssetNotification 是两回事.
+# ⚠️ 同上: 必须在这里导出, 否则建表时漏掉这张表.
+from app.models.notification import UserNotification  # noqa: F401

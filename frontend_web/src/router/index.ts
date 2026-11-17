@@ -52,6 +52,8 @@ export const routes: RouteRecordRaw[] = [
         { path: 'connect/authorize', name: 'mcp-authorize', meta: { title: '连接授权', lede: '核对 MCP 客户端身份，只授予你明确选择的资产权限' }, component: () => import('@/views/Connect/Authorize.vue') },
         { path: 'connect/grants', name: 'mcp-grants', meta: { title: '授权管理', lede: '查看 MCP 客户端权限，撤销不再需要的连接' }, component: () => import('@/views/Connect/Grants.vue') },
         { path: 'profile', name: 'profile', meta: { title: '个人中心', lede: '管理授权与访问令牌' }, component: () => import('@/views/Profile/index.vue') },
+        // 站内消息 —— 评论/回复提醒. 点一条会跳回 /extensions?asset=&comment= 定位评论.
+        { path: 'notifications', name: 'notifications', meta: { title: '消息', lede: '资产评论与回复提醒 —— 点一条直接跳到对应评论' }, component: () => import('@/views/Notifications/index.vue') },
 
         // ⚠️ **adminOnly** (2026-10-28): 设置页整个只给管理员.
         //    设置项里全是平台级配置 (存储路径 / 仓库地址 / 审核白名单 / 账号管理),

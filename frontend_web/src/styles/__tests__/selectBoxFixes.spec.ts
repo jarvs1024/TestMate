@@ -307,3 +307,17 @@ describe('分类下拉: 说明文字短, 且不把分类名挤掉', () => {
     }
   });
 });
+
+describe('main.css: 全局 focus 基线不能套到表单控件里', () => {
+  /**
+   * 2026-11-17 用户报「选择框重影」:
+   *   el-select 内部真正的 `<input class="el-select__input">` 带 `tabindex="0"`,
+   *   而全局 `:where(button, a, [tabindex]):focus-visible` 会给它画 2px 主色 outline ——
+   *   外层的 `.el-select__wrapper` 已经有自己的 focus ring, 于是框里又套一个框.
+   */
+  it('focus-visible 基线必须排除 input / textarea / select', () => {
+    const m = css.match(/([^{}]+):focus-visible\s*\{[^}]*outline:\s*2px solid var\(--primary\)/);
+    expect(m, '全局 focus-visible 基线不见了').toBeTruthy();
+    expect(m![1]).toContain(':not(:where(input, textarea, select');
+  });
+});

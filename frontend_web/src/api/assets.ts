@@ -389,11 +389,27 @@ export async function getExtConfig(): Promise<ExtConfig> {
   return apiGet<ExtConfig>('/extensions/config');
 }
 
+export interface PreviewPackageOptions {
+  /**
+   * 资产 code (新建时从包名派生).
+   *
+   * ⚠️ 带上它, 后端体检时就能当场发现「同名资产已存在」——
+   *    不然要等整包传完才 409.
+   */
+  code?: string;
+  /** create = 上架; update = 发新版本 (code 本来就该存在, 跳过重名校验) */
+  action?: 'create' | 'update';
+}
+
 /** 上传前体检: 这个包装不装得上 */
-export async function previewPackage(file: File, kind: string): Promise<PackagePreview> {
+export async function previewPackage(
+  file: File, kind: string, opts: PreviewPackageOptions = {},
+): Promise<PackagePreview> {
   const fd = new FormData();
   fd.append('package', file, file.name);
   fd.append('kind', kind);
+  fd.append('action', opts.action || 'create');
+  if (opts.code) fd.append('code', opts.code);
   return (await request.post('/extensions/preview-package', fd)) as unknown as PackagePreview;
 }
 
@@ -535,12 +551,33 @@ function toFormData(f: UploadForm, includeCode: boolean): FormData {
   return fd;
 }
 
-export async function uploadAsset(form: UploadForm): Promise<AssetJob> {
-  return apiPost<AssetJob>('/extensions/upload', toFormData(form, true));
+/** 上传类请求进度 (安装包可能几十 MB, 慢网络下要给用户看到真实进度) */
+export interface UploadProgressOptions {
+  onUploadProgress?: (e: { loaded: number; total?: number }) => void;
 }
 
-export async function updateAsset(code: string, form: UploadForm): Promise<AssetJob> {
-  return apiPut<AssetJob>(`/extensions/${encodeURIComponent(code)}`, toFormData(form, false));
+/**
+ * ⚠️ 安装包上传**不用**全局 30s 超时 —— 生产慢网络下大包会在上传途中被掐断.
+ *    给 5 分钟, 跟后端处理时间也匹配得上.
+ */
+const UPLOAD_TIMEOUT_MS = 300_000;
+
+export async function uploadAsset(
+  form: UploadForm, opts: UploadProgressOptions = {},
+): Promise<AssetJob> {
+  return (await request.post('/extensions/upload', toFormData(form, true), {
+    onUploadProgress: opts.onUploadProgress,
+    timeout: UPLOAD_TIMEOUT_MS,
+  })) as unknown as AssetJob;
+}
+
+export async function updateAsset(
+  code: string, form: UploadForm, opts: UploadProgressOptions = {},
+): Promise<AssetJob> {
+  return (await request.put(`/extensions/${encodeURIComponent(code)}`, toFormData(form, false), {
+    onUploadProgress: opts.onUploadProgress,
+    timeout: UPLOAD_TIMEOUT_MS,
+  })) as unknown as AssetJob;
 }
 
 /**

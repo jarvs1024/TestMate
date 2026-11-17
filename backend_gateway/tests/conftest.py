@@ -51,6 +51,8 @@ _TABLES = (
     "asset_jobs",
     "asset_comments",
     "assets",
+    # 站内通知 (评论/回复)
+    "user_notifications",
     # 计数冷却窗口去重标记 (2026-11-05)
     "count_marks",
     # 下载事件明细 (按用户统计)

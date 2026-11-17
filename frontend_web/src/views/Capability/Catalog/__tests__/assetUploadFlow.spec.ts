@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import AssetUploadDialog from '../AssetUploadDialog.vue';
+import { previewPackage } from '@/api/assets';
 
 const { requestGet } = vi.hoisted(() => ({ requestGet: vi.fn() }));
 
@@ -80,7 +81,10 @@ const stubs = {
     template: '<div class="el-form-item"><label v-if="label">{{ label }}</label><slot/></div>',
   },
   'el-input': { template: '<input class="el-input"/>' },
-  'el-select': { template: '<select class="el-select"><slot/></select>' },
+  'el-select': {
+    inheritAttrs: false,
+    template: '<select class="el-select" v-bind="$attrs"><slot/></select>',
+  },
   'el-option': {
     props: ['label'],
     template: '<option>{{ label }}<slot/></option>',
@@ -173,6 +177,12 @@ describe('上传抽屉: 类型头与换类型', () => {
     expect(scope).toBeTruthy();
     // 项目列表是配置 (设置项 extensions.projects) —— 下拉里要有它
     expect(scope!.text()).toContain('6100');
+  });
+
+  it('分类下拉占位是中文「请选择分类」—— 不是 Element 默认的 Select', async () => {
+    const w = await open({ initialKind: 'skill' });
+    const sel = w.find('.sel-category');
+    expect(sel.attributes('placeholder')).toBe('请选择分类');
   });
 
   it('更新版本时类型不可改 —— 没有「更换类型」按钮', async () => {
@@ -312,6 +322,28 @@ describe('上传抽屉: 没开始填时不该有红字', () => {
     expect(w.find('.pick-hint').exists()).toBe(false);
     expect(w.find('.file-chip').text()).toContain('dml-dropped.zip');
     expect(w.find('.pkg-req .pr-code .pc-val').text()).toContain('dml-dropped');
+  });
+
+  it('体检没过 → 页脚说清为什么上架按钮点不了', async () => {
+    const msg = '资产 dml-x 已存在（作者：admin），请改用该资产的「发新版本」入口';
+    vi.mocked(previewPackage).mockResolvedValueOnce({
+      ok: true, filename: 'dml-x.zip', size_bytes: 1, kind: 'skill',
+      total_files: 1, files: ['SKILL.md'], doc_file: 'SKILL.md',
+      has_skill_md: true, has_plugin_manifest: false, has_mcp_config: false,
+      installable: false, block_reason: msg, issues: [msg], warnings: [],
+    });
+    // 用更新模式: 元信息从资产带出 —— 选完包就"什么都不缺", 只剩体检结论拦着
+    const w = await open({ mode: 'update', asset: assetOf('skill') });
+    await w.find('.file-pick').trigger('drop', {
+      dataTransfer: { files: [new File(['x'], 'dml-x.zip')] },
+    });
+    await flushPromises();
+
+    expect(w.find('.pv-box.bad').exists()).toBe(true);
+    expect(w.find('.pv-list').text()).toContain('已存在');
+    // 字段都齐了也不能说「该填的都填了」—— 按钮是灰的, 得说清原因
+    expect(w.find('.foot-ok').exists()).toBe(false);
+    expect(w.find('.foot-warn').text()).toContain('体检未通过');
   });
 
   it('选择安装包按钮复用全局主按钮 (和「＋ 上传资产」同一套渐变)', async () => {

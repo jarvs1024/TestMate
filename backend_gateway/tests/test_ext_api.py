@@ -459,6 +459,58 @@ async def test_preview_package_rejects_garbage(client, auth, publisher_user):
     assert r.json()["issues"]
 
 
+async def test_preview_package_flags_existing_code(client, auth):
+    """新建时同 code 已存在 → **体检当场报**, 别等上传完才 409."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        s.add(Asset(code="dml-weekly-report", name="周报", kind="skill", author="admin"))
+        await s.commit()
+
+    data = _zip_bytes(
+        {"SKILL.md": "---\nname: p\ndescription: d\n---\n\n# p\n"},
+        filename="dml-weekly-report.zip",
+    )
+    r = await client.post(
+        f"{API}/preview-package",
+        data={"kind": "skill"},
+        files={"package": (data[0], data[1], data[2])},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["ok"] is True               # 包本身没问题
+    assert j["installable"] is False     # 但这次上架一定失败
+    assert "已存在" in j["block_reason"]
+    assert any("dml-weekly-report" in i for i in j["issues"])
+
+
+async def test_preview_package_update_allows_existing_code(client, auth):
+    """发新版本: code 本来就该存在 —— 不能误报重名."""
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        s.add(Asset(code="dml-weekly-report", name="周报", kind="skill", author="admin"))
+        await s.commit()
+
+    data = _zip_bytes(
+        {"SKILL.md": "---\nname: p\ndescription: d\n---\n\n# p\n"},
+        filename="dml-weekly-report.zip",
+    )
+    r = await client.post(
+        f"{API}/preview-package",
+        data={"kind": "skill", "action": "update"},
+        files={"package": (data[0], data[1], data[2])},
+        headers=auth,
+    )
+    j = r.json()
+    assert j["ok"] is True
+    assert j["installable"] is True
+    assert j["issues"] == []
+
+
 # ---------- 安装 ----------
 #
 # ⚠️ 服务端写盘通道已下线 —— 安装统一在**用户本机**完成:
