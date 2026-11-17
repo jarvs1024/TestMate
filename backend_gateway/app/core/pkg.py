@@ -235,14 +235,14 @@ def extract_package(
     dest 必须**不存在或为空** —— 解包前会清空.
     """
     name = (filename or "").lower()
-    if name.endswith(".zip"):
-        suffix = ".zip"
-    elif name.endswith(".tar.gz") or name.endswith(".tgz"):
-        suffix = ".tar.gz"
-    else:
+    # ⚠️ 2026-11-17: 上传的安装包**必须是 ZIP** (用户要求)。
+    #    tar.gz / .tgz 一律拒收 —— 顺带少一类解压攻击面 (tar 的软链/路径穿越),
+    #    也让"安装包"只有一个格式, 前端不必再做多格式兼容。
+    if not name.endswith(".zip"):
         raise PackageError(
-            f"不支持的包格式: {filename} (支持 .zip / .tar.gz / .tgz)"
+            f"安装包必须是 ZIP 格式: {filename} (只接受 .zip)"
         )
+    suffix = ".zip"
 
     if len(data) > max_package_bytes:
         raise PackageError(
@@ -256,16 +256,11 @@ def extract_package(
     dest.mkdir(parents=True, exist_ok=True)
 
     try:
-        if suffix == ".zip":
-            files, total = _extract_zip(
-                data, dest,
-                max_entries=max_entries, max_total=max_total_bytes, max_file=max_file_bytes,
-            )
-        else:
-            files, total = _extract_tar(
-                data, dest,
-                max_entries=max_entries, max_total=max_total_bytes, max_file=max_file_bytes,
-            )
+        # ⚠️ 只剩 zip 一条路 (2026-11-17 起 tar.gz 不再接受上传)
+        files, total = _extract_zip(
+            data, dest,
+            max_entries=max_entries, max_total=max_total_bytes, max_file=max_file_bytes,
+        )
     except PackageError:
         shutil.rmtree(dest, ignore_errors=True)
         raise

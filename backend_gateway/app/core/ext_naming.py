@@ -19,7 +19,17 @@ import re
 #    (它收 "dml--x", 权威版本拒) → 已删, 免得两处规则各说各话.
 
 # 安装包允许的扩展名 (前端 assetForm.ts 同款)
-PACKAGE_SUFFIXES: tuple[str, ...] = (".zip", ".tar.gz", ".tgz")
+#
+# ⚠️ 2026-11-17 用户要求: **上传的安装包必须是 ZIP 格式** —— tar.gz / .tgz 一律拒收。
+#    ⚠️ 这里是**唯一真源**: 前端通过 /api/v1/extensions/config 拉这份 suffixes,
+#       改这里前端自动跟着变 (前端 assetForm.ts 只认后端下发的规则)。
+#    ⚠️ 但**下载**侧仍要认 tar.gz —— 存量资产的原始包可能就是 tar.gz,
+#       给它一个 .zip 的名字会让浏览器解不开。所以下载用 _LEGACY_DOWNLOAD_SUFFIXES。
+PACKAGE_SUFFIXES: tuple[str, ...] = (".zip",)
+
+#: 仅用于**下载文件名 / Content-Type** 的历史后缀 —— 存量资产可能是 tar.gz,
+#: 下载时必须沿用真实后缀。
+_LEGACY_DOWNLOAD_SUFFIXES: tuple[str, ...] = (".zip", ".tar.gz", ".tgz")
 
 
 def package_base_name(filename: str) -> str:
@@ -44,6 +54,22 @@ def check_package_consistency(filename: str, code: str) -> str:
     if base == target:
         return ""
     return f"安装包名必须与资产 code 一致 (包名是 {base}, 资产 code 是 {target})"
+
+
+def check_package_format(filename: str) -> str:
+    """安装包**格式**校验 —— 返回错误文案 (空串 = 合法)。
+
+    ⚠️ 2026-11-17 用户要求: 上传的安装包**必须是 ZIP 格式**。
+       只认 .zip; .tar.gz / .tgz / 其它一律拒。
+       (前端通过 /api/v1/extensions/config 拿 suffixes 也会拒 —— 但直接调 API
+        能绕过前端, 所以后端这里必须再拦一道。)
+    """
+    name = (filename or "").strip()
+    if not name:
+        return "安装包名为空"
+    if not name.lower().endswith(".zip"):
+        return f"安装包必须是 ZIP 格式: {name} (只接受 .zip)"
+    return ""
 
 
 def check_mcp_code_consistency(mcp_config: dict | None, code: str) -> str:
@@ -93,7 +119,7 @@ def download_filename(code: str, source_name: str = "") -> str:
     safe_code = _DOWNLOAD_NAME_SAFE.sub("_", (code or "").strip()) or "package"
     lowered = (source_name or "").lower()
     suffix = ".zip"
-    for suf in PACKAGE_SUFFIXES:
+    for suf in _LEGACY_DOWNLOAD_SUFFIXES:
         if lowered.endswith(suf):
             suffix = suf
             break

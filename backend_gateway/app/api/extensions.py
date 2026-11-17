@@ -226,6 +226,20 @@ async def _assert_can_modify(code: str, user: User) -> Asset:
     return a
 
 
+
+def _require_zip_package(filename: str) -> None:
+    """安装包必须是 ZIP —— 不合法直接 422。
+
+    ⚠️ 2026-11-17 用户要求: 上传的安装包只收 .zip。
+       在**读进内存之前**拒 —— 别让 tar 包先占掉上传配额再被丢。
+       前端也会拒 (规则由 ext_naming.PACKAGE_SUFFIXES 下发), 但直接调 API
+       能绕过前端, 这里是后端兜底。
+    """
+    err = ext_naming.check_package_format(filename)
+    if err:
+        raise HTTPException(status_code=422, detail=err)
+
+
 def _assert_naming(
     code: str,
     kind: str,
@@ -1830,8 +1844,8 @@ async def preview_package(
         package, await _max_package_bytes(), package.filename or "package.zip",
     )
     filename = package.filename or "package.zip"
+    _require_zip_package(filename)
     out = PackagePreviewOut(filename=filename, size_bytes=len(data), kind=kind)
-
     tmp = Path(tempfile.mkdtemp(prefix="tm-preview-"))
     try:
         try:
@@ -3487,6 +3501,7 @@ async def upload_asset(
     pkg_bytes: bytes | None = None
     pkg_name = ""
     if package is not None:
+        _require_zip_package(package.filename or "")
         pkg_bytes = await _read_upload_limited(
             package, await _max_package_bytes(), package.filename or "package.zip",
         )
@@ -3496,7 +3511,7 @@ async def upload_asset(
         if not file_map:
             raise HTTPException(
                 status_code=422,
-                detail="请上传安装包 (zip / tar.gz)",
+                detail="请上传安装包 (zip 格式)",
             )
 
     return await _stage_asset(
@@ -3587,6 +3602,7 @@ async def update_asset(
     pkg_bytes: bytes | None = None
     pkg_name = ""
     if package is not None:
+        _require_zip_package(package.filename or "")
         pkg_bytes = await _read_upload_limited(
             package, await _max_package_bytes(), package.filename or "package.zip",
         )
