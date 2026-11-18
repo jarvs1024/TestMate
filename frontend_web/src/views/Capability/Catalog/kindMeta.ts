@@ -36,23 +36,9 @@ export interface KindMeta {
  * 三种形态 —— 顺序即展示顺序
  *
  * ⚠️ 顺序跟扩展页的页签 (extCatalog.ts 的 EXT_KINDS) **保持一致**:
- *    页签和 lede 都是「插件 / 技能 / 连接器」, 这里以前是「技能 / 插件 / 连接器」——
- *    同一个东西两处顺序不同, 用户会以为上传入口跟页签对不上.
+ *    页签和 lede 都是「技能 / 连接器 / 插件」 (2026-11-18 插件移到最后).
  */
 export const KIND_META: KindMeta[] = [
-  {
-    value: 'plugin',
-    label: '插件',
-    code: 'plugin',
-    icon: '🧩',
-    tagline: '带命令、脚本和工具的扩展包, 能真的动手干活',
-    needs: [
-      '上传一个 .zip 安装包',
-      '包内含 README.md 及配套的 skill、脚本等',
-    ],
-    formHint: '上传 .zip 安装包 —— 插件包 (README.md + 配套 skill/脚本)',
-    pkgNeed: '包内含 README.md + .qoder-plugin/plugin.json',
-  },
   {
     value: 'skill',
     label: '技能',
@@ -77,6 +63,19 @@ export const KIND_META: KindMeta[] = [
       '形如 {"mcpServers": {"名字": {...}}}',
     ],
     formHint: '只填一段 MCP JSON 配置',
+  },
+  {
+    value: 'plugin',
+    label: '插件',
+    code: 'plugin',
+    icon: '🧩',
+    tagline: '带命令、脚本和工具的扩展包, 能真的动手干活',
+    needs: [
+      '上传一个 .zip 安装包',
+      '包内含 README.md 及配套的 skill、脚本等',
+    ],
+    formHint: '上传 .zip 安装包 —— 插件包 (README.md + 配套 skill/脚本)',
+    pkgNeed: '包内含 README.md + .qoder-plugin/plugin.json',
   },
 ];
 

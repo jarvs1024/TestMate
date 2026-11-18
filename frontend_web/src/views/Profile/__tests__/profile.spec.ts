@@ -23,15 +23,22 @@ describe('个人中心', () => {
     IntegrationAccounts: { template: '<div data-test="accounts-panel" />' },
   };
 
-  it('默认展示授权管理，可切换到访问令牌', async () => {
+  it('默认展示访问令牌, 可切换到授权管理', async () => {
     const w = mount(Profile, { global: { stubs } });
 
-    expect(w.find('[data-test="grants-panel"]').exists()).toBe(true);
-    expect(w.find('[data-test="tokens-panel"]').exists()).toBe(false);
-
-    await tab(w, '访问令牌').trigger('click');
-    expect(w.find('[data-test="grants-panel"]').exists()).toBe(false);
     expect(w.find('[data-test="tokens-panel"]').exists()).toBe(true);
+    expect(w.find('[data-test="grants-panel"]').exists()).toBe(false);
+
+    await tab(w, '授权管理').trigger('click');
+    expect(w.find('[data-test="tokens-panel"]').exists()).toBe(false);
+    expect(w.find('[data-test="grants-panel"]').exists()).toBe(true);
+    w.unmount();
+  });
+
+  it('页签顺序: 访问令牌 → 平台认证 → 授权管理 (2026-11-18 授权管理移到最后)', () => {
+    const w = mount(Profile, { global: { stubs } });
+    const labels = w.findAll('.kind-tabs .kind-tab').map((b) => b.text().trim());
+    expect(labels).toEqual(['访问令牌', '平台认证', '授权管理']);
     w.unmount();
   });
 

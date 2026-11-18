@@ -32,7 +32,7 @@ export const routes: RouteRecordRaw[] = [
 
         // ===== 资产型: 扩展库 =====
         // ⚠️ 2026-11-04: 标题 "扩展" → "扩展库" (用户要求) —— 跟同级的「知识库」「软件库」对齐.
-        { path: 'extensions', name: 'extensions', meta: { title: '扩展库', lede: '可复用的扩展资产 —— 插件 / 技能 / 连接器, 挑一个装进你的 Agent' }, component: () => import('@/views/Capability/Catalog/index.vue') },
+        { path: 'extensions', name: 'extensions', meta: { title: '扩展库', lede: '可复用的扩展资产 —— 技能 / 连接器 / 插件, 挑一个装进你的 Agent' }, component: () => import('@/views/Capability/Catalog/index.vue') },
         // 旧地址 (原 /market): 保留跳转, 免得旧书签 404
         { path: 'market', redirect: { name: 'extensions' } },
 

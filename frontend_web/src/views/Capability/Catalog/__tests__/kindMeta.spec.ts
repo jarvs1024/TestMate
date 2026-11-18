@@ -4,13 +4,15 @@
  * 这份数据决定了「先选形态」那一步能不能说清话:
  * 连接器必须一眼看出**不需要安装包**, 否则用户还会去找上传框。
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { KIND_META, kindMeta } from '../kindMeta';
 
 describe('资产形态元信息', () => {
   it('三种形态齐全, 值不重复', () => {
-    // ⚠️ 顺序跟扩展页的页签 (EXT_KINDS) 一致 —— 插件 / 技能 / 连接器
-    expect(KIND_META.map((k) => k.value)).toEqual(['plugin', 'skill', 'mcp']);
+    // ⚠️ 顺序跟扩展页的页签 (EXT_KINDS) 一致 —— 技能 / 连接器 / 插件 (2026-11-18 插件移到最后)
+    expect(KIND_META.map((k) => k.value)).toEqual(['skill', 'mcp', 'plugin']);
     expect(new Set(KIND_META.map((k) => k.value)).size).toBe(3);
   });
 
@@ -45,6 +47,12 @@ describe('资产形态元信息', () => {
       const all = [k.tagline, k.formHint, k.needs.join(' ')].join(' ');
       expect(all).not.toContain('宿主');
     }
+  });
+
+  it('页头 lede 的列举顺序也跟页签一致 —— 插件不排最前', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/router/index.ts'), 'utf8');
+    const lede = src.match(/name: 'extensions'[^\n]*lede: '([^']+)'/)?.[1] || '';
+    expect(lede).toContain('技能 / 连接器 / 插件');
   });
 
   it('未知类型兜底回技能, 不返回空', () => {

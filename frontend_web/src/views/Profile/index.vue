@@ -8,14 +8,6 @@
           type="button"
           class="kind-tab"
           role="tab"
-          :aria-selected="tab === 'grants'"
-          :class="{ active: tab === 'grants' }"
-          @click="tab = 'grants'"
-        >授权管理</button>
-        <button
-          type="button"
-          class="kind-tab"
-          role="tab"
           :aria-selected="tab === 'tokens'"
           :class="{ active: tab === 'tokens' }"
           @click="tab = 'tokens'"
@@ -28,6 +20,15 @@
           :class="{ active: tab === 'accounts' }"
           @click="tab = 'accounts'"
         >平台认证</button>
+        <!-- ⚠️ 2026-11-18 (用户指定): 授权管理放最后 -->
+        <button
+          type="button"
+          class="kind-tab"
+          role="tab"
+          :aria-selected="tab === 'grants'"
+          :class="{ active: tab === 'grants' }"
+          @click="tab = 'grants'"
+        >授权管理</button>
       </div>
       <div class="ma-right">
         <span class="account-meta">当前账号 · <b>{{ username }}</b></span>
@@ -48,7 +49,8 @@ import McpTokens from '@/views/Settings/components/McpTokens.vue';
 import IntegrationAccounts from '@/views/Profile/IntegrationAccounts.vue';
 
 const userStore = useUserStore();
-const tab = ref<'grants' | 'tokens' | 'accounts'>('grants');
+// 默认落在第一个页签 (访问令牌); 授权管理已移到最后
+const tab = ref<'grants' | 'tokens' | 'accounts'>('tokens');
 const username = computed(() => userStore.user?.username || '未登录');
 </script>
 

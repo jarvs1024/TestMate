@@ -12,9 +12,10 @@ export type { AssetItem, AssetJob, ExtKind, ExtPermissions } from '@/api/assets'
 import type { ExtKind } from '@/api/assets';
 
 export const EXT_KINDS: { value: ExtKind; label: string }[] = [
-  { value: 'plugin', label: '插件' },
   { value: 'skill', label: '技能' },
   { value: 'mcp', label: '连接器' },
+  // ⚠️ 2026-11-18 (用户指定): 插件移到最后 —— 跟 KIND_META 的顺序保持一致
+  { value: 'plugin', label: '插件' },
 ];
 
 /**
