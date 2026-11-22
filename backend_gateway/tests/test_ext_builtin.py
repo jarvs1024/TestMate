@@ -118,6 +118,30 @@ async def test_pingcode_builtin_covers_case_library(builtin_seeded):
     assert "用例" in (pc.keywords or [])
 
 
+async def test_pingcode_builtin_covers_test_plans(builtin_seeded):
+    """PingCode 连接器要说明**测试计划**能力 (简介 + 推荐问法).
+
+    2026-11-22 新增 pingcode_plan_search / plan_run_search / plan_report,
+    扩展库卡片与抽屉需要同步, 否则用户不知道能查计划、执行记录和测试报告.
+    """
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.asset import Asset
+
+    async with AsyncSessionLocal() as s:
+        pc = (
+            await s.execute(select(Asset).where(Asset.code == "testmate-pingcode"))
+        ).scalar_one()
+
+    assert "测试计划" in pc.summary
+    assert "测试计划" in pc.description
+    assert "测试报告" in pc.description
+    lines = [ln.strip() for ln in (pc.use_when or "").splitlines() if ln.strip()]
+    assert sum("计划" in ln for ln in lines) >= 1, "推荐问法里要有查测试计划的场景"
+    assert "测试计划" in (pc.keywords or [])
+
+
 async def test_ensure_builtin_idempotent_preserves_download_count(builtin_seeded):
     """第二次种子不重复建行, 且**保留**运行时指标 (download_count)."""
     from sqlalchemy import func, select

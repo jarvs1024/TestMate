@@ -51,7 +51,7 @@ export const SCOPE_INFO: Record<McpScope, ScopeMeta> = {
   },
   'pingcode:read': {
     label: '读取 PingCode',
-    description: '查看 PingCode 项目、缺陷/需求、评论和附件，并可下载附件。',
+    description: '查看 PingCode 项目、缺陷/需求、用例、测试计划与执行报告、评论和附件，并可下载附件。',
     system: 'pingcode',
   },
   'pingcode:write': {
