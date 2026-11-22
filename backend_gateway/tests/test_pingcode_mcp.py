@@ -1,4 +1,4 @@
-"""pingcode MCP 域: 18 个工具 schema、scope、幂等与适配输出 (mock 上游)."""
+"""pingcode MCP 域: 21 个工具 schema、scope、幂等与适配输出 (mock 上游)."""
 from __future__ import annotations
 
 import base64
@@ -53,6 +53,9 @@ TOOL_REQUIRED = {
     "pingcode_case_get_properties": {"library_id"},
     "pingcode_case_search": {"library_id"},
     "pingcode_case_get": {"library_id", "identifier"},
+    "pingcode_plan_search": {"library"},
+    "pingcode_plan_run_search": {"plan"},
+    "pingcode_plan_report": {"plan"},
 }
 
 
@@ -276,8 +279,8 @@ def _detail_payload() -> dict:
     }
 
 
-# ── 契约: 13 个工具与严格 schema ────────────────────────────
-async def test_tools_list_exposes_eighteen_strict_schemas(user):
+# ── 契约: 21 个工具与严格 schema ────────────────────────────
+async def test_tools_list_exposes_twenty_one_strict_schemas(user):
     principal = Principal(
         user=user, client_id="test-client", scopes=frozenset({"pingcode:read"})
     )
@@ -2220,3 +2223,391 @@ async def test_preview_fills_hidden_required_defaults(bound_user, fake_api):
     assert isinstance(props["start"], int)
     assert props["shifouyonglifaxian"] == "opt-case"
     assert props["replay_step"] == "<p>见描述详情</p>"
+
+
+# ── 测试计划: 列表 / 执行用例 / 报告+缺陷 ─────────────────────
+def _plan_routes(fake_api):
+    library = {
+        "value": {
+            "_id": "lib1",
+            "name": "Hima",
+            "identifier": "HIMA3361",
+        }
+    }
+    fake_api.routes["/api/testhub/test-libraries/HIMA3361"] = lambda **_: library
+    fake_api.routes["/api/testhub/test-libraries/lib1"] = lambda **_: library
+    fake_api.routes["/api/testhub/test-libraries/lib1/test-plans"] = lambda params, json: {
+        "value": [
+            {
+                "_id": "pl1",
+                "short_id": "INEzuPyn",
+                "name": "【P5000】产品板测试迭代1",
+                "status": 1,
+                "assignee_uid": "u_li",
+                "project_id": "p1",
+                "start_at": 1791621219,
+                "end_at": 1792512000,
+                "related_case_count": 2629,
+                "run_statistics": {
+                    "pass": 2445,
+                    "block": 13,
+                    "failure": 77,
+                    "skip": 4,
+                    "not_start": 90,
+                },
+                "test_plan_type": {"_id": "pt1", "name": "普通测试"},
+            }
+        ],
+        "references": {
+            "members": [{"uid": "u_li", "display_name": "吕志勇", "name": "989722588"}],
+            "projects": [
+                {"_id": "p1", "identifier": "PCM-SSD-CPTEST", "name": "PCM-SSD芯片解决方案项目"}
+            ],
+        },
+        "count": 1,
+        "page_index": 0,
+        "page_size": 20,
+        "page_count": 1,
+    }
+    fake_api.routes["/api/testhub/test-plans/INEzuPyn"] = lambda **_: {
+        "value": {
+            "_id": "pl1",
+            "name": "【P5000】产品板测试迭代1",
+            "status": 1,
+            "test_library_id": "lib1",
+            "project_id": "p1",
+        },
+        "references": {},
+    }
+    fake_api.routes["/api/testhub/test-plans/pl1/statistics"] = lambda **_: {
+        "value": {
+            "_id": "pl1",
+            "name": "【P5000】产品板测试迭代1",
+            "assignee_uid": "u_li",
+            "status": 1,
+            "project_id": "p1",
+            "run_statistics": {
+                "pass": 2445,
+                "block": 13,
+                "failure": 77,
+                "skip": 4,
+                "not_start": 90,
+            },
+            "related_case_count": 2629,
+            "total_case_count": 15140,
+            "start_at": 1791621219,
+            "end_at": 1792512000,
+        },
+        "references": {
+            "members": [{"uid": "u_li", "display_name": "吕志勇"}],
+            "projects": [
+                {"_id": "p1", "identifier": "PCM-SSD-CPTEST", "name": "PCM-SSD芯片解决方案项目"}
+            ],
+        },
+    }
+    fake_api.routes["/api/testhub/test-plans/pl1/test-runs"] = lambda params, json: {
+        "value": [
+            {
+                "_id": "run1",
+                "test_plan_id": "pl1",
+                "test_library_id": "lib1",
+                "test_case_id": "c1",
+                "status": 3,
+                "executor_uid": "u_wan",
+                "updated_at": 1783997510,
+                "steps": [{"step_id": "s1", "status": 3, "actual_value": "报错"}],
+                "relation_counts": {"work_item_defect_group": 1},
+            }
+        ],
+        "references": {
+            "test_cases": [
+                {
+                    "_id": "c1",
+                    "whole_identifier": "HIMA3361-9038",
+                    "title": "onfi读8560寄存器测试",
+                    "suite_id": "su1",
+                    "steps": [
+                        {
+                            "step_id": "s1",
+                            "description": "读寄存器",
+                            "expected_value": "值与寄存器表相同",
+                        }
+                    ],
+                }
+            ],
+            "suites": [{"_id": "su1", "name": "onfi_to_pcm"}],
+            "members": [{"uid": "u_wan", "display_name": "万凿"}],
+        },
+        "count": 1,
+        "page_index": 0,
+        "page_size": 50,
+        "page_count": 1,
+    }
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets"] = lambda **_: {
+        "value": [
+            {"_id": "w_over", "type": "report_overview", "position": 1},
+            {"_id": "w_sum", "type": "report_summary", "position": 2},
+            {"_id": "w_dist", "type": "test_run_result_distribute", "position": 3},
+            {"_id": "w_mem", "type": "test_run_member_distribute", "position": 4},
+            {"_id": "w_suite", "type": "defect_suite_distribute", "position": 5},
+            {"_id": "w_daily", "type": "test_times_daily", "position": 6},
+        ]
+    }
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets/w_over/content"] = lambda **_: {
+        "value": {
+            "test_plan_name": "【P5000】产品板测试迭代1",
+            "library_name": "Hima",
+            "assignee": {"uid": "u_li", "display_name": "吕志勇"},
+            "project_name": "PCM-SSD芯片解决方案项目",
+            "sprint_name": "",
+            "status": 1,
+            "test_case_count": 2629,
+            "throughput_rate": 0.9300114111829593,
+            "coverage_rate": 0.1736459709379128,
+            "bug_count": 1,
+        },
+        "references": {},
+    }
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets/w_sum/content"] = lambda **_: {
+        "value": {"content": ""},
+        "references": {"related_objects": [], "members": []},
+    }
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets/w_dist/content"] = lambda **_: {
+        "value": {
+            "stats": [
+                {"status": 1, "count": 2445},
+                {"status": 3, "count": 77},
+            ],
+            "total_count": 2629,
+        },
+        "references": {},
+    }
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets/w_mem/content"] = lambda **_: {
+        "value": {
+            "stats": [
+                {"_id": "u_li", "display_name": "吕志勇", "count": 100, "has_started": 90, "not_started": 10}
+            ]
+        },
+        "references": {},
+    }
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets/w_suite/content"] = lambda **_: {
+        "value": {
+            "stats": [
+                {
+                    "suite_id": "su1",
+                    "suite_name": "retention_refresh(RTT)",
+                    "bug_count": 1,
+                    "test_case_count": 1,
+                }
+            ]
+        },
+        "references": {},
+    }
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets/w_daily/content"] = lambda **_: {
+        "value": {"stats": [{"date": "2026-10-10", "test_run_count": 3}], "total_count": 3},
+        "references": {},
+    }
+    fake_api.routes["/api/testhub/test-plans/pl1/bugs/content"] = lambda params, json: {
+        "value": [
+            {
+                "_id": "bug1",
+                "identifier": 1091,
+                "whole_identifier": "PCM-SSD-CPTEST-1091",
+                "title": "RTT周期内部分PBA搬移超时",
+                "state_id": "st1",
+                "assignee": "u_wan",
+                "project_id": "p1",
+                "created_at": 1783997510,
+                "completed_at": None,
+                "comment_count": 3,
+                "test_case_identifier": "HIMA3361-17862",
+                "description": "<p>不应出现在列表输出</p>",
+            }
+        ],
+        "references": {
+            "states": [{"_id": "st1", "name": "回归测试"}],
+            "members": [{"uid": "u_wan", "display_name": "万凿"}],
+            "projects": [
+                {"_id": "p1", "identifier": "PCM-SSD-CPTEST", "name": "PCM-SSD芯片解决方案项目"}
+            ],
+        },
+        "count": 1,
+        "page_index": 0,
+        "page_size": 50,
+        "page_count": 1,
+    }
+
+
+async def test_plan_search_maps_plan_fields(bound_user, fake_api):
+    _plan_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.search_test_plans(ctx, library="HIMA3361")
+
+    item = data["items"][0]
+    assert item["short_id"] == "INEzuPyn"
+    assert item["status"] == {"code": 1, "label": "未开始"}
+    assert item["assignee"] == {"uid": "u_li", "name": "吕志勇"}
+    assert item["project"] == {
+        "id": "p1",
+        "identifier": "PCM-SSD-CPTEST",
+        "name": "PCM-SSD芯片解决方案项目",
+    }
+    assert item["start_date"] == "2026-10-10"
+    assert item["end_date"] == "2026-10-21"
+    assert item["plan_type"] == "普通测试"
+    assert item["pass_rate"] == "93.0%"
+    assert item["url"] == "http://10.20.24.30/testhub/libraries/HIMA3361/plans/INEzuPyn/runs"
+    call = next(c for c in fake_api.calls if c[1] == "/api/testhub/test-libraries/lib1/test-plans")
+    assert call[2]["pi"] == 0
+
+
+async def test_plan_search_rejects_unknown_status(bound_user, fake_api):
+    _plan_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(McpRuntimeError) as exc:
+            await adapter.search_test_plans(ctx, library="HIMA3361", status="4")
+    assert "status='4'" in exc.value.message
+    assert "未开始(1)" in exc.value.message
+
+
+async def test_plan_run_search_maps_runs_and_filters(bound_user, fake_api):
+    _plan_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.search_test_plan_runs(
+            ctx, plan="INEzuPyn", result="失败", include_steps=True
+        )
+
+    assert data["summary"]["failure"] == 77
+    assert data["summary"]["pass_rate"] == "93.0%"
+    item = data["items"][0]
+    assert item["run_id"] == "run1"
+    assert item["case_identifier"] == "HIMA3361-9038"
+    assert item["suite"] == "onfi_to_pcm"
+    assert item["status"] == {"code": 3, "label": "失败"}
+    assert item["executor"] == {"uid": "u_wan", "name": "万凿"}
+    assert item["defect_count"] == 1
+    assert item["steps"][0]["actual"] == "报错"
+    body = next(c[3] for c in fake_api.calls if c[1] == "/api/testhub/test-plans/pl1/test-runs")
+    assert body["pi"] == 0
+    assert body["ps"] == 20
+    assert body["scope"]["library_ids"] == ["lib1"]
+    assert body["criteria"]["conditions"] == [
+        {"logic": 1, "property_key": "status", "operation": 6, "value": [3]}
+    ]
+
+
+async def test_plan_report_merges_sections(bound_user, fake_api):
+    _plan_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.get_test_plan_report(
+            ctx, plan="INEzuPyn", sections=["overview", "distribution", "defects"], page_size=50
+        )
+
+    assert data["library"] == {"id": "lib1", "identifier": "HIMA3361", "name": "Hima"}
+    assert data["overview"]["case_count"] == 2629
+    assert data["overview"]["coverage_rate"] == "17.36%"
+    assert data["overview"]["pass_rate"] == "93.0%"
+    assert data["overview"]["defect_count"] == 1
+    assert data["distribution"]["total"] == 2629
+    assert data["distribution"]["items"][0] == {
+        "status": {"code": 1, "label": "通过"},
+        "count": 2445,
+    }
+    defect = data["defects"]["items"][0]
+    assert defect["whole_identifier"] == "PCM-SSD-CPTEST-1091"
+    assert defect["state"] == {"id": "st1", "name": "回归测试"}
+    assert "description" not in defect
+    assert "summary" not in data and "members" not in data
+
+
+async def test_plan_report_rejects_unknown_section(bound_user):
+    async with _context(bound_user) as ctx:
+        with pytest.raises(McpRuntimeError) as exc:
+            await adapter.get_test_plan_report(ctx, plan="INEzuPyn", sections=["oops"])
+    assert "oops" in exc.value.message
+    assert "overview" in exc.value.message and "defects" in exc.value.message
+
+
+async def test_plan_report_rejects_unknown_defect_state(bound_user, fake_api):
+    _plan_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(McpRuntimeError) as exc:
+            await adapter.get_test_plan_report(
+                ctx, plan="INEzuPyn", sections=["defects"], defect_state="已关闭"
+            )
+    assert "已关闭" in exc.value.message
+    assert "回归测试" in exc.value.message
+
+
+async def test_plan_report_distribution_is_status_ordered(bound_user, fake_api):
+    # 上游 stats 顺序不固定, 输出必须固定为 通过/阻塞/失败/跳过/未开始.
+    _plan_routes(fake_api)
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets/w_dist/content"] = lambda **_: {
+        "value": {
+            "stats": [
+                {"status": 5, "count": 90},
+                {"status": 3, "count": 77},
+                {"status": 4, "count": 4},
+                {"status": 1, "count": 2445},
+                {"status": 2, "count": 13},
+            ],
+            "total_count": 2629,
+        },
+        "references": {},
+    }
+    async with _context(bound_user) as ctx:
+        data = await adapter.get_test_plan_report(
+            ctx, plan="INEzuPyn", sections=["distribution"]
+        )
+    assert [row["status"]["code"] for row in data["distribution"]["items"]] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+    ]
+
+
+async def test_plan_report_daily_uses_widget_window(bound_user, fake_api):
+    # 每日测试数按小组件配置的时间窗取数, 区间标注必须与返回日期一致.
+    _plan_routes(fake_api)
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets"] = lambda **_: {
+        "value": [
+            {
+                "_id": "w_daily",
+                "type": "test_times_daily",
+                "position": 1,
+                "config": {"start": 1765814400, "end": 1766408974, "show_type": 3},
+            }
+        ]
+    }
+    seen: dict[str, object] = {}
+
+    def daily_content(params, **kwargs):
+        seen.update(params)
+        return {
+            "value": {
+                "stats": [
+                    {"date": "2025-12-15", "test_run_count": 0},
+                    {"date": "2025-12-16", "test_run_count": 2},
+                ],
+                "total_count": 2,
+            },
+            "references": {},
+        }
+
+    fake_api.routes["/api/testhub/test-libraries/lib1/widgets/w_daily/content"] = daily_content
+    async with _context(bound_user) as ctx:
+        data = await adapter.get_test_plan_report(
+            ctx, plan="INEzuPyn", sections=["daily"]
+        )
+    assert seen["start"] == 1765814400 and seen["end"] == 1766408974
+    assert data["daily"] == {
+        "start": "2025-12-15",
+        "end": "2025-12-16",
+        "total": 2,
+        "items": [
+            {"date": "2025-12-15", "count": 0},
+            {"date": "2025-12-16", "count": 2},
+        ],
+    }

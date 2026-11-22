@@ -210,9 +210,9 @@ ensure_session(user):
 - `allowed_scopes(user)`：活跃用户同时获得 `pingcode:read` 与 `pingcode:write`（已确认：写权限给所有活跃用户）。
 - **存量令牌/授权**：新增 scope 不会自动加到已签发的静态令牌或 OAuth 授权里；个人中心「访问令牌」页重建令牌并勾选新 scope，或重新走一次 OAuth 授权即可。前端无需特殊处理。
 
-### 9.2 工具（18 个，命名 `pingcode_<领域>_<动作>_<对象>`）
+### 9.2 工具（21 个，命名 `pingcode_<领域>_<动作>_<对象>`）
 
-领域三档：`common`（通用：账号/项目/成员）、`issue`（问题单：工单/缺陷/评论/附件）、`case`（用例库：testhub）。
+领域四档：`common`（通用：账号/项目/成员）、`issue`（问题单：工单/缺陷/评论/附件）、`case`（用例库：testhub 用例）、`plan`（测试计划：testhub 计划/执行记录/报告）。
 
 | 工具 | scope | 只读 | 关键参数 |
 |---|---|---|---|
@@ -234,6 +234,9 @@ ensure_session(user):
 | `pingcode_case_get_properties` | read | 是 | `library_id` |
 | `pingcode_case_search` | read | 是 | `library_id`, `keyword?`, `identifier?`, `filters?`, `created_by?`, `updated_by?`, `page?`, `page_size?` |
 | `pingcode_case_get` | read | 是 | `library_id`, `identifier` |
+| `pingcode_plan_search` | read | 是 | `library`, `keyword?`, `status?`, `assignee?`, `page?`, `page_size?` |
+| `pingcode_plan_run_search` | read | 是 | `plan`, `keyword?`, `result?`, `include_steps?`, `page?`, `page_size?` |
+| `pingcode_plan_report` | read | 是 | `plan`, `sections?`, `page?`, `page_size?`, `defect_keyword?`, `defect_state?` |
 
 实现约束：
 - 工具一律通过 `principal.user.id` 取凭据；未绑定返回 `integration_not_configured`（提示去个人中心绑定）。
@@ -245,6 +248,7 @@ ensure_session(user):
 - `download_attachment`：图片返回 `{content_type, base64, bytes}`；非图片返回 `{url, token, name, bytes}`（客户端自行下载）；超过 `max_bytes`（默认 20MB，上限 100MB）返回错误而不截断。
 - `upload_attachment` 单文件上限 100MB，超限返回 `attachment_too_large`。
 - 分页参数上限：`page_size <= 100`；`search_work_items` 默认 20。
+- 测试计划链：`plan_search`（`library` 传测试库 `_id` 或 identifier，内部先解析成 `_id`）→ `short_id` → `plan_run_search` / `plan_report`。执行记录接口的分页参数必须放请求体（`pi`/`ps`），查询串会被忽略。报告缺陷列表不返回描述正文（描述可能含环境凭据），细节把缺陷编号传给 `pingcode_issue_get`。非法 `status`/`result`/`defect_state`/`sections` 返回中文可选值。
 - 描述模板与 `description_fields` 渲染规则从 `pingcode/templates.py` 移植，字段缺失渲染为 `-`。
 
 ## 10. 前端

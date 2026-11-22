@@ -9,6 +9,7 @@ import logging
 import mimetypes
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse
@@ -1205,6 +1206,800 @@ async def get_test_case_properties(ctx: McpContext, *, library_id: str) -> dict[
         if item["key"]:
             fields.append(item)
     return {"library_id": str(library_id), "fields": fields}
+
+
+# ── testhub 测试计划 ─────────────────────────────────────────
+
+_PLAN_STATUS = {1: "未开始", 2: "进行中", 3: "已完成"}
+_RUN_STATUS = {1: "通过", 2: "阻塞", 3: "失败", 4: "跳过", 5: "未开始"}
+_PLAN_SECTIONS = (
+    "overview",
+    "summary",
+    "distribution",
+    "members",
+    "defect_suites",
+    "daily",
+    "defects",
+)
+_HEX24 = re.compile(r"^[0-9a-fA-F]{24}$")
+_CN_TZ = timezone(timedelta(hours=8))
+
+
+def _text_date(value: Any) -> str | None:
+    if not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return datetime.fromtimestamp(value, tz=_CN_TZ).strftime("%Y-%m-%d")
+
+
+def _text_time(value: Any) -> str | None:
+    if not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return datetime.fromtimestamp(value, tz=_CN_TZ).strftime("%Y-%m-%d %H:%M")
+
+
+def _pct(value: Any) -> str | None:
+    if not isinstance(value, (int, float)):
+        return None
+    text = f"{float(value) * 100:.2f}".rstrip("0")
+    if text.endswith("."):
+        text += "0"
+    return f"{text}%"
+
+
+def _ratio(part: Any, total: Any) -> str | None:
+    if not isinstance(part, (int, float)) or not isinstance(total, (int, float)) or total <= 0:
+        return None
+    return _pct(part / total)
+
+
+def _status_of(code: Any, mapping: dict[int, str]) -> dict[str, Any] | None:
+    try:
+        value = int(code)
+    except (TypeError, ValueError):
+        return None
+    return {"code": value, "label": mapping.get(value, "")}
+
+
+def _status_code(raw: Any, mapping: dict[int, str], field: str) -> int | None:
+    if raw is None or raw == "":
+        return None
+    text = str(raw).strip()
+    if text.isdigit():
+        code = int(text)
+    else:
+        matched = [code for code, label in mapping.items() if label == text]
+        if not matched:
+            choices = "、".join(f"{label}({code})" for code, label in mapping.items())
+            raise McpRuntimeError(
+                "invalid_arguments", f"{field}='{text}' 不合法；可选：{choices}"
+            )
+        code = matched[0]
+    if code not in mapping:
+        choices = "、".join(f"{label}({code})" for code, label in mapping.items())
+        raise McpRuntimeError(
+            "invalid_arguments", f"{field}='{text}' 不合法；可选：{choices}"
+        )
+    return code
+
+
+def _page_args(page: Any, page_size: Any) -> tuple[int, int]:
+    try:
+        page_no = int(page or 1)
+    except (TypeError, ValueError) as exc:
+        raise McpRuntimeError("invalid_arguments", f"page 必须是正整数，当前 {page}") from exc
+    if page_no < 1:
+        raise McpRuntimeError("invalid_arguments", f"page 最小为 1，当前 {page_no}")
+    try:
+        size = int(page_size or _TESTHUB_DEFAULT_PAGE_SIZE)
+    except (TypeError, ValueError) as exc:
+        raise McpRuntimeError("invalid_arguments", f"page_size 必须是整数，当前 {page_size}") from exc
+    if size < 1 or size > _TESTHUB_MAX_PAGE_SIZE:
+        raise McpRuntimeError(
+            "invalid_arguments", f"page_size 最大 100，当前 {size}"
+        )
+    return page_no, size
+
+
+async def _resolve_test_library(ctx: McpContext, library: str) -> dict[str, str]:
+    text = str(library or "").strip()
+    if not text:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            "library 必填：传测试库 _id 或 identifier（如 HIMA3361，可用 pingcode_case_list_libraries 查询）",
+        )
+    try:
+        payload = await _raw(ctx, "GET", f"/api/testhub/test-libraries/{quote(text, safe='')}")
+    except client.PingCodeBusinessError as exc:
+        message = str(exc)
+        if getattr(exc, "status", None) == 404 or "not found" in message.lower():
+            raise McpRuntimeError(
+                "not_found",
+                f"未找到测试库 '{text}'；请调用 pingcode_case_list_libraries 查看可见库（返回 _id 与 identifier）",
+            ) from exc
+        raise McpRuntimeError("pingcode_error", _localize_error_message(message)) from exc
+    record = _record_of(payload)
+    library_id = str(record.get("_id") or "")
+    if not library_id:
+        raise McpRuntimeError(
+            "not_found",
+            f"未找到测试库 '{text}'；请调用 pingcode_case_list_libraries 查看可见库（返回 _id 与 identifier）",
+        )
+    return {
+        "id": library_id,
+        "identifier": str(record.get("identifier") or record.get("short_id") or ""),
+        "name": str(record.get("name") or ""),
+    }
+
+
+def _member_names(references: dict[str, Any]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for member in references.get("members") or []:
+        if not isinstance(member, dict):
+            continue
+        uid = str(member.get("uid") or "")
+        if uid:
+            names[uid] = str(member.get("display_name") or member.get("name") or "")
+    return names
+
+
+def _projects(references: dict[str, Any]) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
+    for project in references.get("projects") or []:
+        if not isinstance(project, dict):
+            continue
+        pid = str(project.get("_id") or "")
+        if pid:
+            out[pid] = {
+                "id": pid,
+                "identifier": str(project.get("identifier") or ""),
+                "name": str(project.get("name") or ""),
+            }
+    return out
+
+
+def _project_of(
+    project_id: Any, projects: dict[str, dict[str, str]]
+) -> dict[str, str] | None:
+    pid = str(project_id or "")
+    if not pid:
+        return None
+    return projects.get(pid) or {"id": pid, "identifier": "", "name": ""}
+
+
+async def _resolve_assignee_uids(ctx: McpContext, raw: str) -> list[str]:
+    tokens = [token for token in _PERSON_SPLIT.split(str(raw or "").strip()) if token]
+    if not tokens:
+        raise McpRuntimeError("invalid_arguments", "assignee 不能为空字符串")
+    roster = await _team_roster(ctx)
+    if not roster:
+        return list(dict.fromkeys(tokens))
+    by_name: dict[str, list[str]] = {}
+    for uid, labels in roster.items():
+        for label in labels:
+            by_name.setdefault(label, []).append(uid)
+    uids: list[str] = []
+    missing: list[str] = []
+    for token in tokens:
+        if token in roster:
+            uids.append(token)
+            continue
+        matched = list(dict.fromkeys(by_name.get(token) or []))
+        if len(matched) > 1:
+            detail = "、".join(
+                f"{roster[uid][0] if roster[uid] else ''}(uid={uid})" for uid in matched
+            )
+            raise McpRuntimeError(
+                "invalid_arguments",
+                f"负责人 '{token}' 匹配到多人：{detail}；请改用 uid",
+            )
+        if matched:
+            uids.append(matched[0])
+        else:
+            missing.append(token)
+    if missing:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            f"负责人 '{'、'.join(missing)}' 不在团队花名册中；"
+            "请改传中文显示名、登录名或成员 uid（pingcode_common_list_members 可查）",
+        )
+    return list(dict.fromkeys(uids))
+
+
+def _plan_url(library_identifier: str, short_id: str) -> str:
+    if not library_identifier or not short_id:
+        return ""
+    return (
+        f"{_base_url()}/testhub/libraries/{library_identifier}/plans/{short_id}/runs"
+    )
+
+
+def _plan_item(
+    item: dict[str, Any],
+    *,
+    library_identifier: str,
+    member_names: dict[str, str],
+    projects: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    short_id = str(item.get("short_id") or "")
+    total = item.get("related_case_count")
+    stats = item.get("run_statistics") if isinstance(item.get("run_statistics"), dict) else {}
+    plan_type = item.get("test_plan_type")
+    assignee_uid = str(item.get("assignee_uid") or "")
+    return {
+        "id": str(item.get("_id") or ""),
+        "short_id": short_id,
+        "name": str(item.get("name") or ""),
+        "status": _status_of(item.get("status"), _PLAN_STATUS),
+        "plan_type": str(plan_type.get("name") or "") if isinstance(plan_type, dict) else "",
+        "assignee": (
+            {"uid": assignee_uid, "name": member_names.get(assignee_uid, "")}
+            if assignee_uid
+            else None
+        ),
+        "project": _project_of(item.get("project_id"), projects),
+        "start_at": item.get("start_at"),
+        "start_date": _text_date(item.get("start_at")),
+        "end_at": item.get("end_at"),
+        "end_date": _text_date(item.get("end_at")),
+        "case_count": total,
+        "pass_rate": _ratio(stats.get("pass"), total),
+        "url": _plan_url(library_identifier, short_id),
+    }
+
+
+async def search_test_plans(
+    ctx: McpContext,
+    *,
+    library: str,
+    keyword: str | None = None,
+    status: Any = None,
+    assignee: str | None = None,
+    page: int = 1,
+    page_size: int = _TESTHUB_DEFAULT_PAGE_SIZE,
+) -> dict[str, Any]:
+    page_no, size = _page_args(page, page_size)
+    status_code = _status_code(status, _PLAN_STATUS, "status")
+    resolved = await _resolve_test_library(ctx, library)
+    params: dict[str, Any] = {"pi": page_no - 1, "ps": size}
+    text = str(keyword or "").strip()
+    if text:
+        params["keywords"] = text
+    if status_code is not None:
+        params["status"] = status_code
+    if assignee:
+        uids = await _resolve_assignee_uids(ctx, assignee)
+        if uids:
+            params["assignee_uids"] = ",".join(uids)
+
+    payload = await _get_json(
+        ctx, f"/api/testhub/test-libraries/{resolved['id']}/test-plans", params
+    )
+    raw_items, meta = _paged_of(payload)
+    references = _references_of(payload)
+    names = _member_names(references)
+    projects = _projects(references)
+    items = [
+        _plan_item(
+            item,
+            library_identifier=resolved["identifier"],
+            member_names=names,
+            projects=projects,
+        )
+        for item in raw_items
+    ]
+    total = _total_of(meta, len(items))
+    page_count = meta.get("page_count")
+    return {
+        "library": resolved,
+        "total": total,
+        "page": page_no,
+        "page_size": size,
+        "page_count": page_count if isinstance(page_count, int) else None,
+        "has_more": bool(page_count and page_no < page_count),
+        "items": items,
+    }
+
+
+async def _resolve_test_plan(ctx: McpContext, plan: str) -> dict[str, Any]:
+    key = str(plan or "").strip()
+    if not key:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            "plan 必填：传计划 short_id（如 INEzuPyn，可用 pingcode_plan_search 获取）或 24 位 _id",
+        )
+    try:
+        detail = await _raw(ctx, "GET", f"/api/testhub/test-plans/{quote(key, safe='')}")
+    except client.PingCodeBusinessError as exc:
+        message = str(exc)
+        if getattr(exc, "status", None) == 404 or "not found" in message.lower():
+            raise McpRuntimeError(
+                "not_found",
+                f"未找到测试计划 '{key}'；请用 pingcode_plan_search 传 library 与 keyword 检索后取 short_id",
+            ) from exc
+        raise McpRuntimeError("pingcode_error", _localize_error_message(message)) from exc
+    record = _record_of(detail)
+    plan_id = str(record.get("_id") or "")
+    if not plan_id:
+        raise McpRuntimeError(
+            "not_found",
+            f"未找到测试计划 '{key}'；请用 pingcode_plan_search 传 library 与 keyword 检索后取 short_id",
+        )
+    stats_payload = await _get_json(
+        ctx, f"/api/testhub/test-plans/{plan_id}/statistics"
+    )
+    stats = _record_of(stats_payload)
+    references = _references_of(stats_payload)
+    library = await _resolve_test_library(
+        ctx, str(record.get("test_library_id") or stats.get("test_library_id") or "")
+    )
+    short_id = "" if _HEX24.match(key) else key
+    return {
+        "id": plan_id,
+        "short_id": short_id,
+        "name": str(stats.get("name") or record.get("name") or ""),
+        "status": _status_of(stats.get("status", record.get("status")), _PLAN_STATUS),
+        "assignee_uid": str(stats.get("assignee_uid") or record.get("assignee_uid") or ""),
+        "project_id": str(stats.get("project_id") or record.get("project_id") or ""),
+        "start_at": stats.get("start_at"),
+        "end_at": stats.get("end_at"),
+        "run_statistics": stats.get("run_statistics") or {},
+        "related_case_count": stats.get("related_case_count"),
+        "library": library,
+        "member_names": _member_names(references),
+        "projects": _projects(references),
+        "url": _plan_url(library["identifier"], short_id),
+    }
+
+
+def _merge_steps(run: dict[str, Any], case: dict[str, Any]) -> list[dict[str, Any]]:
+    case_steps = {
+        str(step.get("step_id") or ""): step
+        for step in case.get("steps") or []
+        if isinstance(step, dict)
+    }
+    steps: list[dict[str, Any]] = []
+    for index, raw_step in enumerate(run.get("steps") or [], start=1):
+        if not isinstance(raw_step, dict):
+            continue
+        source = case_steps.get(str(raw_step.get("step_id") or "")) or {}
+        status = raw_step.get("status")
+        steps.append(
+            {
+                "index": index,
+                "description": source.get("description") or "",
+                "expected": source.get("expected_value") or "",
+                "actual": raw_step.get("actual_value"),
+                "status": _RUN_STATUS.get(int(status)) if isinstance(status, int) else None,
+            }
+        )
+    return steps
+
+
+async def search_test_plan_runs(
+    ctx: McpContext,
+    *,
+    plan: str,
+    keyword: str | None = None,
+    result: Any = None,
+    include_steps: bool = False,
+    page: int = 1,
+    page_size: int = _TESTHUB_DEFAULT_PAGE_SIZE,
+) -> dict[str, Any]:
+    page_no, size = _page_args(page, page_size)
+    result_code = _status_code(result, _RUN_STATUS, "result")
+    resolved = await _resolve_test_plan(ctx, plan)
+    conditions = (
+        [{"logic": 1, "property_key": "status", "operation": 6, "value": [result_code]}]
+        if result_code is not None
+        else []
+    )
+    body = {
+        "criteria": {
+            "search": {
+                "keywords": str(keyword or "").strip(),
+                "scopes": ["identifier", "title"],
+            },
+            "conditions": conditions,
+            "sort_by": "position",
+        },
+        "scope": {
+            "include_sub_suite": 1,
+            "suite_id": "",
+            "library_ids": [resolved["library"]["id"]],
+        },
+        "pi": page_no - 1,
+        "ps": size,
+    }
+    payload = await _request(
+        ctx, "POST", f"/api/testhub/test-plans/{resolved['id']}/test-runs", json=body
+    )
+    runs, meta = _paged_of(payload)
+    references = _references_of(payload)
+    cases = {
+        str(case.get("_id") or ""): case
+        for case in references.get("test_cases") or []
+        if isinstance(case, dict)
+    }
+    suites = {
+        str(suite.get("_id") or ""): str(suite.get("name") or "")
+        for suite in references.get("suites") or []
+        if isinstance(suite, dict)
+    }
+    names = _member_names(references)
+    items: list[dict[str, Any]] = []
+    for run in runs:
+        case = cases.get(str(run.get("test_case_id") or "")) or {}
+        suite_id = str(case.get("suite_id") or "")
+        executor_uid = str(run.get("executor_uid") or "")
+        counts = run.get("relation_counts") if isinstance(run.get("relation_counts"), dict) else {}
+        item: dict[str, Any] = {
+            "run_id": str(run.get("_id") or ""),
+            "case_identifier": str(case.get("whole_identifier") or ""),
+            "case_title": str(case.get("title") or ""),
+            "suite": suites.get(suite_id, ""),
+            "status": _status_of(run.get("status"), _RUN_STATUS),
+            "executor": (
+                {"uid": executor_uid, "name": names.get(executor_uid, "")}
+                if executor_uid
+                else None
+            ),
+            "executed_at": run.get("updated_at"),
+            "executed_at_text": _text_time(run.get("updated_at")),
+            "defect_count": counts.get("work_item_defect_group", 0),
+        }
+        if include_steps:
+            item["steps"] = _merge_steps(run, case)
+        items.append(item)
+    stats = resolved["run_statistics"]
+    total = _total_of(meta, len(items))
+    page_count = meta.get("page_count")
+    related = resolved.get("related_case_count")
+    return {
+        "plan": {
+            "id": resolved["id"],
+            "short_id": resolved["short_id"],
+            "name": resolved["name"],
+            "url": resolved["url"],
+        },
+        "summary": {
+            "total": related,
+            "pass": stats.get("pass", 0),
+            "block": stats.get("block", 0),
+            "failure": stats.get("failure", 0),
+            "skip": stats.get("skip", 0),
+            "not_start": stats.get("not_start", 0),
+            "pass_rate": _ratio(stats.get("pass"), related),
+        },
+        "total": total,
+        "page": page_no,
+        "page_size": size,
+        "page_count": page_count if isinstance(page_count, int) else None,
+        "has_more": bool(page_count and page_no < page_count),
+        "items": items,
+    }
+
+
+async def _widget_contents(
+    ctx: McpContext, library_id: str, plan_id: str, wanted: list[str]
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    payload = await _get_json(ctx, f"/api/testhub/test-libraries/{library_id}/widgets")
+    widgets = _list_of(payload)
+    by_type: dict[str, dict[str, Any]] = {}
+    for widget in sorted(
+        (item for item in widgets if isinstance(item, dict)),
+        key=lambda item: item.get("position") or 0,
+    ):
+        by_type.setdefault(str(widget.get("type") or ""), widget)
+    wanted_types = {
+        "overview": "report_overview",
+        "summary": "report_summary",
+        "distribution": "test_run_result_distribute",
+        "members": "test_run_member_distribute",
+        "defect_suites": "defect_suite_distribute",
+        "daily": "test_times_daily",
+    }
+    contents: dict[str, dict[str, Any]] = {}
+    configs: dict[str, dict[str, Any]] = {}
+    for section in wanted:
+        widget_type = wanted_types.get(section)
+        widget = by_type.get(widget_type) if widget_type else None
+        if widget is None:
+            continue
+        params: dict[str, Any] = {"test_plan_id": plan_id, "widget_id": widget.get("_id")}
+        config = widget.get("config") if isinstance(widget.get("config"), dict) else {}
+        if section == "daily":
+            # 网页按小组件自身配置的时间窗取每日数据, 查询参数里的 start/end 会被上游忽略.
+            params["show_type"] = config.get("show_type") or 3
+            if config.get("start"):
+                params["start"] = config["start"]
+            if config.get("end"):
+                params["end"] = config["end"]
+        try:
+            content = _record_of(
+                await _raw(
+                    ctx,
+                    "GET",
+                    f"/api/testhub/test-libraries/{library_id}/widgets/{widget.get('_id')}/content",
+                    params=params,
+                )
+            )
+        except client.PingCodeBusinessError:
+            continue
+        contents[section] = content
+        configs[section] = config
+    return contents, configs
+
+
+async def _plan_defects(
+    ctx: McpContext,
+    *,
+    plan_id: str,
+    keyword: str | None,
+    state: str | None,
+    page: int,
+    page_size: int,
+) -> dict[str, Any]:
+    view: dict[str, Any] = {
+        "search": {
+            "keywords": str(keyword or "").strip(),
+            "scopes": ["identifier", "title"],
+        },
+        "mode": 1,
+        "conditions": [],
+        "group_by": "",
+        "show_type": 2,
+        "sort_by": "identifier",
+        "sort_type": 1,
+        "sort_direction": 1,
+    }
+    path = f"/api/testhub/test-plans/{plan_id}/bugs/content"
+    state_text = str(state or "").strip()
+    if state_text:
+        state_id = state_text if _HEX24.match(state_text) else ""
+        if not state_id:
+            probe = await _request(
+                ctx,
+                "POST",
+                path,
+                json={
+                    "pi": 0,
+                    "ps": _TESTHUB_MAX_PAGE_SIZE,
+                    "is_show_sprint_bug": 1,
+                    "view": view,
+                },
+            )
+            states = [
+                item
+                for item in _references_of(probe).get("states") or []
+                if isinstance(item, dict)
+            ]
+            matched = [item for item in states if item.get("name") == state_text]
+            if not matched:
+                choices = "、".join(str(item.get("name") or "") for item in states) or "无"
+                raise McpRuntimeError(
+                    "invalid_arguments",
+                    f"缺陷状态 '{state_text}' 不在当前计划中出现；可选：{choices}（也可传状态 _id）",
+                )
+            state_id = str(matched[0].get("_id") or "")
+        view["conditions"] = [
+            {"logic": 1, "property_key": "state_id", "operation": 6, "value": [state_id]}
+        ]
+    payload = await _request(
+        ctx,
+        "POST",
+        path,
+        json={
+            "pi": page - 1,
+            "ps": page_size,
+            "is_show_sprint_bug": 1,
+            "view": view,
+        },
+    )
+    raw_items, meta = _paged_of(payload)
+    references = _references_of(payload)
+    names = _member_names(references)
+    projects = _projects(references)
+    states = {
+        str(item.get("_id") or ""): str(item.get("name") or "")
+        for item in references.get("states") or []
+        if isinstance(item, dict)
+    }
+    items: list[dict[str, Any]] = []
+    for item in raw_items:
+        state_id = str(item.get("state_id") or "")
+        assignee_uid = str(item.get("assignee") or "")
+        created_at = item.get("created_at")
+        completed_at = item.get("completed_at")
+        items.append(
+            {
+                "identifier": item.get("identifier"),
+                "whole_identifier": str(item.get("whole_identifier") or ""),
+                "title": str(item.get("title") or ""),
+                "state": {"id": state_id, "name": states.get(state_id, "")} if state_id else None,
+                "assignee": (
+                    {"uid": assignee_uid, "name": names.get(assignee_uid, "")}
+                    if assignee_uid
+                    else None
+                ),
+                "project": _project_of(item.get("project_id"), projects),
+                "created_at": created_at,
+                "created_at_text": _text_time(created_at),
+                "completed_at": completed_at,
+                "completed_at_text": _text_time(completed_at),
+                "comment_count": item.get("comment_count") or 0,
+                "test_case_identifier": str(item.get("test_case_identifier") or ""),
+            }
+        )
+    total = _total_of(meta, len(items))
+    page_count = meta.get("page_count")
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "page_count": page_count if isinstance(page_count, int) else None,
+        "has_more": bool(page_count and page < page_count),
+        "items": items,
+    }
+
+
+async def get_test_plan_report(
+    ctx: McpContext,
+    *,
+    plan: str,
+    sections: list[str] | None = None,
+    page: int = 1,
+    page_size: int = _TESTHUB_DEFAULT_PAGE_SIZE,
+    defect_keyword: str | None = None,
+    defect_state: str | None = None,
+) -> dict[str, Any]:
+    wanted = list(sections) if sections else list(_PLAN_SECTIONS)
+    unknown = [name for name in wanted if name not in _PLAN_SECTIONS]
+    if unknown:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            f"sections 含不支持的段 '{unknown[0]}'；可选：{'、'.join(_PLAN_SECTIONS)}",
+        )
+    page_no, size = _page_args(page, page_size)
+    resolved = await _resolve_test_plan(ctx, plan)
+    library = resolved["library"]
+    stats = resolved["run_statistics"]
+    related = resolved.get("related_case_count")
+    result: dict[str, Any] = {
+        "plan": {
+            "id": resolved["id"],
+            "short_id": resolved["short_id"],
+            "name": resolved["name"],
+            "status": resolved["status"],
+            "url": resolved["url"],
+        },
+        "library": library,
+    }
+    widget_sections = [name for name in wanted if name != "defects"]
+    if widget_sections:
+        contents, configs = await _widget_contents(
+            ctx, library["id"], resolved["id"], widget_sections
+        )
+    else:
+        contents, configs = {}, {}
+    if "overview" in wanted:
+        overview = contents.get("overview") or {}
+        assignee_uid = str(
+            (overview.get("assignee") or {}).get("uid")
+            if isinstance(overview.get("assignee"), dict)
+            else resolved["assignee_uid"]
+        )
+        assignee_name = ""
+        if isinstance(overview.get("assignee"), dict):
+            assignee_name = str(
+                overview["assignee"].get("display_name")
+                or overview["assignee"].get("name")
+                or ""
+            )
+        assignee_name = assignee_name or resolved["member_names"].get(assignee_uid, "")
+        project = _project_of(
+            overview.get("project_id") or resolved["project_id"], resolved["projects"]
+        )
+        case_count = overview.get("test_case_count")
+        result["overview"] = {
+            "case_count": case_count if case_count is not None else related,
+            "coverage_rate": _pct(overview.get("coverage_rate")),
+            "pass_rate": _pct(overview.get("throughput_rate"))
+            or _ratio(stats.get("pass"), related),
+            "defect_count": overview.get("bug_count"),
+            "assignee": {"uid": assignee_uid, "name": assignee_name} if assignee_uid else None,
+            "project": project,
+            "start_at": resolved.get("start_at"),
+            "start_date": _text_date(resolved.get("start_at")),
+            "end_at": resolved.get("end_at"),
+            "end_date": _text_date(resolved.get("end_at")),
+            "status": resolved["status"],
+        }
+    if "summary" in wanted:
+        content = (contents.get("summary") or {}).get("content")
+        result["summary"] = {"content": content or None}
+    if "distribution" in wanted:
+        dist = contents.get("distribution") or {}
+        rows = dist.get("stats") if isinstance(dist.get("stats"), list) else []
+        counts = {
+            int(row.get("status")): row.get("count") or 0
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("status"), int)
+        }
+        if not counts:
+            counts = {
+                1: stats.get("pass", 0),
+                2: stats.get("block", 0),
+                3: stats.get("failure", 0),
+                4: stats.get("skip", 0),
+                5: stats.get("not_start", 0),
+            }
+        total = dist.get("total_count")
+        result["distribution"] = {
+            "total": total if total is not None else related,
+            "items": [
+                {
+                    "status": {"code": code, "label": _RUN_STATUS[code]},
+                    "count": counts.get(code, 0),
+                }
+                for code in sorted(_RUN_STATUS)
+            ],
+        }
+    if "members" in wanted:
+        mem = contents.get("members") or {}
+        rows = mem.get("stats") if isinstance(mem.get("stats"), list) else []
+        result["members"] = [
+            {
+                "uid": str(row.get("_id") or ""),
+                "name": str(row.get("display_name") or row.get("name") or ""),
+                "count": row.get("count") or 0,
+                "has_started": row.get("has_started") or 0,
+                "not_started": row.get("not_started") or 0,
+            }
+            for row in rows
+            if isinstance(row, dict)
+        ]
+    if "defect_suites" in wanted:
+        suites = contents.get("defect_suites") or {}
+        rows = suites.get("stats") if isinstance(suites.get("stats"), list) else []
+        result["defect_suites"] = [
+            {
+                "suite_id": str(row.get("suite_id") or ""),
+                "suite_name": str(row.get("suite_name") or ""),
+                "case_count": row.get("test_case_count") or 0,
+                "bug_count": row.get("bug_count") or 0,
+            }
+            for row in rows
+            if isinstance(row, dict)
+        ]
+    if "daily" in wanted:
+        daily = contents.get("daily") or {}
+        rows = daily.get("stats") if isinstance(daily.get("stats"), list) else []
+        items = sorted(
+            (
+                {"date": str(row.get("date") or ""), "count": row.get("test_run_count") or 0}
+                for row in rows
+                if isinstance(row, dict) and row.get("date")
+            ),
+            key=lambda item: item["date"],
+        )
+        config = configs.get("daily") or {}
+        result["daily"] = {
+            # 上游小组件忽略请求里的 start/end, 只按自身配置取数, 日期以实际返回的条目为准.
+            "start": items[0]["date"] if items else _text_date(config.get("start")),
+            "end": items[-1]["date"] if items else _text_date(config.get("end")),
+            "total": daily.get("total_count") or 0,
+            "items": items,
+        }
+    if "defects" in wanted:
+        result["defects"] = await _plan_defects(
+            ctx,
+            plan_id=resolved["id"],
+            keyword=defect_keyword,
+            state=defect_state,
+            page=page_no,
+            page_size=size,
+        )
+    return result
 
 
 def _allowed_host() -> str:

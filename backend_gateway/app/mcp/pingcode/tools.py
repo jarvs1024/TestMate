@@ -1,4 +1,4 @@
-"""18 个 PingCode 工具的显式 schema 与 ToolSpec 声明."""
+"""21 个 PingCode 工具的显式 schema 与 ToolSpec 声明."""
 from __future__ import annotations
 
 from typing import Any
@@ -285,6 +285,122 @@ READ_SPECS = (
         scope="pingcode:read",
         read_only=True,
         handler=adapter.get_test_case_properties,
+    ),
+    ToolSpec(
+        name="pingcode_plan_search",
+        description=(
+            "列出测试库中的测试计划。library 传测试库 _id 或 identifier（如 HIMA3361，"
+            "可先用 pingcode_case_list_libraries 查询）。返回 short_id（后续 "
+            "pingcode_plan_run_search / pingcode_plan_report 的 plan 参数就用它）、名称、状态、"
+            "计划类型、负责人、项目、起止日期、用例数、通过率与网页链接。"
+            "keyword 只匹配计划名称；status 传 未开始/进行中/已完成 或 1/2/3；"
+            "assignee 传显示名/登录名或 uid。"
+        ),
+        input_schema=_object(
+            {
+                "library": {
+                    "type": "string",
+                    "description": "测试库 _id 或 identifier，如 HIMA3361；先 pingcode_case_list_libraries 查询",
+                },
+                "keyword": {"type": "string", "description": "计划名称关键字"},
+                "status": {
+                    "type": "string",
+                    "description": "计划状态：未开始/进行中/已完成，或代码 1/2/3；省略为全部",
+                },
+                "assignee": {
+                    "type": "string",
+                    "description": "负责人：显示名/登录名或 uid，多人用逗号/空格分隔",
+                },
+                "page": _PAGE,
+                "page_size": _PAGE_SIZE,
+            },
+            ["library"],
+        ),
+        scope="pingcode:read",
+        read_only=True,
+        handler=adapter.search_test_plans,
+    ),
+    ToolSpec(
+        name="pingcode_plan_run_search",
+        description=(
+            "分页查看测试计划的执行记录（用例级执行结果）。plan 传 pingcode_plan_search 返回的 "
+            "short_id（如 INEzuPyn）。keyword 按用例编号/标题过滤；result 传 通过/阻塞/失败/跳过/未开始 "
+            "或 1/2/3/4/5；include_steps=true 时附带每步的预期与实际结果。返回值同时包含整份计划的"
+            "执行统计（各状态数量与通过率）和缺陷数。分页参数由工具内部放入请求体，page_size 最大 100。"
+        ),
+        input_schema=_object(
+            {
+                "plan": {
+                    "type": "string",
+                    "description": "计划 short_id，如 INEzuPyn；从 pingcode_plan_search 获取（也接受 24 位 _id）",
+                },
+                "keyword": {"type": "string", "description": "用例编号或标题关键字"},
+                "result": {
+                    "type": "string",
+                    "description": "执行结果：通过/阻塞/失败/跳过/未开始，或代码 1/2/3/4/5；省略为全部",
+                },
+                "include_steps": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "是否附带步骤明细（步骤描述、预期、实际与结果）",
+                },
+                "page": _PAGE,
+                "page_size": _PAGE_SIZE,
+            },
+            ["plan"],
+        ),
+        scope="pingcode:read",
+        read_only=True,
+        handler=adapter.search_test_plan_runs,
+    ),
+    ToolSpec(
+        name="pingcode_plan_report",
+        description=(
+            "获取测试计划报告与缺陷列表（对应网页 report 与 defects 页）。plan 传 short_id。"
+            "sections 选择需要的段：overview 概览、summary 总结、distribution 结果分布、"
+            "members 成员统计、defect_suites 缺陷按目录分布、daily 每日执行数、defects 缺陷列表，默认全部；"
+            "defects 段支持 defect_keyword（编号/标题）、defect_state（中文状态名或状态 _id）与 page/page_size，"
+            "daily 段沿用网页小组件自身的日期范围（上游接口忽略请求中的起止日期，无法在此改窗口）。"
+            "缺陷列表不返回描述正文（描述可能含环境凭据），需要细节请把缺陷编号传给 pingcode_issue_get。"
+        ),
+        input_schema=_object(
+            {
+                "plan": {
+                    "type": "string",
+                    "description": "计划 short_id，如 INEzuPyn；从 pingcode_plan_search 获取（也接受 24 位 _id）",
+                },
+                "sections": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "overview",
+                            "summary",
+                            "distribution",
+                            "members",
+                            "defect_suites",
+                            "daily",
+                            "defects",
+                        ],
+                    },
+                    "description": "需要的段；省略返回全部",
+                },
+                "page": _PAGE,
+                "page_size": _PAGE_SIZE,
+                "defect_keyword": {
+                    "type": "string",
+                    "description": "缺陷编号或标题关键字（仅 defects 段）",
+                },
+                "defect_state": {
+                    "type": "string",
+                    "description": "缺陷状态中文名或状态 _id（仅 defects 段）；不合法时返回当前计划可选状态",
+                },
+            },
+            ["plan"],
+        ),
+        scope="pingcode:read",
+        read_only=True,
+        handler=adapter.get_test_plan_report,
     ),
     ToolSpec(
         name="pingcode_issue_download_attachment",
