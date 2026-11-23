@@ -2621,25 +2621,44 @@ async def test_plan_report_daily_uses_widget_window(bound_user, fake_api):
 # 每个目录有用例数, 还有父子层级 (sata → application_layer)。
 # ══════════════════════════════════════════════════════════════════
 
+# ⚠️ 2026-11-23 实测: PingCode `/direct/suites` 返回的是**平铺列表** ——
+#    每个节点带 parent_id + parent_ids (祖先 id 链, 顺序 [根 ... 父],
+#    末位 == parent_id), **没有 children 字段**。
+#    所以测试数据必须照这个形态写, 否则测不到真实的层级逻辑。
+_ROOT = "root-1"
+
+
+def _suite_node(sid, name, count, parent_id="", parent_ids=None):
+    node = {
+        "_id": sid,
+        "name": name,
+        "parent_id": parent_id,
+        "parent_ids": list(parent_ids or []),
+        "test_library_id": "lib1",
+        "count": count,
+        "is_deleted": 0,
+        "is_archived": 0,
+    }
+    return node
+
+
 _SUITE_TREE = [
-    {
-        "_id": "sata-1",
-        "name": "sata",
-        "case_count": 3127,
-        "children": [
-            {"_id": "sata-app", "name": "application_layer", "case_count": 2781},
-            {"_id": "sata-low", "name": "sata_low_level", "case_count": 346},
-            {"_id": "sata-link", "name": "sata_link_special", "case_count": 0},
-        ],
-    },
-    {"_id": "nvme-1", "name": "NVMe", "case_count": 4307},
-    {"_id": "ocp-1", "name": "OCP", "case_count": 32},
-    {"_id": "pcie-1", "name": "pcie", "case_count": 961},
-    {"_id": "xl-1", "name": "xl", "case_count": 1442},
-    {"_id": "enc-1", "name": "encryption", "case_count": 38},
-    {"_id": "dm-1", "name": "device_management", "case_count": 347},
-    {"_id": "io-1", "name": "io", "case_count": 448},
-    {"_id": "nvme-pcm-1", "name": "nvme_pcm_io", "case_count": 381},
+    # 根
+    _suite_node(_ROOT, "全部用例", 0),
+    # 一级目录 (parent = 根)
+    _suite_node("sata-1", "sata", 3127, _ROOT, [_ROOT]),
+    _suite_node("nvme-1", "NVMe", 4307, _ROOT, [_ROOT]),
+    _suite_node("ocp-1", "OCP", 32, _ROOT, [_ROOT]),
+    _suite_node("pcie-1", "pcie", 961, _ROOT, [_ROOT]),
+    _suite_node("xl-1", "xl", 1442, _ROOT, [_ROOT]),
+    _suite_node("enc-1", "encryption", 38, _ROOT, [_ROOT]),
+    _suite_node("dm-1", "device_management", 347, _ROOT, [_ROOT]),
+    _suite_node("io-1", "io", 448, _ROOT, [_ROOT]),
+    _suite_node("nvme-pcm-1", "nvme_pcm_io", 381, _ROOT, [_ROOT]),
+    # 二级目录 (parent = sata) —— parent_ids 是 [根, sata]
+    _suite_node("sata-app", "application_layer", 2781, "sata-1", [_ROOT, "sata-1"]),
+    _suite_node("sata-low", "sata_low_level", 346, "sata-1", [_ROOT, "sata-1"]),
+    _suite_node("sata-link", "sata_link_special", 0, "sata-1", [_ROOT, "sata-1"]),
 ]
 
 
@@ -2687,22 +2706,30 @@ async def test_case_list_suites_returns_flat_tree_with_paths(bound_user, fake_ap
     async with _context(bound_user) as ctx:
         data = await adapter.list_test_case_suites(ctx, library_id="lib1")
 
-    assert data["count"] == 12, "9 个顶层 + 3 个子目录"
+    assert data["count"] == 13, "1 个根 + 9 个一级 + 3 个二级"
     names = [i["name"] for i in data["items"]]
     assert "sata" in names and "NVMe" in names and "nvme_pcm_io" in names
 
     by_name = {i["name"]: i for i in data["items"]}
+    # 根节点
+    root = by_name["全部用例"]
+    assert root["id"] == "root-1"
+    assert root["depth"] == 0
+    assert root["path"] == "全部用例"
+
+    # 一级目录 (parent = 根)
     sata = by_name["sata"]
     assert sata["id"] == "sata-1"
-    assert sata["parent_id"] == ""
-    assert sata["depth"] == 0
+    assert sata["parent_id"] == "root-1"
+    assert sata["depth"] == 1
     assert sata["case_count"] == 3127
-    assert sata["path"] == "sata"
+    assert sata["path"] == "全部用例/sata"
 
+    # 二级目录 (parent = sata) —— path 要带上**完整祖先链**
     app = by_name["application_layer"]
     assert app["parent_id"] == "sata-1"
-    assert app["depth"] == 1
-    assert app["path"] == "sata/application_layer"
+    assert app["depth"] == 2
+    assert app["path"] == "全部用例/sata/application_layer"
     assert app["case_count"] == 2781
 
 
@@ -2716,6 +2743,9 @@ async def test_case_list_suites_filter_by_parent_subtree(bound_user, fake_api):
     names = sorted(i["name"] for i in data["items"])
     assert names == ["application_layer", "sata", "sata_link_special", "sata_low_level"]
     assert data["parent_id"] == "sata-1"
+    # 子树里的每个节点, 祖先链都要完整 (不能只剩一层)
+    app = next(i for i in data["items"] if i["name"] == "application_layer")
+    assert app["path"] == "全部用例/sata/application_layer", app["path"]
 
 
 async def test_case_list_suites_filter_by_keyword(bound_user, fake_api):
@@ -2754,14 +2784,34 @@ async def test_case_search_by_suite_path(bound_user, fake_api):
     _suite_routes(fake_api)
     async with _context(bound_user) as ctx:
         data = await adapter.search_test_cases(
+            ctx, library_id="lib1", suite="全部用例/sata/application_layer"
+        )
+
+    case_calls = [c for c in fake_api.calls if c[1].endswith("/test-cases")]
+    scope = (case_calls[-1][3] or {}).get("scope") or {}
+    assert scope["suite_id"] == "sata-app", scope
+    assert data["suite"]["path"] == "全部用例/sata/application_layer"
+    assert [i["identifier"] for i in data["items"]] == ["HIMA3361-8078"]
+
+
+async def test_case_search_by_relative_suite_path(bound_user, fake_api):
+    """suite 传**不带根节点**的相对路径 (sata/application_layer) 也要能解析.
+
+    ⚠️ 实测: 真实完整路径带根节点 ("全部用例/sata/application_layer"),
+       但用户通常只写相对部分 → 必须支持后缀匹配.
+    """
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.search_test_cases(
             ctx, library_id="lib1", suite="sata/application_layer"
         )
 
     case_calls = [c for c in fake_api.calls if c[1].endswith("/test-cases")]
     scope = (case_calls[-1][3] or {}).get("scope") or {}
     assert scope["suite_id"] == "sata-app", scope
-    assert data["suite"]["path"] == "sata/application_layer"
-    assert [i["identifier"] for i in data["items"]] == ["HIMA3361-8078"]
+    assert data["suite"]["id"] == "sata-app"
+    # 回显的 path 是**完整**路径 (带根)
+    assert data["suite"]["path"] == "全部用例/sata/application_layer"
 
 
 async def test_case_search_by_suite_id(bound_user, fake_api):

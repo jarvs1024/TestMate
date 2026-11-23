@@ -1175,35 +1175,68 @@ def _suite_case_count(node: dict[str, Any]) -> int | None:
 
 
 def _suite_tree(nodes: Any, parent_id: str = "") -> list[dict[str, Any]]:
-    """目录树 → 扁平列表 (每项带 id / name / parent_id / path / depth / case_count)."""
+    """目录树 → 扁平列表 (每项带 id / name / parent_id / path / depth / case_count).
+
+    ⚠️ 2026-11-23 实测 (PingCode testhub): `/direct/suites` 返回的是
+    **平铺列表**, 每个节点自带 `parent_id` + `parent_ids` (祖先 id 链),
+    **没有 children 字段** —— 所以不能靠递归 children 建树, 得靠 parent_ids 反推.
+    (之前实现只认 children → 所有目录 depth 都是 0, 层级全丢.)
+    """
     out: list[dict[str, Any]] = []
     if not isinstance(nodes, list):
         return out
 
-    def walk(items: Any, pid: str, prefix: str, depth: int) -> None:
-        if not isinstance(items, list):
-            return
-        for node in items:
-            if not isinstance(node, dict):
-                continue
-            nid = _suite_node_id(node)
-            name = _suite_node_name(node)
-            if not nid:
-                continue
-            path = f"{prefix}/{name}" if prefix else name
-            out.append(
-                {
-                    "id": nid,
-                    "name": name,
-                    "parent_id": pid,
-                    "path": path,
-                    "depth": depth,
-                    "case_count": _suite_case_count(node),
-                }
-            )
-            walk(node.get("children"), nid, path, depth + 1)
+    # ① 先把每个节点摊平成 id → 基本信息
+    info: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        nid = _suite_node_id(node)
+        if not nid or nid in info:
+            continue
+        info[nid] = {
+            "id": nid,
+            "name": _suite_node_name(node),
+            "parent_id": str(node.get("parent_id") or ""),
+            "parent_ids": [str(x) for x in (node.get("parent_ids") or []) if x],
+            "count": _suite_case_count(node),
+        }
+        order.append(nid)
 
-    walk(nodes, parent_id, "", 0)
+    # ② 按 parent_ids 链算 path 和 depth
+    #    ⚠️ 实测: parent_ids 的顺序就是 **[根 ... 父]**, 最后一个 == parent_id
+    #       (1074 个节点里 1039 个有 parent_ids, 全部末位 == parent_id)
+    #    → **不要反转**, 直接按顺序拼 path
+    def chain_of(nid: str) -> list[str]:
+        seen: set[str] = set()
+        chain: list[str] = []
+        for pid in (info.get(nid, {}).get("parent_ids") or []):
+            if pid in seen or pid not in info:
+                continue
+            seen.add(pid)
+            chain.append(pid)
+        return chain
+
+    for nid in order:
+        node = info[nid]
+        ancestors = chain_of(nid)
+        # 链可能不含直接父 (parent_ids 缺层级) → 补上
+        if node["parent_id"] and node["parent_id"] not in ancestors:
+            ancestors.append(node["parent_id"])
+        names = [info[a]["name"] for a in ancestors if a in info]
+        path = "/".join(names + [node["name"]]) if names else node["name"]
+        parent = ancestors[-1] if ancestors else parent_id
+        out.append(
+            {
+                "id": nid,
+                "name": node["name"],
+                "parent_id": parent,
+                "path": path,
+                "depth": len(ancestors),
+                "case_count": node["count"],
+            }
+        )
     return out
 
 
@@ -1300,10 +1333,22 @@ async def _resolve_suite_id(
         return raw, by_id[raw]
 
     # 路径匹配 (大小写不敏感)
+    # ⚠️ 实测: 完整路径带**根节点** ("全部用例/sata/application_layer"),
+    #    但用户通常只写相对部分 ("sata/application_layer") →
+    #    所以要支持**后缀匹配**, 不能只做全等.
     target = raw.replace("\\", "/").strip("/")
-    for item in tree:
-        if item["path"].lower() == target.lower():
-            return item["id"], item
+    if target:
+        low = target.lower()
+        exact = [item for item in tree if item["path"].lower() == low]
+        if exact:
+            return exact[0]["id"], exact[0]
+        # 后缀匹配 (路径的尾部等于用户给的) —— 取**最长**的那个 (最具体)
+        suffix = [item for item in tree
+                  if item["path"].lower().endswith("/" + low)
+                  or item["path"].lower() == low]
+        if suffix:
+            suffix.sort(key=lambda i: len(i["path"]), reverse=True)
+            return suffix[0]["id"], suffix[0]
 
     # 名字匹配 —— 优先**叶子**目录 (用例通常挂在叶子目录里)
     exact = [item for item in tree if item["name"].lower() == raw.lower()]
