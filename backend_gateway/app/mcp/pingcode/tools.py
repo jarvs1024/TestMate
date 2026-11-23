@@ -219,11 +219,43 @@ READ_SPECS = (
         handler=adapter.list_test_case_libraries,
     ),
     ToolSpec(
+        name="pingcode_case_list_suites",
+        description=(
+            "列出指定 PingCode 用例库下的**用例目录**（网页左边的目录树，如 sata / NVMe / OCP / pcie）。"
+            "返回每个目录的 id、名称、父目录、完整路径、层级深度与用例数。"
+            "parent_id 传某个目录 id 可只看那棵子树；keyword 按目录名或路径过滤。"
+            "拿到目录名/路径后，用 pingcode_case_search 的 suite 参数按该目录搜用例。"
+        ),
+        input_schema=_object(
+            {
+                "library_id": _LIBRARY_ID,
+                "parent_id": {
+                    "type": "string",
+                    "description": "只看某个目录及其子目录；传目录 id，空=全部",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "目录名或路径关键字（大小写不敏感）",
+                },
+                "include_sub_suite": {
+                    "type": "boolean",
+                    "description": "parent_id 指定时是否含子目录（默认 true）",
+                },
+            },
+            ["library_id"],
+        ),
+        scope="pingcode:read",
+        read_only=True,
+        handler=adapter.list_test_case_suites,
+    ),
+    ToolSpec(
         name="pingcode_case_search",
         description=(
             "在指定 PingCode 测试用例库中按编号/标题搜索用例，支持网页筛选器同款字段条件，"
             "以及 created_by/updated_by 人员筛选（人名或 uid，多人用逗号分隔）。"
             "identifier 传完整编号（如 HIMA3361-8077）或纯数字；返回用例编号、标题与预置条件。"
+            "suite 可按**用例目录**限定范围：传目录 id、目录名（如 NVMe）或目录路径"
+            "（如 sata/application_layer）；include_sub_suite 决定是否含子目录（默认含）。"
         ),
         input_schema=_object(
             {
@@ -232,6 +264,18 @@ READ_SPECS = (
                 "identifier": {
                     "type": "string",
                     "description": "用例编号，如 HIMA3361-8077（也接受纯数字 8077）",
+                },
+                "suite": {
+                    "type": "string",
+                    "description": (
+                        "限定用例目录：目录 id / 目录名（如 NVMe）/ 目录路径"
+                        "（如 sata/application_layer）；空=全库。"
+                        "目录清单用 pingcode_case_list_suites 查"
+                    ),
+                },
+                "include_sub_suite": {
+                    "type": "boolean",
+                    "description": "suite 指定时是否包含子目录的用例（默认 true）",
                 },
                 "filters": _CASE_FILTERS,
                 "created_by": {

@@ -958,6 +958,8 @@ async def _fetch_case_page(
     page: int,
     page_size: int,
     filters: list[dict[str, Any]],
+    suite_id: str = "",
+    include_sub_suite: int = 1,
 ) -> tuple[list[dict[str, Any]], int]:
     search_keyword = (
         str(identifier).strip().rsplit("-", 1)[-1]
@@ -973,7 +975,14 @@ async def _fetch_case_page(
             "sort_by": "position",
             "sort_direction": 1,
         },
-        "scope": {"include_sub_suite": 1, "suite_id": "", "link_library_id": ""},
+        # ⚠️ 2026-11-23 (用户需求): 按**用例目录**筛用例.
+        #    scope.suite_id = 目录 id; include_sub_suite=1 → 含子目录.
+        #    之前硬编码空串 → 永远全库搜, 用例目录树上那么多目录没法用.
+        "scope": {
+            "include_sub_suite": int(include_sub_suite or 0),
+            "suite_id": str(suite_id or ""),
+            "link_library_id": "",
+        },
         "ps": page_size,
     }
     try:
@@ -1004,6 +1013,8 @@ async def search_test_cases(
     filters: Any = None,
     created_by: str = "",
     updated_by: str = "",
+    suite: str = "",
+    include_sub_suite: bool = True,
 ) -> dict[str, Any]:
     if not library_id:
         raise McpRuntimeError(
@@ -1025,6 +1036,18 @@ async def search_test_cases(
                 "id": f"person-{len(conditions)}",
             }
         )
+    # ⚠️ 2026-11-23 (用户需求): 按**用例目录**筛 —— suite 可以是 id / 目录名 / 路径
+    suite_id = ""
+    suite_info: dict[str, Any] | None = None
+    suite_raw = str(suite or "").strip()
+    if suite_raw:
+        suite_id, suite_info = await _resolve_suite_id(ctx, str(library_id), suite_raw)
+        if not suite_id:
+            raise McpRuntimeError(
+                "not_found",
+                f"用例目录 {suite_raw!r} 不存在或匹配不到 "
+                f"(先调 pingcode_case_list_suites 看目录名/路径)",
+            )
     raw_items, total = await _fetch_case_page(
         ctx,
         library_id=str(library_id),
@@ -1033,9 +1056,11 @@ async def search_test_cases(
         page=page,
         page_size=page_size,
         filters=conditions,
+        suite_id=suite_id,
+        include_sub_suite=1 if include_sub_suite else 0,
     )
     items = [_normalize_test_case(item, steps=False) for item in raw_items]
-    return {
+    out: dict[str, Any] = {
         "library_id": str(library_id),
         "total": total,
         "count": len(items),
@@ -1044,6 +1069,14 @@ async def search_test_cases(
         "has_more": page * page_size < total if total else len(items) >= page_size,
         "items": items,
     }
+    if suite_info:
+        out["suite"] = {
+            "id": suite_info["id"],
+            "name": suite_info["name"],
+            "path": suite_info["path"],
+            "include_sub_suite": bool(include_sub_suite),
+        }
+    return out
 
 
 async def _library_states(ctx: McpContext, library_id: str) -> dict[str, dict[str, Any]]:
@@ -1097,6 +1130,198 @@ async def _library_suites(ctx: McpContext, library_id: str) -> dict[str, str]:
         for node in _flatten_suite_nodes(_list_of(payload))
         if node.get("_id") or node.get("id")
     }
+
+
+# ══════════════════════════════════════════════════════════════════
+# 用例目录 (suite) —— 2026-11-23 用户需求
+#
+# 需求: 「用例库部分可以按用例目录结果输出用例详情或搜索用例」
+#   网页上用例库左边是**目录树** (sata / NVMe / OCP / pcie ...),
+#   每个目录有 id 和用例数, 还有父子层级.
+#
+#   PingCode 的 testhub 接口:
+#     GET  /api/testhub/test-libraries/{library_id}/direct/suites  → 目录树
+#     POST /api/testhub/test-libraries/{library_id}/test-cases
+#          body.scope.suite_id = 目录 id
+#          body.scope.include_sub_suite = 1 → 含子目录
+#
+#   下面两个函数把目录树整理成好用的形态:
+#     · list_test_case_suites  —— 列目录 (可按父目录过滤 / 只看某棵子树)
+#     · _resolve_suite_id      —— 按 id / 目录名 / 路径 解析成 suite_id
+# ══════════════════════════════════════════════════════════════════
+
+
+def _suite_node_id(node: dict[str, Any]) -> str:
+    return str(node.get("_id") or node.get("id") or "")
+
+
+def _suite_node_name(node: dict[str, Any]) -> str:
+    return str(node.get("name") or node.get("title") or "")
+
+
+def _suite_case_count(node: dict[str, Any]) -> int | None:
+    """目录下的用例数 —— 网页上显示成 "sata · 3127"."""
+    # ⚠️ 上游字段名实测: case_count / test_case_count (见 _normalize_library 的 case_count)
+    for key in ("case_count", "test_case_count", "count", "total",
+                "caseCount", "cases_count"):
+        value = node.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+    return None
+
+
+def _suite_tree(nodes: Any, parent_id: str = "") -> list[dict[str, Any]]:
+    """目录树 → 扁平列表 (每项带 id / name / parent_id / path / depth / case_count)."""
+    out: list[dict[str, Any]] = []
+    if not isinstance(nodes, list):
+        return out
+
+    def walk(items: Any, pid: str, prefix: str, depth: int) -> None:
+        if not isinstance(items, list):
+            return
+        for node in items:
+            if not isinstance(node, dict):
+                continue
+            nid = _suite_node_id(node)
+            name = _suite_node_name(node)
+            if not nid:
+                continue
+            path = f"{prefix}/{name}" if prefix else name
+            out.append(
+                {
+                    "id": nid,
+                    "name": name,
+                    "parent_id": pid,
+                    "path": path,
+                    "depth": depth,
+                    "case_count": _suite_case_count(node),
+                }
+            )
+            walk(node.get("children"), nid, path, depth + 1)
+
+    walk(nodes, parent_id, "", 0)
+    return out
+
+
+async def _suite_tree_raw(ctx: McpContext, library_id: str) -> list[dict[str, Any]]:
+    """拉目录树原始节点 (含 children 层级)."""
+    encoded = quote(str(library_id), safe="")
+    try:
+        payload = await _first_json(
+            ctx,
+            [
+                (f"/api/testhub/test-libraries/{encoded}/direct/suites", None),
+                (f"/api/testhub/test-libraries/{encoded}/suites", None),
+            ],
+        )
+    except Exception:  # noqa: BLE001 - 目录拉不到不该让整个工具挂掉
+        return []
+    return _list_of(payload)
+
+
+async def list_test_case_suites(
+    ctx: McpContext,
+    *,
+    library_id: str,
+    parent_id: str = "",
+    keyword: str = "",
+    include_sub_suite: bool = True,
+) -> dict[str, Any]:
+    """列用例目录 (testhub 的 suite 树).
+
+    返回扁平列表, 每项含 id / name / parent_id / path / depth / case_count.
+    """
+    if not library_id:
+        raise McpRuntimeError(
+            "invalid_arguments",
+            "library_id 必填: 先用 pingcode_case_list_libraries 查询用例库 _id",
+        )
+    raw = await _suite_tree_raw(ctx, str(library_id))
+    tree = _suite_tree(raw)
+
+    wanted_parent = str(parent_id or "").strip()
+    if wanted_parent:
+        # 只看某棵子树: 该节点 + 它的所有后代
+        ids = {wanted_parent}
+        changed = True
+        while changed:
+            changed = False
+            for item in tree:
+                if item["parent_id"] in ids and item["id"] not in ids:
+                    ids.add(item["id"])
+                    changed = True
+        tree = [item for item in tree if item["id"] in ids]
+
+    kw = str(keyword or "").strip().lower()
+    if kw:
+        tree = [
+            item for item in tree
+            if kw in item["name"].lower() or kw in item["path"].lower()
+        ]
+
+    if not include_sub_suite and wanted_parent:
+        tree = [item for item in tree if item["parent_id"] == wanted_parent]
+
+    return {
+        "library_id": str(library_id),
+        "count": len(tree),
+        "parent_id": wanted_parent,
+        "items": tree,
+    }
+
+
+async def _resolve_suite_id(
+    ctx: McpContext,
+    library_id: str,
+    suite: str,
+) -> tuple[str, dict[str, Any] | None]:
+    """把用户给的目录标识解析成 suite_id.
+
+    接受三种写法 (按优先级):
+      ① 目录 id      —— 直接用
+      ② 目录名        —— 在**所有层级**里按 name 精确匹配 (同名多个取第一个)
+      ③ 目录路径      —— "sata/application_layer" 这样的路径
+
+    返回 (suite_id, 命中的目录信息); 解析不出来返回 ("", None).
+    """
+    raw = str(suite or "").strip()
+    if not raw:
+        return "", None
+    tree = _suite_tree(await _suite_tree_raw(ctx, str(library_id)))
+    if not tree:
+        return "", None
+
+    by_id = {item["id"]: item for item in tree}
+    if raw in by_id:
+        return raw, by_id[raw]
+
+    # 路径匹配 (大小写不敏感)
+    target = raw.replace("\\", "/").strip("/")
+    for item in tree:
+        if item["path"].lower() == target.lower():
+            return item["id"], item
+
+    # 名字匹配 —— 优先**叶子**目录 (用例通常挂在叶子目录里)
+    exact = [item for item in tree if item["name"].lower() == raw.lower()]
+    if exact:
+        leaf = [item for item in exact if not any(
+            other["parent_id"] == item["id"] for other in tree)]
+        chosen = (leaf or exact)[0]
+        return chosen["id"], chosen
+
+    # 模糊匹配 (包含)
+    fuzzy = [item for item in tree if raw.lower() in item["name"].lower()]
+    if fuzzy:
+        leaf = [item for item in fuzzy if not any(
+            other["parent_id"] == item["id"] for other in tree)]
+        chosen = (leaf or fuzzy)[0]
+        return chosen["id"], chosen
+
+    return "", None
 
 
 async def get_test_case(

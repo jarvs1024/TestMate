@@ -50,6 +50,7 @@ TOOL_REQUIRED = {
     "pingcode_issue_add_comment": {"id", "content", "confirm"},
     "pingcode_issue_upload_attachment": {"confirm"},
     "pingcode_case_list_libraries": set(),
+    "pingcode_case_list_suites": {"library_id"},
     "pingcode_case_get_properties": {"library_id"},
     "pingcode_case_search": {"library_id"},
     "pingcode_case_get": {"library_id", "identifier"},
@@ -280,7 +281,7 @@ def _detail_payload() -> dict:
 
 
 # ── 契约: 21 个工具与严格 schema ────────────────────────────
-async def test_tools_list_exposes_twenty_one_strict_schemas(user):
+async def test_tools_list_exposes_twenty_two_strict_schemas(user):
     principal = Principal(
         user=user, client_id="test-client", scopes=frozenset({"pingcode:read"})
     )
@@ -2611,3 +2612,211 @@ async def test_plan_report_daily_uses_widget_window(bound_user, fake_api):
             {"date": "2025-12-16", "count": 2},
         ],
     }
+
+# ══════════════════════════════════════════════════════════════════
+# 用例目录 (suite) —— 2026-11-23 用户需求
+# 「用例库部分可以按用例目录结果输出用例详情或搜索用例」
+#
+# 网页上用例库左边是目录树 (sata / NVMe / OCP / pcie ...),
+# 每个目录有用例数, 还有父子层级 (sata → application_layer)。
+# ══════════════════════════════════════════════════════════════════
+
+_SUITE_TREE = [
+    {
+        "_id": "sata-1",
+        "name": "sata",
+        "case_count": 3127,
+        "children": [
+            {"_id": "sata-app", "name": "application_layer", "case_count": 2781},
+            {"_id": "sata-low", "name": "sata_low_level", "case_count": 346},
+            {"_id": "sata-link", "name": "sata_link_special", "case_count": 0},
+        ],
+    },
+    {"_id": "nvme-1", "name": "NVMe", "case_count": 4307},
+    {"_id": "ocp-1", "name": "OCP", "case_count": 32},
+    {"_id": "pcie-1", "name": "pcie", "case_count": 961},
+    {"_id": "xl-1", "name": "xl", "case_count": 1442},
+    {"_id": "enc-1", "name": "encryption", "case_count": 38},
+    {"_id": "dm-1", "name": "device_management", "case_count": 347},
+    {"_id": "io-1", "name": "io", "case_count": 448},
+    {"_id": "nvme-pcm-1", "name": "nvme_pcm_io", "case_count": 381},
+]
+
+
+def _suite_routes(fake_api):
+    """装上用例目录 + 用例列表的假路由."""
+    fake_api.routes.setdefault(
+        "/api/testhub/test-libraries/lib1/direct/suites",
+        lambda **_: {"value": _SUITE_TREE},
+    )
+
+    def cases(params=None, json=None):
+        scope = (json or {}).get("scope") or {}
+        suite_id = str(scope.get("suite_id") or "")
+        include_sub = int(scope.get("include_sub_suite") or 0)
+        # 假数据: 按 suite_id 决定返回什么 (验证 scope 真的传下去了)
+        if suite_id == "sata-1":
+            items = [
+                {"_id": "c1", "identifier": "HIMA3361-8077", "title": "sata 用例1",
+                 "suite_id": "sata-1", "precondition": "前置1"},
+                {"_id": "c2", "identifier": "HIMA3361-8078", "title": "sata 用例2",
+                 "suite_id": "sata-app", "precondition": "前置2"},
+            ]
+        elif suite_id == "sata-app":
+            items = [
+                {"_id": "c2", "identifier": "HIMA3361-8078", "title": "sata 用例2",
+                 "suite_id": "sata-app", "precondition": "前置2"},
+            ]
+        elif suite_id == "nvme-1":
+            items = [
+                {"_id": "c3", "identifier": "HIMA3361-9000", "title": "nvme 用例",
+                 "suite_id": "nvme-1", "precondition": "前置3"},
+            ]
+        else:
+            items = []
+        return {"value": items, "total_count": len(items)}
+
+    fake_api.routes.setdefault(
+        "/api/testhub/test-libraries/lib1/test-cases", cases
+    )
+
+
+async def test_case_list_suites_returns_flat_tree_with_paths(bound_user, fake_api):
+    """列目录 → 扁平列表, 带 id/name/parent_id/path/depth/case_count."""
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.list_test_case_suites(ctx, library_id="lib1")
+
+    assert data["count"] == 12, "9 个顶层 + 3 个子目录"
+    names = [i["name"] for i in data["items"]]
+    assert "sata" in names and "NVMe" in names and "nvme_pcm_io" in names
+
+    by_name = {i["name"]: i for i in data["items"]}
+    sata = by_name["sata"]
+    assert sata["id"] == "sata-1"
+    assert sata["parent_id"] == ""
+    assert sata["depth"] == 0
+    assert sata["case_count"] == 3127
+    assert sata["path"] == "sata"
+
+    app = by_name["application_layer"]
+    assert app["parent_id"] == "sata-1"
+    assert app["depth"] == 1
+    assert app["path"] == "sata/application_layer"
+    assert app["case_count"] == 2781
+
+
+async def test_case_list_suites_filter_by_parent_subtree(bound_user, fake_api):
+    """parent_id → 只看那棵子树 (该节点 + 所有后代)."""
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.list_test_case_suites(ctx, library_id="lib1",
+                                                   parent_id="sata-1")
+
+    names = sorted(i["name"] for i in data["items"])
+    assert names == ["application_layer", "sata", "sata_link_special", "sata_low_level"]
+    assert data["parent_id"] == "sata-1"
+
+
+async def test_case_list_suites_filter_by_keyword(bound_user, fake_api):
+    """keyword → 按目录名/路径过滤."""
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.list_test_case_suites(ctx, library_id="lib1",
+                                                   keyword="nvme")
+
+    names = sorted(i["name"] for i in data["items"])
+    assert names == ["NVMe", "nvme_pcm_io"]
+
+
+async def test_case_search_by_suite_name(bound_user, fake_api):
+    """suite 传**目录名** → 解析成 id 并下发给上游 scope."""
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.search_test_cases(ctx, library_id="lib1",
+                                               suite="NVMe")
+
+    # 上游确实收到了 scope.suite_id
+    case_calls = [c for c in fake_api.calls if c[1].endswith("/test-cases")]
+    assert case_calls, "应该调了 test-cases"
+    scope = (case_calls[-1][3] or {}).get("scope") or {}
+    assert scope["suite_id"] == "nvme-1", scope
+    assert scope["include_sub_suite"] == 1
+
+    # 返回值带上命中的目录信息
+    assert data["suite"]["id"] == "nvme-1"
+    assert data["suite"]["name"] == "NVMe"
+    assert [i["identifier"] for i in data["items"]] == ["HIMA3361-9000"]
+
+
+async def test_case_search_by_suite_path(bound_user, fake_api):
+    """suite 传**目录路径** (sata/application_layer) → 解析成子目录 id."""
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        data = await adapter.search_test_cases(
+            ctx, library_id="lib1", suite="sata/application_layer"
+        )
+
+    case_calls = [c for c in fake_api.calls if c[1].endswith("/test-cases")]
+    scope = (case_calls[-1][3] or {}).get("scope") or {}
+    assert scope["suite_id"] == "sata-app", scope
+    assert data["suite"]["path"] == "sata/application_layer"
+    assert [i["identifier"] for i in data["items"]] == ["HIMA3361-8078"]
+
+
+async def test_case_search_by_suite_id(bound_user, fake_api):
+    """suite 传**目录 id** → 直接用."""
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        await adapter.search_test_cases(ctx, library_id="lib1", suite="sata-1")
+
+    case_calls = [c for c in fake_api.calls if c[1].endswith("/test-cases")]
+    scope = (case_calls[-1][3] or {}).get("scope") or {}
+    assert scope["suite_id"] == "sata-1", scope
+
+
+async def test_case_search_include_sub_suite_false(bound_user, fake_api):
+    """include_sub_suite=False → 下发 0 (不含子目录)."""
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        await adapter.search_test_cases(ctx, library_id="lib1",
+                                        suite="sata-1",
+                                        include_sub_suite=False)
+
+    case_calls = [c for c in fake_api.calls if c[1].endswith("/test-cases")]
+    scope = (case_calls[-1][3] or {}).get("scope") or {}
+    assert scope["include_sub_suite"] == 0, scope
+
+
+async def test_case_search_without_suite_keeps_full_scope(bound_user, fake_api):
+    """不传 suite → 仍然全库 (suite_id 空, include_sub_suite=1)."""
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        await adapter.search_test_cases(ctx, library_id="lib1")
+
+    case_calls = [c for c in fake_api.calls if c[1].endswith("/test-cases")]
+    scope = (case_calls[-1][3] or {}).get("scope") or {}
+    assert scope["suite_id"] == "", scope
+    assert scope["include_sub_suite"] == 1
+
+
+async def test_case_search_unknown_suite_raises_not_found(bound_user, fake_api):
+    """目录解析不到 → 报 not_found, 并提示先用哪个工具查目录."""
+    _suite_routes(fake_api)
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.search_test_cases(ctx, library_id="lib1",
+                                           suite="不存在的目录xyz")
+
+    assert excinfo.value.code == "not_found"
+    assert "pingcode_case_list_suites" in excinfo.value.message
+
+
+async def test_case_list_suites_requires_library_id(bound_user, fake_api):
+    """library_id 必填."""
+    async with _context(bound_user) as ctx:
+        with pytest.raises(adapter.McpRuntimeError) as excinfo:
+            await adapter.list_test_case_suites(ctx, library_id="")
+
+    assert excinfo.value.code == "invalid_arguments"
+    assert "library_id" in excinfo.value.message
