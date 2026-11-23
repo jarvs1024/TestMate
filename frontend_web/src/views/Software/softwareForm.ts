@@ -130,6 +130,33 @@ export function validateVersion(version: string): string {
   return '';
 }
 
+/**
+ * 建议的下一个版本号 —— **最后一段 +1**。
+ *
+ * ⚠️ 2026-11-23 (用户反馈): 原来只认**三段** `x.y.z`:
+ *      const m = v.match(/^(\d+)\.(\d+)\.(\d+)$/);
+ *      if (!m) return v;   // ← 两段版本号 (如 "2.4") 匹配不上 → **原样返回**
+ *    结果「当前 2.4 → 建议 2.4」—— 建议值等于当前值, 等于没建议。
+ *
+ *    版本号格式本来就是自由的 (validateVersion 只管长度 32 + 不能有斜杠),
+ *    两段/一段都合法, 所以建议必须**支持任意段数**:
+ *      "2.4"     → "2.5"      (两段: 末段 +1)
+ *      "1.0.0"   → "1.0.1"    (三段: 补丁号 +1)
+ *      "1.2.3.4" → "1.2.3.5"  (四段: 末段 +1)
+ *
+ *    末段不是数字 (如 "2.4-beta") → **原样返回** (不敢瞎猜, 让用户自己填)。
+ */
+export function bumpVersion(v: string): string {
+  const s = (v || '').trim();
+  if (!s) return s;
+  // 按 '.' 拆段, 末段必须是纯数字才能 +1
+  const parts = s.split('.');
+  const last = parts[parts.length - 1];
+  if (!/^\d+$/.test(last)) return s;
+  parts[parts.length - 1] = String(Number(last) + 1);
+  return parts.join('.');
+}
+
 /** 校验软件名 */
 export function validateName(name: string): string {
   const n = (name || '').trim();

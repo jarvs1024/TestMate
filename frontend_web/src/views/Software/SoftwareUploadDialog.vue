@@ -309,7 +309,8 @@ import {
 } from '@/api/software';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 import {
-  ICONS, PLATFORMS, RESERVED_CODES, codeFromFileName, formatSize, splitFeatures, splitTags,
+  ICONS, PLATFORMS, RESERVED_CODES, bumpVersion, codeFromFileName, formatSize,
+  splitFeatures, splitTags,
   validateCode, validateFileName, validateFileSize, validateName, validateVersion,
 } from './softwareForm';
 
@@ -500,13 +501,18 @@ watch(() => props.modelValue, (open) => {
   }
 });
 
-function bumpVersion(v: string): string {
-  const m = v.match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!m) return v;
-  return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
-}
+/**
+ * 建议的下一个版本号 —— **最后一段 +1**。
+ * 实现放在 softwareForm.ts (可被单测直接 import; <script setup> 里的函数导不出去).
+ *
+ * ⚠️ 2026-11-23 (用户反馈): 原来只认**三段** `x.y.z`:
+ *      const m = v.match(/^(\d+)\.(\d+)\.(\d+)$/);
+ *      if (!m) return v;   // ← 两段版本号 (如 "2.4") 匹配不上 → **原样返回**
+ *    结果「当前 2.4 → 建议 2.4」—— 建议值等于当前值, 等于没建议。
+ *    现在支持任意段数 (末段 +1), 详见 softwareForm.ts 的 bumpVersion。
+ */
 
-// ===== 版本号建议 (发新版本时) =====
+// ===== 版本号建议 (发新版本时) ====
 // 当前版本 / 建议的下一个版本号 / 已经发过的版本号
 const currentVersion = computed(() => props.item?.version || '');
 const suggestedVersion = computed(() => bumpVersion(currentVersion.value) || '1.0.0');

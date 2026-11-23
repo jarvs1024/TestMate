@@ -6,7 +6,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  CODE_PATTERN, FILE_NAME_PATTERN, RESERVED_CODES, codeFromFileName, formatSize,
+  CODE_PATTERN, FILE_NAME_PATTERN, RESERVED_CODES, bumpVersion, codeFromFileName,
+  formatSize,
   splitFeatures, splitTags, validateCode, validateFileName, validateFileSize,
   validateName, validateVersion,
 } from '../softwareForm';
@@ -176,5 +177,47 @@ describe('列表拆分', () => {
   it('功能清单: 一行一条', () => {
     expect(splitFeatures('功能一\n功能二\n\n  功能三  ')).toEqual(['功能一', '功能二', '功能三']);
     expect(splitFeatures('')).toEqual([]);
+  });
+});
+
+
+describe('建议的下一个版本号 (bumpVersion)', () => {
+  // ⚠️ 2026-11-23 回归: 原来只认三段 x.y.z, 两段版本号 (如 "2.4") 匹配不上
+  //    → 原样返回 → 建议值等于当前值 (等于没建议)。现在按**末段 +1**, 段数不限。
+  it('两段: 末段 +1 (2.4 → 2.5)', () => {
+    expect(bumpVersion('2.4')).toBe('2.5');
+  });
+
+  it('三段: 补丁号 +1 (1.0.0 → 1.0.1)', () => {
+    expect(bumpVersion('1.0.0')).toBe('1.0.1');
+  });
+
+  it('四段: 末段 +1 (1.2.3.4 → 1.2.3.5)', () => {
+    expect(bumpVersion('1.2.3.4')).toBe('1.2.3.5');
+  });
+
+  it('一段: 数字 +1 (7 → 8)', () => {
+    expect(bumpVersion('7')).toBe('8');
+  });
+
+  it('建议值必须与当前版本不同 (防"建议等于当前"的坑)', () => {
+    for (const v of ['2.4', '1.0.0', '1.2.3.4', '7', '0.1']) {
+      expect(bumpVersion(v)).not.toBe(v);
+    }
+  });
+
+  it('末段不是数字 → 原样返回 (不瞎猜)', () => {
+    expect(bumpVersion('2.4-beta')).toBe('2.4-beta');
+    expect(bumpVersion('release')).toBe('release');
+    expect(bumpVersion('1.0.x')).toBe('1.0.x');
+  });
+
+  it('空串 → 空串 (调用方回落 1.0.0)', () => {
+    expect(bumpVersion('')).toBe('');
+    expect(bumpVersion('   ')).toBe('');
+  });
+
+  it('首尾空格会先 trim', () => {
+    expect(bumpVersion('  2.4  ')).toBe('2.5');
   });
 });
