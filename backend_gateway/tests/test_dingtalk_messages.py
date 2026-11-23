@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.core import dingtalk
@@ -232,11 +234,57 @@ async def test_multiline_release_notes_become_aligned_bullets(monkeypatch):
         release_notes="1. 新增 PingCode/PLM MCP 服务器\n2. 修复刷新失败\n\n3. 修复卡顿",
     )
     lines = r["lines"]
-    assert "- 更新: 1. 新增 PingCode/PLM MCP 服务器" in lines
-    assert "- 2. 修复刷新失败" in lines
-    assert "- 3. 修复卡顿" in lines
+    assert "- 更新: 1\\. 新增 PingCode/PLM MCP 服务器" in lines
+    assert "- 2\\. 修复刷新失败" in lines
+    assert "- 3\\. 修复卡顿" in lines
     assert not any(ln.startswith(("2. ", "3. ")) for ln in lines), "续行必须以列表符号开头"
     assert "" not in lines, "空行会打断列表, 应被丢掉"
+
+
+async def test_numbered_release_notes_are_not_renumbered_by_dingtalk(monkeypatch):
+    """数字编号的更新说明 → 钉钉**不能**把它当有序列表重新编号.
+
+    2026-11-23 (用户截图): 更新说明四条写成 "1. 2. 3. 4.", 数据库里是对的,
+    但渲染成 "- 2. xxx" 这种 (bullet 后面紧跟数字编号) → 钉钉 markdown 认成
+    **有序列表项**, 四条全渲染成 "4." —— 序号乱了.
+
+    修法: 数字编号也剥掉并**转义** ("2\\. xxx") —— markdown 不再当列表,
+    但显示出来还是 "2. xxx", 编号信息不丢.
+    """
+    monkeypatch.setattr(dingtalk, "get", _fake_get({}))
+    r = await dingtalk.preview_asset_message(
+        "software_update", name="AiTestX提单分析插件", version="2.5", kind="plugin",
+        release_notes=(
+            "1. 插件适配新站域名 http://aitest.twsc.com.cn\n"
+            "2. 自由模式「一键填入描述」: PLM 库未命中或接口失败时回落 PingCode 库\n"
+            "3. 预置条件/关键操作步骤/预期效果开放 Ctrl+V 贴图, 与失败现象同管线\n"
+            "4. 调整提单自动化回填字段，单盘 dutSn 以用例日志 disk_sn 为准"
+        ),
+    )
+    lines = r["lines"]
+    # 钉钉的有序列表标记 = 行首 "N. " —— 我们的行首是 "- ",
+    # 所以要查 "- " **之后**是不是紧跟裸的 "N. "
+    for ln in lines:
+        body = ln[2:] if ln.startswith("- ") else ln
+        assert not re.search(r"(?<!\\)\b\d+[.)]\s", body), f"仍会被钉钉重编号: {ln!r}"
+    # 编号信息**不能丢** —— 转义后显示仍是 "1. " / "2. " ...
+    shown = "\n".join(ln.replace("\\.", ".").replace("\\)", ")") for ln in lines)
+    for n in ("1.", "2.", "3.", "4."):
+        assert n in shown, f"编号 {n} 丢了"
+
+
+async def test_numbered_marker_does_not_eat_decimals_or_versions(monkeypatch):
+    """不该被当成编号的边界: 小数 / 年份 / 带字母的版本号."""
+    monkeypatch.setattr(dingtalk, "get", _fake_get({}))
+    for text in ("1.0 修复了 bug", "v1.2 发布", "2024. 年度总结"):
+        r = await dingtalk.preview_asset_message(
+            "software_update", name="X", version="1.0.0", kind="plugin",
+            release_notes=text,
+        )
+        body = r["lines"][0][2:] if r["lines"][0].startswith("- ") else r["lines"][0]
+        assert not re.match(r"^\d+[.)]\s", body), f"{text!r} 被当成列表编号"
+        # 显示内容不能变
+        assert text in r["text"].replace("\\.", ".").replace("\\)", ")")
 
 
 async def test_multiline_detail_is_flattened_too(monkeypatch):

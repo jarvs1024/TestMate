@@ -642,6 +642,30 @@ def _one_line(v: Any) -> str:
 
 # 行首已带的列表符号 (续行可能本身就是 markdown 列表)
 _BULLET_MARKER = re.compile(r"^[-*+•]\s+")
+# ⚠️ 行首的**数字编号** ("1. " / "2) ") —— 钉钉 markdown 同样会当成有序列表标记,
+#    渲染时重新编号 (用户 2026-11-23 截图: 更新说明四条全显示成 "4.").
+#    匹配的是"数字 + 点/括号 + 空白", 所以 "1.0 修复" / "v1.2 发布" 不会被误伤.
+#    ⚠️ "2024. 年度总结" 也会被转义 —— 但年份本来也不是列表编号,
+#    转义后显示仍是 "2024. 年度总结" (反斜杠不显示), 只是源码里多个 "\".
+#    这个代价可接受 (显示效果不变), 而漏转义会让钉钉**重新编号** —— 那个才致命.
+_NUMBERED_MARKER = re.compile(r"^(\d{1,3})([.)])(\s+)")
+
+
+def _strip_list_marker(line: str) -> str:
+    """剥掉行首的列表符号 (bullet 或数字编号), 返回**纯内容**.
+
+    ⚠️ 数字编号用**反斜杠转义**保留下来 ("2\\. xxx") —— 不能直接吞掉:
+       用户是**特意**写了编号的 (更新说明的 1/2/3/4 条), 吞了就看不出对应关系.
+       转义后钉钉 markdown 不会把它当列表标记, 但显示出来还是 "2. xxx".
+    """
+    s = line.strip()
+    # 先剥 bullet ("- " / "* " / "+ " / "• "), 再看是不是数字编号
+    s = _BULLET_MARKER.sub('', s)
+    m = _NUMBERED_MARKER.match(s)
+    if m:
+        # 转义: "2. xxx" → "2\\. xxx" —— 保留编号, 但不让 markdown 认成列表
+        s = f'{m.group(1)}\\{m.group(2)}{m.group(3)}{s[m.end():]}'
+    return s
 
 
 def _bullet_lines(label: str, value: Any) -> list[str]:
@@ -652,13 +676,17 @@ def _bullet_lines(label: str, value: Any) -> list[str]:
        会把它当成**新的一级有序列表** —— 缩进跟上层条目对不上 (用户截图那个样子).
        这里统一收成同级条目: 首行带 label, 续行都加 "- " 前缀, 对齐不依赖渲染器
        对缩进/嵌套列表的支持 (数字编号保留在条目文字里).
+
+    ⚠️ 2026-11-23 (用户截图): 上面那条只解决了**缩进对不齐**, 没解决**序号乱** ——
+       "2. xxx" 紧跟在 "- " 后面, 钉钉仍把它当**有序列表项**, 四条全渲染成 "4.".
+       现在数字编号也一并处理: 剥掉标记再转义 (见 _strip_list_marker).
     """
     parts = [ln.strip() for ln in str(value or "").splitlines()]
     parts = [ln for ln in parts if ln]
     if not parts:
         return []
-    out = [f"- {label}: {_BULLET_MARKER.sub('', parts[0])}"]
-    out.extend(f"- {_BULLET_MARKER.sub('', ln)}" for ln in parts[1:])
+    out = [f"- {label}: {_strip_list_marker(parts[0])}"]
+    out.extend(f"- {_strip_list_marker(ln)}" for ln in parts[1:])
     return out
 
 
