@@ -22,50 +22,44 @@ const src = readFileSync(BOARD, 'utf8');
 // ⚠️ 后端文件在**仓库根**下 (不在 frontend_web/) → 用 ../ 往上走
 const CLIENT = resolve(process.cwd(), '../backend_gateway/app/core/review_agent_client.py');
 const clientSrc = readFileSync(CLIENT, 'utf8');
+// 聚类逻辑在独立 util 里
+const UTIL = resolve(process.cwd(), 'src/utils/ruleCluster.ts');
+const util = readFileSync(UTIL, 'utf8');
 
 describe('聚类 · R-OTHER* 子键合并成一行', () => {
-  it('有聚类函数 clusterRuleKey', () => {
-    expect(src).toContain('function clusterRuleKey');
+  it('聚类逻辑在独立 util 里 (可单测)', () => {
+    // ⚠️ 聚合逻辑必须放在 utils/ruleCluster.ts —— 第一版写在组件里,
+    //    漏了第一个来源的计数, 单来源规则全显示「0 次」. 源码断言抓不到.
+    expect(util).toContain('export function clusterRuleKey');
+    expect(util).toContain('export function clusterRules');
+    expect(util).toContain('export function sortRulesByCited');
+    expect(src).toContain("from '@/utils/ruleCluster'");
   });
 
-  it('R-OTHER / R-OTHER:xxx / R-OTHER-IMPACT:xxx 都归到 R-OTHER', () => {
-    expect(src).toContain("k === 'R-OTHER'");
-    expect(src).toContain("k.startsWith('R-OTHER:')");
-    expect(src).toContain("k.startsWith('R-OTHER-')");
-    expect(src).toContain("return 'R-OTHER';");
+  it('组件用的是 util (不再自己写聚合)', () => {
+    expect(src).toContain('sortRulesByCited(clusterRules(');
+    expect(src).not.toContain('const rulesClustered = computed');
+    expect(src).not.toContain('function clusterRuleKey');
   });
 
-  it('其他前缀不被合并 (R-ERR / CODE-RULE-* 保持独立)', () => {
-    // 聚类只针对 R-OTHER* —— 其他前缀原样返回
-    expect(src).toContain('return k;');
-    // 不能出现「按第一个连字符截断」这种粗暴规则 (会把 CODE-RULE-* 切坏)
-    expect(src).not.toContain("split('-')[0]");
-    expect(src).not.toContain("split('-').slice(0, 2)");
+  it('聚类行标注合并数用 sources 字段', () => {
+    expect(src).toContain('class="rule-merged"');
+    expect(src).toContain('.sources');
+    expect(src).not.toContain('function ruleClusteredFrom');
   });
 
-  it('聚类后重新计算采纳率/忽略率 (不是简单取第一条)', () => {
-    expect(src).toContain('const rulesClustered = computed');
-    expect(src).toContain('cur.applied += r.applied ?? 0;');
-    expect(src).toContain('cur.dismissed += r.dismissed ?? 0;');
-    expect(src).toContain('v.adoption_rate = v.total ? Math.round((v.applied / v.total) * 10000) / 10000 : 0;');
-  });
-
-  it('排序用聚类后的结果', () => {
-    expect(src).toContain('[...rulesClustered.value].sort');
-  });
-
-  it('标题显示聚类后的条数 (不是原始键数)', () => {
+  it('标题显示聚类后条数 (不是原始键数)', () => {
     expect(src).toContain('{{ rulesSorted.length }} 条');
     expect(src).not.toContain('<span class="cnt">{{ rules.length }} 条</span>');
   });
 
-  it('聚类行标注合并了多少个子键', () => {
-    expect(src).toContain('function ruleClusteredFrom');
-    expect(src).toContain('class="rule-merged"');
+  it('搜索作用在聚类后的键上', () => {
+    expect(src).toContain('rulesSorted.value.filter');
   });
 
-  it('搜索也作用在聚类后的键上', () => {
-    expect(src).toContain('rulesSorted.value.filter');
+  it('没有粗暴的前缀截断 (会把 CODE-RULE-* 切坏)', () => {
+    expect(util).not.toContain("split('-')[0]");
+    expect(util).not.toContain("split('-').slice(0, 2)");
   });
 });
 

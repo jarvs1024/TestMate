@@ -274,9 +274,9 @@
             <div class="rule-k" :title="r.rule_key">
               {{ r.rule_key }}
               <!-- 聚类说明: 这一行合并了多少个原始规则键 -->
-              <span v-if="ruleClusteredFrom(r) > 1" class="rule-merged"
-                    :title="`这一类合并了 ${ruleClusteredFrom(r)} 个规则键`">
-                +{{ ruleClusteredFrom(r) - 1 }}
+              <span v-if="(r as any).sources > 1" class="rule-merged"
+                    :title="`这一类合并了 ${(r as any).sources} 个规则键`">
+                +{{ (r as any).sources - 1 }}
               </span>
             </div>
             <div class="rule-bar">
@@ -643,6 +643,7 @@ import {
 import ErrorView from '@/components/ErrorView.vue';
 import CapabilityShell from '@/components/CapabilityShell.vue';
 import { fmtIso, fmtPct, fmtMs } from '@/utils/format';
+import { clusterRules, sortRulesByCited } from '@/utils/ruleCluster';
 import { errorDetail, errorStatus, httpErrorText } from '@/utils/httpError';
 const loading = ref(false);
 const loadError = ref('');
@@ -1077,53 +1078,15 @@ function ruleCited(r: RuleStat): number {
 //   `R-OTHER:magic_number` / `R-OTHER-IMPACT:caller_param` 这类细粒度子键
 //   有 363 个, 把榜单撑爆了. 统一归到 `R-OTHER` 一行.
 //   效果: 399 个键 → 37 行.
+//
+// ⚠️ 聚合逻辑在 utils/ruleCluster.ts (独立可测) —— 第一版写在组件里,
+//   漏了第一个来源的计数, 导致所有单来源规则显示「0 次」.
 const rulesTopLimit = 10;
 const rulesAllOpen = ref(false);
 const ruleSearch = ref('');
 
-// 规则键聚类: R-OTHER / R-OTHER:xxx / R-OTHER-IMPACT:xxx → R-OTHER
-// ⚠️ 只归 `R-OTHER*` 一种 —— 其他前缀 (R-ERR / CODE-RULE-* / BEHAVIOR-RULE-*) 都是
-//   有独立含义的规则, 不能混.
-function clusterRuleKey(key: string): string {
-  const k = (key || '').trim();
-  if (k === 'R-OTHER' || k.startsWith('R-OTHER:') || k.startsWith('R-OTHER-')) {
-    return 'R-OTHER';
-  }
-  return k;
-}
-
-// 聚类后的聚合 (命中数/采纳数/忽略数/打开数 都累加)
-const rulesClustered = computed<RuleStat[]>(() => {
-  const agg = new Map<string, RuleStat & { _sources: number }>();
-  for (const r of rules.value) {
-    const key = clusterRuleKey(r.rule_key);
-    const cur = agg.get(key);
-    if (!cur) {
-      agg.set(key, {
-        rule_key: key,
-        total: 0, applied: 0, dismissed: 0, open: 0,
-        adoption_rate: 0, dismissal_rate: undefined,
-        _sources: 1,
-      });
-      continue;
-    }
-    cur.total += r.total ?? 0;
-    cur.applied += r.applied ?? 0;
-    cur.dismissed += r.dismissed ?? 0;
-    cur.open += r.open ?? 0;
-    cur._sources += 1;
-  }
-  const out: RuleStat[] = [];
-  for (const v of agg.values()) {
-    v.adoption_rate = v.total ? Math.round((v.applied / v.total) * 10000) / 10000 : 0;
-    v.dismissal_rate = v.total ? Math.round((v.dismissed / v.total) * 10000) / 10000 : undefined;
-    out.push(v);
-  }
-  return out;
-});
-// 全部规则 (聚类后排序, 不截断)
-const rulesSorted = computed(() =>
-  [...rulesClustered.value].sort((a, b) => ruleCited(b) - ruleCited(a)));
+// 聚类后的规则 (utils/ruleCluster.ts: R-OTHER* → R-OTHER, 计数全部累加)
+const rulesSorted = computed(() => sortRulesByCited(clusterRules(rules.value as any)));
 // 搜索过滤 (大小写不敏感, 前缀/包含都匹配)
 const rulesFiltered = computed(() => {
   const q = ruleSearch.value.trim().toLowerCase();
@@ -1136,14 +1099,6 @@ const rulesVisible = computed(() => {
   return rulesFiltered.value.slice(0, rulesTopLimit);
 });
 const maxCited = computed(() => Math.max(1, ...rulesSorted.value.map(ruleCited)));
-// 这一类合并了多少个原始规则键 (R-OTHER 显示 +362, 其他都是 1)
-function ruleClusteredFrom(r: RuleStat): number {
-  let n = 0;
-  for (const src of rules.value) {
-    if (clusterRuleKey(src.rule_key) === r.rule_key) n += 1;
-  }
-  return n;
-}
 function rulePct(r: RuleStat): number {
   return Math.round((ruleCited(r) / maxCited.value) * 100);
 }
