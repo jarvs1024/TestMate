@@ -143,7 +143,7 @@
         <div class="sub" :title="wrSubHint">
           <span v-if="wrLoading">加载中...</span>
           <span v-else-if="wrLatest?.sections?.telemetry?.data">
-            {{ wrLatest.sections.telemetry.data.total }} 次 · 成功率 {{ wrLatest.sections.telemetry.data.success_rate }}%<span
+            {{ wrLatest.sections.telemetry.data.total }} 次 · 成功率 {{ wrLatestSuccessRate }}%<span
               v-if="wrLatest.sections.merged_mrs?.data?.merge_count != null"
               class="sub-tip"> · 合并 {{ wrLatest.sections.merged_mrs.data.merge_count }} MR</span>
           </span>
@@ -526,6 +526,17 @@
         <div class="wr-meta mono">
           <span>时间窗: {{ weeklyReport.week_start }} ~ {{ weeklyReport.week_end }}</span>
           <span>生成: {{ weeklyReport.generated_at }}</span>
+          <!-- 周选择器 (2026-11-25): 支持查看历史周报 -->
+          <label class="wr-week">
+            <span class="wr-week-lbl">周报</span>
+            <select class="wr-week-sel" :value="wrSelectedName" :disabled="wrLoadingWeek"
+                    @change="selectWeeklyReport(($event.target as HTMLSelectElement).value)">
+              <option v-for="w in wrList" :key="w.name" :value="w.name">
+                {{ wrWeekLabel(w) }}
+              </option>
+            </select>
+            <span v-if="wrLoadingWeek" class="wr-week-load">加载中…</span>
+          </label>
         </div>
 
         <!-- Section 1: telemetry -->
@@ -536,7 +547,10 @@
             <div class="wr-stat ok"><div class="wr-stat-num">{{ weeklyReport.sections.telemetry.data.success }}</div><div class="wr-stat-k">成功</div></div>
             <div class="wr-stat err"><div class="wr-stat-num">{{ weeklyReport.sections.telemetry.data.failed }}</div><div class="wr-stat-k">失败</div></div>
             <div class="wr-stat mute"><div class="wr-stat-num">{{ weeklyReport.sections.telemetry.data.skipped }}</div><div class="wr-stat-k">跳过</div></div>
-            <div class="wr-stat hl"><div class="wr-stat-num">{{ weeklyReport.sections.telemetry.data.success_rate }}%</div><div class="wr-stat-k">成功率</div></div>
+            <!-- 成功率: 跳过算成功 (2026-11-25) —— 口径与 TestMate 主页一致.
+                 历史周报 JSON 里没有 success_rate_strict, 用本地兜底公式重算,
+                 保证旧周报也按新口径显示. -->
+            <div class="wr-stat hl"><div class="wr-stat-num">{{ wrSuccessRate }}%</div><div class="wr-stat-k">成功率</div></div>
           </div>
           <div v-if="weeklyReport.sections.telemetry.data.by_command" class="wr-cmds">
             <div v-for="(c, cmd) in weeklyReport.sections.telemetry.data.by_command" :key="cmd" class="wr-cmd-row">
@@ -603,7 +617,7 @@ import {
   getWeeklyReports, getWeeklyReport,
   type OverviewResp, type RuleStat, type AuthorStat, type MrRow, type MrRun, type MrListResp, type TimelineResp, type HealthResp,
   type SeverityBucket, type DismissalsByRuleItem, type SuggestionRow, type ActionRow,
-  type WeeklyReport,
+  type WeeklyReport, type WeeklyReportListItem,
 } from '@/api/reviewagent';
 import ErrorView from '@/components/ErrorView.vue';
 import CapabilityShell from '@/components/CapabilityShell.vue';
@@ -679,6 +693,12 @@ const wrLatest = ref<WeeklyReport | null>(null);
 const weeklyReport = ref<WeeklyReport | null>(null);
 const wrOpen = ref(false);
 const wrLoading = ref(false);
+// 周报列表 (可选周) —— 2026-11-25: 图1 只显示最新一份, 用户想看历史周报选不了.
+// 这里拉全量列表 (limit=52 ≈ 一年), 抽屉里给个下拉框切换.
+// ⚠️ 只在**抽屉打开时**拉全文; 主页卡片仍只用最新一份 (避免每 30s 拉多份大 JSON).
+const wrList = ref<WeeklyReportListItem[]>([]);
+const wrSelectedName = ref<string>('');
+const wrLoadingWeek = ref(false);
 // 请求序号: 30s 自动刷新 + 抽屉按需刷新可能并发, 慢的旧响应会覆盖新数据.
 // 只有最后一次请求的结果允许写回 wrLatest.
 let wrSeq = 0;
@@ -697,6 +717,8 @@ async function refreshWrLatest(): Promise<WeeklyReport | null> {
     const rep = await getWeeklyReport(first.name, { silent: true });
     if (seq !== wrSeq) return wrLatest.value;
     wrLatest.value = rep;
+    // 抽屉里选中的周: 用户**手动选过**就别被自动刷新覆盖 (那会把人正在看的周换掉)
+    if (!wrSelectedName.value) wrSelectedName.value = first.name;
     return rep;
   } catch {
     /* 静默: 周报只是辅助卡, 失败不影响主视图; 保留上一份好数据, 等下次刷新 */
@@ -705,6 +727,66 @@ async function refreshWrLatest(): Promise<WeeklyReport | null> {
     if (seq === wrSeq) wrLoading.value = false;
   }
 }
+
+// 拉周报列表 (抽屉打开时调一次) —— 用于「选择每周的数据」
+async function ensureWrList(): Promise<void> {
+  if (wrList.value.length) return;
+  try {
+    const list = await getWeeklyReports(52, { silent: true });
+    wrList.value = list || [];
+    // 没选过 → 默认选最新一份.
+    // ⚠️ 不能用 weeklyReport.name / wrLatest.name —— 那两个是**周报内容**
+    //    (后端 /weekly-reports/{name} 拆了 .json 透出, 内容里没有 name 字段),
+    //    文件名只在**列表项** (WeeklyReportListItem.name) 里.
+    if (!wrSelectedName.value && wrList.value.length) {
+      wrSelectedName.value = wrList.value[0].name;
+    }
+  } catch {
+    /* 静默: 选周是增强功能, 拉不到列表就退回"只能看最新一份" */
+  }
+}
+
+// 切换到指定周
+async function selectWeeklyReport(name: string): Promise<void> {
+  if (!name || name === wrSelectedName.value) return;
+  wrSelectedName.value = name;
+  wrLoadingWeek.value = true;
+  try {
+    const rep = await getWeeklyReport(name, { silent: true });
+    // 请求期间用户可能又切了别的周 → 只接受最后一次的结果
+    if (wrSelectedName.value === name) weeklyReport.value = rep;
+  } catch {
+    ElMessage.warning(`加载周报 ${name} 失败`);
+  } finally {
+    wrLoadingWeek.value = false;
+  }
+}
+
+// 文件名 weekly-2026-W47.json → "2026-W47" (与卡片上的 week_label 同形)
+function wrWeekLabel(w: WeeklyReportListItem): string {
+  const m = /weekly-(\d{4}-W\d{1,2})/.exec(w.name || '');
+  return m ? m[1] : (w.name || '');
+}
+
+// 成功率 (跳过算成功) —— 2026-11-25
+// Why 本地算而不是直接用 JSON 里的 success_rate:
+//   · 新周报: ReviewAgent 侧已改成 (success + skipped) / total
+//   · 历史周报: JSON 里是旧值 (success / total), 直接显示会和主页对不上
+//   → 统一用本地公式重算, 新旧周报口径一致.
+// 分母含 running (还在跑) —— 不算成功也不算失败, 留在分母里才不会被高估.
+function wrCalcSuccessRate(t: any): number {
+  const total = Number(t?.total) || 0;
+  if (!total) return 0;
+  const success = Number(t?.success) || 0;
+  const skipped = Number(t?.skipped) || 0;
+  return Math.round(((success + skipped) / total) * 1000) / 10;
+}
+const wrSuccessRate = computed(() =>
+  wrCalcSuccessRate(weeklyReport.value?.sections?.telemetry?.data));
+// 图1 卡片用的是最新一份 (wrLatest), 与抽屉里的选中周可能不是同一份 → 单独算
+const wrLatestSuccessRate = computed(() =>
+  wrCalcSuccessRate(wrLatest.value?.sections?.telemetry?.data));
+
 async function openWeeklyReport() {
   if (!wrLatest.value) {
     ElMessage.warning('暂无周报');
@@ -716,6 +798,8 @@ async function openWeeklyReport() {
   // 后台补拉一次: 上游失败期间卡片可能停在旧周报, 打开抽屉时强制对齐最新
   await refreshWrLatest();
   if (wrOpen.value && wrLatest.value) weeklyReport.value = wrLatest.value;
+  // 拉周列表 (供选择器用)
+  await ensureWrList();
 }
 const wrHint = computed(() => wrLatest.value
   ? `点击查看 ${wrLatest.value.week_label} 完整周报 (telemetry / merged_mrs / repo_scan + AI 综述)`
@@ -725,7 +809,7 @@ const wrSubHint = computed(() => {
   if (!t) return '数据源: /api/v1/review-agent/weekly-reports';
   const byCmd = t.by_command || {};
   const parts = Object.entries(byCmd).map(([cmd, c]: any) => `${cmd} ${c.count} 次`);
-  return `本周总运行 ${t.total} (${parts.join(', ')}).\n成功率 = success / total × 100%.`;
+  return `本周总运行 ${t.total} (${parts.join(', ')}).\n成功率 = (成功 + 跳过) / 总运行 × 100% (跳过算成功).`;
 });
 
 // 已读 (ack) 失败 MR — localStorage 持久化, 只隐藏已读的; 新失败不在 set 里会重新出现.
@@ -1485,7 +1569,17 @@ const runsSubHint = computed(() => {
 .wr-drawer-hd { display: flex; align-items: center; gap: 8px; }
 .wr-drawer-emoji { font-size: 20px; }
 .wr-drawer-title { font-weight: 600; font-size: 14px; }
-.wr-meta { display: flex; gap: 16px; font-size: 11px; color: var(--ink-500); padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 14px; flex-wrap: wrap; }
+.wr-meta { display: flex; gap: 16px; font-size: 11px; color: var(--ink-500); padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+/* 周选择器 (2026-11-25) */
+.wr-week { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.wr-week-lbl { color: var(--ink-500); font-size: 11px; }
+.wr-week-sel {
+  font: inherit; font-size: 11.5px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface-soft); color: var(--ink-800);
+  cursor: pointer; max-width: 180px;
+}
+.wr-week-sel:disabled { opacity: 0.6; cursor: progress; }
+.wr-week-load { font-size: 11px; color: var(--ink-500); }
 .wr-section { margin-bottom: 18px; }
 .wr-section h3 { font-size: 13px; font-weight: 700; color: var(--ink-700); margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px dashed var(--border); }
 .wr-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; }
