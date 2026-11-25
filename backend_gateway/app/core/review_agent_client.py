@@ -297,6 +297,51 @@ async def overview(since: str | None = None) -> dict:
     }
 
 
+async def _get_all_mrs(page_size: int = 500, max_pages: int = 20) -> list[dict]:
+    """拉**全部** MR (分页), 而不是一次性 limit=200.
+
+    Why 分页而不是直接把 limit 调大:
+      · ReviewAgent 的 /mrs 端点 limit 上限是 1000 (Query(le=1000))
+      · 数据量会持续涨 —— 写死 1000 也是个会过期的魔数
+      · 用 `until` (exclusive, 按 created_at) 往前翻, 每页 500,
+        最多 20 页 = 10000 个 MR, 远超当前 223
+
+    ⚠️ 2026-11-25: 原来写死 `limit: 200` → 生产已有 223 个 MR,
+       漏掉 23 个 (6% 的建议不在「规则命中」统计里). 改成按页拉全量.
+
+    返回去重后的 MR 列表 (同一 project_id+mr_iid 只留一条).
+    """
+    out: list[dict] = []
+    seen: set[tuple[Any, Any]] = set()
+    until: str | None = None
+    for _ in range(max_pages):
+        params: dict[str, Any] = {"limit": page_size}
+        if until:
+            params["until"] = until
+        raw = await _get("/mrs", params) or {}
+        items = raw.get("mrs") if isinstance(raw, dict) else (raw or [])
+        if not items:
+            break
+        fresh = 0
+        for mr in items:
+            pid, iid = mr.get("project_id"), mr.get("mr_iid")
+            key = (pid, iid)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(mr)
+            fresh += 1
+        # 翻页游标: 本页最后一条的 created_at (exclusive → 不会重复)
+        last = items[-1]
+        created = last.get("created_at")
+        if not created or fresh == 0:
+            break
+        until = created
+        if len(items) < page_size:
+            break
+    return out
+
+
 async def per_rule_stats(since: str | None = None) -> list[dict]:
     """聚合真正的 rule_keys.
 
@@ -307,8 +352,7 @@ async def per_rule_stats(since: str | None = None) -> list[dict]:
 
     per-MR 并发 (sem=8), since 暂不实现过滤 (留给 ReviewAgent 服务端补).
     """
-    mrs_raw = await _get("/mrs", {"limit": 200}) or {}
-    mrs_list = mrs_raw.get("mrs") if isinstance(mrs_raw, dict) else (mrs_raw or [])
+    mrs_list = await _get_all_mrs()
 
     sem = asyncio.Semaphore(8)
 

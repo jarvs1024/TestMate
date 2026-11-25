@@ -253,10 +253,22 @@
         <div class="card-hd">
           <h2>📐 规则命中</h2>
           <span class="cnt">{{ rules.length }} 条</span>
+          <!-- 2026-11-25: 之前只渲染 Top 10, 但标题写「N 条」→ 其余全看不到.
+               现在: 默认 Top 10 + 「显示全部」+ 搜索框. -->
+          <input v-if="rulesAllOpen || ruleSearch" class="rule-search"
+                 :value="ruleSearch" placeholder="搜规则名…"
+                 @input="ruleSearch = ($event.target as HTMLInputElement).value" />
+          <button v-if="rules.length > rulesTopLimit" class="rule-toggle"
+                  type="button" @click="rulesAllOpen = !rulesAllOpen">
+            {{ rulesAllOpen ? '收起' : `显示全部 ${rules.length} 条` }}
+          </button>
         </div>
         <div v-if="rules.length === 0" class="empty">暂无规则命中记录</div>
+        <div v-else-if="rulesFiltered.length === 0" class="empty">
+          没有匹配「{{ ruleSearch }}」的规则
+        </div>
         <div v-else class="rules">
-          <div v-for="r in rulesTop" :key="r.rule_key" class="rule-row">
+          <div v-for="r in rulesVisible" :key="r.rule_key" class="rule-row">
             <div class="rule-k" :title="r.rule_key">{{ r.rule_key }}</div>
             <div class="rule-bar">
               <div class="bar-fill" :style="{ width: rulePct(r) + '%' }"></div>
@@ -1048,11 +1060,27 @@ async function reloadKeepPage(opts: { silent?: boolean } = {}) {
 function ruleCited(r: RuleStat): number {
   return r.total ?? r.cited_count ?? 0;
 }
-// 规则: 取前 10, 按引用次数降序
-const rulesTop = computed(() => {
-  return [...rules.value].sort((a, b) => ruleCited(b) - ruleCited(a)).slice(0, 10);
+// 规则: 按引用次数降序.
+// ⚠️ 2026-11-25: 原来硬编码 slice(0, 10), 但卡片标题写「N 条」→ 用户以为有全部,
+//   实际 399 个规则键只显示 10 个. 现在: 默认 Top 10 + 可展开全部 + 可搜索.
+const rulesTopLimit = 10;
+const rulesAllOpen = ref(false);
+const ruleSearch = ref('');
+// 全部规则 (排序后, 不截断)
+const rulesSorted = computed(() =>
+  [...rules.value].sort((a, b) => ruleCited(b) - ruleCited(a)));
+// 搜索过滤 (大小写不敏感, 前缀/包含都匹配)
+const rulesFiltered = computed(() => {
+  const q = ruleSearch.value.trim().toLowerCase();
+  if (!q) return rulesSorted.value;
+  return rulesSorted.value.filter((r) => (r.rule_key || '').toLowerCase().includes(q));
 });
-const maxCited = computed(() => Math.max(1, ...rulesTop.value.map(ruleCited)));
+// 实际渲染的: 收起时只给 Top 10, 展开或搜索时给全部匹配项
+const rulesVisible = computed(() => {
+  if (rulesAllOpen.value || ruleSearch.value.trim()) return rulesFiltered.value;
+  return rulesFiltered.value.slice(0, rulesTopLimit);
+});
+const maxCited = computed(() => Math.max(1, ...rulesSorted.value.map(ruleCited)));
 function rulePct(r: RuleStat): number {
   return Math.round((ruleCited(r) / maxCited.value) * 100);
 }
@@ -1762,8 +1790,30 @@ const runsSubHint = computed(() => {
 
 /* 规则柱图 */
 .rules { display: flex; flex-direction: column; gap: 6px; }
-.rule-row { display: grid; grid-template-columns: 220px 1fr 56px 64px; gap: 10px; align-items: center; font-size: 12px; }
-.rule-k { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ⚠️ 2026-11-25: 名字列原来只有 220px + ellipsis → 长规则名被截成
+   「CODE-RULE-COMMON-DOCSTRING-REQUIRE…」. 改成: 名字列自适应 + 换行,
+   整行 grid 也不再固定 4 列 (窄屏时 4 列会挤爆). */
+.rule-row { display: grid; grid-template-columns: minmax(240px, max-content) 1fr 56px 64px; gap: 10px; align-items: center; font-size: 12px; }
+.rule-k {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-700);
+  overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
+}
+.rule-search {
+  font: inherit; font-size: 11.5px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface-soft); color: var(--ink-800);
+  width: 160px; max-width: 30%;
+}
+.rule-search:focus { outline: 2px solid color-mix(in srgb, var(--primary) 40%, transparent); outline-offset: 1px; }
+.rule-toggle {
+  font: inherit; font-size: 11px; padding: 3px 9px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-soft); color: var(--ink-700);
+  white-space: nowrap;
+}
+.rule-toggle:hover { border-color: var(--primary); color: var(--primary); }
+@media (max-width: 900px) {
+  .rule-row { grid-template-columns: 1fr; }
+  .rule-bar { display: none; }
+}
 .rule-bar { height: 6px; background: var(--surface-sunken); border-radius: 4px; overflow: hidden; }
 .bar-fill { height: 100%; background: var(--primary-grad); border-radius: 4px; transition: width 0.3s ease; }
 .rule-n { color: var(--ink-700); text-align: right; font-size: 11.5px; }
