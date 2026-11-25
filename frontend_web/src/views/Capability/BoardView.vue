@@ -252,15 +252,17 @@
       <div class="card card-rules">
         <div class="card-hd">
           <h2>📐 规则命中</h2>
-          <span class="cnt">{{ rules.length }} 条</span>
+          <span class="cnt" :title="`原始规则键 ${rules.length} 个, 聚类后 ${rulesSorted.length} 条`">
+            {{ rulesSorted.length }} 条
+          </span>
           <!-- 2026-11-25: 之前只渲染 Top 10, 但标题写「N 条」→ 其余全看不到.
                现在: 默认 Top 10 + 「显示全部」+ 搜索框. -->
           <input v-if="rulesAllOpen || ruleSearch" class="rule-search"
                  :value="ruleSearch" placeholder="搜规则名…"
                  @input="ruleSearch = ($event.target as HTMLInputElement).value" />
-          <button v-if="rules.length > rulesTopLimit" class="rule-toggle"
+          <button v-if="rulesSorted.length > rulesTopLimit" class="rule-toggle"
                   type="button" @click="rulesAllOpen = !rulesAllOpen">
-            {{ rulesAllOpen ? '收起' : `显示全部 ${rules.length} 条` }}
+            {{ rulesAllOpen ? '收起' : `显示全部 ${rulesSorted.length} 条` }}
           </button>
         </div>
         <div v-if="rules.length === 0" class="empty">暂无规则命中记录</div>
@@ -269,7 +271,14 @@
         </div>
         <div v-else class="rules">
           <div v-for="r in rulesVisible" :key="r.rule_key" class="rule-row">
-            <div class="rule-k" :title="r.rule_key">{{ r.rule_key }}</div>
+            <div class="rule-k" :title="r.rule_key">
+              {{ r.rule_key }}
+              <!-- 聚类说明: 这一行合并了多少个原始规则键 -->
+              <span v-if="ruleClusteredFrom(r) > 1" class="rule-merged"
+                    :title="`这一类合并了 ${ruleClusteredFrom(r)} 个规则键`">
+                +{{ ruleClusteredFrom(r) - 1 }}
+              </span>
+            </div>
             <div class="rule-bar">
               <div class="bar-fill" :style="{ width: rulePct(r) + '%' }"></div>
             </div>
@@ -1063,12 +1072,58 @@ function ruleCited(r: RuleStat): number {
 // 规则: 按引用次数降序.
 // ⚠️ 2026-11-25: 原来硬编码 slice(0, 10), 但卡片标题写「N 条」→ 用户以为有全部,
 //   实际 399 个规则键只显示 10 个. 现在: 默认 Top 10 + 可展开全部 + 可搜索.
+//
+// 聚类 (2026-11-25 用户反馈): 不用把每一类下所有的都显示出来 ——
+//   `R-OTHER:magic_number` / `R-OTHER-IMPACT:caller_param` 这类细粒度子键
+//   有 363 个, 把榜单撑爆了. 统一归到 `R-OTHER` 一行.
+//   效果: 399 个键 → 37 行.
 const rulesTopLimit = 10;
 const rulesAllOpen = ref(false);
 const ruleSearch = ref('');
-// 全部规则 (排序后, 不截断)
+
+// 规则键聚类: R-OTHER / R-OTHER:xxx / R-OTHER-IMPACT:xxx → R-OTHER
+// ⚠️ 只归 `R-OTHER*` 一种 —— 其他前缀 (R-ERR / CODE-RULE-* / BEHAVIOR-RULE-*) 都是
+//   有独立含义的规则, 不能混.
+function clusterRuleKey(key: string): string {
+  const k = (key || '').trim();
+  if (k === 'R-OTHER' || k.startsWith('R-OTHER:') || k.startsWith('R-OTHER-')) {
+    return 'R-OTHER';
+  }
+  return k;
+}
+
+// 聚类后的聚合 (命中数/采纳数/忽略数/打开数 都累加)
+const rulesClustered = computed<RuleStat[]>(() => {
+  const agg = new Map<string, RuleStat & { _sources: number }>();
+  for (const r of rules.value) {
+    const key = clusterRuleKey(r.rule_key);
+    const cur = agg.get(key);
+    if (!cur) {
+      agg.set(key, {
+        rule_key: key,
+        total: 0, applied: 0, dismissed: 0, open: 0,
+        adoption_rate: 0, dismissal_rate: undefined,
+        _sources: 1,
+      });
+      continue;
+    }
+    cur.total += r.total ?? 0;
+    cur.applied += r.applied ?? 0;
+    cur.dismissed += r.dismissed ?? 0;
+    cur.open += r.open ?? 0;
+    cur._sources += 1;
+  }
+  const out: RuleStat[] = [];
+  for (const v of agg.values()) {
+    v.adoption_rate = v.total ? Math.round((v.applied / v.total) * 10000) / 10000 : 0;
+    v.dismissal_rate = v.total ? Math.round((v.dismissed / v.total) * 10000) / 10000 : undefined;
+    out.push(v);
+  }
+  return out;
+});
+// 全部规则 (聚类后排序, 不截断)
 const rulesSorted = computed(() =>
-  [...rules.value].sort((a, b) => ruleCited(b) - ruleCited(a)));
+  [...rulesClustered.value].sort((a, b) => ruleCited(b) - ruleCited(a)));
 // 搜索过滤 (大小写不敏感, 前缀/包含都匹配)
 const rulesFiltered = computed(() => {
   const q = ruleSearch.value.trim().toLowerCase();
@@ -1081,6 +1136,14 @@ const rulesVisible = computed(() => {
   return rulesFiltered.value.slice(0, rulesTopLimit);
 });
 const maxCited = computed(() => Math.max(1, ...rulesSorted.value.map(ruleCited)));
+// 这一类合并了多少个原始规则键 (R-OTHER 显示 +362, 其他都是 1)
+function ruleClusteredFrom(r: RuleStat): number {
+  let n = 0;
+  for (const src of rules.value) {
+    if (clusterRuleKey(src.rule_key) === r.rule_key) n += 1;
+  }
+  return n;
+}
 function rulePct(r: RuleStat): number {
   return Math.round((ruleCited(r) / maxCited.value) * 100);
 }
@@ -1797,6 +1860,13 @@ const runsSubHint = computed(() => {
 .rule-k {
   font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-700);
   overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
+}
+/* 聚类标记: 这一类合并了多少个原始规则键 (如 R-OTHER +362) */
+.rule-merged {
+  display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 8px;
+  font-family: var(--font-body); font-size: 10px; font-weight: 600;
+  background: color-mix(in srgb, var(--ink-500) 14%, transparent);
+  color: var(--ink-600); vertical-align: 1px; white-space: nowrap;
 }
 .rule-search {
   font: inherit; font-size: 11.5px; padding: 3px 8px; border-radius: 6px;
